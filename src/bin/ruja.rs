@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, BufRead, Write};
 use std::process::exit;
 
-const VERSION: &str = "0.2.0";
+const VERSION: &str = "2.0.0-alpha";
 const HELP: &str = r#"Usage: ruja [OPTIONS] [FILE]
 
 A JavaScript engine written in Rust (bytecode VM + GC).
