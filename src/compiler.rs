@@ -122,16 +122,18 @@ impl Compiler {
                     } else {
                         self.chunk.emit(Op::Undefined, 0);
                     }
-                    // store: at top level go to global, otherwise local slot
                     if self.scopes.len() == 1 {
-                        // top-level: declare in global env, don't use local slots
+                        // top-level: global
                         self.declare(name, *kind);
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                         self.chunk.emit(Op::Const(name_idx), 0);
                         self.chunk.emit(Op::StoreGlobal, 0);
-                    } else if let Some((slot, _)) = self.resolve(name) {
+                    } else {
+                        // function/block scope: store in environment (enables closure capture)
                         self.declare(name, *kind);
-                        self.chunk.emit(Op::StoreLocal(slot), 0);
+                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                        self.chunk.emit(Op::Const(name_idx), 0);
+                        self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                     }
                 }
             }
@@ -347,16 +349,6 @@ impl Compiler {
             }
             Expr::Null => self.chunk.emit(Op::Null, 0),
             Expr::Undefined => self.chunk.emit(Op::Undefined, 0),
-            Expr::Ident(name) => {
-                if let Some((slot, _)) = self.resolve(name) {
-                    self.chunk.emit(Op::LoadLocal(slot), 0);
-                } else {
-                    // global variable: push name string constant, then LoadGlobal
-                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(name.as_ref())));
-                    self.chunk.emit(Op::Const(name_idx), 0);
-                    self.chunk.emit(Op::LoadGlobal, 0);
-                }
-            }
             Expr::This => {
                 let name_idx = self.intern("this");
                 self.chunk.emit(Op::LoadEnv(name_idx), 0);
@@ -548,10 +540,11 @@ impl Compiler {
     fn compile_assign_target(&mut self, target: &Expr) -> error::Result<()> {
         match target {
             Expr::Ident(name) => {
-                if let Some((slot, _)) = self.resolve(name) {
-                    self.chunk.emit(Op::StoreLocal(slot), 0);
+                if self.scopes.len() > 1 {
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    self.chunk.emit(Op::Const(name_idx), 0);
+                    self.chunk.emit(Op::StoreEnvName(name_idx), 0);
                 } else {
-                    // global variable assignment
                     let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::Const(name_idx), 0);
                     self.chunk.emit(Op::StoreGlobal, 0);

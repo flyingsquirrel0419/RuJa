@@ -394,17 +394,18 @@ impl Vm {
                     self.stack.push(v);
                 }
                 Op::SetProp => {
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    // stack (bottom->top): [value, obj, key]
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
                     self.set_property(&obj, &key_str, value)?;
                     self.stack.push(Value::Undefined);
                 }
                 Op::SetElem => {
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
                     self.set_property(&obj, &key_str, value)?;
                     self.stack.push(Value::Undefined);
