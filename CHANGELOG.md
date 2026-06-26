@@ -1,34 +1,27 @@
 # Changelog
 
-## [2.0.0-alpha] - 2026-06-27
-
-Complete rewrite: bytecode VM + mark-and-sweep GC.
+## [0.2.0] - 2026-06-27
 
 ### Added
-- Stack-based bytecode VM (`vm.rs`) replacing the tree-walking interpreter
-- Self-contained mark-and-sweep garbage collector (`gc.rs`)
-- `HeapObj` enum value model with `GcIdx` handles, GC-traced
-- AST-to-bytecode compiler with lexical scope resolution
-- Function calls, recursion, `this` binding via VM call frames
-- Function `.prototype` object creation and constructor linking
-- `try`/`catch` via VM catch stack
-- Global variable storage via `StoreGlobal`/`LoadGlobal`
-- Built-in: `Math` (full), `JSON` (parse/stringify), `console`, `Object`,
-  `Array` (push/map/filter/reduce/forEach/slice/concat/join/includes/indexOf),
-  `String` (charAt/slice/split/replace/trim/case conversions/repeat),
-  `Number`, `Boolean`, `Error`, `Map`, `Set`, `Symbol`
-- `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `NaN`, `Infinity`, `undefined`
-- CLI with file execution, `-e` eval, `--version`, `--help`, REPL
+- Bytecode compiler: AST -> stack-machine Op codes (single-pass, lexical scopes)
+- Stack-based VM with call frames, operand stack, and return/call dispatch
+- Mark-and-sweep garbage collector (gc.rs) tracing from VM roots
+- New value model: HeapObj enum with GcIdx heap handles
+- Environment-based variable storage (environment.rs)
+- Try/catch/finally with Throw jumping to catch handlers
+- Built-in objects: Object/Array/String/Number/Boolean/Function/Math/JSON/console/Error
+- Array methods: push, pop, map, filter, reduce, forEach, find, includes, slice, concat, join
+- String methods: charAt, charCodeAt, slice, split, replace, includes, startsWith, endsWith, repeat, trim, toUpperCase, toLowerCase
+- Math: floor, ceil, round, abs, sqrt, pow, max, min, sin, cos, tan, log, exp, random, and constants
+- JSON parse and stringify
+- parseInt, parseFloat, isNaN, isFinite globals
+- 17 passing integration tests + 13 unit tests
 
 ### Changed
-- Value model: `Rc<RefCell<Obj>>` replaced with GC-managed `HeapObj`
-- Execution: tree-walking `interpreter.rs` removed; bytecode VM is the engine
-
-### Known issues
-- Closure capture of outer locals (partial)
-- `class`/`async`/`await`/generators/Promise runtime not yet implemented
-- test262 conformance harness pending
+- Replaced v1.0 tree-walking interpreter with bytecode VM
+- Replaced Rc<RefCell> value model with GC-managed HeapObj
+- Variables stored in environment chain instead of local slots
 
 ## [0.1.0-alpha] - 2026-06-26
 
-Initial tree-walking interpreter release.
+Initial alpha: tree-walking interpreter, ES5.1 subset, 56 tests.

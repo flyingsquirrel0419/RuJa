@@ -1,35 +1,22 @@
 # RuJa Roadmap
 
-RuJa is a JavaScript engine written in Rust.
+Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 
-## v2.0 (alpha) - Bytecode VM + GC
+## v2.0 - Bytecode VM + GC (current)
 
-- [x] Stack-based bytecode VM
-- [x] Mark-and-sweep garbage collector
-- [x] HeapObj enum value model with GcIdx handles
-- [x] AST-to-bytecode compiler
-- [x] Function calls, recursion, this binding
-- [x] try/catch via VM catch stack
-- [x] Built-in: Math, JSON, console, Object, Array, String, Number, Boolean, Error
-- [x] Map, Set, Symbol
-- [x] CLI + REPL
-- [ ] Closure capture of outer locals (in progress)
-- [ ] class syntax
-- [ ] test262 conformance harness
+1. [x] GC heap + value model (gc.rs, value.rs)
+2. [x] Bytecode Op set + compiler (bytecode.rs, compiler.rs)
+3. [x] Stack VM dispatch (vm.rs)
+4. [~] Lexer/parser ES2015 extensions (class, destructuring, generators)
+5. [~] Built-in objects (Math/JSON/String/Array/console done; Map/Set/Promise stubbed)
+6. [~] Closure variable capture + this binding
+7. [ ] ES2015: class/extends, Map/Set, Promise, Symbol, iterator protocol
+8. [ ] async/await + generator state machine
+9. [ ] Built-in spec conformance + TDZ
+10. [ ] test262 harness + regression tests (200+)
+11. [x] Release prep (README/CHANGELOG/CI)
+12. [ ] Release verification (tests + CLI + metadata)
 
-## v2.1 (planned)
+## v1.0 - Tree-walking interpreter (archived)
 
-- Promise + microtask queue
-- async/await + generators
-- class/extends
-- Destructuring, default/rest params, template interpolation
-- test262 ES2015 subset 85% pass gate
-
-## v2.2+ (future)
-
-- Hidden classes, inline caches
-- Incremental/concurrent GC
-- ES modules (import/export)
-- Full test262 conformance
-
-Last updated: 2026-06-27.
+Completed and tagged as v0.1.0-alpha. See v1-archive branch.

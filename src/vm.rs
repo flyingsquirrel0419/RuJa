@@ -235,6 +235,44 @@ impl Vm {
                         crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Var);
                     }
                 }
+                Op::DeclareEnv(_) => {
+                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let name = match &name_val {
+                        Value::String(s) => s.to_string(),
+                        _ => self.to_string(&name_val)?.to_string(),
+                    };
+                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare(&self.heap, env, &name, value, crate::value::BindingKind::Let);
+                }
+                Op::LoadEnvName(_) => {
+                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    let name = match &name_val {
+                        Value::String(s) => s.to_string(),
+                        _ => self.to_string(&name_val)?.to_string(),
+                    };
+                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    match crate::environment::get(&self.heap, env, &name) {
+                        Some(v) => self.stack.push(v),
+                        None => match crate::environment::get(&self.heap, self.global, &name) {
+                            Some(v) => self.stack.push(v),
+                            None => return Err(Error::reference(format!("{} is not defined", name))),
+                        }
+                    }
+                }
+                Op::StoreEnvName(_) => {
+                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let name = match &name_val {
+                        Value::String(s) => s.to_string(),
+                        _ => self.to_string(&name_val)?.to_string(),
+                    };
+                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::set(&self.heap, env, &name, value.clone()) {
+                        crate::environment::declare(&self.heap, env, &name, value, crate::value::BindingKind::Var);
+                    }
+                    self.stack.push(Value::Undefined);
+                }
                 Op::LoadLocal(idx) => {
                     let v = self.frames.last().unwrap().locals[idx].clone();
                     self.stack.push(v);
