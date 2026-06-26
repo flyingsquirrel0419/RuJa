@@ -198,6 +198,43 @@ impl Vm {
                     }
                     self.stack.push(Value::Undefined);
                 }
+                Op::DeclareEnv(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Let);
+                }
+                Op::LoadEnv(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                    };
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    match crate::environment::get(&self.heap, cur_env, &name) {
+                        Some(v) => self.stack.push(v),
+                        None => match crate::environment::get(&self.heap, self.global, &name) {
+                            Some(v) => self.stack.push(v),
+                            None => return Err(Error::reference(format!("{} is not defined", name))),
+                        }
+                    }
+                }
+                Op::StoreEnv(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
+                        crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Var);
+                    }
+                }
                 Op::LoadLocal(idx) => {
                     let v = self.frames.last().unwrap().locals[idx].clone();
                     self.stack.push(v);
@@ -659,12 +696,34 @@ impl Vm {
                             return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
                         }
                     }
-                    let props = o.props();
-                    if let Some(desc) = props.borrow().get(key) {
-                        return Ok(desc.value.clone());
+                let props = o.props();
+                if let Some(desc) = props.borrow().get(key) {
+                    return Ok(desc.value.clone());
+                }
+                // function-specific: .prototype lives in a dedicated field
+                if let HeapObj::Function(f) = o {
+                    if key == "prototype" {
+                        if let Some(p) = f.prototype.borrow().as_ref() {
+                            return Ok(p.clone());
+                        }
                     }
-                    Ok(Value::Undefined)
-                });
+                    if key == "name" {
+                        if let Some(n) = &f.name {
+                            return Ok(Value::String(n.clone()));
+                        }
+                        return Ok(Value::String(Rc::from("")));
+                    }
+                    if key == "length" {
+                        if let crate::value::FunctionKind::Native { length, .. } = &f.kind {
+                            return Ok(Value::Number(*length as f64));
+                        }
+                        if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
+                            return Ok(Value::Number(func.params.len() as f64));
+                        }
+                    }
+                }
+                Ok(Value::Undefined)
+            });
                 let val = proto?;
                 if !val.is_undefined() { return Ok(val); }
                 // walk proto chain

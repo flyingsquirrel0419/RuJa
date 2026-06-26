@@ -229,9 +229,8 @@ impl Compiler {
                 self.push_scope(true);
                 if let Some(param) = catch_param {
                     self.declare(param, VarKind::Let);
-                    if let Some((slot, _)) = self.resolve(param) {
-                        self.chunk.emit(Op::StoreLocal(slot), 0);
-                    }
+                    let name_idx = self.intern(&**param);
+                    self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                 }
                 self.compile_stmt(catch_body)?;
                 self.pop_scope();

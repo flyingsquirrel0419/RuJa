@@ -137,6 +137,9 @@ pub enum Op {
     DeclareVar(usize),   // name index
     DeclareLet(usize),
     DeclareConst(usize),
+    DeclareEnv(usize),   // declare name in env with value from stack
+    LoadEnvName(usize),   // push name const then load from env
+    StoreEnvName(usize), // push name const then store to env
 
     // Halt
     Halt,
