@@ -124,13 +124,13 @@ impl Compiler {
                     if self.scopes.len() == 1 {
                         // top-level: global
                         self.declare(name, *kind);
-                        let name_idx = self.intern(&**name);
+                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                         self.chunk.emit(Op::Const(name_idx), 0);
                         self.chunk.emit(Op::StoreGlobal, 0);
                     } else {
                         // function/block scope: store in environment (enables closure capture)
                         self.declare(name, *kind);
-                        let name_idx = self.intern(&**name);
+                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                         self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                     }
                 }
@@ -231,9 +231,8 @@ impl Compiler {
                 self.push_scope(true);
                 if let Some(param) = catch_param {
                     self.declare(param, VarKind::Let);
-                    if let Some((slot, _)) = self.resolve(param) {
-                        self.chunk.emit(Op::StoreLocal(slot), 0);
-                    }
+                    let name_idx = self.intern(&**param);
+                    self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                 }
                 self.compile_stmt(catch_body)?;
                 self.pop_scope();
@@ -263,7 +262,7 @@ impl Compiler {
                         self.chunk.emit(Op::StoreLocal(slot), 0);
                     } else {
                         // store as global so recursive calls can find it
-                        let name_idx = self.intern(&**name);
+                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                         self.chunk.emit(Op::Const(name_idx), 0);
                         self.chunk.emit(Op::StoreGlobal, 0);
                     }
@@ -355,10 +354,10 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
-                    let name_idx = self.intern(&**name);
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::LoadEnvName(name_idx), 0);
                 } else {
-                    let name_idx = self.intern(&**name);
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::Const(name_idx), 0);
                     self.chunk.emit(Op::LoadGlobal, 0);
                 }
@@ -575,7 +574,7 @@ impl Compiler {
             Expr::Ident(name) => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Op::Dup, 0);
-                let name_idx = self.intern(&**name);
+                let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                 self.chunk.emit(Op::StoreEnv(name_idx), 0);
                 self.chunk.emit(Op::Pop, 0);
             }
@@ -590,11 +589,10 @@ impl Compiler {
         match target {
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
-                    let name_idx = self.intern(&**name);
-                    self.chunk.emit(Op::Const(name_idx), 0);
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::StoreEnvName(name_idx), 0);
                 } else {
-                    let name_idx = self.intern(&**name);
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::Const(name_idx), 0);
                     self.chunk.emit(Op::StoreGlobal, 0);
                 }
