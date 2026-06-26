@@ -1,0 +1,34 @@
+--- src/builtins.rs
++++ src/builtins.rs
+@@ -565,3 +565,31 @@ fn object_define_properties(vm: &mut Vm, args: &[Value], _this: Option<Value>) ->
+     }
+     Ok(target)
+ }
++
++// Minimal stubs to keep the crate compiling while parser/lexer work is in progress.
++
++fn error_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
++    let msg = args.get(0)
++        .map(|v| vm.to_string(v).unwrap_or_else(|_| Rc::from("")))
++        .unwrap_or_else(|| Rc::from(""));
++    let idx = vm.new_object();
++    vm.heap.with_obj(idx.0, |obj| {
++        if let HeapObj::Object(o) = obj {
++            o.props.borrow_mut().insert(Rc::from("message"), data_prop(Value::String(msg)));
++            o.props.borrow_mut().insert(Rc::from("name"), data_prop(Value::String(Rc::from("Error"))));
++        }
++    });
++    Ok(Value::Object(idx))
++}
++
++pub fn setup(vm: &mut Vm) {
++    let (object_ctor, object_proto) = make_builtin_constructor(vm, "Object", &[
++        ("toString", object_to_string_native, 0),
++        ("hasOwnProperty", object_has_own_property, 1),
++        ("valueOf", object_value_of, 0),
++    ]);
++    define_global(vm, "Object", Value::Object(object_ctor));
++    vm.object_proto = Value::Object(object_proto);
++
++    let (error_ctor, _error_proto) = make_error_constructor(vm, "Error");
++    define_global(vm, "Error", Value::Object(error_ctor));

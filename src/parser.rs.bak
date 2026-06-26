@@ -132,7 +132,7 @@ impl Parser {
         };
         let params = self.parse_params()?;
         let body = self.parse_fn_body()?;
-        Ok(Stmt::FunctionDecl(FunctionExpr { name, params, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }))
+        Ok(Stmt::FunctionDecl(FunctionExpr { name, params, param_decls: vec![], body, is_arrow: false, is_generator: false, is_async: false }))
     }
 
     fn parse_params(&mut self) -> error::Result<Vec<Rc<str>>> {
@@ -689,7 +689,7 @@ impl Parser {
             if self.check(&TokenKind::LParen) {
                 let params = self.parse_params()?;
                 let body = self.parse_fn_body()?;
-                props.push(Property { key, value: Expr::Function(FunctionExpr { name: None, params, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }), computed, method: true, shorthand: false });
+                props.push(Property { key, value: Expr::Function(FunctionExpr { name: None, params, param_decls: vec![], body, is_arrow: false, is_generator: false, is_async: false }), computed, method: true, shorthand: false });
             } else {
                 self.expect(&TokenKind::Colon, ":")?;
                 let value = self.parse_assign()?;
@@ -709,7 +709,7 @@ impl Parser {
         };
         let params = self.parse_params()?;
         let body = self.parse_fn_body()?;
-        Ok(Expr::Function(FunctionExpr { name, params, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }))
+        Ok(Expr::Function(FunctionExpr { name, params, param_decls: vec![], body, is_arrow: false, is_generator: false, is_async: false }))
     }
 
     fn parse_new(&mut self) -> error::Result<Expr> {
@@ -771,28 +771,10 @@ impl Parser {
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
             let body = self.parse_fn_body()?;
-            Ok(Expr::Arrow(FunctionExpr { name: None, params, body, is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
+            Ok(Expr::Arrow(FunctionExpr { name: None, params, param_decls: vec![], body, is_arrow: true, is_generator: false, is_async: false }))
         } else {
             let e = self.parse_assign()?;
-            Ok(Expr::Arrow(FunctionExpr { name: None, params, body: vec![Stmt::Return(Some(e))], is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
-        }
-    }
-    fn parse_class_decl(&mut self) -> error::Result<Stmt> {
-        let e = self.parse_expr()?;
-        self.expect_semi()?;
-        Ok(Stmt::ExprStmt(e))
-    }
-    fn parse_async_or_expr_stmt(&mut self) -> error::Result<Stmt> {
-        let e = self.parse_expr()?;
-        self.expect_semi()?;
-        Ok(Stmt::ExprStmt(e))
-    }
-    fn parse_pattern(&mut self) -> error::Result<Pattern> {
-        if let TokenKind::Ident(s) = self.peek().clone() {
-            self.advance();
-            Ok(Pattern::Ident(Rc::from(s.as_str())))
-        } else {
-            Err(error::Error::syntax("expected pattern".to_string()))
+            Ok(Expr::Arrow(FunctionExpr { name: None, params, body: vec![Stmt::Return(Some(e))], param_decls: vec![], is_arrow: true, is_generator: false, is_async: false }))
         }
     }
 }

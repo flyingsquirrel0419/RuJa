@@ -1,136 +1,128 @@
-use crate::error;
-use crate::value::Value;
+//! Environment helpers (EnvironmentData lives in value.rs as a HeapObj variant).
+
+use crate::gc::Heap;
+use crate::value::{BindingKind, GcIdx, HeapObj, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum BindingKind {
-    Var,
-    Let,
-    Const,
+/// Allocate a new environment in the heap.
+pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> GcIdx {
+    let env = HeapObj::Environment(crate::value::EnvironmentData {
+        vars: RefCell::new(HashMap::new()),
+        parent: RefCell::new(parent),
+        is_function_scope,
+    });
+    GcIdx(heap.allocate(env))
 }
 
-pub struct Binding {
-    pub value: RefCell<Value>,
-    pub kind: BindingKind,
-    pub mutable: bool,
+pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingKind) {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.borrow_mut().insert(
+                Rc::from(name),
+                crate::value::Binding { value: RefCell::new(value), kind },
+            );
+        }
+    });
 }
 
-#[derive(Default)]
-pub struct EnvData {
-    pub vars: HashMap<Rc<str>, Rc<Binding>>,
-    pub parent: Option<Env>,
-}
-
-#[derive(Clone)]
-pub struct Env(pub Rc<RefCell<EnvData>>);
-
-impl Env {
-    pub fn new() -> Self {
-        Env(Rc::new(RefCell::new(EnvData::default())))
+pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
+    let (val, parent) = heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            if let Some(b) = e.vars.borrow().get(name) {
+                return (Some(b.value.borrow().clone()), None);
+            }
+            return (None, *e.parent.borrow());
+        }
+        (None, None)
+    });
+    if let Some(v) = val {
+        return Some(v);
     }
-
-    pub fn child(&self) -> Env {
-        Env(Rc::new(RefCell::new(EnvData {
-            vars: HashMap::new(),
-            parent: Some(self.clone()),
-        })))
+    if let Some(p) = parent {
+        return get(heap, p, name);
     }
+    None
+}
 
-    /// Declare a binding in THIS scope only.
-    pub fn declare(&self, name: &str, value: Value, kind: BindingKind) {
-        let binding = Rc::new(Binding {
-            value: RefCell::new(value),
-            mutable: !matches!(kind, BindingKind::Const),
-            kind,
+pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
+    let value_copy = value.clone();
+    let (found, parent) = heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            if let Some(b) = e.vars.borrow().get(name) {
+                if b.kind == BindingKind::Const {
+                    return (false, None); // assignment to const
+                }
+                *b.value.borrow_mut() = value_copy;
+                return (true, None);
+            }
+            return (false, *e.parent.borrow());
+        }
+        (false, None)
+    });
+    if found {
+        return true;
+    }
+    // false could mean "not found" or "const violation"; caller distinguishes
+    if let Some(p) = parent {
+        return set(heap, p, name, value.clone());
+    }
+    false
+}
+
+pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    let (found, parent) = heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            return (e.vars.borrow().contains_key(name), *e.parent.borrow());
+        }
+        (false, None)
+    });
+    if found {
+        return true;
+    }
+    if let Some(p) = parent {
+        return has(heap, p, name);
+    }
+    false
+}
+
+/// Walk up to the nearest function scope (or global) and declare/assign a var.
+pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
+    let root = function_scope_root(heap, env);
+    heap.with_obj(root.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            if let Some(b) = e.vars.borrow().get(name) {
+                *b.value.borrow_mut() = value;
+            } else {
+                e.vars.borrow_mut().insert(
+                    Rc::from(name),
+                    crate::value::Binding {
+                        value: RefCell::new(value),
+                        kind: BindingKind::Var,
+                    },
+                );
+            }
+        }
+    });
+}
+
+/// Find the nearest function-scope ancestor (or global).
+pub fn function_scope_root(heap: &Heap, env: GcIdx) -> GcIdx {
+    let mut cur = env;
+    loop {
+        let parent = heap.with_obj(cur.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if e.is_function_scope {
+                    return None; // this IS the function scope
+                }
+                return *e.parent.borrow();
+            }
+            None
         });
-        self.0.borrow_mut().vars.insert(Rc::from(name), binding);
-    }
-
-    /// Declare or reassign a var binding (hoists to function/global scope).
-    pub fn declare_var(&self, name: &str, value: Value) {
-        // Walk up to nearest function scope. For simplicity treat global as function scope.
-        let mut scope = self.clone();
-        loop {
-            let parent;
-            {
-                let data = scope.0.borrow();
-                parent = data.parent.clone();
-            }
-            match parent {
-                Some(p) => scope = p,
-                None => break,
-            }
-        }
-        let mut data = scope.0.borrow_mut();
-        if let Some(b) = data.vars.get(name) {
-            *b.value.borrow_mut() = value;
-        } else {
-            let binding = Rc::new(Binding {
-                value: RefCell::new(value),
-                mutable: true,
-                kind: BindingKind::Var,
-            });
-            data.vars.insert(Rc::from(name), binding);
-        }
-    }
-
-    pub fn get(&self, name: &str) -> error::Result<Value> {
-        let mut scope = self.clone();
-        loop {
-            let parent;
-            {
-                let data = scope.0.borrow();
-                if let Some(b) = data.vars.get(name) {
-                    return Ok(b.value.borrow().clone());
-                }
-                parent = data.parent.clone();
-            }
-            match parent {
-                Some(p) => scope = p,
-                None => return Err(error::Error::reference(format!("{} is not defined", name))),
-            }
-        }
-    }
-
-    pub fn set(&self, name: &str, value: Value) -> error::Result<()> {
-        let mut scope = self.clone();
-        loop {
-            let parent;
-            {
-                let data = scope.0.borrow();
-                if let Some(b) = data.vars.get(name) {
-                    if !b.mutable {
-                        return Err(error::Error::type_err("Assignment to constant variable.".to_string()));
-                    }
-                    *b.value.borrow_mut() = value;
-                    return Ok(());
-                }
-                parent = data.parent.clone();
-            }
-            match parent {
-                Some(p) => scope = p,
-                None => return Err(error::Error::reference(format!("{} is not defined", name))),
-            }
-        }
-    }
-
-    pub fn has(&self, name: &str) -> bool {
-        let mut scope = self.clone();
-        loop {
-            let parent;
-            {
-                let data = scope.0.borrow();
-                if data.vars.contains_key(name) {
-                    return true;
-                }
-                parent = data.parent.clone();
-            }
-            match parent {
-                Some(p) => scope = p,
-                None => return false,
-            }
+        match parent {
+            Some(p) => cur = p,
+            None => return cur,
         }
     }
 }

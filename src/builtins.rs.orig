@@ -1,0 +1,567 @@
+//! Built-in objects and globals for the RuJa VM (v2.0).
+//!
+//! All built-in constructors, prototypes, and global functions are registered
+//! here. Native functions follow the `NativeFn` signature used by the VM.
+
+use crate::environment as env;
+use crate::error::{self, Error};
+use crate::gc::Heap;
+use crate::value::{
+    ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, ObjectData,
+    PromiseData, PromiseHandler, PromiseStatus, PropertyDescriptor, SetData, Value,
+};
+use crate::vm::{NativeFn, Vm};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn data_prop(value: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+        get: None,
+        set: None,
+        is_accessor: false,
+    }
+}
+
+fn read_only(value: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value,
+        writable: false,
+        enumerable: false,
+        configurable: false,
+        get: None,
+        set: None,
+        is_accessor: false,
+    }
+}
+
+fn method_prop(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<str>, Value) {
+    let idx = vm.new_native_function(name, func, length);
+    (Rc::from(name), Value::Object(idx))
+}
+
+fn bound_method(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<str>, Value) {
+    method_prop(vm, name, func, length)
+}
+
+fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(proto),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Object")),
+    });
+    GcIdx(heap.allocate(obj))
+}
+
+fn new_object_with_props(heap: &Heap, proto: Option<Value>, props: Vec<(&str, Value)>) -> GcIdx {
+    let mut map: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    for (k, v) in props {
+        map.insert(Rc::from(k), data_prop(v));
+    }
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(map),
+        proto: RefCell::new(proto),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Object")),
+    });
+    GcIdx(heap.allocate(obj))
+}
+
+fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Rc<str>, Value)]) {
+    if let Value::Object(idx) = proto {
+        vm.heap.with_obj(idx.0, |obj| {
+            let props = obj.props();
+            for (name, func) in methods {
+                props.borrow_mut().insert(name.clone(), data_prop(func.clone()));
+            }
+        });
+    }
+}
+
+fn is_array(value: &Value, heap: &Heap) -> bool {
+    match value {
+        Value::Object(idx) => heap.with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_))),
+        _ => false,
+    }
+}
+
+fn is_callable(value: &Value, heap: &Heap) -> bool {
+    match value {
+        Value::Object(idx) => heap.with_obj(idx.0, |obj| obj.is_function()),
+        _ => false,
+    }
+}
+
+fn object_to_string(vm: &mut Vm, this: Option<Value>, class_hint: Option<&str>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Ok(Value::String(Rc::from("[object Null]")));
+    }
+    if let Value::String(_) = &this {
+        return Ok(Value::String(Rc::from("[object String]")));
+    }
+    if let Value::Number(_) = &this {
+        return Ok(Value::String(Rc::from("[object Number]")));
+    }
+    if let Value::Bool(_) = &this {
+        return Ok(Value::String(Rc::from("[object Boolean]")));
+    }
+    if let Value::Symbol(_) = &this {
+        return Ok(Value::String(Rc::from("[object Symbol]")));
+    }
+    if let Value::Object(idx) = &this {
+        let class = if let Some(hint) = class_hint {
+            hint.to_string()
+        } else {
+            vm.heap.with_obj(idx.0, |obj| {
+                let name = obj.class_name();
+                if name == "Object" {
+                    // check constructor name via prototype
+                    if let Some(proto) = obj.proto().borrow().as_ref() {
+                        if let Value::Object(pidx) = proto {
+                            let constructor = vm.heap.with_obj(pidx.0, |p| {
+                                p.props().borrow().get("constructor").map(|d| d.value.clone())
+                            });
+                            if let Some(Value::Object(fidx)) = constructor {
+                                let fname = vm.heap.with_obj(fidx.0, |f| {
+                                    if let HeapObj::Function(fd) = f {
+                                        fd.name.clone()
+                                    } else {
+                                        None
+                                    }
+                                });
+                                if let Some(n) = fname {
+                                    return n.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+                name.to_string()
+            })
+        };
+        return Ok(Value::String(Rc::from(format!("[object {}]", class).as_str())));
+    }
+    Ok(Value::String(Rc::from("[object Object]")))
+}
+
+// ---------------------------------------------------------------------------
+// Built-in builders
+// ---------------------------------------------------------------------------
+
+fn make_builtin_constructor(vm: &mut Vm, name: &str, methods: &[(&str, NativeFn, usize)]) -> (GcIdx, GcIdx) {
+    let proto_value = vm.object_proto.clone();
+
+    let mut method_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    for (n, f, len) in methods {
+        let func_idx = vm.new_native_function(n, *f, *len);
+        method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
+    }
+
+    let proto_obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(method_props),
+        proto: RefCell::new(Some(proto_value.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from(name)),
+    });
+    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+
+    let ctor_func = FunctionData {
+        name: Some(Rc::from(name)),
+        kind: FunctionKind::Native { func: object_constructor, length: 1 },
+        closure: vm.global,
+        prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        props: RefCell::new(HashMap::new()),
+    };
+    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    // constructor.prototype
+    vm.heap.with_obj(ctor_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+    });
+    // prototype.constructor
+    vm.heap.with_obj(proto_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+    });
+
+    (ctor_idx, proto_idx)
+}
+
+
+fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
+    let error_proto_val = vm.error_proto.clone();
+    let proto_obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(error_proto_val.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from(name)),
+    });
+    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+
+    let ctor_func = FunctionData {
+        name: Some(Rc::from(name)),
+        kind: FunctionKind::Native { func: error_constructor, length: 1 },
+        closure: vm.global,
+        prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        props: RefCell::new(HashMap::new()),
+    };
+    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    vm.heap.with_obj(ctor_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+    });
+    vm.heap.with_obj(proto_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+    });
+
+    (ctor_idx, proto_idx)
+}
+
+fn define_global(vm: &mut Vm, name: &str, value: Value) {
+    env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
+}
+
+fn define_global_property(vm: &mut Vm, name: &str, value: Value) {
+    env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
+}
+
+fn get_arg<T: Default>(args: &[Value], idx: usize) -> Value {
+    args.get(idx).cloned().unwrap_or(Value::Undefined)
+}
+
+fn to_index(len: usize, value: &Value, vm: &mut Vm) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() { return Ok(0); }
+    if n.is_infinite() || n > len as f64 { return Ok(len); }
+    if n < 0.0 { return Ok(0); }
+    Ok(n as usize)
+}
+
+fn to_relative_index(len: usize, value: &Value, vm: &mut Vm) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() { return Ok(0); }
+    let idx = n as isize;
+    if idx < 0 { Ok((len as isize + idx).max(0) as usize) } else { Ok(idx as usize) }
+}
+
+fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() || n <= 0.0 { return Ok(0); }
+    if n.is_infinite() { return Ok(usize::MAX); }
+    if n > usize::MAX as f64 { return Ok(usize::MAX); }
+    Ok(n as usize)
+}
+
+// ---------------------------------------------------------------------------
+// Object constructor / prototype
+// ---------------------------------------------------------------------------
+
+fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        if args.is_empty() {
+            return Ok(Value::Object(idx));
+        }
+        let first = &args[0];
+        match first {
+            Value::Undefined | Value::Null => {}
+            Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
+                return vm.to_object(first);
+            }
+            Value::Object(_) => return Ok(first.clone()),
+        }
+        let new_idx = vm.new_object();
+        return Ok(Value::Object(new_idx));
+    }
+    // Called as function
+    if args.is_empty() {
+        let new_idx = vm.new_object();
+        return Ok(Value::Object(new_idx));
+    }
+    let first = &args[0];
+    match first {
+        Value::Undefined | Value::Null => {
+            let new_idx = vm.new_object();
+            Ok(Value::Object(new_idx))
+        }
+        Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => vm.to_object(first),
+        Value::Object(_) => Ok(first.clone()),
+    }
+}
+
+fn object_to_string_native(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    object_to_string(vm, this, None)
+}
+
+fn object_has_own_property(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    let key = if let Some(a) = args.get(0) {
+        vm.to_property_key(a)?
+    } else {
+        String::new()
+    };
+    match &this {
+        Value::Object(idx) => {
+            let has = vm.heap.with_obj(idx.0, |obj| {
+                obj.props().borrow().contains_key(key.as_str()) || {
+                    if let HeapObj::Array(a) = obj {
+                        if key == "length" { return true; }
+                        if let Ok(i) = key.parse::<usize>() {
+                            return i < a.items.borrow().len();
+                        }
+                    }
+                    false
+                }
+            });
+            Ok(Value::Bool(has))
+        }
+        Value::String(s) => {
+            if key == "length" { return Ok(Value::Bool(true)); }
+            if let Ok(i) = key.parse::<usize>() {
+                return Ok(Value::Bool(i < s.chars().count()));
+            }
+            Ok(Value::Bool(false))
+        }
+        _ => Ok(Value::Bool(false)),
+    }
+}
+
+fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(v) = this { return Ok(v); }
+    Ok(Value::Undefined)
+}
+
+fn object_is_prototype_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let proto_val = this.unwrap_or(Value::Undefined);
+    let candidate = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if proto_val.is_nullish() || candidate.is_nullish() { return Ok(Value::Bool(false)); }
+    if let (Value::Object(pidx), Value::Object(cidx)) = (&proto_val, &candidate) {
+        let mut cur = cidx.clone();
+        loop {
+            let proto = vm.heap.with_obj(cur.0, |obj| obj.proto().borrow().clone());
+            match proto {
+                Some(Value::Object(next)) => {
+                    if next == *pidx { return Ok(Value::Bool(true)); }
+                    cur = next;
+                }
+                _ => return Ok(Value::Bool(false)),
+            }
+        }
+    }
+    Ok(Value::Bool(false))
+}
+
+fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let mut keys = Vec::new();
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                for i in 0..a.items.borrow().len() {
+                    keys.push(Value::String(Rc::from(i.to_string().as_str())));
+                }
+            } else {
+                for k in obj.props().borrow().keys() {
+                    keys.push(Value::String(k.clone()));
+                }
+            }
+        });
+    }
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(keys),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+
+fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let mut values = Vec::new();
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                values.extend(a.items.borrow().iter().cloned());
+            } else {
+                for d in obj.props().borrow().values() {
+                    values.push(d.value.clone());
+                }
+            }
+        });
+    }
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(values),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+
+fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let mut entries = Vec::new();
+    let array_proto = vm.array_proto.clone();
+    let object_proto = vm.object_proto.clone();
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                for (i, v) in a.items.borrow().iter().enumerate() {
+                    let pair = new_object_with_props(&vm.heap, Some(object_proto.clone()), vec![
+                        ("0", Value::String(Rc::from(i.to_string().as_str()))),
+                        ("1", v.clone()),
+                    ]);
+                    entries.push(Value::Object(pair));
+                }
+            } else {
+                for (k, d) in obj.props().borrow().iter() {
+                    let pair = new_object_with_props(&vm.heap, Some(object_proto.clone()), vec![
+                        ("0", Value::String(k.clone())),
+                        ("1", d.value.clone()),
+                    ]);
+                    entries.push(Value::Object(pair));
+                }
+            }
+        });
+    }
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(entries),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(array_proto)),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+
+fn object_create(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let proto = args.get(0).cloned().unwrap_or(Value::Null);
+    let proto_opt = if proto.is_nullish() { None } else { Some(proto) };
+    let idx = new_plain_object(&vm.heap, proto_opt);
+    if let Some(props) = args.get(1) {
+        object_define_properties(vm, &[Value::Object(idx), props.clone()], None)?;
+    }
+    Ok(Value::Object(idx))
+}
+
+fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if !target.is_object() { return Err(Error::type_err("Object.assign target must be an object".to_string())); }
+    let Value::Object(tidx) = target else { unreachable!() };
+    for src in args.iter().skip(1) {
+        if let Value::Object(sidx) = src {
+            let (keys, is_array) = vm.heap.with_obj(sidx.0, |obj| {
+                let mut keys = Vec::new();
+                if let HeapObj::Array(a) = obj {
+                    for i in 0..a.items.borrow().len() { keys.push(i.to_string()); }
+                    (keys, true)
+                } else {
+                    for k in obj.props().borrow().keys() { keys.push(k.to_string()); }
+                    (keys, false)
+                }
+            });
+            for k in keys {
+                let val = vm.get_property(src, &k)?;
+                vm.set_property(&Value::Object(tidx), &k, val)?;
+                if is_array && !matches!(k.parse::<usize>(), Ok(_)) { continue; }
+            }
+        }
+    }
+    Ok(Value::Object(tidx))
+}
+
+fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Object(o) = obj {
+                o.extensible.set(false);
+                for d in o.props.borrow_mut().values_mut() {
+                    d.writable = false;
+                    d.configurable = false;
+                }
+            }
+        });
+    }
+    Ok(target)
+}
+
+fn object_define_property(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.get(1).map(|v| vm.to_property_key(v)).transpose()?.unwrap_or_default();
+    let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = target {
+        let mut value = Value::Undefined;
+        let mut writable = false;
+        let mut enumerable = false;
+        let mut configurable = false;
+        let mut is_data = false;
+        if let Value::Object(didx) = desc {
+            if let Some(v) = vm.get_property(&desc, "value").ok() { value = v; is_data = true; }
+            if let Some(v) = vm.get_property(&desc, "writable").ok() { writable = v.is_truthy(); is_data = true; }
+            if let Some(v) = vm.get_property(&desc, "enumerable").ok() { enumerable = v.is_truthy(); }
+            if let Some(v) = vm.get_property(&desc, "configurable").ok() { configurable = v.is_truthy(); }
+        }
+        let descriptor = if is_data {
+            PropertyDescriptor { value, writable, enumerable, configurable, get: None, set: None, is_accessor: false }
+        } else {
+            PropertyDescriptor { value: Value::Undefined, writable: false, enumerable, configurable, get: None, set: None, is_accessor: false }
+        };
+        vm.heap.with_obj(idx.0, |obj| {
+            obj.props().borrow_mut().insert(Rc::from(key.as_str()), descriptor);
+        });
+    }
+    Ok(target)
+}
+
+fn object_get_own_property_descriptor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.get(1).map(|v| vm.to_property_key(v)).transpose()?.unwrap_or_default();
+    let object_proto = vm.object_proto.clone();
+    if let Value::Object(idx) = target {
+        let value = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                if key == "length" {
+                    return Some(Value::Number(a.items.borrow().len() as f64));
+                }
+                if let Ok(i) = key.parse::<usize>() {
+                    return a.items.borrow().get(i).cloned();
+                }
+            }
+            obj.props().borrow().get(key.as_str()).map(|d| d.value.clone())
+        });
+        if let Some(v) = value {
+            let desc = new_object_with_props(&vm.heap, Some(object_proto), vec![
+                ("value", v),
+                ("writable", Value::Bool(true)),
+                ("enumerable", Value::Bool(true)),
+                ("configurable", Value::Bool(true)),
+            ]);
+            return Ok(Value::Object(desc));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn object_define_properties(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let props = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let (Value::Object(_), Value::Object(_)) = (&target, &props) {
+        let keys = object_keys(vm, &[props.clone()], None)?;
+        if let Value::Object(kidx) = keys {
+            let key_objs = vm.heap.with_obj(kidx.0, |obj| {
+                if let HeapObj::Array(a) = obj { a.items.borrow().clone() } else { Vec::new() }
+            });
+            for k_val in key_objs {
+                let key_str = vm.to_string(&k_val)?;
+                let desc = vm.get_property(&props, &key_str)?;
+                object_define_property(vm, &[target.clone(), k_val, desc], None)?;
+            }
+        }
+    }
+    Ok(target)
+}
+

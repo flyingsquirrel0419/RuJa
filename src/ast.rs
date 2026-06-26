@@ -42,6 +42,7 @@ pub enum PropertyKey {
     Ident(Rc<str>),
     String(Rc<str>),
     Number(f64),
+    Computed(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +51,18 @@ pub struct FunctionExpr {
     pub params: Vec<Rc<str>>,
     pub body: Vec<Stmt>,
     pub is_arrow: bool,
+    pub is_async: bool,
+    pub is_generator: bool,
+    pub param_decls: Vec<Pattern>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Ident(Rc<str>),
+    Array(Vec<Pattern>),
+    Object(Vec<(Rc<str>, Pattern)>),
+    Assign(Box<Pattern>, Expr),
+    Rest(Box<Pattern>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,7 +167,7 @@ pub struct SwitchCase {
     pub body: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum VarKind {
     Var,
     Let,

@@ -1,909 +1,1136 @@
-use crate::environment::{BindingKind, Env};
+//! Built-in objects and globals for the RuJa VM (v2.0).
+//!
+//! All built-in constructors, prototypes, and global functions are registered
+//! here. Native functions follow the `NativeFn` signature used by the VM.
+
+use crate::environment as env;
 use crate::error::{self, Error};
-use crate::interpreter::Interpreter;
-use crate::value::{FunctionKind, FunctionValue, InternalData, Obj, PropertyDescriptor, Value};
-use std::cell::RefCell;
+use crate::gc::Heap;
+use crate::value::{
+    ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, ObjectData,
+    PromiseData, PromiseHandler, PromiseStatus, PropertyDescriptor, SetData, Value,
+};
+use crate::vm::{NativeFn, Vm};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-type Native = crate::value::NativeFn;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-fn native(name: &str, func: Native, length: usize) -> Value {
-    let fv = FunctionValue {
+fn data_prop(value: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+        get: None,
+        set: None,
+        is_accessor: false,
+    }
+}
+
+fn read_only(value: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value,
+        writable: false,
+        enumerable: false,
+        configurable: false,
+        get: None,
+        set: None,
+        is_accessor: false,
+    }
+}
+
+fn method_prop(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<str>, Value) {
+    let idx = vm.new_native_function(name, func, length);
+    (Rc::from(name), Value::Object(idx))
+}
+
+fn bound_method(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<str>, Value) {
+    method_prop(vm, name, func, length)
+}
+
+fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(proto),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Object")),
+    });
+    GcIdx(heap.allocate(obj))
+}
+
+fn new_object_with_props(heap: &Heap, proto: Option<Value>, props: Vec<(&str, Value)>) -> GcIdx {
+    let mut map: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    for (k, v) in props {
+        map.insert(Rc::from(k), data_prop(v));
+    }
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(map),
+        proto: RefCell::new(proto),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Object")),
+    });
+    GcIdx(heap.allocate(obj))
+}
+
+fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Rc<str>, Value)]) {
+    if let Value::Object(idx) = proto {
+        vm.heap.with_obj(idx.0, |obj| {
+            let props = obj.props();
+            for (name, func) in methods {
+                props.borrow_mut().insert(name.clone(), data_prop(func.clone()));
+            }
+        });
+    }
+}
+
+fn is_array(value: &Value, heap: &Heap) -> bool {
+    match value {
+        Value::Object(idx) => heap.with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_))),
+        _ => false,
+    }
+}
+
+fn is_callable(value: &Value, heap: &Heap) -> bool {
+    match value {
+        Value::Object(idx) => heap.with_obj(idx.0, |obj| obj.is_function()),
+        _ => false,
+    }
+}
+
+fn object_to_string(vm: &mut Vm, this: Option<Value>, class_hint: Option<&str>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Ok(Value::String(Rc::from("[object Null]")));
+    }
+    if let Value::String(_) = &this {
+        return Ok(Value::String(Rc::from("[object String]")));
+    }
+    if let Value::Number(_) = &this {
+        return Ok(Value::String(Rc::from("[object Number]")));
+    }
+    if let Value::Bool(_) = &this {
+        return Ok(Value::String(Rc::from("[object Boolean]")));
+    }
+    if let Value::Symbol(_) = &this {
+        return Ok(Value::String(Rc::from("[object Symbol]")));
+    }
+    if let Value::Object(idx) = &this {
+        let class = if let Some(hint) = class_hint {
+            hint.to_string()
+        } else {
+            vm.heap.with_obj(idx.0, |obj| {
+                let name = obj.class_name();
+                if name == "Object" {
+                    // check constructor name via prototype
+                    if let Some(proto) = obj.proto().borrow().as_ref() {
+                        if let Value::Object(pidx) = proto {
+                            let constructor = vm.heap.with_obj(pidx.0, |p| {
+                                p.props().borrow().get("constructor").map(|d| d.value.clone())
+                            });
+                            if let Some(Value::Object(fidx)) = constructor {
+                                let fname = vm.heap.with_obj(fidx.0, |f| {
+                                    if let HeapObj::Function(fd) = f {
+                                        fd.name.clone()
+                                    } else {
+                                        None
+                                    }
+                                });
+                                if let Some(n) = fname {
+                                    return n.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+                name.to_string()
+            })
+        };
+        return Ok(Value::String(Rc::from(format!("[object {}]", class).as_str())));
+    }
+    Ok(Value::String(Rc::from("[object Object]")))
+}
+
+// ---------------------------------------------------------------------------
+// Built-in builders
+// ---------------------------------------------------------------------------
+
+fn make_builtin_constructor(vm: &mut Vm, name: &str, methods: &[(&str, NativeFn, usize)]) -> (GcIdx, GcIdx) {
+    let proto_value = vm.object_proto.clone();
+
+    let mut method_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    for (n, f, len) in methods {
+        let func_idx = vm.new_native_function(n, *f, *len);
+        method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
+    }
+
+    let proto_obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(method_props),
+        proto: RefCell::new(Some(proto_value.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from(name)),
+    });
+    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+
+    let ctor_func = FunctionData {
         name: Some(Rc::from(name)),
-        kind: FunctionKind::Native { func, length },
-        closure: Env::new(),
-        prototype: None,
-        properties: RefCell::new(HashMap::new()),
+        kind: FunctionKind::Native { func: object_constructor, length: 1 },
+        closure: vm.global,
+        prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        props: RefCell::new(HashMap::new()),
     };
-    Value::Function(Rc::new(fv))
+    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    // constructor.prototype
+    vm.heap.with_obj(ctor_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+    });
+    // prototype.constructor
+    vm.heap.with_obj(proto_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+    });
+
+    (ctor_idx, proto_idx)
 }
 
-fn make_proto(_interp: &Interpreter, parent: &Value) -> Value {
-    let mut o = Obj::new();
-    o.proto = Some(parent.clone());
-    Value::Object(Rc::new(RefCell::new(o)))
+
+fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
+    let error_proto_val = vm.error_proto.clone();
+    let proto_obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(error_proto_val.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from(name)),
+    });
+    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+
+    let ctor_func = FunctionData {
+        name: Some(Rc::from(name)),
+        kind: FunctionKind::Native { func: error_constructor, length: 1 },
+        closure: vm.global,
+        prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        props: RefCell::new(HashMap::new()),
+    };
+    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    vm.heap.with_obj(ctor_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+    });
+    vm.heap.with_obj(proto_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+    });
+
+    (ctor_idx, proto_idx)
 }
 
-fn set_method(obj: &Value, name: &str, func: Value) {
-    match obj {
-        Value::Object(o) => {
-        o.borrow_mut().props.insert(Rc::from(name), PropertyDescriptor::data(func));
+fn define_global(vm: &mut Vm, name: &str, value: Value) {
+    env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
+}
+
+fn define_global_property(vm: &mut Vm, name: &str, value: Value) {
+    env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
+}
+
+fn get_arg<T: Default>(args: &[Value], idx: usize) -> Value {
+    args.get(idx).cloned().unwrap_or(Value::Undefined)
+}
+
+fn to_index(len: usize, value: &Value, vm: &mut Vm) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() { return Ok(0); }
+    if n.is_infinite() || n > len as f64 { return Ok(len); }
+    if n < 0.0 { return Ok(0); }
+    Ok(n as usize)
+}
+
+fn to_relative_index(len: usize, value: &Value, vm: &mut Vm) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() { return Ok(0); }
+    let idx = n as isize;
+    if idx < 0 { Ok((len as isize + idx).max(0) as usize) } else { Ok(idx as usize) }
+}
+
+fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() || n <= 0.0 { return Ok(0); }
+    if n.is_infinite() { return Ok(usize::MAX); }
+    if n > usize::MAX as f64 { return Ok(usize::MAX); }
+    Ok(n as usize)
+}
+
+// ---------------------------------------------------------------------------
+// Object constructor / prototype
+// ---------------------------------------------------------------------------
+
+fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        if args.is_empty() {
+            return Ok(Value::Object(idx));
         }
-        Value::Function(f) => {
-            f.properties.borrow_mut().insert(Rc::from(name), PropertyDescriptor::data(func));
+        let first = &args[0];
+        match first {
+            Value::Undefined | Value::Null => {}
+            Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
+                return vm.to_object(first);
+            }
+            Value::Object(_) => return Ok(first.clone()),
         }
-        _ => {}
+        let new_idx = vm.new_object();
+        return Ok(Value::Object(new_idx));
+    }
+    // Called as function
+    if args.is_empty() {
+        let new_idx = vm.new_object();
+        return Ok(Value::Object(new_idx));
+    }
+    let first = &args[0];
+    match first {
+        Value::Undefined | Value::Null => {
+            let new_idx = vm.new_object();
+            Ok(Value::Object(new_idx))
+        }
+        Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => vm.to_object(first),
+        Value::Object(_) => Ok(first.clone()),
     }
 }
 
-pub fn setup(interp: &mut Interpreter) {
-    // Create the base Object.prototype
-    let object_proto = make_proto(interp, &Value::Null);
-    interp.object_proto = object_proto.clone();
+fn object_to_string_native(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    object_to_string(vm, this, None)
+}
 
-    let function_proto = make_proto(interp, &object_proto);
-    interp.function_proto = function_proto.clone();
-
-    let array_proto = make_proto(interp, &object_proto);
-    interp.array_proto = array_proto.clone();
-
-    let string_proto = make_proto(interp, &object_proto);
-    interp.string_proto = string_proto.clone();
-
-    let number_proto = make_proto(interp, &object_proto);
-    interp.number_proto = number_proto.clone();
-
-    let boolean_proto = make_proto(interp, &object_proto);
-    interp.boolean_proto = boolean_proto.clone();
-
-    let error_proto = make_proto(interp, &object_proto);
-    interp.error_proto = error_proto.clone();
-
-    // --- Object.prototype methods ---
-    let op = object_proto.clone();
-    set_method(&op, "toString", native("toString", obj_to_string, 0));
-    set_method(&op, "hasOwnProperty", native("hasOwnProperty", obj_has_own, 1));
-    set_method(&op, "valueOf", native("valueOf", obj_value_of, 0));
-    set_method(&op, "isPrototypeOf", native("isPrototypeOf", obj_is_proto_of, 1));
-
-    // --- Function.prototype ---
-    let fp = function_proto.clone();
-    set_method(&fp, "call", native("call", fn_call, 1));
-    set_method(&fp, "apply", native("apply", fn_apply, 2));
-    set_method(&fp, "bind", native("bind", fn_bind, 1));
-    set_method(&fp, "toString", native("toString", fn_to_string, 0));
-
-    // --- Array.prototype ---
-    set_method(&array_proto, "push", native("push", array_push, 1));
-    set_method(&array_proto, "pop", native("pop", array_pop, 0));
-    set_method(&array_proto, "shift", native("shift", array_shift, 0));
-    set_method(&array_proto, "unshift", native("unshift", array_unshift, 1));
-    set_method(&array_proto, "join", native("join", array_join, 1));
-    set_method(&array_proto, "indexOf", native("indexOf", array_index_of, 1));
-    set_method(&array_proto, "slice", native("slice", array_slice, 2));
-    set_method(&array_proto, "concat", native("concat", array_concat, 1));
-    set_method(&array_proto, "reverse", native("reverse", array_reverse, 0));
-    set_method(&array_proto, "forEach", native("forEach", array_for_each, 1));
-    set_method(&array_proto, "map", native("map", array_map, 1));
-    set_method(&array_proto, "filter", native("filter", array_filter, 1));
-    set_method(&array_proto, "reduce", native("reduce", array_reduce, 1));
-    set_method(&array_proto, "find", native("find", array_find, 1));
-    set_method(&array_proto, "includes", native("includes", array_includes, 1));
-    set_method(&array_proto, "toString", native("toString", array_to_string, 0));
-
-    // --- String.prototype ---
-    set_method(&string_proto, "charAt", native("charAt", str_char_at, 1));
-    set_method(&string_proto, "charCodeAt", native("charCodeAt", str_char_code_at, 1));
-    set_method(&string_proto, "indexOf", native("indexOf", str_index_of, 1));
-    set_method(&string_proto, "slice", native("slice", str_slice, 2));
-    set_method(&string_proto, "substring", native("substring", str_substring, 2));
-    set_method(&string_proto, "substr", native("substr", str_substr, 2));
-    set_method(&string_proto, "toUpperCase", native("toUpperCase", str_to_upper, 0));
-    set_method(&string_proto, "toLowerCase", native("toLowerCase", str_to_lower, 0));
-    set_method(&string_proto, "trim", native("trim", str_trim, 0));
-    set_method(&string_proto, "split", native("split", str_split, 1));
-    set_method(&string_proto, "replace", native("replace", str_replace, 2));
-    set_method(&string_proto, "includes", native("includes", str_includes, 1));
-    set_method(&string_proto, "startsWith", native("startsWith", str_starts_with, 1));
-    set_method(&string_proto, "endsWith", native("endsWith", str_ends_with, 1));
-    set_method(&string_proto, "repeat", native("repeat", str_repeat, 1));
-    set_method(&string_proto, "concat", native("concat", str_concat, 1));
-    set_method(&string_proto, "toString", native("toString", str_to_string_val, 0));
-    set_method(&string_proto, "valueOf", native("valueOf", str_to_string_val, 0));
-
-    // --- Number.prototype ---
-    set_method(&number_proto, "toString", native("toString", num_to_string_method, 0));
-    set_method(&number_proto, "toFixed", native("toFixed", num_to_fixed, 1));
-
-    // --- Error.prototype ---
-    set_method(&error_proto, "toString", native("toString", error_to_string, 0));
-    let ep = error_proto.clone();
-    if let Value::Object(o) = &ep {
-        o.borrow_mut().props.insert(Rc::from("name"), PropertyDescriptor::data(Value::from_str("Error")));
-        o.borrow_mut().props.insert(Rc::from("message"), PropertyDescriptor::data(Value::from_str("")));
-    }
-
-    // --- global constructors ---
-    let g = interp.global.clone();
-
-    // Object constructor + Object.keys/values/entries/create
-    let object_ctor = native("Object", obj_ctor, 1);
-    set_static(&g, "Object", &object_ctor);
-    set_method(&object_ctor, "keys", native("keys", obj_keys, 1));
-    set_method(&object_ctor, "values", native("values", obj_values, 1));
-    set_method(&object_ctor, "entries", native("entries", obj_entries, 1));
-    set_method(&object_ctor, "create", native("create", obj_create, 1));
-    set_method(&object_ctor, "assign", native("assign", obj_assign, 2));
-    set_method(&object_ctor, "freeze", native("freeze", obj_freeze, 1));
-    if let Value::Function(f) = &object_ctor {
-        f.properties.borrow_mut().insert(Rc::from("prototype"), PropertyDescriptor::data(object_proto.clone()));
-    }
-
-    // Array constructor
-    let array_ctor = native("Array", array_ctor, 1);
-    set_static(&g, "Array", &array_ctor);
-    set_method(&array_ctor, "isArray", native("isArray", array_is_array, 1));
-    set_method(&array_ctor, "from", native("from", array_from, 1));
-    set_method(&array_ctor, "of", native("of", array_of, 0));
-    if let Value::Function(f) = &array_ctor {
-        f.properties.borrow_mut().insert(Rc::from("prototype"), PropertyDescriptor::data(array_proto.clone()));
-    }
-
-    // String constructor
-    let string_ctor = native("String", string_ctor, 1);
-    set_static(&g, "String", &string_ctor);
-    set_method(&string_ctor, "fromCharCode", native("fromCharCode", str_from_char_code, 1));
-    if let Value::Function(f) = &string_ctor {
-        f.properties.borrow_mut().insert(Rc::from("prototype"), PropertyDescriptor::data(string_proto.clone()));
-    }
-
-    // Number constructor + constants
-    let number_ctor = native("Number", number_ctor, 1);
-    set_static(&g, "Number", &number_ctor);
-    if let Value::Function(f) = &number_ctor {
-        let mut props = f.properties.borrow_mut();
-        props.insert(Rc::from("MAX_SAFE_INTEGER"), PropertyDescriptor::data(Value::Number(9007199254740991.0)));
-        props.insert(Rc::from("MIN_SAFE_INTEGER"), PropertyDescriptor::data(Value::Number(-9007199254740991.0)));
-        props.insert(Rc::from("MAX_VALUE"), PropertyDescriptor::data(Value::Number(f64::MAX)));
-        props.insert(Rc::from("MIN_VALUE"), PropertyDescriptor::data(Value::Number(f64::MIN_POSITIVE)));
-        props.insert(Rc::from("POSITIVE_INFINITY"), PropertyDescriptor::data(Value::Number(f64::INFINITY)));
-        props.insert(Rc::from("NEGATIVE_INFINITY"), PropertyDescriptor::data(Value::Number(f64::NEG_INFINITY)));
-        props.insert(Rc::from("NaN"), PropertyDescriptor::data(Value::Number(f64::NAN)));
-        props.insert(Rc::from("EPSILON"), PropertyDescriptor::data(Value::Number(f64::EPSILON)));
-        props.insert(Rc::from("isInteger"), PropertyDescriptor::data(native("isInteger", num_is_integer, 1)));
-        props.insert(Rc::from("isFinite"), PropertyDescriptor::data(native("isFinite", num_is_finite, 1)));
-        props.insert(Rc::from("isNaN"), PropertyDescriptor::data(native("isNaN", num_is_nan, 1)));
-        props.insert(Rc::from("prototype"), PropertyDescriptor::data(number_proto.clone()));
-    }
-
-    // Boolean constructor
-    let boolean_ctor = native("Boolean", boolean_ctor, 1);
-    set_static(&g, "Boolean", &boolean_ctor);
-    if let Value::Function(f) = &boolean_ctor {
-        f.properties.borrow_mut().insert(Rc::from("prototype"), PropertyDescriptor::data(boolean_proto.clone()));
-    }
-
-    // Error constructors
-    setup_error_ctor(&g, "Error", &error_proto);
-    let type_error_proto = make_proto(interp, &error_proto);
-    if let Value::Object(o) = &type_error_proto {
-        o.borrow_mut().props.insert(Rc::from("name"), PropertyDescriptor::data(Value::from_str("TypeError")));
-    }
-    setup_error_ctor(&g, "TypeError", &type_error_proto);
-    let range_error_proto = make_proto(interp, &error_proto);
-    if let Value::Object(o) = &range_error_proto {
-        o.borrow_mut().props.insert(Rc::from("name"), PropertyDescriptor::data(Value::from_str("RangeError")));
-    }
-    setup_error_ctor(&g, "RangeError", &range_error_proto);
-    let ref_error_proto = make_proto(interp, &error_proto);
-    if let Value::Object(o) = &ref_error_proto {
-        o.borrow_mut().props.insert(Rc::from("name"), PropertyDescriptor::data(Value::from_str("ReferenceError")));
-    }
-    setup_error_ctor(&g, "ReferenceError", &ref_error_proto);
-    let syntax_error_proto = make_proto(interp, &error_proto);
-    if let Value::Object(o) = &syntax_error_proto {
-        o.borrow_mut().props.insert(Rc::from("name"), PropertyDescriptor::data(Value::from_str("SyntaxError")));
-    }
-    setup_error_ctor(&g, "SyntaxError", &syntax_error_proto);
-
-    // Math
-    let math = {
-        let mut o = Obj::new();
-        o.props.insert(Rc::from("PI"), PropertyDescriptor::data(Value::Number(std::f64::consts::PI)));
-        o.props.insert(Rc::from("E"), PropertyDescriptor::data(Value::Number(std::f64::consts::E)));
-        o.props.insert(Rc::from("LN2"), PropertyDescriptor::data(Value::Number(std::f64::consts::LN_2)));
-        o.props.insert(Rc::from("LN10"), PropertyDescriptor::data(Value::Number(std::f64::consts::LN_10)));
-        o.props.insert(Rc::from("SQRT2"), PropertyDescriptor::data(Value::Number(std::f64::consts::SQRT_2)));
-        o.props.insert(Rc::from("floor"), PropertyDescriptor::data(native("floor", math_floor, 1)));
-        o.props.insert(Rc::from("ceil"), PropertyDescriptor::data(native("ceil", math_ceil, 1)));
-        o.props.insert(Rc::from("round"), PropertyDescriptor::data(native("round", math_round, 1)));
-        o.props.insert(Rc::from("abs"), PropertyDescriptor::data(native("abs", math_abs, 1)));
-        o.props.insert(Rc::from("sqrt"), PropertyDescriptor::data(native("sqrt", math_sqrt, 1)));
-        o.props.insert(Rc::from("pow"), PropertyDescriptor::data(native("pow", math_pow, 2)));
-        o.props.insert(Rc::from("max"), PropertyDescriptor::data(native("max", math_max, 2)));
-        o.props.insert(Rc::from("min"), PropertyDescriptor::data(native("min", math_min, 2)));
-        o.props.insert(Rc::from("random"), PropertyDescriptor::data(native("random", math_random, 0)));
-        o.props.insert(Rc::from("log"), PropertyDescriptor::data(native("log", math_log, 1)));
-        o.props.insert(Rc::from("log2"), PropertyDescriptor::data(native("log2", math_log2, 1)));
-        o.props.insert(Rc::from("log10"), PropertyDescriptor::data(native("log10", math_log10, 1)));
-        o.props.insert(Rc::from("exp"), PropertyDescriptor::data(native("exp", math_exp, 1)));
-        o.props.insert(Rc::from("sin"), PropertyDescriptor::data(native("sin", math_sin, 1)));
-        o.props.insert(Rc::from("cos"), PropertyDescriptor::data(native("cos", math_cos, 1)));
-        o.props.insert(Rc::from("tan"), PropertyDescriptor::data(native("tan", math_tan, 1)));
-        o.props.insert(Rc::from("trunc"), PropertyDescriptor::data(native("trunc", math_trunc, 1)));
-        o.props.insert(Rc::from("sign"), PropertyDescriptor::data(native("sign", math_sign, 1)));
-        Value::Object(Rc::new(RefCell::new(o)))
+fn object_has_own_property(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    let key = if let Some(a) = args.get(0) {
+        vm.to_property_key(a)?
+    } else {
+        String::new()
     };
-    set_static(&g, "Math", &math);
-
-    // JSON
-    let json = {
-        let mut o = Obj::new();
-        o.props.insert(Rc::from("parse"), PropertyDescriptor::data(native("parse", json_parse, 1)));
-        o.props.insert(Rc::from("stringify"), PropertyDescriptor::data(native("stringify", json_stringify, 3)));
-        Value::Object(Rc::new(RefCell::new(o)))
-    };
-    set_static(&g, "JSON", &json);
-
-    // console
-    let console = {
-        let mut o = Obj::new();
-        o.props.insert(Rc::from("log"), PropertyDescriptor::data(native("log", console_log, 0)));
-        o.props.insert(Rc::from("error"), PropertyDescriptor::data(native("error", console_log, 0)));
-        o.props.insert(Rc::from("warn"), PropertyDescriptor::data(native("warn", console_log, 0)));
-        o.props.insert(Rc::from("info"), PropertyDescriptor::data(native("info", console_log, 0)));
-        o.props.insert(Rc::from("debug"), PropertyDescriptor::data(native("debug", console_log, 0)));
-        Value::Object(Rc::new(RefCell::new(o)))
-    };
-    set_static(&g, "console", &console);
-
-    // global functions
-    set_static(&g, "parseInt", &native("parseInt", global_parse_int, 1));
-    set_static(&g, "parseFloat", &native("parseFloat", global_parse_float, 1));
-    set_static(&g, "isNaN", &native("isNaN", global_is_nan, 1));
-    set_static(&g, "isFinite", &native("isFinite", global_is_finite, 1));
-    set_static(&g, "NaN", &Value::Number(f64::NAN));
-    set_static(&g, "Infinity", &Value::Number(f64::INFINITY));
-    set_static(&g, "undefined", &Value::Undefined);
-}
-
-fn set_static(g: &Env, name: &str, val: &Value) {
-    g.declare(name, val.clone(), BindingKind::Const);
-}
-
-fn setup_error_ctor(g: &Env, name: &str, proto: &Value) {
-    let ctor = native(name, error_ctor, 1);
-    if let Value::Function(f) = &ctor {
-        f.properties.borrow_mut().insert(Rc::from("prototype"), PropertyDescriptor::data(proto.clone()));
+    match &this {
+        Value::Object(idx) => {
+            let has = vm.heap.with_obj(idx.0, |obj| {
+                obj.props().borrow().contains_key(key.as_str()) || {
+                    if let HeapObj::Array(a) = obj {
+                        if key == "length" { return true; }
+                        if let Ok(i) = key.parse::<usize>() {
+                            return i < a.items.borrow().len();
+                        }
+                    }
+                    false
+                }
+            });
+            Ok(Value::Bool(has))
+        }
+        Value::String(s) => {
+            if key == "length" { return Ok(Value::Bool(true)); }
+            if let Ok(i) = key.parse::<usize>() {
+                return Ok(Value::Bool(i < s.chars().count()));
+            }
+            Ok(Value::Bool(false))
+        }
+        _ => Ok(Value::Bool(false)),
     }
-    if let Value::Object(o) = proto {
-        // link back constructor
-        o.borrow_mut().props.insert(Rc::from("constructor"), PropertyDescriptor::data(ctor.clone()));
-    }
-    set_static(g, name, &ctor);
 }
 
-fn this_obj(this: Option<Value>) -> Value {
-    this.unwrap_or(Value::Undefined)
+fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(v) = this { return Ok(v); }
+    Ok(Value::Undefined)
 }
 
-// ---- Object.prototype ----
-fn obj_to_string(interp: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let t = this_obj(this);
-    Ok(Value::String(interp.to_string_val(&t)?))
-}
-fn obj_has_own(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let key = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    if let Value::Object(o) = &this_obj(this) {
-        let key_rc: Rc<str> = Rc::from(key.as_str());
-        Ok(Value::Bool(o.borrow().props.contains_key(&*key_rc)))
-    } else { Ok(Value::Bool(false)) }
-}
-fn obj_value_of(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(this_obj(this.clone()))
-}
-fn obj_is_proto_of(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let proto = this_obj(this);
-    let mut cur = match args.get(0) {
-        Some(Value::Object(o)) => o.borrow().proto.clone(),
-        _ => None,
-    };
-    while let Some(p) = cur {
-        if p.eq(&proto) { return Ok(Value::Bool(true)); }
-        cur = match &p { Value::Object(o) => o.borrow().proto.clone(), _ => None };
+fn object_is_prototype_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let proto_val = this.unwrap_or(Value::Undefined);
+    let candidate = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if proto_val.is_nullish() || candidate.is_nullish() { return Ok(Value::Bool(false)); }
+    if let (Value::Object(pidx), Value::Object(cidx)) = (&proto_val, &candidate) {
+        let mut cur = cidx.clone();
+        loop {
+            let proto = vm.heap.with_obj(cur.0, |obj| obj.proto().borrow().clone());
+            match proto {
+                Some(Value::Object(next)) => {
+                    if next == *pidx { return Ok(Value::Bool(true)); }
+                    cur = next;
+                }
+                _ => return Ok(Value::Bool(false)),
+            }
+        }
     }
     Ok(Value::Bool(false))
 }
 
-// ---- Function.prototype ----
-fn fn_call(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let f = this_obj(this);
-    let new_this = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let rest = &args[1.min(args.len())..];
-    interp.call_function(&f, rest, Some(new_this))
-}
-fn fn_apply(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let f = this_obj(this);
-    let new_this = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let call_args = match args.get(1) {
-        Some(Value::Object(o)) => {
-            let o = o.borrow();
-            if let InternalData::Array(items) = &o.internal { items.clone() } else { Vec::new() }
-        }
-        _ => Vec::new(),
-    };
-    interp.call_function(&f, &call_args, Some(new_this))
-}
-fn fn_bind(_interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let target = this_obj(this);
-    if let Value::Function(f) = &target {
-        let bound_this = args.get(0).cloned().unwrap_or(Value::Undefined);
-        let bound_args: Vec<Value> = args[1.min(args.len())..].to_vec();
-        let fv = FunctionValue {
-            name: f.name.clone(),
-            kind: FunctionKind::Bound { target: f.clone(), this_val: bound_this, bound_args },
-            closure: Env::new(),
-            prototype: None,
-            properties: RefCell::new(HashMap::new()),
-        };
-        Ok(Value::Function(Rc::new(fv)))
-    } else {
-        Err(Error::type_err("bind called on non-function".to_string()))
-    }
-}
-fn fn_to_string(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let f = this_obj(this);
-    if let Value::Function(fv) = &f {
-        let n = fv.name.as_ref().map(|s| s.to_string()).unwrap_or_default();
-        Ok(Value::String(Rc::from(format!("function {}() {{ [native code] }}", n).as_str())))
-    } else {
-        Ok(Value::String(Rc::from("function () { [native code] }")))
-    }
-}
-
-// ---- Array.prototype ----
-fn arr_items(this: &Option<Value>) -> Vec<Value> {
-    match this_obj(this.clone()) {
-        Value::Object(o) => {
-            let o = o.borrow();
-            if let InternalData::Array(items) = &o.internal { items.clone() } else { Vec::new() }
-        }
-        _ => Vec::new(),
-    }
-}
-fn array_push(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Value::Object(o) = &this_obj(this) {
-        let mut o = o.borrow_mut();
-        if let InternalData::Array(items) = &mut o.internal {
-            items.extend_from_slice(args);
-            return Ok(Value::Number(items.len() as f64));
-        }
-    }
-    Ok(Value::Number(0.0))
-}
-fn array_pop(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Value::Object(o) = &this_obj(this) {
-        let mut o = o.borrow_mut();
-        if let InternalData::Array(items) = &mut o.internal {
-            return Ok(items.pop().unwrap_or(Value::Undefined));
-        }
-    }
-    Ok(Value::Undefined)
-}
-fn array_shift(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Value::Object(o) = &this_obj(this) {
-        let mut o = o.borrow_mut();
-        if let InternalData::Array(items) = &mut o.internal {
-            if items.is_empty() { return Ok(Value::Undefined); }
-            return Ok(items.remove(0));
-        }
-    }
-    Ok(Value::Undefined)
-}
-fn array_unshift(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Value::Object(o) = &this_obj(this) {
-        let mut o = o.borrow_mut();
-        if let InternalData::Array(items) = &mut o.internal {
-            for (i, a) in args.iter().enumerate() { items.insert(i, a.clone()); }
-            return Ok(Value::Number(items.len() as f64));
-        }
-    }
-    Ok(Value::Number(0.0))
-}
-fn array_join(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let sep = match args.get(0) {
-        Some(Value::Undefined) | None => ",".to_string(),
-        Some(v) => interp.to_string_val(v)?.to_string(),
-    };
-    let parts: Vec<String> = items.iter()
-        .map(|i| if i.is_nullish() { String::new() } else { interp.to_string_val(i).map(|s| s.to_string()).unwrap_or_default() })
-        .collect();
-    Ok(Value::String(Rc::from(parts.join(&sep).as_str())))
-}
-fn array_index_of(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
+fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    for (i, item) in items.iter().enumerate() {
-        if item == &target { return Ok(Value::Number(i as f64)); }
-    }
-    Ok(Value::Number(-1.0))
-}
-fn array_slice(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let len = items.len() as i64;
-    let start = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(0);
-    let end = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(len);
-    let s = if start < 0 { (len + start).max(0) as usize } else { (start as usize).min(items.len()) };
-    let e = if end < 0 { (len + end).max(0) as usize } else { (end as usize).min(items.len()) };
-    let sliced: Vec<Value> = if s < e { items[s..e].to_vec() } else { Vec::new() };
-    Ok(interp.new_array(sliced))
-}
-fn array_concat(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let mut items = arr_items(&this);
-    for a in args {
-        match a {
-            Value::Object(o) => {
-                let o = o.borrow();
-                if let InternalData::Array(extra) = &o.internal {
-                    items.extend_from_slice(extra);
-                    continue;
+    let mut keys = Vec::new();
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                for i in 0..a.items.borrow().len() {
+                    keys.push(Value::String(Rc::from(i.to_string().as_str())));
+                }
+            } else {
+                for k in obj.props().borrow().keys() {
+                    keys.push(Value::String(k.clone()));
                 }
             }
-            _ => {}
-        }
-        items.push(a.clone());
+        });
     }
-    Ok(interp.new_array(items))
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(keys),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
-fn array_reverse(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let this_val = this_obj(this.clone());
-    if let Value::Object(o) = &this_val {
-        let mut o = o.borrow_mut();
-        if let InternalData::Array(items) = &mut o.internal {
-            items.reverse();
-        }
-    }
-    Ok(this_val)
-}
-fn array_for_each(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
-    for (i, item) in items.iter().enumerate() {
-        interp.call_function(&cb, &[item.clone(), Value::Number(i as f64), this_obj(this.clone())], Some(Value::Undefined))?;
-    }
-    Ok(Value::Undefined)
-}
-fn array_map(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let mut result = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        result.push(interp.call_function(&cb, &[item.clone(), Value::Number(i as f64), this_obj(this.clone())], Some(Value::Undefined))?);
-    }
-    Ok(interp.new_array(result))
-}
-fn array_filter(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let mut result = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        let keep = interp.call_function(&cb, &[item.clone(), Value::Number(i as f64), this_obj(this.clone())], Some(Value::Undefined))?;
-        if keep.is_truthy() { result.push(item.clone()); }
-    }
-    Ok(interp.new_array(result))
-}
-fn array_reduce(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let (mut acc, start) = if args.len() >= 2 {
-        (args[1].clone(), 0)
-    } else {
-        (items.get(0).cloned().unwrap_or(Value::Undefined), 1)
-    };
-    for i in start..items.len() {
-        acc = interp.call_function(&cb, &[acc, items[i].clone(), Value::Number(i as f64), this_obj(this.clone())], Some(Value::Undefined))?;
-    }
-    Ok(acc)
-}
-fn array_find(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
-    for (i, item) in items.iter().enumerate() {
-        let found = interp.call_function(&cb, &[item.clone(), Value::Number(i as f64), this_obj(this.clone())], Some(Value::Undefined))?;
-        if found.is_truthy() { return Ok(item.clone()); }
-    }
-    Ok(Value::Undefined)
-}
-fn array_includes(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let items = arr_items(&this);
+
+fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    Ok(Value::Bool(items.iter().any(|i| i == &target)))
-}
-fn array_to_string(interp: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    array_join(interp, &[], this)
-}
-
-// ---- Array constructor ----
-fn array_ctor(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let items = if args.len() == 1 {
-        if let Some(Value::Number(n)) = args.get(0) {
-            vec![Value::Undefined; *n as usize]
-        } else { args.to_vec() }
-    } else { args.to_vec() };
-    Ok(interp.new_array(items))
-}
-fn array_is_array(_i: &mut Interpreter, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    // Note: for static methods `this` isn't used; arg comes via args[0] in our calling convention.
-    Ok(Value::Bool(false))
-}
-fn array_from(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let items = interp.iter_to_values_pub(&v)?;
-    Ok(interp.new_array(items))
-}
-fn array_of(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(interp.new_array(args.to_vec()))
-}
-
-// ---- String.prototype ----
-fn str_val(this: &Option<Value>) -> String {
-    this_obj(this.clone()).to_string_debug()
-}
-fn str_char_at(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let idx = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
-    Ok(s.chars().nth(idx).map(|c| Value::from_str(&c.to_string())).unwrap_or(Value::String(Rc::from(""))))
-}
-fn str_char_code_at(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let idx = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
-    Ok(s.chars().nth(idx).map(|c| Value::Number(c as u32 as f64)).unwrap_or(Value::Number(f64::NAN)))
-}
-fn str_index_of(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let needle = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    Ok(Value::Number(s.find(&needle).map(|i| i as f64).unwrap_or(-1.0)))
-}
-fn str_slice(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len() as i64;
-    let start = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(0);
-    let end = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(len);
-    let st = if start < 0 { (len + start).max(0) as usize } else { (start as usize).min(chars.len()) };
-    let en = if end < 0 { (len + end).max(0) as usize } else { (end as usize).min(chars.len()) };
-    let result: String = if st < en { chars[st..en].iter().collect() } else { String::new() };
-    Ok(Value::String(Rc::from(result.as_str())))
-}
-fn str_substring(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len();
-    let mut start = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
-    let mut end = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(len);
-    if start > end { std::mem::swap(&mut start, &mut end); }
-    start = start.min(len); end = end.min(len);
-    let result: String = chars[start..end].iter().collect();
-    Ok(Value::String(Rc::from(result.as_str())))
-}
-fn str_substr(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len() as i64;
-    let mut start = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(0);
-    if start < 0 { start = (len + start).max(0); }
-    let length = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as i64) } else { None }).unwrap_or(len - start);
-    let st = start as usize;
-    let en = (st + length.max(0) as usize).min(chars.len());
-    let result: String = if st < en { chars[st..en].iter().collect() } else { String::new() };
-    Ok(Value::String(Rc::from(result.as_str())))
-}
-fn str_to_upper(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(str_val(&this).to_uppercase().as_str())))
-}
-fn str_to_lower(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(str_val(&this).to_lowercase().as_str())))
-}
-fn str_trim(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(str_val(&this).trim())))
-}
-fn str_split(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let sep = args.get(0).map(|v| v.to_string_debug());
-    let parts: Vec<String> = match sep {
-        None => vec![s],
-        Some(sep) if sep.is_empty() => s.chars().map(|c| c.to_string()).collect(),
-        Some(sep) => s.split(&sep).map(|p| p.to_string()).collect(),
-    };
-    let items: Vec<Value> = parts.into_iter().map(|p| Value::String(Rc::from(p.as_str()))).collect();
-    Ok(interp.new_array(items))
-}
-fn str_replace(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let from = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    let to = args.get(1).map(|v| v.to_string_debug()).unwrap_or_default();
-    Ok(Value::String(Rc::from(s.replacen(&from, &to, 1).as_str())))
-}
-fn str_includes(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let needle = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    Ok(Value::Bool(s.contains(&needle)))
-}
-fn str_starts_with(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let needle = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    Ok(Value::Bool(s.starts_with(&needle)))
-}
-fn str_ends_with(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let needle = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    Ok(Value::Bool(s.ends_with(&needle)))
-}
-fn str_repeat(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(&this);
-    let n = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
-    Ok(Value::String(Rc::from(s.repeat(n).as_str())))
-}
-fn str_concat(interp: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let mut s = str_val(&this);
-    for a in args { s.push_str(&interp.to_string_val(a)?.to_string()); }
-    Ok(Value::String(Rc::from(s.as_str())))
-}
-fn str_to_string_val(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(str_val(&this).as_str())))
-}
-
-// ---- String constructor ----
-fn string_ctor(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    Ok(Value::String(interp.to_string_val(&v)?))
-}
-fn str_from_char_code(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let s: String = args.iter()
-        .filter_map(|v| if let Value::Number(n) = v { char::from_u32(*n as u32) } else { None })
-        .collect();
-    Ok(Value::String(Rc::from(s.as_str())))
-}
-
-// ---- Number ----
-fn number_ctor(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Number(0.0));
-    Ok(Value::Number(interp.to_number(&v)?))
-}
-fn num_to_string_method(_interp: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let n = match this_obj(this) { Value::Number(n) => n, _ => 0.0 };
-    Ok(Value::String(Rc::from(crate::value::num_to_string(n).as_str())))
-}
-fn num_to_fixed(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let n = match this_obj(this) { Value::Number(n) => n, _ => 0.0 };
-    let d = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n as usize) } else { None }).unwrap_or(0);
-    Ok(Value::String(Rc::from(format!("{:.*}", d, n).as_str())))
-}
-fn num_is_integer(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Bool(matches!(args.get(0), Some(Value::Number(n)) if n.fract() == 0.0 && n.is_finite())))
-}
-fn num_is_finite(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Bool(matches!(args.get(0), Some(Value::Number(n)) if n.is_finite())))
-}
-fn num_is_nan(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Bool(matches!(args.get(0), Some(Value::Number(n)) if n.is_nan())))
-}
-
-// ---- Boolean ----
-fn boolean_ctor(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    Ok(Value::Bool(v.is_truthy()))
-}
-
-// ---- Error constructor ----
-fn error_ctor(_i: &mut Interpreter, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let msg = args.get(0).cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(o)) = this.clone() {
-        let mut o = o.borrow_mut();
-        if !msg.is_undefined() {
-            o.props.insert(Rc::from("message"), PropertyDescriptor::data(msg));
-        }
+    let mut values = Vec::new();
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                values.extend(a.items.borrow().iter().cloned());
+            } else {
+                for d in obj.props().borrow().values() {
+                    values.push(d.value.clone());
+                }
+            }
+        });
     }
-    Ok(this_obj(this))
-}
-fn error_to_string(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let o = this_obj(this);
-    if let Value::Object(obj) = &o {
-        let obj = obj.borrow();
-        let name = obj.props.get("name").map(|d| d.value.to_string_debug()).unwrap_or_else(|| "Error".to_string());
-        let msg = obj.props.get("message").map(|d| d.value.to_string_debug()).unwrap_or_default();
-        if msg.is_empty() { return Ok(Value::String(Rc::from(name.as_str()))); }
-        return Ok(Value::String(Rc::from(format!("{}: {}", name, msg).as_str())));
-    }
-    Ok(Value::String(Rc::from("Error")))
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(values),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
 
-// ---- Object constructor ----
-fn obj_ctor(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let t = this_obj(this);
-    if t.is_undefined() || t.is_null() {
-        let o = Obj::new();
-        Ok(Value::Object(Rc::new(RefCell::new(o))))
-    } else { Ok(t) }
-}
-fn obj_keys(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let keys = interp.own_enum_keys_pub(&v);
-    let items: Vec<Value> = keys.into_iter().map(|k| Value::String(Rc::from(k.as_str()))).collect();
-    Ok(interp.new_array(items))
-}
-fn obj_values(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let keys = interp.own_enum_keys_pub(&v);
-    let mut items = Vec::new();
-    for k in keys { items.push(interp.get_property(&v, &k)?); }
-    Ok(interp.new_array(items))
-}
-fn obj_entries(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let keys = interp.own_enum_keys_pub(&v);
-    let mut items = Vec::new();
-    for k in keys {
-        let val = interp.get_property(&v, &k)?;
-        items.push(interp.new_array(vec![Value::String(Rc::from(k.as_str())), val]));
+fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let mut entries = Vec::new();
+    let array_proto = vm.array_proto.clone();
+    let object_proto = vm.object_proto.clone();
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                for (i, v) in a.items.borrow().iter().enumerate() {
+                    let pair = new_object_with_props(&vm.heap, Some(object_proto.clone()), vec![
+                        ("0", Value::String(Rc::from(i.to_string().as_str()))),
+                        ("1", v.clone()),
+                    ]);
+                    entries.push(Value::Object(pair));
+                }
+            } else {
+                for (k, d) in obj.props().borrow().iter() {
+                    let pair = new_object_with_props(&vm.heap, Some(object_proto.clone()), vec![
+                        ("0", Value::String(k.clone())),
+                        ("1", d.value.clone()),
+                    ]);
+                    entries.push(Value::Object(pair));
+                }
+            }
+        });
     }
-    Ok(interp.new_array(items))
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(entries),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(array_proto)),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
-fn obj_create(_interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+
+fn object_create(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let proto = args.get(0).cloned().unwrap_or(Value::Null);
-    let mut o = Obj::new();
-    o.proto = match &proto { Value::Object(_) | Value::Null => Some(proto), _ => None };
-    Ok(Value::Object(Rc::new(RefCell::new(o))))
+    let proto_opt = if proto.is_nullish() { None } else { Some(proto) };
+    let idx = new_plain_object(&vm.heap, proto_opt);
+    if let Some(props) = args.get(1) {
+        object_define_properties(vm, &[Value::Object(idx), props.clone()], None)?;
+    }
+    Ok(Value::Object(idx))
 }
-fn obj_assign(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+
+fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    for src in &args[1.min(args.len())..] {
-        let keys = interp.own_enum_keys_pub(src);
-        for k in keys {
-            let v = interp.get_property(src, &k)?;
-            interp.set_property(&target, &k, v)?;
+    if !target.is_object() { return Err(Error::type_err("Object.assign target must be an object".to_string())); }
+    let Value::Object(tidx) = target else { unreachable!() };
+    for src in args.iter().skip(1) {
+        if let Value::Object(sidx) = src {
+            let (keys, is_array) = vm.heap.with_obj(sidx.0, |obj| {
+                let mut keys = Vec::new();
+                if let HeapObj::Array(a) = obj {
+                    for i in 0..a.items.borrow().len() { keys.push(i.to_string()); }
+                    (keys, true)
+                } else {
+                    for k in obj.props().borrow().keys() { keys.push(k.to_string()); }
+                    (keys, false)
+                }
+            });
+            for k in keys {
+                let val = vm.get_property(src, &k)?;
+                vm.set_property(&Value::Object(tidx), &k, val)?;
+                if is_array && !matches!(k.parse::<usize>(), Ok(_)) { continue; }
+            }
+        }
+    }
+    Ok(Value::Object(tidx))
+}
+
+fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = target {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Object(o) = obj {
+                o.extensible.set(false);
+                for d in o.props.borrow_mut().values_mut() {
+                    d.writable = false;
+                    d.configurable = false;
+                }
+            }
+        });
+    }
+    Ok(target)
+}
+
+fn object_define_property(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.get(1).map(|v| vm.to_property_key(v)).transpose()?.unwrap_or_default();
+    let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = target {
+        let mut value = Value::Undefined;
+        let mut writable = false;
+        let mut enumerable = false;
+        let mut configurable = false;
+        let mut is_data = false;
+        if let Value::Object(didx) = desc {
+            if let Some(v) = vm.get_property(&desc, "value").ok() { value = v; is_data = true; }
+            if let Some(v) = vm.get_property(&desc, "writable").ok() { writable = v.is_truthy(); is_data = true; }
+            if let Some(v) = vm.get_property(&desc, "enumerable").ok() { enumerable = v.is_truthy(); }
+            if let Some(v) = vm.get_property(&desc, "configurable").ok() { configurable = v.is_truthy(); }
+        }
+        let descriptor = if is_data {
+            PropertyDescriptor { value, writable, enumerable, configurable, get: None, set: None, is_accessor: false }
+        } else {
+            PropertyDescriptor { value: Value::Undefined, writable: false, enumerable, configurable, get: None, set: None, is_accessor: false }
+        };
+        vm.heap.with_obj(idx.0, |obj| {
+            obj.props().borrow_mut().insert(Rc::from(key.as_str()), descriptor);
+        });
+    }
+    Ok(target)
+}
+
+fn object_get_own_property_descriptor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.get(1).map(|v| vm.to_property_key(v)).transpose()?.unwrap_or_default();
+    let object_proto = vm.object_proto.clone();
+    if let Value::Object(idx) = target {
+        let value = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                if key == "length" {
+                    return Some(Value::Number(a.items.borrow().len() as f64));
+                }
+                if let Ok(i) = key.parse::<usize>() {
+                    return a.items.borrow().get(i).cloned();
+                }
+            }
+            obj.props().borrow().get(key.as_str()).map(|d| d.value.clone())
+        });
+        if let Some(v) = value {
+            let desc = new_object_with_props(&vm.heap, Some(object_proto), vec![
+                ("value", v),
+                ("writable", Value::Bool(true)),
+                ("enumerable", Value::Bool(true)),
+                ("configurable", Value::Bool(true)),
+            ]);
+            return Ok(Value::Object(desc));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn object_define_properties(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let props = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let (Value::Object(_), Value::Object(_)) = (&target, &props) {
+        let keys = object_keys(vm, &[props.clone()], None)?;
+        if let Value::Object(kidx) = keys {
+            let key_objs = vm.heap.with_obj(kidx.0, |obj| {
+                if let HeapObj::Array(a) = obj { a.items.borrow().clone() } else { Vec::new() }
+            });
+            for k_val in key_objs {
+                let key_str = vm.to_string(&k_val)?;
+                let desc = vm.get_property(&props, &key_str)?;
+                object_define_property(vm, &[target.clone(), k_val, desc], None)?;
+            }
         }
     }
     Ok(target)
 }
-fn obj_freeze(_i: &mut Interpreter, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let this_val = this_obj(this.clone());
-    if let Value::Object(o) = &this_val {
-        let mut o = o.borrow_mut();
-        o.extensible = false;
-        for (_, d) in o.props.iter_mut() {
-            d.writable = false;
-            d.configurable = false;
+
+
+// Minimal stubs to keep the crate compiling while parser/lexer work is in progress.
+
+fn error_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let msg = args.get(0)
+        .map(|v| vm.to_string(v).unwrap_or_else(|_| Rc::from("")))
+        .unwrap_or_else(|| Rc::from(""));
+    let idx = vm.new_object();
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Object(o) = obj {
+            o.props.borrow_mut().insert(Rc::from("message"), data_prop(Value::String(msg)));
+            o.props.borrow_mut().insert(Rc::from("name"), data_prop(Value::String(Rc::from("Error"))));
         }
-    }
-    Ok(this_val)
+    });
+    Ok(Value::Object(idx))
 }
 
-// ---- Math ----
-fn num_arg(args: &[Value]) -> f64 {
-    args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n) } else { None }).unwrap_or(f64::NAN)
+pub fn setup(vm: &mut Vm) {
+    let (object_ctor, object_proto) = make_builtin_constructor(vm, "Object", &[
+        ("toString", object_to_string_native, 0),
+        ("hasOwnProperty", object_has_own_property, 1),
+        ("valueOf", object_value_of, 0),
+    ]);
+    define_global(vm, "Object", Value::Object(object_ctor));
+    vm.object_proto = Value::Object(object_proto);
+
+    let (error_ctor, _error_proto) = make_error_constructor(vm, "Error");
+    define_global(vm, "Error", Value::Object(error_ctor));
 }
-fn math_floor(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).floor())) }
-fn math_ceil(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).ceil())) }
-fn math_round(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> {
-    let n = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n) } else { None }).unwrap_or(f64::NAN);
-    Ok(Value::Number(n.round()))
+
+// =========================================================================
+// Math
+// =========================================================================
+fn math_unary(f: fn(f64) -> f64, vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
+    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Number(f(n)))
 }
-fn math_abs(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).abs())) }
-fn math_sqrt(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).sqrt())) }
-fn math_pow(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> {
-    let a = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n) } else { None }).unwrap_or(f64::NAN);
-    let b = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n) } else { None }).unwrap_or(f64::NAN);
+fn math_floor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::floor, vm, args) }
+fn math_ceil(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::ceil, vm, args) }
+fn math_round(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(|n| n.round(), vm, args) }
+fn math_trunc(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::trunc, vm, args) }
+fn math_abs(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::abs, vm, args) }
+fn math_sign(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Number(if n > 0.0 {1.0} else if n < 0.0 {-1.0} else {0.0}))
+}
+fn math_sqrt(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::sqrt, vm, args) }
+fn math_cbrt(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::cbrt, vm, args) }
+fn math_exp(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::exp, vm, args) }
+fn math_log(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::ln, vm, args) }
+fn math_log2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::log2, vm, args) }
+fn math_log10(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::log10, vm, args) }
+fn math_sin(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::sin, vm, args) }
+fn math_cos(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::cos, vm, args) }
+fn math_tan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::tan, vm, args) }
+fn math_pow(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let a = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let b = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(a.powf(b)))
 }
-fn math_max(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> {
+fn math_max(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let mut m = f64::NEG_INFINITY;
-    for a in args { if let Value::Number(n) = a { if *n > m { m = *n; } } }
+    for a in args { let n = vm.to_number(a)?; if n > m { m = n; } }
     Ok(Value::Number(m))
 }
-fn math_min(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> {
+fn math_min(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let mut m = f64::INFINITY;
-    for a in args { if let Value::Number(n) = a { if *n < m { m = *n; } } }
+    for a in args { let n = vm.to_number(a)?; if n < m { m = n; } }
     Ok(Value::Number(m))
 }
-fn math_random(_i: &mut Interpreter, _args: &[Value], _t: Option<Value>) -> error::Result<Value> {
-    // simple LCG since no rand crate
+fn math_random(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
     use std::cell::Cell;
     thread_local! { static STATE: Cell<u64> = Cell::new(0x2545F4914F6CDD1D); }
-    let r = STATE.with(|s| {
-        let mut x = s.get();
-        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
-        s.set(x);
-        x as f64 / u64::MAX as f64
-    });
+    let r = STATE.with(|s| { let mut x = s.get(); x ^= x << 13; x ^= x >> 7; x ^= x << 17; s.set(x); x as f64 / u64::MAX as f64 });
     Ok(Value::Number(r))
 }
-fn math_log(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).ln())) }
-fn math_log2(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).log2())) }
-fn math_log10(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).log10())) }
-fn math_exp(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).exp())) }
-fn math_sin(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).sin())) }
-fn math_cos(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).cos())) }
-fn math_tan(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).tan())) }
-fn math_trunc(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> { Ok(Value::Number(num_arg(args).trunc())) }
-fn math_sign(_i: &mut Interpreter, args: &[Value], _t: Option<Value>) -> error::Result<Value> {
-    let n = args.get(0).and_then(|v| if let Value::Number(n) = v { Some(*n) } else { None }).unwrap_or(f64::NAN);
-    Ok(Value::Number(if n > 0.0 { 1.0 } else if n < 0.0 { -1.0 } else { 0.0 }))
+
+fn build_math(vm: &mut Vm) -> Value {
+    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    // build methods first, collect into a temp vec
+    let mut method_entries: Vec<(&str, NativeFn, usize)> = vec![
+        ("floor", math_floor, 1), ("ceil", math_ceil, 1), ("round", math_round, 1),
+        ("trunc", math_trunc, 1), ("abs", math_abs, 1), ("sign", math_sign, 1),
+        ("sqrt", math_sqrt, 1), ("cbrt", math_cbrt, 1), ("exp", math_exp, 1),
+        ("log", math_log, 1), ("log2", math_log2, 1), ("log10", math_log10, 1),
+        ("sin", math_sin, 1), ("cos", math_cos, 1), ("tan", math_tan, 1),
+        ("pow", math_pow, 2), ("max", math_max, 2), ("min", math_min, 2),
+        ("random", math_random, 0),
+    ];
+    for (name, f, len) in method_entries.drain(..) {
+        let idx = vm.new_native_function(name, f, len);
+        props.insert(Rc::from(name), data_prop(Value::Object(idx)));
+    }
+    props.insert(Rc::from("PI"), data_prop(Value::Number(std::f64::consts::PI)));
+    props.insert(Rc::from("E"), data_prop(Value::Number(std::f64::consts::E)));
+    props.insert(Rc::from("LN2"), data_prop(Value::Number(std::f64::consts::LN_2)));
+    props.insert(Rc::from("LN10"), data_prop(Value::Number(std::f64::consts::LN_10)));
+    props.insert(Rc::from("LOG2E"), data_prop(Value::Number(std::f64::consts::LOG2_E)));
+    props.insert(Rc::from("LOG10E"), data_prop(Value::Number(std::f64::consts::LOG10_E)));
+    props.insert(Rc::from("SQRT2"), data_prop(Value::Number(std::f64::consts::SQRT_2)));
+    props.insert(Rc::from("SQRT1_2"), data_prop(Value::Number(std::f64::consts::FRAC_1_SQRT_2)));
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(props), proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(false), class_name: Some(Rc::from("Math")),
+    });
+    Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
 
-// ---- JSON ----
-fn json_parse(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let s = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    interp.parse_json(&s)
+// =========================================================================
+// console
+// =========================================================================
+fn console_log(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let parts: Vec<String> = args.iter().map(|a| vm.to_string(a).map(|s| s.to_string()).unwrap_or_default()).collect();
+    println!("{}", parts.join(" "));
+    Ok(Value::Undefined)
 }
-fn json_stringify(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).cloned().unwrap_or(Value::Undefined);
-    match interp.stringify_json(&v, None) {
+fn build_console(vm: &mut Vm) -> Value {
+    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    for name in &["log", "error", "warn", "info", "debug", "dir", "trace"] {
+        let idx = vm.new_native_function(name, console_log, 0);
+        props.insert(Rc::from(*name), data_prop(Value::Object(idx)));
+    }
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(props), proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true), class_name: Some(Rc::from("Object")),
+    });
+    Value::Object(GcIdx(vm.heap.allocate(obj)))
+}
+
+// =========================================================================
+// JSON
+// =========================================================================
+fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let v = args.get(0).unwrap_or(&Value::Undefined);
+    match stringify_value(vm, v) {
         Some(s) => Ok(Value::String(Rc::from(s.as_str()))),
         None => Ok(Value::Undefined),
     }
 }
-
-// ---- console ----
-fn console_log(interp: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let parts: Vec<String> = args.iter()
-        .map(|a| interp.to_string_val(a).map(|s| s.to_string()).unwrap_or_default())
-        .collect();
-    println!("{}", parts.join(" "));
-    Ok(Value::Undefined)
-}
-
-// ---- globals ----
-fn global_parse_int(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let s = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    let radix = args.get(1).and_then(|v| if let Value::Number(n) = v { Some(*n as u32) } else { None }).unwrap_or(10);
-    let radix = if radix == 0 { 10 } else { radix };
-    let trimmed = s.trim_start();
-    let mut chars = trimmed.chars().peekable();
-    let mut sign = 1.0;
-    if chars.peek() == Some(&'+') { chars.next(); }
-    else if chars.peek() == Some(&'-') { sign = -1.0; chars.next(); }
-    let rest: String = chars.collect();
-    let (digits, r) = if (radix == 16) && (rest.starts_with("0x") || rest.starts_with("0X")) {
-        (&rest[2..], radix)
-    } else { (rest.as_str(), radix) };
-    match i64::from_str_radix(digits, r) {
-        Ok(n) => Ok(Value::Number(sign * n as f64)),
-        Err(_) => Ok(Value::Number(f64::NAN)),
-    }
-}
-fn global_parse_float(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let s = args.get(0).map(|v| v.to_string_debug()).unwrap_or_default();
-    let trimmed = s.trim_start();
-    // take longest valid float prefix
-    let end = trimmed.char_indices()
-        .take_while(|(_, c)| c.is_ascii_digit() || *c == '.' || *c == '+' || *c == '-' || *c == 'e' || *c == 'E')
-        .last().map(|(i, _)| i + 1).unwrap_or(0);
-    let prefix = &trimmed[..end];
-    Ok(Value::Number(prefix.parse::<f64>().unwrap_or(f64::NAN)))
-}
-fn global_is_nan(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Bool(matches!(args.get(0), Some(Value::Number(n)) if n.is_nan())))
-}
-fn global_is_finite(_i: &mut Interpreter, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Bool(matches!(args.get(0), Some(Value::Number(n)) if n.is_finite())))
-}
-
-// helper trait for Value
-trait ValueDebug {
-    fn to_string_debug(&self) -> String;
-}
-impl ValueDebug for Value {
-    fn to_string_debug(&self) -> String {
-        match self {
-            Value::String(s) => s.to_string(),
-            Value::Number(n) => crate::value::num_to_string(*n),
-            Value::Bool(b) => b.to_string(),
-            Value::Undefined => "undefined".to_string(),
-            Value::Null => "null".to_string(),
-            _ => format!("{:?}", self),
+fn stringify_value(vm: &mut Vm, v: &Value) -> Option<String> {
+    match v {
+        Value::Undefined => None,
+        Value::Null => Some("null".into()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => {
+            if n.is_nan() || n.is_infinite() { None } else { Some(crate::value::num_to_string(*n)) }
+        }
+        Value::String(s) => Some(format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\t', "\\t"))),
+        Value::Symbol(_) => None,
+        Value::Object(idx) => {
+            let (is_arr, items, props, proto) = vm.heap.with_obj(idx.0, |obj| {
+                match obj {
+                    HeapObj::Array(a) => (true, a.items.borrow().clone(), HashMap::new(), None),
+                    HeapObj::Object(o) => (false, Vec::new(), o.props.borrow().clone(), o.proto.borrow().clone()),
+                    HeapObj::Function(_) => (false, Vec::new(), HashMap::new(), None),
+                    _ => (false, Vec::new(), obj.props().borrow().clone(), obj.proto().borrow().clone()),
+                }
+            });
+            if is_arr {
+                let parts: Vec<String> = items.iter().filter_map(|i| stringify_value(vm, i)).collect();
+                Some(format!("[{}]", parts.join(",")))
+            } else {
+                let _ = proto;
+                let mut pairs = Vec::new();
+                for (k, d) in &props {
+                    if !d.enumerable { continue; }
+                    if let Some(vs) = stringify_value(vm, &d.value) {
+                        pairs.push(format!("\"{}\":{}", k, vs));
+                    }
+                }
+                Some(format!("{{{}}}", pairs.join(",")))
+            }
         }
     }
+}
+fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let s = match args.get(0) { Some(Value::String(s)) => s.to_string(), _ => return Ok(Value::Null) };
+    parse_json_value(vm, &mut s.chars().peekable())
+}
+fn parse_json_value(vm: &mut Vm, chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() { chars.next(); } else { break; }
+    }
+    match chars.peek() {
+        Some(&'{') => { chars.next(); parse_json_obj(vm, chars) }
+        Some(&'[') => { chars.next(); parse_json_arr(vm, chars) }
+        Some(&'"') => { chars.next(); parse_json_str(chars) }
+        Some('t') => { chars.take(4).for_each(|_|{}); Ok(Value::Bool(true)) }
+        Some('f') => { chars.take(5).for_each(|_|{}); Ok(Value::Bool(false)) }
+        Some('n') => { chars.take(4).for_each(|_|{}); Ok(Value::Null) }
+        Some(c) if *c == '-' || c.is_ascii_digit() => parse_json_num(chars),
+        _ => Err(Error::syntax("Invalid JSON".to_string())),
+    }
+}
+fn parse_json_obj(vm: &mut Vm, chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
+    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    loop {
+        while let Some(&c) = chars.peek() { if c.is_whitespace() { chars.next(); } else { break; } }
+        if chars.peek() == Some(&'}') { chars.next(); break; }
+        let key = match parse_json_str(chars)? {
+            Value::String(s) => s.to_string(),
+            _ => String::new(),
+        };
+        while chars.peek() != Some(&':') { chars.next(); }
+        chars.next();
+        let val = parse_json_value(vm, chars)?;
+        props.insert(Rc::from(key.as_str()), data_prop(val));
+        while let Some(&c) = chars.peek() { if c.is_whitespace() || c == ',' { chars.next(); } else { break; } }
+        if chars.peek() == Some(&'}') { chars.next(); break; }
+    }
+    let obj = HeapObj::Object(ObjectData { props: RefCell::new(props), proto: RefCell::new(Some(vm.object_proto.clone())), extensible: Cell::new(true), class_name: None });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+}
+fn parse_json_arr(vm: &mut Vm, chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
+    let mut items = Vec::new();
+    loop {
+        while let Some(&c) = chars.peek() { if c.is_whitespace() { chars.next(); } else { break; } }
+        if chars.peek() == Some(&']') { chars.next(); break; }
+        items.push(parse_json_value(vm, chars)?);
+        while let Some(&c) = chars.peek() { if c.is_whitespace() || c == ',' { chars.next(); } else { break; } }
+        if chars.peek() == Some(&']') { chars.next(); break; }
+    }
+    let obj = HeapObj::Array(ArrayData { items: RefCell::new(items), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+}
+fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
+    let mut s = String::new();
+    while let Some(c) = chars.next() {
+        if c == '"' { break; }
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => s.push('\n'), Some('t') => s.push('\t'), Some('"') => s.push('"'),
+                Some('\\') => s.push('\\'), Some(c) => s.push(c), None => break,
+            }
+        } else { s.push(c); }
+    }
+    Ok(Value::String(Rc::from(s.as_str())))
+}
+fn parse_json_num(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
+    let mut s = String::new();
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E' { s.push(c); chars.next(); } else { break; }
+    }
+    Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
+}
+fn build_json(vm: &mut Vm) -> Value {
+    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let pi = vm.new_native_function("parse", json_parse, 1);
+    let si = vm.new_native_function("stringify", json_stringify, 3);
+    props.insert(Rc::from("parse"), data_prop(Value::Object(pi)));
+    props.insert(Rc::from("stringify"), data_prop(Value::Object(si)));
+    let obj = HeapObj::Object(ObjectData { props: RefCell::new(props), proto: RefCell::new(Some(vm.object_proto.clone())), extensible: Cell::new(true), class_name: Some(Rc::from("JSON")) });
+    Value::Object(GcIdx(vm.heap.allocate(obj)))
+}
+
+// =========================================================================
+// Global functions
+// =========================================================================
+fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let s = match args.get(0) { Some(Value::String(s)) => s.trim().to_string(), Some(v) => vm.to_string(v)?.to_string(), None => return Ok(Value::Number(f64::NAN)) };
+    let radix = args.get(1).and_then(|v| if let Value::Number(n)=v {Some(*n as u32)} else {None}).unwrap_or(10);
+    let radix = if radix == 0 {10} else {radix};
+    let s = s.trim_start_matches('+');
+    let neg = s.starts_with('-');
+    let s = s.trim_start_matches('-');
+    let s = if radix == 16 && (s.starts_with("0x") || s.starts_with("0X")) { &s[2..] } else { s };
+    match i64::from_str_radix(s, radix) { Ok(n) => Ok(Value::Number((if neg {-n} else {n}) as f64)), Err(_) => Ok(Value::Number(f64::NAN)) }
+}
+fn global_parse_float(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let s = match args.get(0) { Some(Value::String(s)) => s.trim().to_string(), Some(v) => vm.to_string(v)?.to_string(), None => return Ok(Value::Number(f64::NAN)) };
+    Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
+}
+fn global_is_nan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Bool(n.is_nan()))
+}
+fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Bool(n.is_finite()))
+}
+
+// =========================================================================
+// Array prototype + constructor
+// =========================================================================
+fn array_is_array(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(is_array(args.get(0).unwrap_or(&Value::Undefined), &vm.heap)))
+}
+fn array_push(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow_mut().extend_from_slice(args);
+            }
+        });
+        let len = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj { a.items.borrow().len() } else { 0 }
+        });
+        return Ok(Value::Number(len as f64));
+    }
+    Ok(Value::Number(0.0))
+}
+fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        return Ok(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj { a.items.borrow_mut().pop().unwrap_or(Value::Undefined) } else { Value::Undefined }
+        }));
+    }
+    Ok(Value::Undefined)
+}
+fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let sep = match args.get(0) { Some(Value::String(s)) => s.to_string(), Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(), _ => ",".to_string() };
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        let parts: Vec<String> = items.iter().map(|i| if i.is_nullish() { String::new() } else { vm.to_string(i).map(|s|s.to_string()).unwrap_or_default() }).collect();
+        return Ok(Value::String(Rc::from(parts.join(&sep).as_str())));
+    }
+    Ok(Value::String(Rc::from("")))
+}
+fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        let mut result = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            result.push(vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?);
+        }
+        let arr = HeapObj::Array(ArrayData { items: RefCell::new(result), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+    }
+    Ok(Value::Undefined)
+}
+fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        let mut result = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let keep = vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+            if keep.is_truthy() { result.push(item.clone()); }
+        }
+        let arr = HeapObj::Array(ArrayData { items: RefCell::new(result), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+    }
+    Ok(Value::Undefined)
+}
+fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        let (mut acc, start) = if args.len() >= 2 { (args[1].clone(), 0) } else { (items.get(0).cloned().unwrap_or(Value::Undefined), 1) };
+        for i in start..items.len() {
+            acc = vm.call_function(&cb, &[acc, items[i].clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+        }
+        return Ok(acc);
+    }
+    Ok(Value::Undefined)
+}
+fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        for (i, item) in items.iter().enumerate() {
+            vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn array_index_of(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let pos = _vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().iter().position(|i| i == &target)
+            } else { None }
+        });
+        return Ok(Value::Number(pos.map(|i| i as f64).unwrap_or(-1.0)));
+    }
+    Ok(Value::Number(-1.0))
+}
+fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let found = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj { a.items.borrow().iter().any(|i| i == &target) } else { false }
+        });
+        return Ok(Value::Bool(found));
+    }
+    Ok(Value::Bool(false))
+}
+fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        let len = items.len() as i64;
+        let start = args.get(0).and_then(|v| if let Value::Number(n)=v {Some(*n as i64)} else {None}).unwrap_or(0);
+        let end = args.get(1).and_then(|v| if let Value::Number(n)=v {Some(*n as i64)} else {None}).unwrap_or(len);
+        let s = if start < 0 {(len+start).max(0) as usize} else {(start as usize).min(items.len())};
+        let e = if end < 0 {(len+end).max(0) as usize} else {(end as usize).min(items.len())};
+        let sliced = if s < e { items[s..e].to_vec() } else { Vec::new() };
+        let arr = HeapObj::Array(ArrayData { items: RefCell::new(sliced), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+    }
+    Ok(Value::Undefined)
+}
+fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let mut items = Vec::new();
+    if let Some(Value::Object(idx)) = this {
+        items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+    }
+    for a in args {
+        if let Value::Object(aidx) = a {
+            let is_arr = vm.heap.with_obj(aidx.0, |obj| matches!(obj, HeapObj::Array(_)));
+            if is_arr {
+                let extra = vm.heap.with_obj(aidx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+                items.extend(extra);
+                continue;
+            }
+        }
+        items.push(a.clone());
+    }
+    let arr = HeapObj::Array(ArrayData { items: RefCell::new(items), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let items = if args.len() == 1 {
+        if let Some(Value::Number(n)) = args.get(0) { vec![Value::Undefined; *n as usize] } else { args.to_vec() }
+    } else { args.to_vec() };
+    if let Some(Value::Object(idx)) = this { return Ok(Value::Object(idx)); }
+    let arr = HeapObj::Array(ArrayData { items: RefCell::new(items), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+
+// =========================================================================
+// String prototype + constructor
+// =========================================================================
+fn str_val(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
+    match this { Some(Value::String(s)) => Ok(s.to_string()), Some(Value::Object(idx)) => Ok(vm.heap.with_obj(idx.0, |o| { if let HeapObj::Object(o)=o { if let Some(cn)=&o.class_name { cn.to_string() } else { "[object Object]".into() } } else { "[object Object]".into() } })), Some(v) => Ok(vm.to_string(v)?.to_string()), None => Ok("undefined".into()) }
+}
+fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let i = args.get(0).and_then(|v| if let Value::Number(n)=v {Some(*n as usize)} else {None}).unwrap_or(0);
+    Ok(s.chars().nth(i).map(|c| Value::String(Rc::from(c.to_string().as_str()))).unwrap_or(Value::String(Rc::from(""))))
+}
+fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let i = args.get(0).and_then(|v| if let Value::Number(n)=v {Some(*n as usize)} else {None}).unwrap_or(0);
+    Ok(s.chars().nth(i).map(|c| Value::Number(c as u32 as f64)).unwrap_or(Value::Number(f64::NAN)))
+}
+fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let n = args.get(0).map(|v| crate::value::value_to_debug_string(v)).unwrap_or_default();
+    Ok(Value::Number(s.find(&n).map(|i| i as f64).unwrap_or(-1.0)))
+}
+fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len() as i64;
+    let start = args.get(0).and_then(|v| if let Value::Number(n)=v {Some(*n as i64)} else {None}).unwrap_or(0);
+    let end = args.get(1).and_then(|v| if let Value::Number(n)=v {Some(*n as i64)} else {None}).unwrap_or(len);
+    let st = if start < 0 {(len+start).max(0) as usize} else {(start as usize).min(chars.len())};
+    let en = if end < 0 {(len+end).max(0) as usize} else {(end as usize).min(chars.len())};
+    let r: String = if st < en { chars[st..en].iter().collect() } else { String::new() };
+    Ok(Value::String(Rc::from(r.as_str())))
+}
+fn str_to_upper(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::String(Rc::from(str_val(vm, &this)?.to_uppercase().as_str())))
+}
+fn str_to_lower(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::String(Rc::from(str_val(vm, &this)?.to_lowercase().as_str())))
+}
+fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::String(Rc::from(str_val(vm, &this)?.trim())))
+}
+fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let sep = args.get(0).map(|v| crate::value::value_to_debug_string(v));
+    let parts: Vec<String> = match sep { None => vec![s], Some(sep) if sep.is_empty() => s.chars().map(|c| c.to_string()).collect(), Some(sep) => s.split(&sep).map(|p| p.to_string()).collect() };
+    let items: Vec<Value> = parts.into_iter().map(|p| Value::String(Rc::from(p.as_str()))).collect();
+    let arr = HeapObj::Array(ArrayData { items: RefCell::new(items), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let from = args.get(0).map(|v| crate::value::value_to_debug_string(v)).unwrap_or_default();
+    let to = args.get(1).map(|v| crate::value::value_to_debug_string(v)).unwrap_or_default();
+    Ok(Value::String(Rc::from(s.replacen(&from, &to, 1).as_str())))
+}
+fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(str_val(vm, &this)?.contains(args.get(0).map(|v| crate::value::value_to_debug_string(v)).unwrap_or_default().as_str())))
+}
+fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(str_val(vm, &this)?.starts_with(args.get(0).map(|v| crate::value::value_to_debug_string(v)).unwrap_or_default().as_str())))
+}
+fn str_ends_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(str_val(vm, &this)?.ends_with(args.get(0).map(|v| crate::value::value_to_debug_string(v)).unwrap_or_default().as_str())))
+}
+fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let n = args.get(0).and_then(|v| if let Value::Number(n)=v {Some(*n as usize)} else {None}).unwrap_or(0);
+    Ok(Value::String(Rc::from(str_val(vm, &this)?.repeat(n).as_str())))
+}
+fn str_from_char_code(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let s: String = args.iter().filter_map(|v| if let Value::Number(n)=v { char::from_u32(*n as u32) } else { None }).collect();
+    Ok(Value::String(Rc::from(s.as_str())))
+}
+fn string_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(Value::String(vm.to_string(args.get(0).unwrap_or(&Value::Undefined))?))
+}
+fn number_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Number(vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?))
+}
+fn boolean_constructor(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(args.get(0).unwrap_or(&Value::Undefined).is_truthy()))
+}
+
+// =========================================================================
+// Extended setup
+// =========================================================================
+pub fn setup_full(vm: &mut Vm) {
+    setup(vm);
+    // Math
+    let math = build_math(vm);
+    define_global(vm, "Math", math);
+    // console
+    let console = build_console(vm);
+    define_global(vm, "console", console);
+    // JSON
+    let json = build_json(vm);
+    define_global(vm, "JSON", json);
+    // Array
+    let (array_ctor, array_proto) = make_builtin_constructor(vm, "Array", &[
+        ("push", array_push, 1), ("pop", array_pop, 0), ("join", array_join, 1),
+        ("map", array_map, 1), ("filter", array_filter, 1), ("reduce", array_reduce, 1),
+        ("forEach", array_for_each, 1), ("indexOf", array_index_of, 1),
+        ("includes", array_includes, 1), ("slice", array_slice, 2), ("concat", array_concat, 1),
+    ]);
+    // override the constructor function to use array_constructor
+    vm.array_proto = Value::Object(array_proto);
+    define_global(vm, "Array", Value::Object(array_ctor));
+    // String
+    let (str_ctor, str_proto) = make_builtin_constructor(vm, "String", &[
+        ("charAt", str_char_at, 1), ("charCodeAt", str_char_code_at, 1),
+        ("indexOf", str_index_of, 1), ("slice", str_slice, 2),
+        ("toUpperCase", str_to_upper, 0), ("toLowerCase", str_to_lower, 0),
+        ("trim", str_trim, 0), ("split", str_split, 1), ("replace", str_replace, 2),
+        ("includes", str_includes, 1), ("startsWith", str_starts_with, 1),
+        ("endsWith", str_ends_with, 1), ("repeat", str_repeat, 1),
+    ]);
+    vm.string_proto = Value::Object(str_proto);
+    define_global(vm, "String", Value::Object(str_ctor));
+    // Number
+    let (num_ctor, num_proto) = make_builtin_constructor(vm, "Number", &[]);
+    vm.number_proto = Value::Object(num_proto);
+    define_global(vm, "Number", Value::Object(num_ctor));
+    // Boolean
+    let (bool_ctor, bool_proto) = make_builtin_constructor(vm, "Boolean", &[]);
+    vm.boolean_proto = Value::Object(bool_proto);
+    define_global(vm, "Boolean", Value::Object(bool_ctor));
+    // globals
+    let idx = vm.new_native_function("parseInt", global_parse_int, 2);
+    define_global(vm, "parseInt", Value::Object(idx));
+    let idx = vm.new_native_function("parseFloat", global_parse_float, 1);
+    define_global(vm, "parseFloat", Value::Object(idx));
+    let idx = vm.new_native_function("isNaN", global_is_nan, 1);
+    define_global(vm, "isNaN", Value::Object(idx));
+    let idx = vm.new_native_function("isFinite", global_is_finite, 1);
+    define_global(vm, "isFinite", Value::Object(idx));
+    define_global(vm, "NaN", Value::Number(f64::NAN));
+    define_global(vm, "Infinity", Value::Number(f64::INFINITY));
+    define_global(vm, "undefined", Value::Undefined);
 }

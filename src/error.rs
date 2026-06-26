@@ -1,12 +1,15 @@
 use std::fmt;
 use std::rc::Rc;
 
+use crate::value::Value;
+
 #[derive(Debug)]
 pub struct Error {
     pub kind: ErrorKind,
     pub message: String,
     pub stack: Vec<String>,
-    pub thrown_value: Option<crate::value::Value>,
+    pub thrown_value: Option<Value>,
+    pub line: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,45 +20,53 @@ pub enum ErrorKind {
     Range,
     Eval,
     Uri,
-    User, // thrown JS value
+    User,
     Internal,
 }
 
 impl Error {
     pub fn syntax(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error { kind: ErrorKind::Syntax, message: msg.into(), stack: Vec::new(), thrown_value: None })
+        Rc::new(Error { kind: ErrorKind::Syntax, message: msg.into(), stack: Vec::new(), thrown_value: None, line: None })
     }
     pub fn reference(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error { kind: ErrorKind::Reference, message: msg.into(), stack: Vec::new(), thrown_value: None })
+        Rc::new(Error { kind: ErrorKind::Reference, message: msg.into(), stack: Vec::new(), thrown_value: None, line: None })
     }
     pub fn type_err(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error { kind: ErrorKind::Type, message: msg.into(), stack: Vec::new(), thrown_value: None })
+        Rc::new(Error { kind: ErrorKind::Type, message: msg.into(), stack: Vec::new(), thrown_value: None, line: None })
     }
     pub fn range(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error { kind: ErrorKind::Range, message: msg.into(), stack: Vec::new(), thrown_value: None })
+        Rc::new(Error { kind: ErrorKind::Range, message: msg.into(), stack: Vec::new(), thrown_value: None, line: None })
     }
     pub fn internal(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error { kind: ErrorKind::Internal, message: msg.into(), stack: Vec::new(), thrown_value: None })
+        Rc::new(Error { kind: ErrorKind::Internal, message: msg.into(), stack: Vec::new(), thrown_value: None, line: None })
     }
-    pub fn user(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error { kind: ErrorKind::User, message: msg.into(), stack: Vec::new(), thrown_value: None })
+    pub fn thrown(v: Value, heap: &crate::gc::Heap) -> Rc<Error> {
+        let msg = value_to_message(&v, heap);
+        Rc::new(Error { kind: ErrorKind::User, message: msg, stack: Vec::new(), thrown_value: Some(v), line: None })
     }
-    pub fn thrown(v: crate::value::Value) -> Rc<Error> {
-        let msg = match &v {
-            crate::value::Value::String(s) => s.to_string(),
-            crate::value::Value::Undefined => "undefined".to_string(),
-            crate::value::Value::Null => "null".to_string(),
-            crate::value::Value::Number(n) => crate::value::num_to_string(*n),
-            crate::value::Value::Bool(b) => b.to_string(),
-            crate::value::Value::Object(o) => {
-                let o = o.borrow();
-                if let Some(d) = o.props.get("message") {
-                    if let crate::value::Value::String(s) = &d.value { s.to_string() } else { format!("{:?}", d.value) }
-                } else { "[object Object]".to_string() }
-            }
-            crate::value::Value::Function(_) => "function".to_string(),
-        };
-        Rc::new(Error { kind: ErrorKind::User, message: msg, stack: Vec::new(), thrown_value: Some(v) })
+}
+
+fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
+    match v {
+        Value::String(s) => s.to_string(),
+        Value::Undefined => "undefined".to_string(),
+        Value::Null => "null".to_string(),
+        Value::Number(n) => crate::value::num_to_string(*n),
+        Value::Bool(b) => b.to_string(),
+        Value::Object(idx) => {
+            heap.with_obj(idx.0, |obj| {
+                let props = obj.props();
+                if let Some(desc) = props.borrow().get("message") {
+                    match &desc.value {
+                        Value::String(s) => s.to_string(),
+                        _ => "[object Error]".to_string(),
+                    }
+                } else {
+                    "[object Object]".to_string()
+                }
+            })
+        }
+        Value::Symbol(_) => "Symbol".to_string(),
     }
 }
 
@@ -71,19 +82,23 @@ impl fmt::Display for Error {
             ErrorKind::User => "Error",
             ErrorKind::Internal => "InternalError",
         };
-        write!(f, "{}: {}", name, self.message)
+        if let Some(line) = self.line {
+            write!(f, "{}: {} (at line {})", name, self.message, line)
+        } else {
+            write!(f, "{}: {}", name, self.message)
+        }
     }
 }
 
 pub type Result<T> = std::result::Result<T, Rc<Error>>;
 
-/// Internal control-flow signals (break/continue/return) that are not real errors.
+/// Internal control-flow signals.
 #[derive(Debug)]
 pub enum Completion {
     Normal,
     Break(Option<String>),
     Continue(Option<String>),
-    Return(crate::value::Value),
+    Return(Value),
 }
 
 impl Completion {
