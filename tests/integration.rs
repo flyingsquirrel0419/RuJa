@@ -89,3 +89,44 @@ fn globals() {
     assert_eq!(run("parseInt('42');"), Value::Number(42.0));
     assert_eq!(run("isNaN(NaN);"), Value::Bool(true));
 }
+
+#[test]
+fn map_basic() {
+    assert_eq!(run("let m = new Map(); m.set('a', 1); m.get('a');"), Value::Number(1.0));
+    assert_eq!(run("let m = new Map(); m.set('x', 1); m.set('y', 2); m.size;"), Value::Number(2.0));
+    assert_eq!(run("let m = new Map(); m.set('a', 1); m.has('a');"), Value::Bool(true));
+    assert_eq!(run("let m = new Map(); m.set('a', 1); m.delete('a'); m.has('a');"), Value::Bool(false));
+}
+
+#[test]
+fn set_basic() {
+    assert_eq!(run("let s = new Set(); s.add(1); s.add(2); s.add(1); s.size;"), Value::Number(2.0));
+    assert_eq!(run("let s = new Set(); s.add(1); s.has(1);"), Value::Bool(true));
+}
+
+#[test]
+fn symbol_type() {
+    assert_eq!(run("typeof Symbol();"), Value::String(Rc::from("symbol")));
+}
+
+#[test]
+fn prototype_inheritance() {
+    let src = r#"function Shape() {} Shape.prototype.describe = function() { return 'shape'; }; new Shape().describe();"#;
+    assert_eq!(run(src), Value::String(Rc::from("shape")));
+}
+
+#[test]
+fn array_method_chaining() {
+    assert_eq!(run("[1,2,3,4,5].filter(x => x > 2).map(x => x * 2).join(',');"), Value::String(Rc::from("6,8,10")));
+}
+
+#[test]
+fn string_split_join() {
+    assert_eq!(run("'a,b,c'.split(',').join('-');"), Value::String(Rc::from("a-b-c")));
+}
+
+#[test]
+fn nested_functions() {
+    let src = r#"function outer() { let x = 10; function inner() { return x; } return inner(); } outer();"#;
+    assert_eq!(run(src), Value::Number(10.0));
+}

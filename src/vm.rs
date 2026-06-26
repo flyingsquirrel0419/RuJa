@@ -191,7 +191,11 @@ impl Vm {
                         Value::String(s) => s.to_string(),
                         _ => self.to_string(&name_val)?.to_string(),
                     };
-                    crate::environment::declare(&self.heap, self.global, &name, value, crate::value::BindingKind::Var);
+                    // try to set in current scope chain first, else declare in global
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
+                        crate::environment::declare(&self.heap, self.global, &name, value, crate::value::BindingKind::Var);
+                    }
                     self.stack.push(Value::Undefined);
                 }
                 Op::LoadLocal(idx) => {
@@ -389,14 +393,31 @@ impl Vm {
                 Op::MakeClosure(func_idx) => {
                     if let Some(fdef) = self.functions.get(func_idx).cloned() {
                         let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                        let is_arrow = fdef.is_arrow;
+                        // create a .prototype object for non-arrow functions
+                        let proto_val = if !fdef.is_arrow {
+                            let proto = HeapObj::Object(crate::value::ObjectData {
+                                props: RefCell::new(HashMap::new()),
+                                proto: RefCell::new(Some(self.object_proto.clone())),
+                                extensible: std::cell::Cell::new(true),
+                                class_name: None,
+                            });
+                            Value::Object(GcIdx(self.heap.allocate(proto)))
+                        } else { Value::Undefined };
                         let fd = crate::value::FunctionData {
                             name: fdef.name.clone(),
                             kind: crate::value::FunctionKind::Interpreted { func: fdef },
                             closure: env_idx,
-                            prototype: RefCell::new(None),
+                            prototype: RefCell::new(if !is_arrow { Some(proto_val.clone()) } else { None }),
                             props: RefCell::new(HashMap::new()),
                         };
                         let idx = self.heap.allocate(HeapObj::Function(fd));
+                        // link prototype.constructor back to the function
+                        if let Value::Object(pidx) = &proto_val {
+                            self.heap.with_obj(pidx.0, |obj| {
+                                obj.props().borrow_mut().insert(Rc::from("constructor"), crate::value::PropertyDescriptor::data(Value::Object(GcIdx(idx))));
+                            });
+                        }
                         self.stack.push(Value::Object(GcIdx(idx)));
                     } else {
                         self.stack.push(Value::Undefined);

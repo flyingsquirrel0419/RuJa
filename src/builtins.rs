@@ -1133,4 +1133,213 @@ pub fn setup_full(vm: &mut Vm) {
     define_global(vm, "NaN", Value::Number(f64::NAN));
     define_global(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global(vm, "undefined", Value::Undefined);
+    setup_collections(vm);
+}
+
+// =========================================================================
+// Map
+// =========================================================================
+fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let val = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                let mut entries = m.entries.borrow_mut();
+                if let Some(slot) = entries.iter_mut().find(|(k, _)| k == &key) {
+                    slot.1 = val;
+                } else {
+                    entries.push((key, val));
+                }
+            }
+        });
+    }
+    Ok(this.unwrap_or(Value::Undefined))
+}
+fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        return Ok(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                m.entries.borrow().iter().find(|(k, _)| k == &key).map(|(_, v)| v.clone()).unwrap_or(Value::Undefined)
+            } else { Value::Undefined }
+        }));
+    }
+    Ok(Value::Undefined)
+}
+fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj { m.entries.borrow().iter().any(|(k, _)| k == &key) } else { false }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                let mut entries = m.entries.borrow_mut();
+                let len = entries.len();
+                entries.retain(|(k, _)| k != &key);
+                entries.len() != len
+            } else { false }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj { m.entries.borrow_mut().clear(); }
+        });
+    }
+    Ok(Value::Undefined)
+}
+fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj { m.entries.borrow().len() } else { 0 }
+        }) as f64));
+    }
+    Ok(Value::Number(0.0))
+}
+fn map_constructor(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let obj = HeapObj::Map(MapData {
+        entries: RefCell::new(Vec::new()),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.map_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+}
+
+// =========================================================================
+// Set
+// =========================================================================
+fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(s) = obj {
+                let mut items = s.items.borrow_mut();
+                if !items.iter().any(|i| i == &val) { items.push(val); }
+            }
+        });
+    }
+    Ok(this.unwrap_or(Value::Undefined))
+}
+fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(s) = obj { s.items.borrow().iter().any(|i| i == &val) } else { false }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+fn set_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(s) = obj {
+                let mut items = s.items.borrow_mut();
+                let len = items.len();
+                items.retain(|i| i != &val);
+                items.len() != len
+            } else { false }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(s) = obj { s.items.borrow().len() } else { 0 }
+        }) as f64));
+    }
+    Ok(Value::Number(0.0))
+}
+fn set_constructor(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let obj = HeapObj::Set(SetData {
+        items: RefCell::new(Vec::new()),
+        props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.set_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+}
+
+// =========================================================================
+// Symbol
+// =========================================================================
+fn symbol_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let _desc = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let id = vm.next_symbol_id;
+    vm.next_symbol_id += 1;
+    Ok(Value::Symbol(id))
+}
+fn symbol_for(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let id = vm.next_symbol_id;
+    vm.next_symbol_id += 1;
+    Ok(Value::Symbol(id))
+}
+
+// =========================================================================
+// Extended setup 2: Map/Set/Symbol
+// =========================================================================
+pub fn setup_collections(vm: &mut Vm) {
+    // Map
+    let (map_ctor, map_proto) = make_builtin_constructor_with(vm, "Map", map_constructor, &[
+        ("set", map_set, 2), ("get", map_get, 1), ("has", map_has, 1),
+        ("delete", map_delete, 1), ("clear", map_clear, 0), ("size", map_size, 0),
+    ]);
+    vm.map_proto = Value::Object(map_proto);
+    define_global(vm, "Map", Value::Object(map_ctor));
+    // Set
+    let (set_ctor, set_proto) = make_builtin_constructor_with(vm, "Set", set_constructor, &[
+        ("add", set_add, 1), ("has", set_has, 1), ("delete", set_delete, 1), ("size", set_size, 0),
+    ]);
+    vm.set_proto = Value::Object(set_proto);
+    define_global(vm, "Set", Value::Object(set_ctor));
+    // Symbol
+    let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1);
+    define_global(vm, "Symbol", Value::Object(sym_idx));
+    let sym_for_idx = vm.new_native_function("for", symbol_for, 1);
+    if let Value::Object(idx) = Value::Object(sym_idx) {
+        vm.heap.with_obj(idx.0, |obj| {
+            obj.props().borrow_mut().insert(Rc::from("for"), data_prop(Value::Object(sym_for_idx)));
+            obj.props().borrow_mut().insert(Rc::from("iterator"), data_prop(Value::Symbol(vm.well_known_symbols.iterator)));
+        });
+    }
+}
+
+fn make_builtin_constructor_with(vm: &mut Vm, name: &str, ctor: NativeFn, methods: &[(&str, NativeFn, usize)]) -> (GcIdx, GcIdx) {
+    let mut method_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    for (n, f, len) in methods {
+        let func_idx = vm.new_native_function(n, *f, *len);
+        method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
+    }
+    let proto_obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(method_props),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from(name)),
+    });
+    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+    let ctor_func = FunctionData {
+        name: Some(Rc::from(name)),
+        kind: FunctionKind::Native { func: ctor, length: 0 },
+        closure: vm.global,
+        prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        props: RefCell::new(HashMap::new()),
+    };
+    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    vm.heap.with_obj(ctor_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+    });
+    vm.heap.with_obj(proto_idx.0, |obj| {
+        obj.props().borrow_mut().insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+    });
+    (ctor_idx, proto_idx)
 }
