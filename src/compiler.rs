@@ -358,8 +358,8 @@ impl Compiler {
                 }
             }
             Expr::This => {
-                // load this from frame (slot 0 reserved? use a special)
-                self.chunk.emit(Op::Undefined, 0); // placeholder
+                let name_idx = self.intern("this");
+                self.chunk.emit(Op::LoadEnv(name_idx), 0);
             }
             Expr::Update(op, prefix, target) => {
                 // load current value

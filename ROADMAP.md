@@ -1,34 +1,35 @@
 # RuJa Roadmap
 
-RuJa is a JavaScript engine written in Rust. The goal of v1.0 is a working
-tree-walking interpreter that runs a pragmatic ES5.1 subset with built-in
-objects, a REPL, a CLI, and a test suite. A future v2.0 will introduce a
-bytecode VM and a tracing garbage collector.
+RuJa is a JavaScript engine written in Rust.
 
-Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
+## v2.0 (alpha) - Bytecode VM + GC
 
-## v1.0 - Tree-walking interpreter
+- [x] Stack-based bytecode VM
+- [x] Mark-and-sweep garbage collector
+- [x] HeapObj enum value model with GcIdx handles
+- [x] AST-to-bytecode compiler
+- [x] Function calls, recursion, this binding
+- [x] try/catch via VM catch stack
+- [x] Built-in: Math, JSON, console, Object, Array, String, Number, Boolean, Error
+- [x] Map, Set, Symbol
+- [x] CLI + REPL
+- [ ] Closure capture of outer locals (in progress)
+- [ ] class syntax
+- [ ] test262 conformance harness
 
-1. [x] Project scaffold + design (Cargo.toml, module tree, value/AST/error model)
-2. [x] Lexer (tokenization, ASI, template literals)
-3. [x] Parser (Pratt expressions, statements, functions, program)
-4. [x] Value model + environment scope chain
-5. [x] Interpreter core (arithmetic/comparison/logic/assignment/control flow)
-6. [x] Functions + closures
-7. [x] Objects / prototype / `this` / `new`
-8. [x] Built-in objects (Array/String/Number/Boolean/Object/Function/Math/JSON/console/Error)
-9. [x] Error handling (`throw` / `try` / `catch` / `finally`)
-10. [x] REPL + CLI
-11. [x] Test suite (fixtures + regression)
-12. [x] Release prep (README/docs/CHANGELOG/CI)
-13. [x] Release verification (tests pass + CLI runs + metadata sync)
+## v2.1 (planned)
 
-## v2.0 - Performance tier (post-v1.0)
+- Promise + microtask queue
+- async/await + generators
+- class/extends
+- Destructuring, default/rest params, template interpolation
+- test262 ES2015 subset 85% pass gate
 
-- Bytecode compiler + stack VM
-- Tracing garbage collector
-- ES2015+ features (`class`, `import`/`export`, `async`/`await`, generators)
+## v2.2+ (future)
 
-## Tracking
+- Hidden classes, inline caches
+- Incremental/concurrent GC
+- ES modules (import/export)
+- Full test262 conformance
 
-This file is updated as each step is completed. Last updated: 2026-06-26.
+Last updated: 2026-06-27.

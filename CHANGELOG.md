@@ -1,28 +1,34 @@
 # Changelog
 
-## [0.1.0] - 2026-06-26
+## [2.0.0-alpha] - 2026-06-27
 
-Initial release of RuJa, a JavaScript engine written in Rust.
+Complete rewrite: bytecode VM + mark-and-sweep GC.
 
 ### Added
-- Lexer with full token coverage, ASI, and comment support
-- Pratt-style recursive-descent parser producing an AST
-- Tree-walking interpreter with closures and prototype chains
-- `var`/`let`/`const` scoping, block and function scope
-- Control flow: `if`/`else`, `while`, `do...while`, `for`, `for...in`, `for...of`,
-  `switch`, labeled `break`/`continue`
-- Functions, closures, and arrow functions with lexical `this`
-- Objects, arrays, prototype chain, `new`, `instanceof`, `this` binding
-- `throw`/`try`/`catch`/`finally` with `Error` type hierarchy
-- Built-in objects: `Object`, `Array`, `String`, `Number`, `Boolean`,
-  `Function`, `Math`, `JSON`, `console`
-- Array methods: `push`, `pop`, `shift`, `unshift`, `join`, `slice`, `concat`,
-  `reverse`, `forEach`, `map`, `filter`, `reduce`, `find`, `includes`, `indexOf`
-- String methods: `charAt`, `charCodeAt`, `slice`, `substring`, `substr`,
-  `split`, `replace`, `includes`, `startsWith`, `endsWith`, `repeat`, `trim`,
-  `toUpperCase`, `toLowerCase`, `concat`
-- `parseInt`, `parseFloat`, `isNaN`, `isFinite`
-- Spread in arrays and calls, nullish coalescing
-- CLI with file execution, `-e` eval, `--version`, `--help`
-- Interactive REPL with multi-line block support
-- JSON parse and stringify
+- Stack-based bytecode VM (`vm.rs`) replacing the tree-walking interpreter
+- Self-contained mark-and-sweep garbage collector (`gc.rs`)
+- `HeapObj` enum value model with `GcIdx` handles, GC-traced
+- AST-to-bytecode compiler with lexical scope resolution
+- Function calls, recursion, `this` binding via VM call frames
+- Function `.prototype` object creation and constructor linking
+- `try`/`catch` via VM catch stack
+- Global variable storage via `StoreGlobal`/`LoadGlobal`
+- Built-in: `Math` (full), `JSON` (parse/stringify), `console`, `Object`,
+  `Array` (push/map/filter/reduce/forEach/slice/concat/join/includes/indexOf),
+  `String` (charAt/slice/split/replace/trim/case conversions/repeat),
+  `Number`, `Boolean`, `Error`, `Map`, `Set`, `Symbol`
+- `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `NaN`, `Infinity`, `undefined`
+- CLI with file execution, `-e` eval, `--version`, `--help`, REPL
+
+### Changed
+- Value model: `Rc<RefCell<Obj>>` replaced with GC-managed `HeapObj`
+- Execution: tree-walking `interpreter.rs` removed; bytecode VM is the engine
+
+### Known issues
+- Closure capture of outer locals (partial)
+- `class`/`async`/`await`/generators/Promise runtime not yet implemented
+- test262 conformance harness pending
+
+## [0.1.0-alpha] - 2026-06-26
+
+Initial tree-walking interpreter release.
