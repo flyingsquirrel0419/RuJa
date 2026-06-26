@@ -529,6 +529,81 @@ impl Compiler {
                 self.funcs.push(Rc::new(fdef));
                 self.chunk.emit(Op::MakeClosure(func_idx), 0);
             }
+            Expr::Class(cls) => {
+                // Build a constructor function from the class.
+                // Methods become prototype properties (or static on the constructor).
+                let ctor_fn = FunctionExpr {
+                    name: cls.name.clone(),
+                    params: cls.methods.iter().find(|m| m.is_constructor)
+                        .map(|m| m.params.clone()).unwrap_or_default(),
+                    body: cls.methods.iter().find(|m| m.is_constructor)
+                        .map(|m| m.body.clone()).unwrap_or_default(),
+                    is_arrow: false,
+                    is_async: false,
+                    is_generator: false,
+                    param_decls: Vec::new(),
+                };
+                let func_chunk = self.compile_function(&ctor_fn)?;
+                let func_idx = self.funcs.len();
+                let fdef = crate::function::FunctionDef {
+                    name: cls.name.clone(),
+                    params: ctor_fn.params.clone(),
+                    chunk: Rc::new(func_chunk),
+                    num_locals: ctor_fn.params.len() + 16,
+                    is_arrow: false,
+                    is_async: false,
+                    is_generator: false,
+                };
+                self.funcs.push(Rc::new(fdef));
+                self.chunk.emit(Op::MakeClosure(func_idx), 0);
+                // assign each non-constructor method to prototype (or constructor if static)
+                for method in &cls.methods {
+                    if method.is_constructor { continue; }
+                    let m_fn = FunctionExpr {
+                        name: Some(method.name.clone()),
+                        params: method.params.clone(),
+                        body: method.body.clone(),
+                        is_arrow: false, is_async: false, is_generator: false,
+                        param_decls: Vec::new(),
+                    };
+                    let m_chunk = self.compile_function(&m_fn)?;
+                    let m_idx = self.funcs.len();
+                    let mdef = crate::function::FunctionDef {
+                        name: Some(method.name.clone()),
+                        params: method.params.clone(),
+                        chunk: Rc::new(m_chunk),
+                        num_locals: method.params.len() + 16,
+                        is_arrow: false, is_async: false, is_generator: false,
+                    };
+                    self.funcs.push(Rc::new(mdef));
+                    if method.is_static {
+                        // Constructor.method = fn
+                        self.chunk.emit(Op::Dup, 0); // dup constructor
+                        let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                        self.chunk.emit(Op::Const(key_idx), 0);
+                        self.chunk.emit(Op::MakeClosure(m_idx), 0);
+                        self.chunk.emit(Op::SetProp, 0);
+                        self.chunk.emit(Op::Pop, 0);
+                    } else {
+                        // Constructor.prototype.method = fn
+                        self.chunk.emit(Op::Dup, 0); // dup constructor
+                        let proto_key = self.chunk.add_constant(Value::String(Rc::from("prototype")));
+                        self.chunk.emit(Op::Const(proto_key), 0);
+                        self.chunk.emit(Op::GetProp, 0);
+                        // stack: [ctor, proto_obj] — push key then value then SetProp
+                        let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                        self.chunk.emit(Op::Const(key_idx), 0);
+                        self.chunk.emit(Op::MakeClosure(m_idx), 0);
+                        self.chunk.emit(Op::SetProp, 0);
+                        self.chunk.emit(Op::Pop, 0);
+                    }
+                }
+                // store the constructor under the class name
+                if let Some(name) = &cls.name {
+                    let name_idx = self.intern(&**name);
+                    self.chunk.emit(Op::StoreEnv(name_idx), 0);
+                }
+            }
             Expr::Sequence(exprs) => {
                 for (i, e) in exprs.iter().enumerate() {
                     self.compile_expr(e)?;

@@ -65,6 +65,7 @@ impl Parser {
             TokenKind::LBrace => self.parse_block(),
             TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
             TokenKind::Function => self.parse_function_decl(),
+            TokenKind::Class => self.parse_class_decl(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::Do => self.parse_do_while(),
@@ -809,9 +810,43 @@ impl Parser {
     }
 
     fn parse_class_decl(&mut self) -> error::Result<Stmt> {
-        let e = self.parse_expr()?;
-        self.expect_semi()?;
-        Ok(Stmt::ExprStmt(e))
+        // Parse a class declaration as a statement that evaluates the class expr.
+        let cls = self.parse_class_body()?;
+        Ok(Stmt::ExprStmt(Expr::Class(cls)))
+    }
+
+    fn parse_class_body(&mut self) -> error::Result<ClassExpr> {
+        self.advance(); // 'class'
+        let name = match self.peek().clone() {
+            TokenKind::Ident(s) => { self.advance(); Some(Rc::from(s.as_str())) }
+            _ => None,
+        };
+        let superclass = if self.eat(&TokenKind::Extends) {
+            Some(Box::new(self.parse_postfix()?))
+        } else { None };
+        self.expect(&TokenKind::LBrace, "{")?;
+        let mut methods = Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let is_static = self.eat(&TokenKind::Static);
+            let is_constructor = matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
+            let method_name = if is_constructor {
+                self.advance();
+                Rc::from("constructor")
+            } else {
+                Rc::from(self.read_property_name()?.as_str())
+            };
+            let params = self.parse_params()?;
+            let body = self.parse_fn_body()?;
+            methods.push(ClassMethod {
+                name: method_name,
+                params,
+                body,
+                is_static,
+                is_constructor,
+            });
+        }
+        self.expect(&TokenKind::RBrace, "}")?;
+        Ok(ClassExpr { name, superclass, methods })
     }
     fn parse_async_or_expr_stmt(&mut self) -> error::Result<Stmt> {
         let e = self.parse_expr()?;

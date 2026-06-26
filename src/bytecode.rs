@@ -111,6 +111,7 @@ pub enum Op {
 
     // Closures
     MakeClosure(usize),  // function index, captures current env
+    MakeClass(usize),    // class definition index in function table
 
     // Iteration
     GetIterator,

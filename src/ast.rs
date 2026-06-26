@@ -1,6 +1,22 @@
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClassExpr {
+    pub name: Option<Rc<str>>,
+    pub superclass: Option<Box<Expr>>,
+    pub methods: Vec<ClassMethod>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassMethod {
+    pub name: Rc<str>,
+    pub params: Vec<Rc<str>>,
+    pub body: Vec<Stmt>,
+    pub is_static: bool,
+    pub is_constructor: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
     String(Rc<str>),
@@ -15,6 +31,7 @@ pub enum Expr {
     Object(Vec<Property>),
     Function(FunctionExpr),
     Arrow(FunctionExpr),
+    Class(ClassExpr),
     Unary(UnOp, Box<Expr>),
     Update(UpdateOp, bool, Box<Expr>), // op, prefix, expr
     Binary(BinOp, Box<Expr>, Box<Expr>),

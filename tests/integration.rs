@@ -171,3 +171,21 @@ fn prototype_method() {
 fn object_method_assignment() {
     assert_eq!(run("let o = {}; o.f = function(){ return 5; }; o.f();"), Value::Number(5.0));
 }
+
+#[test]
+fn class_basic() {
+    let src = r#"
+        class Point {
+            constructor(x, y) { this.x = x; this.y = y; }
+            sum() { return this.x + this.y; }
+        }
+        let p = new Point(3, 4);
+        p.sum();
+    "#;
+    assert_eq!(run(src), Value::Number(7.0));
+}
+
+#[test]
+fn class_constructor_field() {
+    assert_eq!(run("class A { constructor(x) { this.x = x; } } new A(42).x;"), Value::Number(42.0));
+}
