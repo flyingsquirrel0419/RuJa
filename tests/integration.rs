@@ -130,3 +130,44 @@ fn nested_functions() {
     let src = r#"function outer() { let x = 10; function inner() { return x; } return inner(); } outer();"#;
     assert_eq!(run(src), Value::Number(10.0));
 }
+
+#[test]
+fn closures() {
+    let src = r#"
+        function mk() { let c = 0; return function() { c = c + 1; return c; }; }
+        let f = mk(); f(); f();
+    "#;
+    assert_eq!(run(src), Value::Number(2.0));
+}
+
+#[test]
+fn closure_capture_read() {
+    assert_eq!(run("function mk(){ let c = 42; return function(){ return c; }; } mk()();"), Value::Number(42.0));
+}
+
+#[test]
+fn this_in_method() {
+    let src = r#"
+        let calc = {
+            value: 10,
+            add: function(n) { return this.value + n; }
+        };
+        calc.add(5);
+    "#;
+    assert_eq!(run(src), Value::Number(15.0));
+}
+
+#[test]
+fn prototype_method() {
+    let src = r#"
+        function Animal(name) { this.name = name; }
+        Animal.prototype.speak = function() { return this.name + " speaks"; };
+        new Animal("Rex").speak();
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("Rex speaks")));
+}
+
+#[test]
+fn object_method_assignment() {
+    assert_eq!(run("let o = {}; o.f = function(){ return 5; }; o.f();"), Value::Number(5.0));
+}
