@@ -317,6 +317,7 @@ impl Compiler {
 
     fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<Chunk> {
         let saved_chunk = std::mem::take(&mut self.chunk);
+        let saved_names = std::mem::take(&mut self.name_map);
         self.scopes.push(Scope { bindings: HashMap::new(), is_function: true, base: 0 });
         for (i, param) in f.params.iter().enumerate() {
             self.declare(param, VarKind::Let);
@@ -328,6 +329,7 @@ impl Compiler {
         self.chunk.emit(Op::ReturnUndefined, 0);
         self.pop_scope();
         let func_chunk = std::mem::take(&mut self.chunk);
+        self.name_map = saved_names;
         self.chunk = saved_chunk;
         Ok(func_chunk)
     }
