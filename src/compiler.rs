@@ -122,13 +122,15 @@ impl Compiler {
                     } else {
                         self.chunk.emit(Op::Undefined, 0);
                     }
-                    self.declare(name, *kind);
                     // store: at top level go to global, otherwise local slot
                     if self.scopes.len() == 1 {
+                        // top-level: declare in global env, don't use local slots
+                        self.declare(name, *kind);
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                         self.chunk.emit(Op::Const(name_idx), 0);
                         self.chunk.emit(Op::StoreGlobal, 0);
                     } else if let Some((slot, _)) = self.resolve(name) {
+                        self.declare(name, *kind);
                         self.chunk.emit(Op::StoreLocal(slot), 0);
                     }
                 }
@@ -229,8 +231,9 @@ impl Compiler {
                 self.push_scope(true);
                 if let Some(param) = catch_param {
                     self.declare(param, VarKind::Let);
-                    let name_idx = self.intern(&**param);
-                    self.chunk.emit(Op::DeclareEnv(name_idx), 0);
+                    if let Some((slot, _)) = self.resolve(param) {
+                        self.chunk.emit(Op::StoreLocal(slot), 0);
+                    }
                 }
                 self.compile_stmt(catch_body)?;
                 self.pop_scope();
