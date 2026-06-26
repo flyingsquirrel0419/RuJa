@@ -93,14 +93,14 @@ fn globals() {
 #[test]
 fn map_basic() {
     assert_eq!(run("let m = new Map(); m.set('a', 1); m.get('a');"), Value::Number(1.0));
-    assert_eq!(run("let m = new Map(); m.set('x', 1); m.set('y', 2); m.size;"), Value::Number(2.0));
+    assert_eq!(run("let m = new Map(); m.set('x', 1); m.set('y', 2); m.size();"), Value::Number(2.0));
     assert_eq!(run("let m = new Map(); m.set('a', 1); m.has('a');"), Value::Bool(true));
     assert_eq!(run("let m = new Map(); m.set('a', 1); m.delete('a'); m.has('a');"), Value::Bool(false));
 }
 
 #[test]
 fn set_basic() {
-    assert_eq!(run("let s = new Set(); s.add(1); s.add(2); s.add(1); s.size;"), Value::Number(2.0));
+    assert_eq!(run("let s = new Set(); s.add(1); s.add(2); s.add(1); s.size();"), Value::Number(2.0));
     assert_eq!(run("let s = new Set(); s.add(1); s.has(1);"), Value::Bool(true));
 }
 
@@ -111,7 +111,7 @@ fn symbol_type() {
 
 #[test]
 fn prototype_inheritance() {
-    let src = r#"function Shape() {} Shape.prototype.describe = function() { return 'shape'; }; new Shape().describe();"#;
+    let src = r#"function Shape() {} Shape.prototype.describe = function() { return 'shape'; }; let s = new Shape(); s.describe();"#;
     assert_eq!(run(src), Value::String(Rc::from("shape")));
 }
 

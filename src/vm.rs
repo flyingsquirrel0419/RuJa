@@ -723,9 +723,19 @@ impl Vm {
                         }
                         if let Ok(i) = key.parse::<usize>() {
                             let items = a.items.borrow();
-                            return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
-                        }
+                           return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
+                       }
+                   }
+                if let HeapObj::Map(m) = o {
+                    if key == "size" {
+                        return Ok(Value::Number(m.entries.borrow().len() as f64));
                     }
+                }
+                if let HeapObj::Set(s) = o {
+                    if key == "size" {
+                        return Ok(Value::Number(s.items.borrow().len() as f64));
+                    }
+                }
                 let props = o.props();
                 if let Some(desc) = props.borrow().get(key) {
                     return Ok(desc.value.clone());

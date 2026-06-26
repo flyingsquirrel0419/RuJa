@@ -557,10 +557,8 @@ impl Parser {
             match self.peek() {
                 TokenKind::Dot => {
                     self.advance();
-                    let prop = match self.advance() {
-                        TokenKind::Ident(s) => Expr::String(Rc::from(s.as_str())),
-                        other => return Err(error::Error::syntax(format!("Expected property name after ., got {:?}", other))),
-                    };
+                    let name = self.read_property_name()?;
+                    let prop = Expr::String(Rc::from(name.as_str()));
                     e = Expr::Member { object: Box::new(e), property: Box::new(prop), computed: false };
                 }
                 TokenKind::LBracket => {
@@ -714,10 +712,20 @@ impl Parser {
 
     fn parse_new(&mut self) -> error::Result<Expr> {
         self.advance(); // new
-        let callee = self.parse_call()?;
-        // callee already consumed the call parens; distinguish constructor call.
-        if let Expr::Call { callee: c, args } = callee {
-            Ok(Expr::New { callee: c, args })
+        // parse the constructor (primary + member access, but NOT call parens)
+        let mut callee = self.parse_primary()?;
+        // allow member access on the constructor: new Foo.Bar()
+        while self.check(&TokenKind::Dot) {
+            self.advance();
+            let name = self.read_property_name()?;
+            let prop = Expr::String(Rc::from(name.as_str()));
+            callee = Expr::Member { object: Box::new(callee), property: Box::new(prop), computed: false };
+        }
+        if self.check(&TokenKind::LParen) {
+            self.advance();
+            let args = self.parse_args()?;
+            self.expect(&TokenKind::RParen, ")")?;
+            Ok(Expr::New { callee: Box::new(callee), args })
         } else {
             Ok(Expr::New { callee: Box::new(callee), args: Vec::new() })
         }
@@ -777,6 +785,29 @@ impl Parser {
             Ok(Expr::Arrow(FunctionExpr { name: None, params, body: vec![Stmt::Return(Some(e))], is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
         }
     }
+
+    fn read_property_name(&mut self) -> error::Result<String> {
+        // Accept identifiers and keywords as property names after `.`
+        let name = match self.peek().clone() {
+            TokenKind::Ident(s) => s,
+            TokenKind::Delete => "delete".to_string(),
+            TokenKind::Typeof => "typeof".to_string(),
+            TokenKind::Void => "void".to_string(),
+            TokenKind::New => "new".to_string(),
+            TokenKind::Of => "of".to_string(),
+            TokenKind::In => "in".to_string(),
+            TokenKind::Instanceof => "instanceof".to_string(),
+            TokenKind::This => "this".to_string(),
+            TokenKind::Null => "null".to_string(),
+            TokenKind::True => "true".to_string(),
+            TokenKind::False => "false".to_string(),
+            TokenKind::Undefined => "undefined".to_string(),
+            other => return Err(error::Error::syntax(format!("Expected property name after ., got {:?}", other))),
+        };
+        self.advance();
+        Ok(name)
+    }
+
     fn parse_class_decl(&mut self) -> error::Result<Stmt> {
         let e = self.parse_expr()?;
         self.expect_semi()?;

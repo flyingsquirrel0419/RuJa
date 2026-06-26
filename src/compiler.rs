@@ -419,20 +419,7 @@ impl Compiler {
             }
             Expr::Assign(op, target, value) => {
                 if matches!(op, AssignOp::Assign) {
-                    self.compile_expr(value)?;
-                    self.chunk.emit(Op::Dup, 0);
-                    if self.scopes.len() > 1 {
-                        if let Expr::Ident(name) = target.as_ref() {
-                            let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
-                            self.chunk.emit(Op::StoreEnvName(name_idx), 0);
-                        } else { self.compile_assign_target(target)?; }
-                    } else {
-                        if let Expr::Ident(name) = target.as_ref() {
-                            let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
-                            self.chunk.emit(Op::Const(name_idx), 0);
-                            self.chunk.emit(Op::StoreGlobal, 0);
-                        } else { self.compile_assign_target(target)?; }
-                    }
+                    self.compile_assign_target_store(target, value)?;
                 } else {
                     // compound: load, op, store
                     self.compile_expr(target)?;
