@@ -6,7 +6,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Allocate a new environment in the heap.
 pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> GcIdx {
     let env = HeapObj::Environment(crate::value::EnvironmentData {
         vars: RefCell::new(HashMap::new()),
@@ -21,73 +20,79 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
         if let HeapObj::Environment(e) = obj {
             e.vars.borrow_mut().insert(
                 Rc::from(name),
-                crate::value::Binding { value: RefCell::new(value), kind },
+                crate::value::Binding { value: RefCell::new(value.clone()), kind },
             );
+            eprintln!("DECLARE name={} val={:?} count={}", name, value, e.vars.borrow().len());
         }
     });
 }
 
 pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
-    let (val, parent) = heap.with_obj(env.0, |obj| {
-        if let HeapObj::Environment(e) = obj {
-            if let Some(b) = e.vars.borrow().get(name) {
-                return (Some(b.value.borrow().clone()), None);
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (val, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    return (Some(b.value.borrow().clone()), None);
+                }
+                return (None, *e.parent.borrow());
             }
-            return (None, *e.parent.borrow());
+            (None, None)
+        });
+        if let Some(v) = val {
+            return Some(v);
         }
-        (None, None)
-    });
-    if let Some(v) = val {
-        return Some(v);
-    }
-    if let Some(p) = parent {
-        return get(heap, p, name);
+        cur = parent;
     }
     None
 }
 
 pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
-    let value_copy = value.clone();
-    let (found, parent) = heap.with_obj(env.0, |obj| {
-        if let HeapObj::Environment(e) = obj {
-            if let Some(b) = e.vars.borrow().get(name) {
-                if b.kind == BindingKind::Const {
-                    return (false, None); // assignment to const
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (found, is_const, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    return (true, b.kind == BindingKind::Const, None);
                 }
-                *b.value.borrow_mut() = value_copy;
-                return (true, None);
+                return (false, false, *e.parent.borrow());
             }
-            return (false, *e.parent.borrow());
+            (false, false, None)
+        });
+        if found {
+            if is_const {
+                return false;
+            }
+            heap.with_obj(e_idx.0, |obj| {
+                if let HeapObj::Environment(e) = obj {
+                    if let Some(b) = e.vars.borrow().get(name) {
+                        *b.value.borrow_mut() = value.clone();
+                    } else {
+                    }
+                }
+            });
+            return true;
         }
-        (false, None)
-    });
-    if found {
-        return true;
-    }
-    // false could mean "not found" or "const violation"; caller distinguishes
-    if let Some(p) = parent {
-        return set(heap, p, name, value.clone());
+        cur = parent;
     }
     false
 }
 
 pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
-    let (found, parent) = heap.with_obj(env.0, |obj| {
-        if let HeapObj::Environment(e) = obj {
-            return (e.vars.borrow().contains_key(name), *e.parent.borrow());
-        }
-        (false, None)
-    });
-    if found {
-        return true;
-    }
-    if let Some(p) = parent {
-        return has(heap, p, name);
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (found, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                return (e.vars.borrow().contains_key(name), *e.parent.borrow());
+            }
+            (false, None)
+        });
+        if found { return true; }
+        cur = parent;
     }
     false
 }
 
-/// Walk up to the nearest function scope (or global) and declare/assign a var.
 pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     let root = function_scope_root(heap, env);
     heap.with_obj(root.0, |obj| {
@@ -107,15 +112,12 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     });
 }
 
-/// Find the nearest function-scope ancestor (or global).
 pub fn function_scope_root(heap: &Heap, env: GcIdx) -> GcIdx {
     let mut cur = env;
     loop {
         let parent = heap.with_obj(cur.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if e.is_function_scope {
-                    return None; // this IS the function scope
-                }
+                if e.is_function_scope { return None; }
                 return *e.parent.borrow();
             }
             None
