@@ -132,7 +132,6 @@ impl Compiler {
                         // function/block scope: store in environment (enables closure capture)
                         self.declare(name, *kind);
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
-                        self.chunk.emit(Op::Const(name_idx), 0);
                         self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                     }
                 }
@@ -353,6 +352,16 @@ impl Compiler {
                 let name_idx = self.intern("this");
                 self.chunk.emit(Op::LoadEnv(name_idx), 0);
             }
+            Expr::Ident(name) => {
+                if self.scopes.len() > 1 {
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    self.chunk.emit(Op::LoadEnvName(name_idx), 0);
+                } else {
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    self.chunk.emit(Op::Const(name_idx), 0);
+                    self.chunk.emit(Op::LoadGlobal, 0);
+                }
+            }
             Expr::Update(op, prefix, target) => {
                 // load current value
                 self.compile_expr(target)?;
@@ -410,9 +419,7 @@ impl Compiler {
             }
             Expr::Assign(op, target, value) => {
                 if matches!(op, AssignOp::Assign) {
-                    self.compile_expr(value)?;
-                    self.chunk.emit(Op::Dup, 0);
-                    self.compile_assign_target(target)?;
+                    self.compile_assign_target_store(target, value)?;
                 } else {
                     // compound: load, op, store
                     self.compile_expr(target)?;
@@ -449,8 +456,8 @@ impl Compiler {
                     self.chunk.emit(Op::Const(key_idx), 0);
                     self.compile_expr(&p.value)?;
                     self.chunk.emit(Op::SetProp, 0);
-                    // SetProp pops obj+key+value, pushes undefined; we dup'd obj so it's still under the undefined
-                    self.chunk.emit(Op::Pop, 0); // remove the undefined
+                    // SetProp leaves the assigned value on top; pop it so obj remains
+                    self.chunk.emit(Op::Pop, 0);
                 }
             }
             Expr::Array(elements) => {
@@ -532,6 +539,34 @@ impl Compiler {
             }
             _ => {
                 self.chunk.emit(Op::Undefined, 0);
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_assign_target_store(&mut self, target: &Expr, value: &Expr) -> error::Result<()> {
+        match target {
+            Expr::Member { object, property, computed } => {
+                self.compile_expr(object)?;
+                if *computed {
+                    self.compile_expr(property)?;
+                } else {
+                    let key = if let Expr::String(s) = &**property { s.to_string() } else { String::new() };
+                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                    self.chunk.emit(Op::Const(key_idx), 0);
+                }
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::SetProp, 0);
+            }
+            Expr::Ident(name) => {
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Dup, 0);
+                let name_idx = self.intern(&**name);
+                self.chunk.emit(Op::StoreEnv(name_idx), 0);
+                self.chunk.emit(Op::Pop, 0);
+            }
+            _ => {
+                self.compile_expr(value)?;
             }
         }
         Ok(())

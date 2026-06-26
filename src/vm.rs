@@ -234,22 +234,13 @@ impl Vm {
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
                         crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Var);
                     }
+                    self.stack.push(Value::Undefined);
                 }
-                Op::DeclareEnv(_) => {
-                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = match &name_val {
-                        Value::String(s) => s.to_string(),
-                        _ => self.to_string(&name_val)?.to_string(),
-                    };
-                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::declare(&self.heap, env, &name, value, crate::value::BindingKind::Let);
-                }
-                Op::LoadEnvName(_) => {
-                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = match &name_val {
-                        Value::String(s) => s.to_string(),
-                        _ => self.to_string(&name_val)?.to_string(),
+                Op::LoadEnvName(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     match crate::environment::get(&self.heap, env, &name) {
@@ -260,12 +251,12 @@ impl Vm {
                         }
                     }
                 }
-                Op::StoreEnvName(_) => {
-                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
+                Op::StoreEnvName(name_idx) => {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = match &name_val {
-                        Value::String(s) => s.to_string(),
-                        _ => self.to_string(&name_val)?.to_string(),
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, env, &name, value.clone()) {
@@ -394,21 +385,21 @@ impl Vm {
                     self.stack.push(v);
                 }
                 Op::SetProp => {
-                    // stack (bottom->top): [value, obj, key]
+                    // stack (bottom->top): [obj, key, value]
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
-                    self.set_property(&obj, &key_str, value)?;
-                    self.stack.push(Value::Undefined);
+                    self.set_property(&obj, &key_str, value.clone())?;
+                    self.stack.push(value);
                 }
                 Op::SetElem => {
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
-                    self.set_property(&obj, &key_str, value)?;
-                    self.stack.push(Value::Undefined);
+                    self.set_property(&obj, &key_str, value.clone())?;
+                    self.stack.push(value);
                 }
                 Op::Throw => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
@@ -910,7 +901,11 @@ impl Vm {
             Some(FuncCallInfo::Native(f)) => f(self, args, this),
             Some(FuncCallInfo::Interpreted { func, closure, is_arrow }) => {
                 let call_env = env::new_env(&self.heap, Some(closure), true);
-                // args are stored into locals[0..n] by execute_chunk_func
+                // store parameters into the call environment (enables closures + recursion)
+                for (i, param) in func.params.iter().enumerate() {
+                    let v = args.get(i).cloned().unwrap_or(Value::Undefined);
+                    env::declare(&self.heap, call_env, param, v, crate::value::BindingKind::Let);
+                }
                 // make the function visible to itself by its name (for recursion)
                 if let Some(name) = &func.name {
                     env::declare(&self.heap, call_env, name, Value::Object(idx), crate::value::BindingKind::Const);
