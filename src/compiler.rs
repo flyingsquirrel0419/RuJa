@@ -42,8 +42,7 @@ impl Compiler {
         if let Some(&idx) = self.name_map.get(name) {
             return idx;
         }
-        let idx = self.names.len();
-        self.names.push(name.to_string());
+        let idx = self.chunk.add_constant(Value::String(Rc::from(name)));
         self.name_map.insert(name.to_string(), idx);
         idx
     }

@@ -191,7 +191,6 @@ impl Vm {
                         Value::String(s) => s.to_string(),
                         _ => self.to_string(&name_val)?.to_string(),
                     };
-                    eprintln!("STOREG name={}", name);
                     // try to set in current scope chain first, else declare in global
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {

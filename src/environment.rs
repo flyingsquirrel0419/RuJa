@@ -22,7 +22,6 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
                 Rc::from(name),
                 crate::value::Binding { value: RefCell::new(value.clone()), kind },
             );
-            eprintln!("DECLARE name={} val={:?} count={}", name, value, e.vars.borrow().len());
         }
     });
 }
