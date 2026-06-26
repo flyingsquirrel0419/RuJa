@@ -4,10 +4,10 @@ use std::fs;
 use std::io::{self, BufRead, Write};
 use std::process::exit;
 
-const VERSION: &str = "2.0.0-alpha";
+const VERSION: &str = "0.2.0";
 const HELP: &str = r#"Usage: ruja [OPTIONS] [FILE]
 
-A JavaScript engine written in Rust (v2.0 bytecode VM).
+A JavaScript engine written in Rust (bytecode VM + GC).
 
 Arguments:
   FILE                JavaScript file to execute. If omitted, starts REPL.
@@ -30,12 +30,11 @@ fn print_value(vm: &mut Vm, v: &Value) {
         Value::Bool(b) => println!("{}", b),
         Value::Number(n) => println!("{}", ruja::value::num_to_string(*n)),
         Value::String(s) => println!("{}", s),
-        Value::Object(_) | Value::Symbol(_) => {
-            match vm.to_string(v) {
-                Ok(s) => println!("{}", s),
-                Err(_) => println!("[object Object]"),
-            }
-        }
+        Value::Object(_) => match vm.to_string_pub(v) {
+            Ok(s) => println!("{}", s),
+            Err(_) => println!("[object Object]"),
+        },
+        Value::Symbol(_) => println!("Symbol()"),
     }
 }
 
@@ -61,30 +60,31 @@ fn run_eval(code: &str) -> i32 {
 }
 
 fn repl() -> i32 {
+    let mut vm = Vm::new();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut buffer = String::new();
-    let mut in_block = false;
+
     println!("RuJa v{} - JavaScript REPL (Ctrl+C to exit)", VERSION);
     loop {
-        let prompt = if in_block { "  ... " } else { "ruja> " };
+        let prompt = if buffer.matches('{').count() > buffer.matches('}').count() { "  ... " } else { "ruja> " };
         print!("{}", prompt);
         if stdout.flush().is_err() { break; }
+
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
             Ok(0) => { println!(); break; }
             Ok(_) => {}
             Err(_) => break,
         }
+
         buffer.push_str(&line);
-        let opens = buffer.matches('{').count();
-        let closes = buffer.matches('}').count();
-        in_block = opens > closes;
-        if in_block { continue; }
+        if buffer.matches('{').count() > buffer.matches('}').count() { continue; }
+
         let trimmed = buffer.trim();
         if trimmed.is_empty() { buffer.clear(); continue; }
         if trimmed == ".exit" || trimmed == ".quit" { break; }
-        let mut vm = Vm::new();
+
         match vm.run(&buffer) {
             Ok(v) => { if !v.is_undefined() { print_value(&mut vm, &v); } }
             Err(e) => eprintln!("{}", e),
@@ -106,10 +106,13 @@ fn main() {
                 if i + 1 >= args.len() { eprintln!("ruja: -e requires an argument"); exit(2); }
                 exit(run_eval(&args[i + 1]));
             }
+            "--" => { if i + 1 < args.len() { exit(run_file(&args[i + 1])); } exit(0); }
             arg if arg.starts_with('-') => {
-                eprintln!("ruja: unknown option '{}'", arg); exit(2);
+                eprintln!("ruja: unknown option '{}'", arg);
+                eprintln!("Try 'ruja --help' for more information.");
+                exit(2);
             }
-            file => { exit(run_file(file)); }
+            file => exit(run_file(file)),
         }
         i += 1;
     }

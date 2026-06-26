@@ -966,3 +966,9 @@ enum FuncCallInfo {
     Interpreted { func: std::rc::Rc<crate::function::FunctionDef>, closure: GcIdx, is_arrow: bool },
     Bound { target: GcIdx, this_val: Value, bound_args: Vec<Value> },
 }
+
+impl Vm {
+    pub fn to_string_pub(&mut self, v: &Value) -> error::Result<String> {
+        Ok(self.to_string(v)?.to_string())
+    }
+}
