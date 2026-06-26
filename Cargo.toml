@@ -1,0 +1,23 @@
+[package]
+name = "ruja"
+version = "0.1.0"
+edition = "2021"
+authors = ["flyingsquirrel0419"]
+description = "RuJa - A JavaScript engine written in Rust"
+license = "MIT"
+repository = "https://github.com/flyingsquirrel0419/RuJa"
+homepage = "https://github.com/flyingsquirrel0419/RuJa"
+readme = "README.md"
+keywords = ["javascript", "js", "interpreter", "engine", "runtime"]
+categories = ["compilers", "development-tools", "parser-implementations"]
+
+
+[dependencies]
+
+[lib]
+name = "ruja"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ruja"
+path = "src/bin/ruja.rs"
