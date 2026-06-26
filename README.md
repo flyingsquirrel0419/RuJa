@@ -27,9 +27,8 @@ selected ES2015 features, with zero external runtime dependencies.
 - `var`/`let`/`const` with environment-based scoping
 - Control flow: `if`/`else`, `while`, `do...while`, `for`, `for...in`,
   `for...of`, `switch`, `break`/`continue`
-- Functions, recursion, and arrow functions
+ - Functions, recursion, arrow functions, and **closures** (variable capture + mutation)
 - `throw`/`try`/`catch`/`finally` with `Error` type hierarchy
-- Objects, arrays, prototype chain, `new`, `instanceof`
 - Built-in objects: `Object`, `Array`, `String`, `Number`, `Boolean`,
   `Function`, `Math`, `JSON`, `console`, `Error`/`TypeError`/`RangeError`/
   `ReferenceError`/`SyntaxError`
@@ -83,11 +82,9 @@ fn main() {
 
 ## Known limitations
 
-- Closure variable capture (in progress)
-- `this` binding in constructors (in progress)
-- ES2015 `class` syntax, `Map`/`Set`/`Promise`/`Symbol` (stubbed)
-- `async`/`await`, generators (not yet implemented)
-- test262 conformance (targeted for follow-up)
+- ES2015 `class` syntax (not yet implemented; prototype chain works)
+ - `async`/`await`, generators (not yet implemented)
+ - test262 conformance (targeted for follow-up)
 
 ## License
 
