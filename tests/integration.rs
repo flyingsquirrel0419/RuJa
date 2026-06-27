@@ -535,3 +535,40 @@ fn string_split_reverse() {
         Value::String(Rc::from("world hello"))
     );
 }
+
+#[test]
+fn break_in_loop() {
+    assert_eq!(run("var s=0;for(var i=0;i<10;i++){if(i>=3)break;s+=i}s;"), Value::Number(3.0));
+}
+#[test]
+fn continue_in_loop() {
+    assert_eq!(run("var s=0;for(var i=0;i<5;i++){if(i==2)continue;s+=i}s;"), Value::Number(8.0));
+}
+#[test]
+fn nested_break() {
+    assert_eq!(run("var s=0;for(var i=0;i<3;i++){for(var j=0;j<3;j++){if(j==1)break;s++}}s;"), Value::Number(3.0));
+}
+
+#[test]
+fn delete_operator() {
+    assert_eq!(run("delete ({a:1}).a;"), Value::Bool(true));
+}
+#[test]
+fn increment_postfix() {
+    assert_eq!(run("var c=5; c++;"), Value::Number(5.0));
+    assert_eq!(run("var c=5; c++; c;"), Value::Number(6.0));
+}
+#[test]
+fn increment_prefix() {
+    assert_eq!(run("var c=5; ++c;"), Value::Number(6.0));
+    assert_eq!(run("var c=5; ++c; c;"), Value::Number(6.0));
+}
+#[test]
+fn function_hoisting() {
+    assert_eq!(run("let r = hoisted(); function hoisted(){return 42;}; r;"), Value::Number(42.0));
+}
+#[test]
+fn array_spread_literal() {
+    assert_eq!(run("[1, ...[2,3], 4].length;"), Value::Number(4.0));
+    assert_eq!(run("[...\"hi\"].join(\"\");"), Value::String(Rc::from("hi")));
+}
