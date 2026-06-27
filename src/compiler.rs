@@ -67,7 +67,19 @@ impl Compiler {
         program: &Program,
     ) -> error::Result<(Chunk, Vec<Rc<crate::function::FunctionDef>>)> {
         let n = program.body.len();
+        // Hoist function declarations: compile them first so they're available
+        // before any statement in the body runs.
+        for stmt in &program.body {
+            if let Stmt::FunctionDecl(f) = stmt {
+                self.compile_stmt(stmt)?;
+                let _ = f;
+            }
+        }
         for (i, stmt) in program.body.iter().enumerate() {
+            // Function declarations were hoisted above; skip them in the body pass.
+            if matches!(stmt, Stmt::FunctionDecl(_)) {
+                continue;
+            }
             if i + 1 == n {
                 // last statement: if it's an expression, keep its value as the result
                 if let Stmt::ExprStmt(e) = stmt {
