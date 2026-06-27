@@ -15,7 +15,7 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 9. [ ] Built-in spec conformance + TDZ
 10. [~] regression tests (161 passing, split across 6 files)
 11. [x] Release prep (README/CHANGELOG/CI)
-12. [~] Release verification (tests + CLI + metadata)
+12. [x] Release verification (tests + CLI + metadata)
 
 ## v1.0 - Tree-walking interpreter (archived)
 
