@@ -760,22 +760,25 @@ impl Compiler {
                 // `x++`/`++x`/`x--`/`--x`: load old, coerce to number, compute new,
                 // store new back, then leave old (postfix) or new (prefix) as the result.
                 self.compile_expr(target)?;
-                self.chunk.emit(Op::TypeCoerce, 0);      // [oldNum]
-                self.chunk.emit(Op::Dup, 0);             // [oldNum, oldNum]
-                let delta = match op { UpdateOp::Inc => 1.0, UpdateOp::Dec => -1.0 };
+                self.chunk.emit(Op::TypeCoerce, 0); // [oldNum]
+                self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
+                let delta = match op {
+                    UpdateOp::Inc => 1.0,
+                    UpdateOp::Dec => -1.0,
+                };
                 let c = self.chunk.add_constant(Value::Number(delta));
-                self.chunk.emit(Op::Const(c), 0);        // [oldNum, oldNum, delta]
-                self.chunk.emit(Op::Add, 0);             // [oldNum, newNum]
-                // Store the new value back to the target (consumes newNum, pushes undefined).
+                self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
+                self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
+                                             // Store the new value back to the target (consumes newNum, pushes undefined).
                 self.compile_assign_target(target)?;
-                self.chunk.emit(Op::Pop, 0);             // [oldNum]
+                self.chunk.emit(Op::Pop, 0); // [oldNum]
                 if *prefix {
                     // prefix result is the new value: recompute from oldNum.
-                    self.chunk.emit(Op::Dup, 0);         // [oldNum, oldNum]
-                    self.chunk.emit(Op::Const(c), 0);    // [oldNum, oldNum, delta]
-                    self.chunk.emit(Op::Add, 0);         // [oldNum, newNum]
-                    self.chunk.emit(Op::Swap, 0);       // [newNum, oldNum]
-                    self.chunk.emit(Op::Pop, 0);         // [newNum]
+                    self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
+                    self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
+                    self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
+                    self.chunk.emit(Op::Swap, 0); // [newNum, oldNum]
+                    self.chunk.emit(Op::Pop, 0); // [newNum]
                 }
                 // postfix: result is oldNum, already on the stack.
             }

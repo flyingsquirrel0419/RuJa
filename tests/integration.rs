@@ -429,7 +429,10 @@ fn switch_break() {
 
 #[test]
 fn typeof_undeclared() {
-    assert_eq!(run("typeof noSuchVar;"), Value::String(Rc::from("undefined")));
+    assert_eq!(
+        run("typeof noSuchVar;"),
+        Value::String(Rc::from("undefined"))
+    );
 }
 
 #[test]
@@ -439,10 +442,7 @@ fn unary_plus() {
 
 #[test]
 fn unary_plus_str() {
-    assert_eq!(
-        run("typeof +\"5\";"),
-        Value::String(Rc::from("number"))
-    );
+    assert_eq!(run("typeof +\"5\";"), Value::String(Rc::from("number")));
 }
 
 #[test]
@@ -507,18 +507,12 @@ fn object_values_sum() {
 
 #[test]
 fn object_entries() {
-    assert_eq!(
-        run("Object.entries({a:1,b:2}).length;"),
-        Value::Number(2.0)
-    );
+    assert_eq!(run("Object.entries({a:1,b:2}).length;"), Value::Number(2.0));
 }
 
 #[test]
 fn split_limit() {
-    assert_eq!(
-        run("\"a,b,c\".split(\",\",2).length;"),
-        Value::Number(2.0)
-    );
+    assert_eq!(run("\"a,b,c\".split(\",\",2).length;"), Value::Number(2.0));
 }
 
 #[test]
@@ -528,7 +522,10 @@ fn loose_eq_array_bool() {
 
 #[test]
 fn error_subclass() {
-    assert_eq!(run("new TypeError(\"x\").message;"), Value::String(Rc::from("x")));
+    assert_eq!(
+        run("new TypeError(\"x\").message;"),
+        Value::String(Rc::from("x"))
+    );
 }
 
 #[test]
