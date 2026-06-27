@@ -132,6 +132,7 @@ pub enum HeapObj {
     Promise(PromiseData),
     Generator(GeneratorData),
     Iterator(IteratorData),
+    LazyGenerator(LazyGeneratorData),
 }
 
 /// Generic JS object.
@@ -233,6 +234,39 @@ pub struct GeneratorData {
     pub proto: RefCell<Option<Value>>,
 }
 
+/// A lazy (pull-based) generator: its function body is executed incrementally
+/// across `next()` calls, suspending at each `yield`.
+pub struct LazyGeneratorData {
+    /// The compiled function definition (holds the bytecode chunk).
+    pub fdef: Rc<crate::function::FunctionDef>,
+    /// Closure environment captured at creation time.
+    pub closure: GcIdx,
+    /// Current environment (advanced by PushScope/PopScope); saved/restored
+    /// across yields so block scopes resume correctly.
+    pub env: RefCell<GcIdx>,
+    /// `this` value for the generator function call.
+    pub this_val: RefCell<Value>,
+    /// Arguments bound to the generator function's parameters.
+    pub args: RefCell<Vec<Value>>,
+    /// Current instruction pointer; 0 before the first `next()`.
+    pub ip: Cell<usize>,
+    /// Saved operand stack depth at suspension (for incremental runs we keep a
+    /// per-generator value stack).
+    pub stack: RefCell<Vec<Value>>,
+    /// Local variables slot table.
+    pub locals: RefCell<Vec<Value>>,
+    /// Saved try/catch handler stack (so catches resume across yields).
+    pub catch_stack: RefCell<Vec<usize>>,
+    /// True once the body has begun executing.
+    pub started: Cell<bool>,
+    /// True once the body has run to completion (return / fall-off end).
+    pub done: Cell<bool>,
+    /// The value sent into the generator via `next(v)` (consumed by `yield`).
+    pub resume_value: RefCell<Value>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub proto: RefCell<Option<Value>>,
+}
+
 /// Internal iterator state used by `for...of` / `for...in` and the spread operator.
 pub struct IteratorData {
     /// Remaining values to yield, in order.
@@ -291,6 +325,7 @@ impl HeapObj {
             HeapObj::Set(s) => &s.props,
             HeapObj::Promise(p) => &p.props,
             HeapObj::Generator(g) => &g.props,
+            HeapObj::LazyGenerator(g) => &g.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -306,6 +341,7 @@ impl HeapObj {
             HeapObj::Set(s) => &s.proto,
             HeapObj::Promise(p) => &p.proto,
             HeapObj::Generator(g) => &g.proto,
+            HeapObj::LazyGenerator(g) => &g.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -325,6 +361,7 @@ impl HeapObj {
             HeapObj::Set(_) => "Set",
             HeapObj::Promise(_) => "Promise",
             HeapObj::Generator(_) => "Generator",
+            HeapObj::LazyGenerator(_) => "Generator",
             HeapObj::Iterator(_) => "Iterator",
             HeapObj::Environment(_) => "Environment",
         }

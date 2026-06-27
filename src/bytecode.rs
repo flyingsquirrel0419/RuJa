@@ -175,8 +175,15 @@ pub enum Op {
     DeclareVar(usize), // name index
     DeclareLet(usize),
     DeclareConst(usize),
-    DeclareEnv(usize),   // declare name in env with value from stack
-    LoadEnvName(usize),  // push name const then load from env
+    DeclareEnv(usize),         // declare name in env with value from stack
+    DeclareEnvConst(usize),    // declare const name in env with value from stack
+    DeclareLetUninit(usize),   // TDZ: declare let binding uninitialized at scope entry
+    DeclareConstUninit(usize), // TDZ: declare const binding uninitialized at scope entry
+    InitLet(usize),            // pop value, initialize an existing (hoisted) let binding (TDZ lift)
+    InitConst(usize), // pop value, initialize an existing (hoisted) const binding (TDZ lift)
+    InitEnv(usize),   // pop value, init-or-declare a let binding in current env (pattern/loop)
+    InitEnvConst(usize), // pop value, init-or-declare a const binding in current env (pattern/loop)
+    LoadEnvName(usize), // push name const then load from env
     StoreEnvName(usize), // push name const then store to env
 
     // Halt

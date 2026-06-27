@@ -98,6 +98,39 @@ pub fn initialize(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
     }
     false
 }
+
+/// Initialize a binding in the *current* environment only (no parent walk).
+/// Used for TDZ: the binding was declared uninitialized at scope entry; this
+/// sets its value and lifts the TDZ. Returns false if no binding exists here.
+pub fn initialize_local(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            if let Some(b) = e.vars.borrow().get(name) {
+                *b.value.borrow_mut() = value;
+                b.initialized.set(true);
+                return true;
+            }
+        }
+        false
+    })
+}
+
+/// Declare a binding with a value directly in the current env (initialized).
+/// Like `declare` but takes an explicit kind, used for const destructuring etc.
+pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingKind) {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.borrow_mut().insert(
+                Rc::from(name),
+                crate::value::Binding {
+                    value: RefCell::new(value),
+                    kind,
+                    initialized: Cell::new(true),
+                },
+            );
+        }
+    });
+}
 pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {
@@ -146,6 +179,43 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
         cur = parent;
     }
     false
+}
+
+/// Outcome of a TDZ-aware assignment to a name.
+pub enum SetOutcome {
+    Set,
+    Const,
+    /// Binding exists but is in the TDZ (not yet initialized).
+    Tdz,
+    NotFound,
+}
+
+/// TDZ-aware set: refuses to write a binding that is still in the TDZ.
+pub fn set_checked(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutcome {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (outcome, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    if !b.initialized.get() {
+                        return (SetOutcome::Tdz, None);
+                    }
+                    if b.kind == BindingKind::Const {
+                        return (SetOutcome::Const, None);
+                    }
+                    *b.value.borrow_mut() = value.clone();
+                    return (SetOutcome::Set, None);
+                }
+                return (SetOutcome::NotFound, *e.parent.borrow());
+            }
+            (SetOutcome::NotFound, None)
+        });
+        match outcome {
+            SetOutcome::NotFound => cur = parent,
+            other => return other,
+        }
+    }
+    SetOutcome::NotFound
 }
 
 /// Returns true if `name` is bound as a `const` in the scope chain.

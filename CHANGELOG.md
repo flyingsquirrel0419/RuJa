@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- Temporal Dead Zone (TDZ) for `let`/`const`: lexical bindings are hoisted as
+  uninitialized at scope entry; reading or assigning them before the declaration
+  throws `ReferenceError: Cannot access '<name>' before initialization`. Also
+  fixes `const` reassignment detection in block/function scopes.
+- Generators are now lazy (pull-based): `function*` bodies run incrementally
+  across `next()` calls and suspend at each `yield`, so infinite generators
+  (`while(true) yield`) no longer hang. `next(v)` resumes with a value, and an
+  explicit `return` ends the generator. (Previously generators were eagerly
+  evaluated, which could not terminate on infinite generators.)
+- Destructuring assignment to existing bindings: `[a, b] = expr`,
+  `{a, b} = expr` (including swaps, holes, rest, rename, and nested patterns)
+- Object literal shorthand properties: `{x, y}` (equivalent to `{x: x, y: y}`)
+- `yield` operand now spans the full assignment-expression, so `yield 1 + 1`
+  means `yield (1 + 1)` per spec (was parsed as `(yield 1) + 1`)
+- `Promise.resolve(v)` and `Promise.reject(r)` static methods
 - Generators (function*/yield) with eager evaluation: next(), for...of, and spread over generators
 - async/await: async functions return a Promise; await extracts a Promise result synchronously (drains microtasks)
 - try/catch now catches runtime errors (TypeError, ReferenceError, ...) not just JS throw; native errors are surfaced as Error objects with name/message

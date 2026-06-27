@@ -33,6 +33,16 @@ pub struct Vm {
     pub microtask_queue: Vec<Microtask>,
     /// Collected yield values while running a generator function body (eager).
     pub current_yields: Vec<Value>,
+    /// When true, `Op::YieldValue` suspends the running generator frame
+    /// instead of collecting eagerly. Set while resuming a lazy generator.
+    pub gen_mode: Cell<bool>,
+    /// Signal value emitted by a `yield` during lazy generator execution.
+    pub gen_yield: Cell<Option<Value>>,
+    /// True when the last lazy-generator run suspended at a `yield` (vs. returned).
+    pub gen_suspended: Cell<bool>,
+    /// Value sent into the currently-resuming generator via `next(v)`; pushed
+    /// onto the stack as the result of the `yield` expression.
+    pub gen_resume_value: RefCell<Value>,
     pub next_symbol_id: u32,
     pub well_known_symbols: WellKnownSymbols,
     pub global_names: HashMap<Rc<str>, usize>,
@@ -112,6 +122,10 @@ impl Vm {
             set_proto: Value::Undefined,
             microtask_queue: Vec::new(),
             current_yields: Vec::new(),
+            gen_mode: Cell::new(false),
+            gen_yield: Cell::new(None),
+            gen_suspended: Cell::new(false),
+            gen_resume_value: RefCell::new(Value::Undefined),
             next_symbol_id: 1,
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
@@ -187,6 +201,133 @@ impl Vm {
             self.frames.pop();
         }
         result
+    }
+
+    /// Resume (or start) a lazy generator, running until the next `yield` or
+    /// until the body completes. Returns `(value, done)` where `value` is the
+    /// yielded value (or the return value when done) and `done` indicates
+    /// whether the generator has finished.
+    pub fn resume_generator(
+        &mut self,
+        g_idx: GcIdx,
+        resume_val: Value,
+    ) -> error::Result<(Value, bool)> {
+        // Pull the saved execution state out of the generator object.
+        let (
+            fdef,
+            env,
+            this_val,
+            args,
+            mut ip,
+            mut locals,
+            mut stack,
+            mut catch_stack,
+            started,
+            done,
+        ) = self.heap.with_obj(g_idx.0, |o| {
+            if let HeapObj::LazyGenerator(g) = o {
+                (
+                    g.fdef.clone(),
+                    *g.env.borrow(),
+                    g.this_val.borrow().clone(),
+                    g.args.borrow().clone(),
+                    g.ip.get(),
+                    g.locals.borrow().clone(),
+                    g.stack.borrow().clone(),
+                    g.catch_stack.borrow().clone(),
+                    g.started.get(),
+                    g.done.get(),
+                )
+            } else {
+                panic!("resume_generator on non-lazy-generator");
+            }
+        });
+
+        if done {
+            return Ok((Value::Undefined, true));
+        }
+
+        // On the first resume, initialize the locals table with the arguments.
+        if !started {
+            locals = vec![Value::Undefined; fdef.num_locals.max(256)];
+            for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
+                if i < locals.len() {
+                    locals[i] = a.clone();
+                }
+            }
+            ip = 0;
+            stack.clear();
+            catch_stack.clear();
+        } else {
+            // Resuming after a `yield`: the value sent via `next(v)` becomes the
+            // result of the suspended `yield` expression.
+            stack.push(resume_val.clone());
+        }
+
+        // Push the generator's frame.
+        self.frames.push(CallFrame {
+            chunk: fdef.chunk.clone(),
+            ip,
+            locals,
+            env,
+            catch_stack,
+            this_val: this_val.clone(),
+        });
+        // Swap in a dedicated operand stack for the generator run, preserving
+        // the caller's stack untouched. This keeps generator execution fully
+        // isolated from the caller's operand values.
+        let caller_stack = std::mem::replace(&mut self.stack, stack);
+
+        // Set up the yield-resume value (the result of the `yield` expression).
+        *self.gen_resume_value.borrow_mut() = resume_val;
+        self.gen_mode.set(true);
+        self.gen_suspended.set(false);
+        self.gen_yield.set(None);
+
+        let target_depth = self.frames.len() - 1;
+        let result = self.interpret_to_depth(target_depth);
+
+        self.gen_mode.set(false);
+
+        // Reclaim the generator's (possibly modified) operand stack and restore
+        // the caller's stack.
+        let gen_stack = std::mem::replace(&mut self.stack, caller_stack);
+
+        // The generator frame is now either suspended (still on the stack) or
+        // completed (popped by Return/Halt).
+        let suspended = self.gen_suspended.get();
+
+        if suspended {
+            // Pop the generator frame and save its state for the next resume.
+            let frame = self.frames.pop().expect("generator frame present");
+            // The generator's leftover operands are its private stack.
+            let saved_stack = gen_stack;
+
+            self.heap.with_obj(g_idx.0, |o| {
+                if let HeapObj::LazyGenerator(g) = o {
+                    g.ip.set(frame.ip);
+                    *g.env.borrow_mut() = frame.env;
+                    *g.locals.borrow_mut() = frame.locals;
+                    *g.stack.borrow_mut() = saved_stack;
+                    *g.catch_stack.borrow_mut() = frame.catch_stack;
+                    g.started.set(true);
+                }
+            });
+
+            let yielded = self.gen_yield.take().unwrap_or(Value::Undefined);
+            Ok((yielded, false))
+        } else {
+            // Completed: the body returned or ran off the end. `result` holds
+            // the return value; mark the generator done.
+            self.heap.with_obj(g_idx.0, |o| {
+                if let HeapObj::LazyGenerator(g) = o {
+                    g.done.set(true);
+                    g.started.set(true);
+                }
+            });
+            let ret = result.unwrap_or(Value::Undefined);
+            Ok((ret, true))
+        }
     }
 
     fn interpret(&mut self) -> error::Result<Value> {
@@ -310,11 +451,40 @@ impl Vm {
                     };
                     // search the current frame's env first, then global
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let val = crate::environment::get(&self.heap, cur_env, &name)
-                        .or_else(|| crate::environment::get(&self.heap, self.global, &name));
-                    match val {
-                        Some(v) => self.stack.push(v),
-                        None => return Err(Error::reference(format!("{} is not defined", name))),
+                    match crate::environment::get_checked(&self.heap, cur_env, &name) {
+                        Ok(Some(v)) => self.stack.push(v),
+                        Ok(None) => {
+                            match crate::environment::get_checked(&self.heap, self.global, &name) {
+                                Ok(Some(v)) => self.stack.push(v),
+                                Ok(None) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
+                                Err(true) => {
+                                    return Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    )))
+                                }
+                                Err(false) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
+                            }
+                        }
+                        Err(true) => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )))
+                        }
+                        Err(false) => {
+                            return Err(Error::reference(format!("{} is not defined", name)))
+                        }
                     }
                 }
                 Op::StoreGlobal => {
@@ -326,20 +496,30 @@ impl Vm {
                     };
                     // try to set in current scope chain first, else declare in global
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
-                        if crate::environment::has(&self.heap, cur_env, &name) {
+                    match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
+                    {
+                        crate::environment::SetOutcome::Set => {}
+                        crate::environment::SetOutcome::Const => {
                             return Err(Error::type_err(format!(
                                 "Assignment to constant variable '{}'",
                                 name
                             )));
                         }
-                        crate::environment::declare(
-                            &self.heap,
-                            self.global,
-                            &name,
-                            value,
-                            crate::value::BindingKind::Var,
-                        );
+                        crate::environment::SetOutcome::Tdz => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )));
+                        }
+                        crate::environment::SetOutcome::NotFound => {
+                            crate::environment::declare(
+                                &self.heap,
+                                self.global,
+                                &name,
+                                value,
+                                crate::value::BindingKind::Var,
+                            );
+                        }
                     }
                     self.stack.push(Value::Undefined);
                 }
@@ -433,6 +613,198 @@ impl Vm {
                         crate::value::BindingKind::Const,
                     );
                 }
+                Op::DeclareEnvConst(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare_typed(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value,
+                        crate::value::BindingKind::Const,
+                    );
+                }
+                Op::DeclareLetUninit(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare_uninit(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        crate::value::BindingKind::Let,
+                    );
+                }
+                Op::DeclareConstUninit(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare_uninit(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        crate::value::BindingKind::Const,
+                    );
+                }
+                Op::InitEnv(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::initialize_local(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value.clone(),
+                    ) {
+                        crate::environment::declare_typed(
+                            &self.heap,
+                            cur_env,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Let,
+                        );
+                    }
+                }
+                Op::InitEnvConst(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::initialize_local(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value.clone(),
+                    ) {
+                        crate::environment::declare_typed(
+                            &self.heap,
+                            cur_env,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Const,
+                        );
+                    }
+                }
+                Op::InitLet(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::initialize_local(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value.clone(),
+                    ) {
+                        crate::environment::declare_typed(
+                            &self.heap,
+                            cur_env,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Let,
+                        );
+                    }
+                }
+                Op::InitConst(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if !crate::environment::initialize_local(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value.clone(),
+                    ) {
+                        crate::environment::declare_typed(
+                            &self.heap,
+                            cur_env,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Const,
+                        );
+                    }
+                }
                 Op::LoadEnv(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
@@ -448,14 +820,40 @@ impl Vm {
                         }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    match crate::environment::get(&self.heap, cur_env, &name) {
-                        Some(v) => self.stack.push(v),
-                        None => match crate::environment::get(&self.heap, self.global, &name) {
-                            Some(v) => self.stack.push(v),
-                            None => {
-                                return Err(Error::reference(format!("{} is not defined", name)))
+                    match crate::environment::get_checked(&self.heap, cur_env, &name) {
+                        Ok(Some(v)) => self.stack.push(v),
+                        Ok(None) => {
+                            match crate::environment::get_checked(&self.heap, self.global, &name) {
+                                Ok(Some(v)) => self.stack.push(v),
+                                Ok(None) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
+                                Err(true) => {
+                                    return Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    )))
+                                }
+                                Err(false) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
                             }
-                        },
+                        }
+                        Err(true) => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )))
+                        }
+                        Err(false) => {
+                            return Err(Error::reference(format!("{} is not defined", name)))
+                        }
                     }
                 }
                 Op::StoreEnv(name_idx) => {
@@ -474,20 +872,30 @@ impl Vm {
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
-                        if crate::environment::has(&self.heap, cur_env, &name) {
+                    match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
+                    {
+                        crate::environment::SetOutcome::Set => {}
+                        crate::environment::SetOutcome::Const => {
                             return Err(Error::type_err(format!(
                                 "Assignment to constant variable '{}'",
                                 name
                             )));
                         }
-                        crate::environment::declare(
-                            &self.heap,
-                            cur_env,
-                            &name,
-                            value,
-                            crate::value::BindingKind::Var,
-                        );
+                        crate::environment::SetOutcome::Tdz => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )));
+                        }
+                        crate::environment::SetOutcome::NotFound => {
+                            crate::environment::declare(
+                                &self.heap,
+                                cur_env,
+                                &name,
+                                value,
+                                crate::value::BindingKind::Var,
+                            );
+                        }
                     }
                     self.stack.push(Value::Undefined);
                 }
@@ -506,14 +914,40 @@ impl Vm {
                         }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    match crate::environment::get(&self.heap, env, &name) {
-                        Some(v) => self.stack.push(v),
-                        None => match crate::environment::get(&self.heap, self.global, &name) {
-                            Some(v) => self.stack.push(v),
-                            None => {
-                                return Err(Error::reference(format!("{} is not defined", name)))
+                    match crate::environment::get_checked(&self.heap, env, &name) {
+                        Ok(Some(v)) => self.stack.push(v),
+                        Ok(None) => {
+                            match crate::environment::get_checked(&self.heap, self.global, &name) {
+                                Ok(Some(v)) => self.stack.push(v),
+                                Ok(None) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
+                                Err(true) => {
+                                    return Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    )))
+                                }
+                                Err(false) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
                             }
-                        },
+                        }
+                        Err(true) => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )))
+                        }
+                        Err(false) => {
+                            return Err(Error::reference(format!("{} is not defined", name)))
+                        }
                     }
                 }
                 Op::StoreEnvName(name_idx) => {
@@ -532,20 +966,29 @@ impl Vm {
                         }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    if !crate::environment::set(&self.heap, env, &name, value.clone()) {
-                        if crate::environment::has(&self.heap, env, &name) {
+                    match crate::environment::set_checked(&self.heap, env, &name, value.clone()) {
+                        crate::environment::SetOutcome::Set => {}
+                        crate::environment::SetOutcome::Const => {
                             return Err(Error::type_err(format!(
                                 "Assignment to constant variable '{}'",
                                 name
                             )));
                         }
-                        crate::environment::declare(
-                            &self.heap,
-                            env,
-                            &name,
-                            value,
-                            crate::value::BindingKind::Var,
-                        );
+                        crate::environment::SetOutcome::Tdz => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )));
+                        }
+                        crate::environment::SetOutcome::NotFound => {
+                            crate::environment::declare(
+                                &self.heap,
+                                env,
+                                &name,
+                                value,
+                                crate::value::BindingKind::Var,
+                            );
+                        }
                     }
                     self.stack.push(Value::Undefined);
                 }
@@ -928,11 +1371,19 @@ impl Vm {
                     }
                 }
                 Op::YieldValue => {
-                    // Eager generator: collect the yielded value and leave
-                    // undefined on the stack (the yield expression's value).
+                    // Lazy generator: pop the yielded value and suspend execution.
+                    // The `yield` expression's *result* (the value sent in by the
+                    // next `next(v)`) is pushed onto the stack on resume, not here.
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    self.current_yields.push(v);
-                    self.stack.push(Value::Undefined);
+                    if self.gen_mode.get() {
+                        self.gen_yield.set(Some(v));
+                        self.gen_suspended.set(true);
+                        return Ok(Value::Undefined);
+                    } else {
+                        // Not in a generator context (shouldn't happen): behave eagerly.
+                        self.current_yields.push(v);
+                        self.stack.push(Value::Undefined);
+                    }
                 }
                 Op::CallSuperCtor(arg_count) => {
                     // stack: [this, superCtor, args...]; call superCtor with this.
@@ -1899,49 +2350,45 @@ impl Vm {
                 let _ = is_arrow;
                 let is_gen = func.is_generator;
                 if is_gen {
-                    self.current_yields.clear();
-                }
-                // execute the compiled function chunk
-                let result = self.execute_chunk_func(func.clone(), call_env, this_val, args)?;
-                if is_async {
-                    // async functions return a Promise resolved with the result.
-                    let p_idx = self
-                        .heap
-                        .allocate(HeapObj::Promise(crate::value::PromiseData {
-                            state: Cell::new(PromiseStatus::Fulfilled),
-                            result: RefCell::new(result.clone()),
-                            handlers: RefCell::new(Vec::new()),
+                    // Lazy generator: don't run the body yet. Create a suspended
+                    // generator object; the body runs incrementally via next().
+                    let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
+                        crate::value::LazyGeneratorData {
+                            fdef: func.clone(),
+                            closure: call_env,
+                            env: RefCell::new(call_env),
+                            this_val: RefCell::new(this_val.clone()),
+                            args: RefCell::new(args.to_vec()),
+                            ip: Cell::new(0),
+                            stack: RefCell::new(Vec::new()),
+                            locals: RefCell::new(Vec::new()),
+                            catch_stack: RefCell::new(Vec::new()),
+                            started: Cell::new(false),
+                            done: Cell::new(false),
+                            resume_value: RefCell::new(Value::Undefined),
                             props: RefCell::new(IndexMap::new()),
-                            proto: RefCell::new(Some(self.promise_proto.clone())),
-                        }));
-                    Ok(Value::Object(GcIdx(p_idx)))
-                } else if is_gen {
-                    // eager generator: collect yielded values into a Generator.
-                    let collected = std::mem::take(&mut self.current_yields);
-                    let g_idx =
-                        self.heap
-                            .allocate(HeapObj::Generator(crate::value::GeneratorData {
-                                function: crate::ast::FunctionExpr {
-                                    name: func.name.clone(),
-                                    params: func.params.clone(),
-                                    param_defaults: vec![],
-                                    rest_param: func.rest_param.clone(),
-                                    body: vec![],
-                                    is_arrow: false,
-                                    is_async: false,
-                                    is_generator: true,
-                                    param_decls: vec![],
-                                },
-                                closure,
-                                state: RefCell::new(collected),
-                                ip: Cell::new(0),
-                                done: Cell::new(false),
-                                props: RefCell::new(IndexMap::new()),
-                                proto: RefCell::new(Some(self.generator_proto.clone())),
-                            }));
+                            proto: RefCell::new(Some(self.generator_proto.clone())),
+                        },
+                    ));
                     Ok(Value::Object(GcIdx(g_idx)))
                 } else {
-                    Ok(result)
+                    // execute the compiled function chunk
+                    let result = self.execute_chunk_func(func.clone(), call_env, this_val, args)?;
+                    if is_async {
+                        // async functions return a Promise resolved with the result.
+                        let p_idx =
+                            self.heap
+                                .allocate(HeapObj::Promise(crate::value::PromiseData {
+                                    state: Cell::new(PromiseStatus::Fulfilled),
+                                    result: RefCell::new(result.clone()),
+                                    handlers: RefCell::new(Vec::new()),
+                                    props: RefCell::new(IndexMap::new()),
+                                    proto: RefCell::new(Some(self.promise_proto.clone())),
+                                }));
+                        Ok(Value::Object(GcIdx(p_idx)))
+                    } else {
+                        Ok(result)
+                    }
                 }
             }
             Some(FuncCallInfo::Bound {
@@ -2002,17 +2449,26 @@ impl Vm {
                         matches!(o, HeapObj::Array(_)),
                         matches!(o, HeapObj::Map(_)),
                         matches!(o, HeapObj::Set(_)),
-                        matches!(o, HeapObj::Generator(_)),
+                        matches!(o, HeapObj::Generator(_) | HeapObj::LazyGenerator(_)),
                     )
                 });
                 if is_generator {
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Generator(g) = o {
-                            g.state.borrow().clone()
-                        } else {
-                            Vec::new()
+                    // Pull values via next() until the generator is done.
+                    let mut out = Vec::new();
+                    loop {
+                        let g = *idx;
+                        let (value, done) = self.resume_generator(g, Value::Undefined)?;
+                        if done {
+                            break;
                         }
-                    })
+                        out.push(value);
+                        // Guard against runaway infinite generators used directly
+                        // in for-of/spread (which would never terminate in JS too).
+                        if out.len() > 50_000_000 {
+                            break;
+                        }
+                    }
+                    out
                 } else if is_array {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {

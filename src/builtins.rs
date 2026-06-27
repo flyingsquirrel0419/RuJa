@@ -3198,6 +3198,18 @@ pub fn setup_full(vm: &mut Vm) {
         &[("then", promise_then, 2), ("catch", promise_catch, 1)],
     );
     vm.promise_proto = Value::Object(promise_proto);
+    // Static methods on the Promise constructor.
+    let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1);
+    let reject_static = vm.new_native_function("reject", promise_static_reject, 1);
+    vm.heap.with_obj(promise_ctor.0, |obj| {
+        obj.props().borrow_mut().insert(
+            Rc::from("resolve"),
+            data_prop(Value::Object(resolve_static)),
+        );
+        obj.props()
+            .borrow_mut()
+            .insert(Rc::from("reject"), data_prop(Value::Object(reject_static)));
+    });
     define_global(vm, "Promise", Value::Object(promise_ctor));
     // RegExp
     let (regex_ctor, regex_proto) = make_builtin_constructor_with(
@@ -3517,6 +3529,53 @@ fn promise_reject(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     Ok(Value::Undefined)
 }
 
+/// `Promise.resolve(v)`: returns a promise resolved with `v`. If `v` is already
+/// a promise, it is returned as-is (simplified adoption).
+fn promise_static_resolve(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &value {
+        let is_promise = vm
+            .heap
+            .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
+        if is_promise {
+            return Ok(value);
+        }
+    }
+    let p_idx = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: std::cell::Cell::new(crate::value::PromiseStatus::Fulfilled),
+            result: RefCell::new(value),
+            handlers: RefCell::new(Vec::new()),
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(Some(vm.promise_proto.clone())),
+        }));
+    Ok(Value::Object(GcIdx(p_idx)))
+}
+
+/// `Promise.reject(r)`: returns a promise rejected with `r`.
+fn promise_static_reject(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let reason = args.first().cloned().unwrap_or(Value::Undefined);
+    let p_idx = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: std::cell::Cell::new(crate::value::PromiseStatus::Rejected),
+            result: RefCell::new(reason),
+            handlers: RefCell::new(Vec::new()),
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(Some(vm.promise_proto.clone())),
+        }));
+    Ok(Value::Object(GcIdx(p_idx)))
+}
+
 fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let on_fulfilled = args.first().cloned().unwrap_or(Value::Undefined);
     let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -3691,21 +3750,31 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         Some(Value::Object(idx)) => idx.0,
         _ => return Err(Error::type_err("not a generator".to_string())),
     };
-    let (value, done) = vm.heap.with_obj(g_idx, |o| {
-        if let HeapObj::Generator(g) = o {
-            let state = g.state.borrow_mut();
-            let idx = g.ip.get();
-            if idx < state.len() {
-                g.ip.set(idx + 1);
-                (state[idx].clone(), false)
+    // Lazy generators run their body incrementally across next() calls.
+    let is_lazy = vm
+        .heap
+        .with_obj(g_idx, |o| matches!(o, HeapObj::LazyGenerator(_)));
+    let (value, done) = if is_lazy {
+        let resume = _args.first().cloned().unwrap_or(Value::Undefined);
+        vm.resume_generator(GcIdx(g_idx), resume)?
+    } else {
+        // Legacy eager generator (kept for safety).
+        vm.heap.with_obj(g_idx, |o| {
+            if let HeapObj::Generator(g) = o {
+                let state = g.state.borrow();
+                let idx = g.ip.get();
+                if idx < state.len() {
+                    g.ip.set(idx + 1);
+                    (state[idx].clone(), false)
+                } else {
+                    g.done.set(true);
+                    (Value::Undefined, true)
+                }
             } else {
-                g.done.set(true);
                 (Value::Undefined, true)
             }
-        } else {
-            (Value::Undefined, true)
-        }
-    });
+        })
+    };
     // return {value, done}
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: RefCell::new(IndexMap::new()),

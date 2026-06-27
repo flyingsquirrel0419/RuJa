@@ -142,6 +142,20 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
                 marker.mark_value(v);
             }
         }
+        HeapObj::LazyGenerator(g) => {
+            marker.mark_idx(g.closure);
+            marker.mark_value(&g.this_val.borrow());
+            for v in g.args.borrow().iter() {
+                marker.mark_value(v);
+            }
+            for v in g.stack.borrow().iter() {
+                marker.mark_value(v);
+            }
+            for v in g.locals.borrow().iter() {
+                marker.mark_value(v);
+            }
+            marker.mark_value(&g.resume_value.borrow());
+        }
         HeapObj::Iterator(it) => {
             for v in it.items.borrow().iter() {
                 marker.mark_value(v);

@@ -851,7 +851,10 @@ impl Parser {
                 ) {
                     None
                 } else {
-                    Some(Box::new(self.parse_unary()?))
+                    // Per spec, `yield` is a low-precedence operator: its
+                    // operand extends through the assignment-expression level,
+                    // so `yield 1 + 1` means `yield (1 + 1)`, not `(yield 1) + 1`.
+                    Some(Box::new(self.parse_assign()?))
                 };
                 Ok(Expr::Yield(inner))
             }
@@ -1067,6 +1070,22 @@ impl Parser {
                     computed,
                     method: true,
                     shorthand: false,
+                });
+            } else if !self.check(&TokenKind::Colon) && !computed {
+                // Shorthand property: `{x}` is equivalent to `{x: x}`.
+                let value = if let PropertyKey::Ident(s) = &key {
+                    Expr::Ident(s.clone())
+                } else {
+                    return Err(error::Error::syntax(
+                        "Shorthand property requires an identifier key".to_string(),
+                    ));
+                };
+                props.push(Property {
+                    key,
+                    value,
+                    computed,
+                    method: false,
+                    shorthand: true,
                 });
             } else {
                 self.expect(&TokenKind::Colon, ":")?;

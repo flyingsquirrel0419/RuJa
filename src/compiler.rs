@@ -96,6 +96,12 @@ impl Compiler {
                 }
             }
         }
+        // Hoist lexical (`let`/`const`) declarations into the TDZ at the top
+        // level, so accessing them before the declaration throws ReferenceError.
+        {
+            let lex = Self::collect_lexical_names(&program.body);
+            self.emit_lexical_hoist(&lex);
+        }
         for (i, stmt) in program.body.iter().enumerate() {
             // Function declarations were hoisted above; skip them in the body pass.
             if matches!(stmt, Stmt::FunctionDecl(_)) {
@@ -174,6 +180,67 @@ impl Compiler {
         }
     }
 
+    /// Collect all binding names introduced by a destructuring pattern.
+    fn pattern_names(pattern: &Pattern, out: &mut Vec<Rc<str>>) {
+        match pattern {
+            Pattern::Ident(name) => out.push(name.clone()),
+            Pattern::Array(elems) => {
+                for el in elems {
+                    Self::pattern_names(el, out);
+                }
+            }
+            Pattern::Object(props) => {
+                for (_, target) in props {
+                    Self::pattern_names(target, out);
+                }
+            }
+            Pattern::Assign(inner, _) => Self::pattern_names(inner, out),
+            Pattern::Rest(inner) => Self::pattern_names(inner, out),
+        }
+    }
+
+    /// Collect lexical (`let`/`const`) names declared at the top level of a
+    /// statement list. Does NOT descend into nested blocks/functions/loops:
+    /// those introduce their own scopes and hoist their own lexicals.
+    fn collect_lexical_names(body: &[Stmt]) -> Vec<(Rc<str>, VarKind)> {
+        let mut out = Vec::new();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl { kind, decls } => {
+                    if *kind != VarKind::Var {
+                        for (name, _) in decls {
+                            out.push((name.clone(), *kind));
+                        }
+                    }
+                }
+                // `var` destructuring (rare) is function-scoped, not lexical.
+                Stmt::Destructure { kind, pattern, .. } if *kind != VarKind::Var => {
+                    let mut names = Vec::new();
+                    Self::pattern_names(pattern, &mut names);
+                    for n in names {
+                        out.push((n, *kind));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Emit TDZ (uninitialized) declarations for lexical bindings at scope entry.
+    /// Also registers them in the compiler's scope table so `resolve` works and
+    /// later `declare` calls for the same name are no-ops (preventing slot reuse).
+    fn emit_lexical_hoist(&mut self, names: &[(Rc<str>, VarKind)]) {
+        for (name, kind) in names {
+            self.declare(name, *kind);
+            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+            match kind {
+                VarKind::Const => self.chunk.emit(Op::DeclareConstUninit(name_idx), 0),
+                _ => self.chunk.emit(Op::DeclareLetUninit(name_idx), 0),
+            }
+        }
+    }
+
     fn resolve(&self, name: &str) -> Option<(usize, VarKind)> {
         // At top level, all names resolve via LoadGlobal (declared with StoreGlobal).
         if self.scopes.len() <= 1 {
@@ -218,21 +285,15 @@ impl Compiler {
                             // var was hoisted to function-scope root; just set the value.
                             self.chunk.emit(Op::DeclareVar(name_idx), 0);
                         }
-                    } else if self.scopes.len() == 1 {
-                        // top-level: global
-                        self.declare(name, *kind);
-                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
-                        // Use DeclareLet/DeclareConst so the binding kind is tracked
-                        // (enables const reassignment errors).
-                        match kind {
-                            VarKind::Const => self.chunk.emit(Op::DeclareConst(name_idx), 0),
-                            _ => self.chunk.emit(Op::DeclareLet(name_idx), 0),
-                        }
                     } else {
-                        // function/block scope: store in environment (enables closure capture)
-                        self.declare(name, *kind);
+                        // Lexical (let/const): already declared uninitialized at scope
+                        // entry by `emit_lexical_hoist`. Initialize the binding with the
+                        // value now (this lifts the TDZ).
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
-                        self.chunk.emit(Op::DeclareEnv(name_idx), 0);
+                        match kind {
+                            VarKind::Const => self.chunk.emit(Op::InitConst(name_idx), 0),
+                            _ => self.chunk.emit(Op::InitLet(name_idx), 0),
+                        }
                     }
                 }
             }
@@ -272,6 +333,12 @@ impl Compiler {
                             }
                         }
                     }
+                }
+                // Hoist lexical (`let`/`const`) declarations into the TDZ at block
+                // entry, so accessing them before the declaration throws ReferenceError.
+                {
+                    let lex = Self::collect_lexical_names(body);
+                    self.emit_lexical_hoist(&lex);
                 }
                 for s in body {
                     if matches!(s, Stmt::FunctionDecl(_)) {
@@ -479,8 +546,7 @@ impl Compiler {
                 }
                 let temp_idx = self.intern("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), 0);
-                self.compile_pattern(pattern, temp_idx, &[])?;
-                let _ = kind;
+                self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
             Stmt::Break(_) => {
                 // Jump past the loop body; target patched when the loop ends.
@@ -575,8 +641,7 @@ impl Compiler {
                 // for-of/for-in with a destructuring pattern: the value is on the stack.
                 let temp_idx = self.intern("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), 0);
-                self.compile_pattern(pattern, temp_idx, &[])?;
-                let _ = kind;
+                self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
             other => {
                 // Non-declaration left side (e.g. `for (x of ...)`): treat as assignment target.
@@ -670,6 +735,12 @@ impl Compiler {
                 }
             }
         }
+        // Hoist lexical (`let`/`const`) declarations into the TDZ at function
+        // entry, so accessing them before the declaration throws ReferenceError.
+        {
+            let lex = Self::collect_lexical_names(&f.body);
+            self.emit_lexical_hoist(&lex);
+        }
         for stmt in &f.body {
             self.compile_stmt(stmt)?;
         }
@@ -708,24 +779,29 @@ impl Compiler {
         pattern: &Pattern,
         temp_idx: usize,
         path: &[PathStep],
+        kind: VarKind,
     ) -> error::Result<()> {
         match pattern {
             Pattern::Ident(name) => {
-                self.declare(name, VarKind::Let);
                 self.load_path(temp_idx, path);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::DeclareEnv(name_idx), 0);
+                // Try to initialize an already-hoisted (TDZ) binding; if none exists
+                // (e.g. a per-iteration loop binding in for-of), declare it fresh.
+                match kind {
+                    VarKind::Const => self.chunk.emit(Op::InitEnvConst(name_idx), 0),
+                    _ => self.chunk.emit(Op::InitEnv(name_idx), 0),
+                }
             }
             Pattern::Array(elems) => {
                 for (i, el) in elems.iter().enumerate() {
                     match el {
                         Pattern::Rest(inner) => {
-                            self.bind_rest(inner, temp_idx, path, i)?;
+                            self.bind_rest(inner, temp_idx, path, i, kind)?;
                         }
                         _ => {
                             let mut new_path = path.to_vec();
                             new_path.push(PathStep::Index(i));
-                            self.compile_pattern(el, temp_idx, &new_path)?;
+                            self.compile_pattern(el, temp_idx, &new_path, kind)?;
                         }
                     }
                 }
@@ -748,10 +824,10 @@ impl Compiler {
                             self.chunk.patch_jump(skip, after);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), 0);
-                            self.compile_pattern(inner, t2, &[])?;
+                            self.compile_pattern(inner, t2, &[], kind)?;
                         }
                         other => {
-                            self.compile_pattern(other, temp_idx, &new_path)?;
+                            self.compile_pattern(other, temp_idx, &new_path, kind)?;
                         }
                     }
                 }
@@ -769,15 +845,129 @@ impl Compiler {
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), 0);
-                self.compile_pattern(inner, t2, &[])?;
+                self.compile_pattern(inner, t2, &[], kind)?;
             }
             Pattern::Rest(inner) => {
                 self.load_path(temp_idx, path);
                 let t2 = self.intern("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), 0);
-                self.compile_pattern(inner, t2, &[])?;
+                self.compile_pattern(inner, t2, &[], kind)?;
             }
         }
+        Ok(())
+    }
+
+    /// Compile a destructuring *assignment* pattern (no declaration): each
+    /// bound name is an existing variable that receives its value via
+    /// `StoreEnvName`. `target` is an array/object literal expression.
+    fn compile_assign_pattern(
+        &mut self,
+        target: &Expr,
+        temp_idx: usize,
+        path: &[PathStep],
+    ) -> error::Result<()> {
+        match target {
+            Expr::Array(elems) => {
+                for (i, el) in elems.iter().enumerate() {
+                    match el {
+                        Expr::Spread(inner) => {
+                            self.bind_assign_rest(inner, temp_idx, path, i)?;
+                        }
+                        _ => {
+                            let mut new_path = path.to_vec();
+                            new_path.push(PathStep::Index(i));
+                            self.compile_assign_pattern(el, temp_idx, &new_path)?;
+                        }
+                    }
+                }
+            }
+            Expr::Object(props) => {
+                for p in props {
+                    let mut new_path = path.to_vec();
+                    match &p.key {
+                        PropertyKey::Ident(s) | PropertyKey::String(s) => {
+                            new_path.push(PathStep::Prop(s.clone()));
+                        }
+                        PropertyKey::Number(n) => {
+                            let key = self
+                                .chunk
+                                .add_constant(Value::String(Rc::from(n.to_string().as_str())));
+                            // numeric key: load via computed element access
+                            self.load_path(temp_idx, path);
+                            self.chunk.emit(Op::Const(key), 0);
+                            self.chunk.emit(Op::GetElem, 0);
+                            let t2 = self.intern("#d2");
+                            self.chunk.emit(Op::DeclareEnv(t2), 0);
+                            self.compile_assign_pattern(&p.value, t2, &[])?;
+                            continue;
+                        }
+                        PropertyKey::Computed(e) => {
+                            self.load_path(temp_idx, path);
+                            self.compile_expr(e)?;
+                            self.chunk.emit(Op::GetElem, 0);
+                            let t2 = self.intern("#d2");
+                            self.chunk.emit(Op::DeclareEnv(t2), 0);
+                            self.compile_assign_pattern(&p.value, t2, &[])?;
+                            continue;
+                        }
+                    }
+                    // shorthand `o.a` assigns to existing var named `a`;
+                    // `o.a: b` assigns to `b` (p.value is the target).
+                    if p.shorthand {
+                        self.load_path(temp_idx, &new_path);
+                        if let Expr::Ident(name) = &p.value {
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk.emit(Op::StoreEnvName(name_idx), 0);
+                            self.chunk.emit(Op::Pop, 0);
+                        } else {
+                            let t2 = self.intern("#d2");
+                            self.chunk.emit(Op::DeclareEnv(t2), 0);
+                            self.compile_assign_pattern(&p.value, t2, &[])?;
+                        }
+                    } else {
+                        self.compile_assign_pattern(&p.value, temp_idx, &new_path)?;
+                    }
+                }
+            }
+            Expr::Ident(name) => {
+                self.load_path(temp_idx, path);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::StoreEnvName(name_idx), 0);
+                self.chunk.emit(Op::Pop, 0);
+            }
+            Expr::Array(_) => {
+                // nested array pattern as a direct element (rare); stash and recurse
+                self.load_path(temp_idx, path);
+                let t2 = self.intern("#d2");
+                self.chunk.emit(Op::DeclareEnv(t2), 0);
+                self.compile_assign_pattern(target, t2, &[])?;
+            }
+            _ => {
+                // Non-pattern element (e.g. a hole `[,`): just discard.
+                self.load_path(temp_idx, path);
+                self.chunk.emit(Op::Pop, 0);
+            }
+        }
+        Ok(())
+    }
+
+    /// Rest binding for assignment patterns: `...rest` collects temp[i..].
+    fn bind_assign_rest(
+        &mut self,
+        inner: &Expr,
+        temp_idx: usize,
+        path: &[PathStep],
+        from: usize,
+    ) -> error::Result<()> {
+        self.load_path(temp_idx, path);
+        let slice_key = self.chunk.add_constant(Value::String(Rc::from("slice")));
+        self.chunk.emit(Op::Const(slice_key), 0);
+        let from_c = self.chunk.add_constant(Value::Number(from as f64));
+        self.chunk.emit(Op::Const(from_c), 0);
+        self.chunk.emit(Op::CallMethod(1), 0);
+        let t2 = self.intern("#d2");
+        self.chunk.emit(Op::DeclareEnv(t2), 0);
+        self.compile_assign_pattern(inner, t2, &[])?;
         Ok(())
     }
 
@@ -788,6 +978,7 @@ impl Compiler {
         temp_idx: usize,
         path: &[PathStep],
         from: usize,
+        kind: VarKind,
     ) -> error::Result<()> {
         // Load the value at path (the array to slice), then call .slice(from).
         self.load_path(temp_idx, path);
@@ -798,7 +989,7 @@ impl Compiler {
         self.chunk.emit(Op::CallMethod(1), 0); // value.slice(from)
         let t2 = self.intern("#d2");
         self.chunk.emit(Op::DeclareEnv(t2), 0);
-        self.compile_pattern(inner, t2, &[])?;
+        self.compile_pattern(inner, t2, &[], kind)?;
         Ok(())
     }
 
@@ -1583,6 +1774,13 @@ impl Compiler {
 
     fn compile_assign_target_store(&mut self, target: &Expr, value: &Expr) -> error::Result<()> {
         match target {
+            // Destructuring assignment: `[a, b] = expr` / `{a, b} = expr`.
+            Expr::Array(_) | Expr::Object(_) => {
+                self.compile_expr(value)?;
+                let temp_idx = self.intern("#destr");
+                self.chunk.emit(Op::DeclareEnv(temp_idx), 0);
+                self.compile_assign_pattern(target, temp_idx, &[])?;
+            }
             Expr::Member {
                 object,
                 property,

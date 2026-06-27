@@ -34,6 +34,10 @@ selected ES2015 features, with zero external runtime dependencies.
   `Symbol`, `Error`/`TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`
 - ES2015: `class`/`extends`/`super`, template literals with `${}`,
   default & rest parameters, array/object destructuring, `for...of`/`for...in`
+- ES2015 destructuring assignment to existing bindings: `[a, b] = expr`,
+  `{a, b} = expr` (swaps, holes, rest, rename, nested) and object shorthand `{x, y}`
+- Temporal Dead Zone (TDZ) for `let`/`const`: accessing a lexical binding
+  before its declaration throws `ReferenceError`; `const` reassignment is rejected
 - Logical operators with correct short-circuit semantics: `&&`, `||`, and
   nullish coalescing `??` (keeps falsy-but-non-null left operands such as `0`)
 - Logical assignment `&&=`, `||=`, `??=` and compound assignment (`+=`, `-=`,
@@ -43,7 +47,11 @@ selected ES2015 features, with zero external runtime dependencies.
 - Regex literals `/pattern/flags` with `RegExp` (`test`, `exec`, `match`, `source`,
   `flags`) and `String.replace` with regex
 - `Promise` with `then`/`catch` chaining and microtask draining
+- `Promise.resolve`/`Promise.reject` static methods
 - `async`/`await` (async functions return a Promise; await resolves it synchronously)
+- Lazy generators (`function*`/`yield`): pull-based `next()`/`for...of`/spread
+  that suspend at each `yield`, supporting infinite generators; `next(v)` resumes
+  with a value; `return` ends the generator
 - `try`/`catch` catches runtime errors (TypeError/ReferenceError) and native
   errors surface as `Error` objects
 - Array methods: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`,
@@ -101,9 +109,7 @@ fn main() {
 
 ## Known limitations
 
-- `async`/`await`, generators (not yet implemented)
 - test262 conformance (targeted for follow-up)
-- Deeply nested optional method chains (`a?.b?.()`) are not fully short-circuited
 
 ## License
 
