@@ -285,7 +285,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::PlusAssign);
                 }
-                return Some(TokenKind::Plus);
+                Some(TokenKind::Plus)
             }
             b'-' => {
                 self.advance();
@@ -297,7 +297,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::MinusAssign);
                 }
-                return Some(TokenKind::Minus);
+                Some(TokenKind::Minus)
             }
             b'*' => {
                 self.advance();
@@ -313,7 +313,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::StarAssign);
                 }
-                return Some(TokenKind::Star);
+                Some(TokenKind::Star)
             }
             b'/' => {
                 self.advance();
@@ -321,7 +321,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::SlashAssign);
                 }
-                return Some(TokenKind::Slash);
+                Some(TokenKind::Slash)
             }
             b'%' => {
                 self.advance();
@@ -329,7 +329,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::PercentAssign);
                 }
-                return Some(TokenKind::Percent);
+                Some(TokenKind::Percent)
             }
             b'=' => {
                 self.advance();
@@ -345,7 +345,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::Arrow);
                 }
-                return Some(TokenKind::Assign);
+                Some(TokenKind::Assign)
             }
             b'!' => {
                 self.advance();
@@ -357,7 +357,7 @@ impl<'a> Lexer<'a> {
                     }
                     return Some(TokenKind::NotEq);
                 }
-                return Some(TokenKind::Not);
+                Some(TokenKind::Not)
             }
             b'<' => {
                 self.advance();
@@ -373,7 +373,7 @@ impl<'a> Lexer<'a> {
                     }
                     return Some(TokenKind::Shl);
                 }
-                return Some(TokenKind::Lt);
+                Some(TokenKind::Lt)
             }
             b'>' => {
                 self.advance();
@@ -397,7 +397,7 @@ impl<'a> Lexer<'a> {
                     }
                     return Some(TokenKind::Shr);
                 }
-                return Some(TokenKind::Gt);
+                Some(TokenKind::Gt)
             }
             b'&' => {
                 self.advance();
@@ -413,7 +413,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::AmpAssign);
                 }
-                return Some(TokenKind::BitAnd);
+                Some(TokenKind::BitAnd)
             }
             b'|' => {
                 self.advance();
@@ -429,7 +429,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::PipeAssign);
                 }
-                return Some(TokenKind::BitOr);
+                Some(TokenKind::BitOr)
             }
             b'^' => {
                 self.advance();
@@ -437,11 +437,11 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::CaretAssign);
                 }
-                return Some(TokenKind::BitXor);
+                Some(TokenKind::BitXor)
             }
             b'~' => {
                 self.advance();
-                return Some(TokenKind::BitNot);
+                Some(TokenKind::BitNot)
             }
             b'?' => {
                 self.advance();
@@ -459,7 +459,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::QuestionDot);
                 }
-                return Some(TokenKind::Question);
+                Some(TokenKind::Question)
             }
             b'.' => {
                 self.advance();
@@ -468,43 +468,43 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Some(TokenKind::Spread);
                 }
-                return Some(TokenKind::Dot);
+                Some(TokenKind::Dot)
             }
             b':' => {
                 self.advance();
-                return Some(TokenKind::Colon);
+                Some(TokenKind::Colon)
             }
             b',' => {
                 self.advance();
-                return Some(TokenKind::Comma);
+                Some(TokenKind::Comma)
             }
             b';' => {
                 self.advance();
-                return Some(TokenKind::Semicolon);
+                Some(TokenKind::Semicolon)
             }
             b'(' => {
                 self.advance();
-                return Some(TokenKind::LParen);
+                Some(TokenKind::LParen)
             }
             b')' => {
                 self.advance();
-                return Some(TokenKind::RParen);
+                Some(TokenKind::RParen)
             }
             b'{' => {
                 self.advance();
-                return Some(TokenKind::LBrace);
+                Some(TokenKind::LBrace)
             }
             b'}' => {
                 self.advance();
-                return Some(TokenKind::RBrace);
+                Some(TokenKind::RBrace)
             }
             b'[' => {
                 self.advance();
-                return Some(TokenKind::LBracket);
+                Some(TokenKind::LBracket)
             }
             b']' => {
                 self.advance();
-                return Some(TokenKind::RBracket);
+                Some(TokenKind::RBracket)
             }
             _ => None,
         }
@@ -730,6 +730,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn numbers() {
         assert_eq!(kinds("42"), vec![Number(42.0), Eof]);
         assert_eq!(kinds("3.14"), vec![Number(3.14), Eof]);

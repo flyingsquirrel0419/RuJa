@@ -132,7 +132,7 @@ fn main() {
         exit(repl());
     }
     let i = 1;
-    while i < args.len() {
+    if i < args.len() {
         match args[i].as_str() {
             "-h" | "--help" => {
                 print!("{}", HELP);

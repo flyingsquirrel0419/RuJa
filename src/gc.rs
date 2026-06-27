@@ -151,6 +151,12 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
     }
 }
 
+impl Default for Heap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Heap {
     pub fn new() -> Self {
         Heap {

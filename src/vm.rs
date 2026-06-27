@@ -82,6 +82,12 @@ pub enum Microtask {
     },
 }
 
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Vm {
     pub fn new() -> Self {
         let heap = Heap::new();
@@ -211,7 +217,7 @@ impl Vm {
             }),
             _ => None,
         }
-        .or_else(|| crate::environment::get(&self.heap, self.global, "Error").map(|v| v))
+        .or_else(|| crate::environment::get(&self.heap, self.global, "Error"))
         .unwrap_or(self.error_proto.clone());
         let mut props = IndexMap::new();
         props.insert(
@@ -1148,7 +1154,7 @@ impl Vm {
                 }
             }
             // GC check
-            if self.heap.live_count() > 0 && self.heap.live_count() % 4096 == 0 {
+            if self.heap.live_count() > 0 && self.heap.live_count().is_multiple_of(4096) {
                 let roots = self.collect_roots();
                 self.heap.maybe_collect(&roots);
             }
@@ -1251,13 +1257,10 @@ impl Vm {
                     match obj {
                         HeapObj::Array(a) => {
                             let items = a.items.borrow();
-                            if items.is_empty() {
+                            if items.len() <= 1 {
                                 0.0
-                            } else if items.len() == 1 {
-                                0.0
-                            }
-                            // recurse needed
-                            else {
+                            } else {
+                                // recurse needed
                                 f64::NAN
                             }
                         }
@@ -1598,7 +1601,6 @@ impl Vm {
     }
 
     /// Allocate a plain object and return its handle.
-
     /// Resolve a promise: set state to Fulfilled and schedule its handlers.
     pub fn promise_resolve(&mut self, promise_idx: usize, value: Value) {
         let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {

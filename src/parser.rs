@@ -1451,7 +1451,6 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::*;
 
     fn parse(src: &str) -> Program {
         Parser::parse(src).unwrap()

@@ -37,6 +37,12 @@ enum PathStep {
     RestFrom(usize),
 }
 
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Compiler {
@@ -406,8 +412,8 @@ impl Compiler {
                 let jump_past_catch = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), 0);
                 let catch_start = self.chunk.code.len();
-                self.chunk.patch_jump(try_start + 0, catch_start); // patch PushTry handler
-                                                                   // patch the PushTry's handler ip
+                self.chunk.patch_jump(try_start, catch_start); // patch PushTry handler
+                                                               // patch the PushTry's handler ip
                 {
                     let try_ip = try_start;
                     if let Op::PushTry(ref mut h) = self.chunk.code[try_ip] {
@@ -417,7 +423,7 @@ impl Compiler {
                 self.push_scope(true);
                 if let Some(param) = catch_param {
                     self.declare(param, VarKind::Let);
-                    let name_idx = self.intern(&**param);
+                    let name_idx = self.intern(param);
                     self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                 }
                 self.compile_stmt(catch_body)?;
@@ -614,7 +620,7 @@ impl Compiler {
             is_function: true,
             base: 0,
         });
-        for (_i, param) in f.params.iter().enumerate() {
+        for param in f.params.iter() {
             self.declare(param, VarKind::Let);
             // param is in slot i (VM stores args to locals[0..n])
         }
@@ -1556,7 +1562,7 @@ impl Compiler {
                 }
                 // store the constructor under the class name
                 if let Some(name) = &cls.name {
-                    let name_idx = self.intern(&**name);
+                    let name_idx = self.intern(name);
                     self.chunk.emit(Op::StoreEnv(name_idx), 0);
                 }
             }

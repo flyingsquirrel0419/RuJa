@@ -134,25 +134,23 @@ fn object_to_string(
                 let name = obj.class_name();
                 if name == "Object" {
                     // check constructor name via prototype
-                    if let Some(proto) = obj.proto().borrow().as_ref() {
-                        if let Value::Object(pidx) = proto {
-                            let constructor = vm.heap.with_obj(pidx.0, |p| {
-                                p.props()
-                                    .borrow()
-                                    .get("constructor")
-                                    .map(|d| d.value.clone())
-                            });
-                            if let Some(Value::Object(fidx)) = constructor {
-                                let fname = vm.heap.with_obj(fidx.0, |f| {
-                                    if let HeapObj::Function(fd) = f {
-                                        fd.name.clone()
-                                    } else {
-                                        None
-                                    }
-                                });
-                                if let Some(n) = fname {
-                                    return n.to_string();
+                    if let Some(Value::Object(pidx)) = obj.proto().borrow().as_ref().cloned() {
+                        let constructor = vm.heap.with_obj(pidx.0, |p| {
+                            p.props()
+                                .borrow()
+                                .get("constructor")
+                                .map(|d| d.value.clone())
+                        });
+                        if let Some(Value::Object(fidx)) = constructor {
+                            let fname = vm.heap.with_obj(fidx.0, |f| {
+                                if let HeapObj::Function(fd) = f {
+                                    fd.name.clone()
+                                } else {
+                                    None
                                 }
+                            });
+                            if let Some(n) = fname {
+                                return n.to_string();
                             }
                         }
                     }
@@ -262,7 +260,7 @@ fn define_global_property(vm: &mut Vm, name: &str, value: Value) {
     env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
 }
 
-fn get_arg<T: Default>(args: &[Value], idx: usize) -> Value {
+fn get_arg(args: &[Value], idx: usize) -> Value {
     args.get(idx).cloned().unwrap_or(Value::Undefined)
 }
 
@@ -359,7 +357,7 @@ fn object_has_own_property(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
-    let key = if let Some(a) = args.get(0) {
+    let key = if let Some(a) = args.first() {
         vm.to_property_key(a)?
     } else {
         String::new()
@@ -455,13 +453,13 @@ fn make_str_array(vm: &mut Vm, strs: Vec<Rc<str>>) -> Value {
 }
 
 fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let keys = own_string_keys(vm, &obj);
     Ok(make_str_array(vm, keys))
 }
 
 fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let mut vals = Vec::new();
     if let Value::Object(idx) = &obj {
         vm.heap.with_obj(idx.0, |o| {
@@ -489,7 +487,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
 }
 
 fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let keys = own_string_keys(vm, &obj);
     let mut pairs = Vec::new();
     for k in keys {
@@ -510,7 +508,7 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
 }
 
 fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
     for src in &args[1..] {
         let keys = own_string_keys(vm, src);
         for k in keys {
@@ -527,12 +525,12 @@ fn object_is_prototype_of(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let proto_val = this.unwrap_or(Value::Undefined);
-    let candidate = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let candidate = args.first().cloned().unwrap_or(Value::Undefined);
     if proto_val.is_nullish() || candidate.is_nullish() {
         return Ok(Value::Bool(false));
     }
     if let (Value::Object(pidx), Value::Object(cidx)) = (&proto_val, &candidate) {
-        let mut cur = cidx.clone();
+        let mut cur = *cidx;
         loop {
             let proto = vm.heap.with_obj(cur.0, |obj| obj.proto().borrow().clone());
             match proto {
@@ -550,7 +548,7 @@ fn object_is_prototype_of(
 }
 
 fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let a = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let a = args.first().cloned().unwrap_or(Value::Undefined);
     let b = args.get(1).cloned().unwrap_or(Value::Undefined);
     // Object.is: SameValue (distinguishes -0/+0 and treats NaN as equal)
     let same = match (&a, &b) {
@@ -568,7 +566,7 @@ fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
     Ok(Value::Bool(same))
 }
 fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let entries = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let entries = args.first().cloned().unwrap_or(Value::Undefined);
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.object_proto.clone())),
@@ -589,7 +587,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
                     if let HeapObj::Array(a) = o {
                         let it = a.items.borrow();
                         (
-                            it.get(0).cloned().unwrap_or(Value::Undefined),
+                            it.first().cloned().unwrap_or(Value::Undefined),
                             it.get(1).cloned().unwrap_or(Value::Undefined),
                         )
                     } else {
@@ -610,7 +608,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let proto = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let proto = args.first().cloned().unwrap_or(Value::Undefined);
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(if proto.is_null() { None } else { Some(proto) }),
@@ -624,7 +622,7 @@ fn object_get_own_property_names(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let keys = own_string_keys(vm, &obj);
     Ok(make_str_array(vm, keys))
 }
@@ -633,7 +631,7 @@ fn object_get_own_property_descriptor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let key = match args.get(1) {
         Some(v) => vm.to_property_key(v)?,
         None => return Ok(Value::Undefined),
@@ -680,7 +678,7 @@ fn object_get_own_property_descriptor(
 }
 
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = target {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Object(o) = obj {
@@ -700,7 +698,7 @@ fn object_define_property(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
     let key = args
         .get(1)
         .map(|v| vm.to_property_key(v))
@@ -714,18 +712,18 @@ fn object_define_property(
         let mut configurable = false;
         let mut is_data = false;
         if let Value::Object(_didx) = desc {
-            if let Some(v) = vm.get_property(&desc, "value").ok() {
+            if let Ok(v) = vm.get_property(&desc, "value") {
                 value = v;
                 is_data = true;
             }
-            if let Some(v) = vm.get_property(&desc, "writable").ok() {
+            if let Ok(v) = vm.get_property(&desc, "writable") {
                 writable = v.is_truthy();
                 is_data = true;
             }
-            if let Some(v) = vm.get_property(&desc, "enumerable").ok() {
+            if let Ok(v) = vm.get_property(&desc, "enumerable") {
                 enumerable = v.is_truthy();
             }
-            if let Some(v) = vm.get_property(&desc, "configurable").ok() {
+            if let Ok(v) = vm.get_property(&desc, "configurable") {
                 configurable = v.is_truthy();
             }
         }
@@ -764,10 +762,10 @@ fn object_define_properties(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
     let props = args.get(1).cloned().unwrap_or(Value::Undefined);
     if let (Value::Object(_), Value::Object(_)) = (&target, &props) {
-        let keys = object_keys(vm, &[props.clone()], None)?;
+        let keys = object_keys(vm, std::slice::from_ref(&props), None)?;
         if let Value::Object(kidx) = keys {
             let key_objs = vm.heap.with_obj(kidx.0, |obj| {
                 if let HeapObj::Array(a) = obj {
@@ -790,7 +788,7 @@ fn object_define_properties(
 
 fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let msg = args
-        .get(0)
+        .first()
         .map(|v| vm.to_string(v).unwrap_or_else(|_| Rc::from("")))
         .unwrap_or_else(|| Rc::from(""));
     // Use the `this` provided by `construct` (already linked to <Error>.prototype).
@@ -874,7 +872,7 @@ pub fn setup(vm: &mut Vm) {
 // Math
 // =========================================================================
 fn math_unary(f: fn(f64) -> f64, vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
-    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(f(n)))
 }
 fn math_floor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -905,7 +903,7 @@ fn math_abs(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
     math_unary(f64::abs, vm, args)
 }
 fn math_sign(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(if n > 0.0 {
         1.0
     } else if n < 0.0 {
@@ -951,7 +949,7 @@ fn math_hypot(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     }))
 }
 fn math_atan2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let y = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let y = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     let x = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(y.atan2(x)))
 }
@@ -980,11 +978,11 @@ fn math_log1p(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     math_unary(f64::ln_1p, vm, args)
 }
 fn math_clz32(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))? as u32;
+    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))? as u32;
     Ok(Value::Number(n.leading_zeros() as f64))
 }
 fn math_fround(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(n as f32 as f64))
 }
 fn math_trunc2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -1001,7 +999,7 @@ fn math_tan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
     math_unary(f64::tan, vm, args)
 }
 fn math_pow(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let a = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let a = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     let b = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(a.powf(b)))
 }
@@ -1026,7 +1024,7 @@ fn math_min(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
     Ok(Value::Number(m))
 }
 fn math_random(_vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    thread_local! { static STATE: Cell<u64> = Cell::new(0x2545F4914F6CDD1D); }
+    thread_local! { static STATE: Cell<u64> = const { Cell::new(0x2545F4914F6CDD1D) }; }
     let r = STATE.with(|s| {
         let mut x = s.get();
         x ^= x << 13;
@@ -1146,7 +1144,7 @@ fn build_console(vm: &mut Vm) -> Value {
 // JSON
 // =========================================================================
 fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let v = args.get(0).unwrap_or(&Value::Undefined);
+    let v = args.first().unwrap_or(&Value::Undefined);
     // Reject circular references per ECMAScript (TypeError).
     if let Value::Object(_) = v {
         if has_json_cycle(vm, v, &mut Vec::new()) {
@@ -1255,7 +1253,7 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
     }
 }
 fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let s = match args.get(0) {
+    let s = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         _ => return Ok(Value::Null),
     };
@@ -1449,7 +1447,7 @@ fn build_json(vm: &mut Vm) -> Value {
 // Global functions
 // =========================================================================
 fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let input = match args.get(0) {
+    let input = match args.first() {
         Some(Value::String(s)) => s.trim().to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
         None => return Ok(Value::Number(f64::NAN)),
@@ -1492,7 +1490,7 @@ fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
     if !(2..=36).contains(&radix) {
         return Ok(Value::Number(f64::NAN));
     }
-    let valid = |c: char| c.to_digit(radix).is_some();
+    let valid = |c: char| c.is_digit(radix);
     let start = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
     let digits_end = input[start..]
         .char_indices()
@@ -1509,7 +1507,7 @@ fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
     }
 }
 fn global_parse_float(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let s = match args.get(0) {
+    let s = match args.first() {
         Some(Value::String(s)) => s.trim().to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
         None => return Ok(Value::Number(f64::NAN)),
@@ -1517,11 +1515,11 @@ fn global_parse_float(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::R
     Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
 }
 fn global_is_nan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(n.is_nan()))
 }
 fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(n.is_finite()))
 }
 
@@ -1530,7 +1528,7 @@ fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
 // =========================================================================
 
 fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let src_val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let src_val = args.first().cloned().unwrap_or(Value::Undefined);
     let map_fn = args.get(1).cloned();
     // Array-like or iterable
     let mut items: Vec<Value> = Vec::new();
@@ -1586,7 +1584,7 @@ fn array_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
 
 fn array_is_array(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(is_array(
-        args.get(0).unwrap_or(&Value::Undefined),
+        args.first().unwrap_or(&Value::Undefined),
         &vm.heap,
     )))
 }
@@ -1621,7 +1619,7 @@ fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result
     Ok(Value::Undefined)
 }
 fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let sep = match args.get(0) {
+    let sep = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
         _ => ",".to_string(),
@@ -1649,7 +1647,7 @@ fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     Ok(Value::String(Rc::from("")))
 }
 fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1680,7 +1678,7 @@ fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     Ok(Value::Undefined)
 }
 fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1714,7 +1712,7 @@ fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     Ok(Value::Undefined)
 }
 fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1726,14 +1724,14 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         let (mut acc, start) = if args.len() >= 2 {
             (args[1].clone(), 0)
         } else {
-            (items.get(0).cloned().unwrap_or(Value::Undefined), 1)
+            (items.first().cloned().unwrap_or(Value::Undefined), 1)
         };
-        for i in start..items.len() {
+        for (i, item) in items.iter().enumerate().skip(start) {
             acc = vm.call_function(
                 &cb,
                 &[
                     acc,
-                    items[i].clone(),
+                    item.clone(),
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
@@ -1745,7 +1743,7 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     Ok(Value::Undefined)
 }
 fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1769,7 +1767,7 @@ fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     Ok(Value::Undefined)
 }
 fn array_index_of(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let pos = _vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1783,7 +1781,7 @@ fn array_index_of(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
     Ok(Value::Number(-1.0))
 }
 fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let found = vm.heap.with_obj(idx.0, |obj| {
             // includes uses SameValueZero: NaN matches NaN (unlike indexOf's ===).
@@ -1814,7 +1812,7 @@ fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         });
         let len = items.len() as i64;
         let start = args
-            .get(0)
+            .first()
             .and_then(|v| {
                 if let Value::Number(n) = v {
                     Some(*n as i64)
@@ -1908,7 +1906,7 @@ fn array_reverse(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Re
 }
 
 fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cmp = args.get(0).cloned();
+    let cmp = args.first().cloned();
     if let Some(Value::Object(idx)) = this {
         // Collect items, sort via comparator (default: cast to string, UTF-16 code unit compare).
         let mut items = vm.heap.with_obj(idx.0, |obj| {
@@ -2014,7 +2012,7 @@ fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
             }
         });
         let len = items_clone.len() as f64;
-        let start = match args.get(0) {
+        let start = match args.first() {
             Some(v) => vm.to_number(v)?,
             None => 0.0,
         };
@@ -2050,7 +2048,7 @@ fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     Ok(Value::Undefined)
 }
 fn array_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).unwrap_or(&Value::Undefined).clone();
+    let target = args.first().unwrap_or(&Value::Undefined).clone();
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2076,7 +2074,7 @@ fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<V
                 Vec::new()
             }
         });
-        let n = match args.get(0) {
+        let n = match args.first() {
             Some(v) => vm.to_number(v)?,
             None => 0.0,
         };
@@ -2093,7 +2091,7 @@ fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<V
     Ok(Value::Undefined)
 }
 fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let depth = match args.get(0) {
+    let depth = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 1.0,
     };
@@ -2151,7 +2149,7 @@ fn array_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     } else {
         Vec::new()
     };
-    let fn_val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let fn_val = args.first().cloned().unwrap_or(Value::Undefined);
     let mut mapped: Vec<Value> = Vec::new();
     for (i, v) in items.iter().enumerate() {
         let result = vm.call_function(
@@ -2201,7 +2199,7 @@ fn array_copy_within(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
                 0
             }
         }) as f64;
-        let target = match args.get(0) {
+        let target = match args.first() {
             Some(v) => vm.to_number(v)?,
             None => 0.0,
         };
@@ -2294,7 +2292,7 @@ fn array_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Re
 
 fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let items = if args.len() == 1 {
-        if let Some(Value::Number(n)) = args.get(0) {
+        if let Some(Value::Number(n)) = args.first() {
             vec![Value::Undefined; *n as usize]
         } else {
             args.to_vec()
@@ -2314,7 +2312,7 @@ fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
 }
 
 fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2341,7 +2339,7 @@ fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     Ok(Value::Undefined)
 }
 fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2368,7 +2366,7 @@ fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
     Ok(Value::Number(-1.0))
 }
 fn array_find_last(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2395,7 +2393,7 @@ fn array_find_last(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
     Ok(Value::Undefined)
 }
 fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let value = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2450,7 +2448,7 @@ fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     Ok(Value::Undefined)
 }
 fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2477,7 +2475,7 @@ fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     Ok(Value::Bool(false))
 }
 fn array_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2528,7 +2526,7 @@ fn str_val(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
 fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let i = args
-        .get(0)
+        .first()
         .and_then(|v| {
             if let Value::Number(n) = v {
                 Some(*n as usize)
@@ -2545,7 +2543,7 @@ fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
 fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let i = args
-        .get(0)
+        .first()
         .and_then(|v| {
             if let Value::Number(n) = v {
                 Some(*n as usize)
@@ -2562,8 +2560,8 @@ fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
 fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let n = args
-        .get(0)
-        .map(|v| crate::value::value_to_debug_string(v))
+        .first()
+        .map(crate::value::value_to_debug_string)
         .unwrap_or_default();
     Ok(Value::Number(s.find(&n).map(|i| i as f64).unwrap_or(-1.0)))
 }
@@ -2572,7 +2570,7 @@ fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len() as i64;
     let start = args
-        .get(0)
+        .first()
         .and_then(|v| {
             if let Value::Number(n) = v {
                 Some(*n as i64)
@@ -2623,7 +2621,7 @@ fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
 }
 fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let sep = args.get(0).map(|v| crate::value::value_to_debug_string(v));
+    let sep = args.first().map(crate::value::value_to_debug_string);
     let limit = match args.get(1) {
         Some(Value::Undefined) | None => usize::MAX,
         Some(v) => vm.to_number(v).map(|n| n as usize).unwrap_or(usize::MAX),
@@ -2651,7 +2649,7 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         None => "undefined".to_string(),
     };
     // If the search value is a RegExp, use regex replacement.
-    if let Some(Value::Object(idx)) = args.get(0) {
+    if let Some(Value::Object(idx)) = args.first() {
         let source = vm.heap.with_obj(idx.0, |o| {
             o.props().borrow().get("source").map(|d| d.value.clone())
         });
@@ -2669,7 +2667,7 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             return Ok(Value::String(Rc::from(replaced.as_ref())));
         }
     }
-    let from = match args.get(0) {
+    let from = match args.first() {
         Some(v) => vm.to_string(v)?.to_string(),
         None => return Ok(Value::String(Rc::from(s.as_str()))),
     };
@@ -2678,8 +2676,8 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
 fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
         str_val(vm, &this)?.contains(
-            args.get(0)
-                .map(|v| crate::value::value_to_debug_string(v))
+            args.first()
+                .map(crate::value::value_to_debug_string)
                 .unwrap_or_default()
                 .as_str(),
         ),
@@ -2688,8 +2686,8 @@ fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
 fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
         str_val(vm, &this)?.starts_with(
-            args.get(0)
-                .map(|v| crate::value::value_to_debug_string(v))
+            args.first()
+                .map(crate::value::value_to_debug_string)
                 .unwrap_or_default()
                 .as_str(),
         ),
@@ -2698,8 +2696,8 @@ fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
 fn str_ends_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
         str_val(vm, &this)?.ends_with(
-            args.get(0)
-                .map(|v| crate::value::value_to_debug_string(v))
+            args.first()
+                .map(crate::value::value_to_debug_string)
                 .unwrap_or_default()
                 .as_str(),
         ),
@@ -2707,7 +2705,7 @@ fn str_ends_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
 }
 fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let n = args
-        .get(0)
+        .first()
         .and_then(|v| {
             if let Value::Number(n) = v {
                 Some(*n as usize)
@@ -2723,7 +2721,7 @@ fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
 
 fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    match args.get(0) {
+    match args.first() {
         Some(Value::Object(idx)) => {
             let source = vm.heap.with_obj(idx.0, |o| {
                 o.props().borrow().get("source").map(|d| d.value.clone())
@@ -2752,7 +2750,7 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     }
 }
 fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let fn_val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let fn_val = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -2777,7 +2775,7 @@ fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 
 fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let target = match args.get(0) {
+    let target = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
     } as usize;
@@ -2800,7 +2798,7 @@ fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
 }
 fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let target = match args.get(0) {
+    let target = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
     } as usize;
@@ -2821,7 +2819,7 @@ fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
 }
 fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let n = match args.get(0) {
+    let n = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
     } as isize;
@@ -2843,7 +2841,7 @@ fn str_trim_end(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Res
 }
 fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let from = match args.get(0) {
+    let from = match args.first() {
         Some(Value::String(p)) => p.to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
         None => return Ok(Value::String(Rc::from(s.as_str()))),
@@ -2867,7 +2865,7 @@ fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
 fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let len = s.chars().count() as f64;
-    let mut start = match args.get(0) {
+    let mut start = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
     };
@@ -2911,35 +2909,35 @@ fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
 }
 fn string_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     Ok(Value::String(
-        vm.to_string(args.get(0).unwrap_or(&Value::Undefined))?,
+        vm.to_string(args.first().unwrap_or(&Value::Undefined))?,
     ))
 }
 fn number_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     Ok(Value::Number(
-        vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?,
+        vm.to_number(args.first().unwrap_or(&Value::Undefined))?,
     ))
 }
 
 fn number_is_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    match args.get(0) {
+    match args.first() {
         Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0 => Ok(Value::Bool(true)),
         _ => Ok(Value::Bool(false)),
     }
 }
 fn number_is_finite(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    match args.get(0) {
+    match args.first() {
         Some(Value::Number(n)) if n.is_finite() => Ok(Value::Bool(true)),
         _ => Ok(Value::Bool(false)),
     }
 }
 fn number_is_nan(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    match args.get(0) {
+    match args.first() {
         Some(Value::Number(n)) if n.is_nan() => Ok(Value::Bool(true)),
         _ => Ok(Value::Bool(false)),
     }
 }
 fn number_is_safe_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    match args.get(0) {
+    match args.first() {
         Some(Value::Number(n))
             if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0 =>
         {
@@ -2970,7 +2968,7 @@ fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
             "-Infinity"
         })));
     }
-    let digits = match args.get(0) {
+    let digits = match args.first() {
         Some(v) => vm.to_number(v)? as usize,
         None => 0,
     };
@@ -2982,7 +2980,7 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
         Some(v) => vm.to_number(v)?,
         None => 0.0,
     };
-    let radix = match args.get(0) {
+    let radix = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 10.0,
     } as u32;
@@ -2991,7 +2989,7 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
             crate::value::num_to_string(n).as_str(),
         )));
     }
-    if radix < 2 || radix > 36 {
+    if !(2..=36).contains(&radix) {
         return Err(Error::range(
             "toString() radix must be between 2 and 36".to_string(),
         ));
@@ -3023,7 +3021,7 @@ fn format_i64_radix(n: i64, radix: u32) -> String {
 
 fn boolean_constructor(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
-        args.get(0).unwrap_or(&Value::Undefined).is_truthy(),
+        args.first().unwrap_or(&Value::Undefined).is_truthy(),
     ))
 }
 
@@ -3247,7 +3245,7 @@ pub fn setup_full(vm: &mut Vm) {
 // Map
 // =========================================================================
 fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
     let val = args.get(1).cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
@@ -3264,7 +3262,7 @@ fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     Ok(this.unwrap_or(Value::Undefined))
 }
 fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         return Ok(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
@@ -3282,7 +3280,7 @@ fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     Ok(Value::Undefined)
 }
 fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
@@ -3295,7 +3293,7 @@ fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     Ok(Value::Bool(false))
 }
 fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let key = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
@@ -3345,7 +3343,7 @@ fn map_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
 // Set
 // =========================================================================
 fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let val = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
@@ -3359,7 +3357,7 @@ fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     Ok(this.unwrap_or(Value::Undefined))
 }
 fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let val = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
@@ -3372,7 +3370,7 @@ fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     Ok(Value::Bool(false))
 }
 fn set_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let val = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
@@ -3412,7 +3410,7 @@ fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
 // Symbol
 // =========================================================================
 fn symbol_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let _desc = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let _desc = args.first().cloned().unwrap_or(Value::Undefined);
     let id = vm.next_symbol_id;
     vm.next_symbol_id += 1;
     Ok(Value::Symbol(id))
@@ -3436,7 +3434,7 @@ fn symbol_to_string(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> erro
 // Promise
 // =========================================================================
 fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let executor = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let executor = args.first().cloned().unwrap_or(Value::Undefined);
     // create the promise object
     let p_idx = vm
         .heap
@@ -3505,7 +3503,7 @@ fn promise_resolve(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
         Some(Value::Object(idx)) => idx.0,
         _ => return Ok(Value::Undefined),
     };
-    let value = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
     vm.promise_resolve(p_idx, value);
     Ok(Value::Undefined)
 }
@@ -3514,13 +3512,13 @@ fn promise_reject(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
         Some(Value::Object(idx)) => idx.0,
         _ => return Ok(Value::Undefined),
     };
-    let reason = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let reason = args.first().cloned().unwrap_or(Value::Undefined);
     vm.promise_reject(p_idx, reason);
     Ok(Value::Undefined)
 }
 
 fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let on_fulfilled = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let on_fulfilled = args.first().cloned().unwrap_or(Value::Undefined);
     let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
     let p_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
@@ -3571,7 +3569,7 @@ fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
 
 fn promise_catch(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     // p.catch(r) === p.then(undefined, r)
-    let on_rejected = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let on_rejected = args.first().cloned().unwrap_or(Value::Undefined);
     promise_then(vm, &[Value::Undefined, on_rejected], this)
 }
 
@@ -3579,7 +3577,7 @@ fn promise_catch(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
 // RegExp
 // =========================================================================
 fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let pattern = match args.get(0) {
+    let pattern = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
         _ => String::new(),
@@ -3641,7 +3639,7 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
 
 fn regexp_test(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let source = read_regexp_source(vm, &this)?;
-    let input = match args.get(0) {
+    let input = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
         None => String::new(),
@@ -3652,7 +3650,7 @@ fn regexp_test(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
 
 fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let source = read_regexp_source(vm, &this)?;
-    let input = match args.get(0) {
+    let input = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
         None => String::new(),

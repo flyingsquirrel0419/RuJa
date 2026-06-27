@@ -40,7 +40,7 @@ impl Value {
     pub fn from_num(n: f64) -> Self {
         Value::Number(n)
     }
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_string(s: &str) -> Self {
         Value::String(Rc::from(s))
     }
 
@@ -62,7 +62,7 @@ impl Value {
             Value::Undefined | Value::Null => false,
             Value::Bool(b) => *b,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
-            Value::String(s) => s.len() > 0,
+            Value::String(s) => !s.is_empty(),
             Value::Object(_) | Value::Symbol(_) => true,
         }
     }
@@ -357,7 +357,7 @@ pub fn num_to_string(n: f64) -> String {
     }
     // ECMAScript uses exponential notation outside [1e-6, 1e21).
     let abs = n.abs();
-    if abs >= 1e21 || abs < 1e-6 {
+    if !(1e-6..1e21).contains(&abs) {
         return format_exponential(n, abs);
     }
     if n.fract() == 0.0 && n.abs() < 1e21 && n.abs() <= i64::MAX as f64 {

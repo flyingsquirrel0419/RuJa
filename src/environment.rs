@@ -50,7 +50,7 @@ pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
 }
 
 /// Get a binding, returning an error if it exists but is in the TDZ.
-pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Value, ()> {
+pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Option<Value>, bool> {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {
         let (val, in_tdz, parent) = heap.with_obj(e_idx.0, |obj| {
@@ -66,14 +66,14 @@ pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Value, ()> {
             (None, false, None)
         });
         if in_tdz {
-            return Err(());
+            return Err(true);
         }
         if let Some(v) = val {
-            return Ok(v);
+            return Ok(Some(v));
         }
         cur = parent;
     }
-    Err(())
+    Err(false)
 }
 
 /// Initialize (or re-initialize) a binding's value and mark it initialized.
@@ -138,7 +138,6 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
                 if let HeapObj::Environment(e) = obj {
                     if let Some(b) = e.vars.borrow().get(name) {
                         *b.value.borrow_mut() = value.clone();
-                    } else {
                     }
                 }
             });
