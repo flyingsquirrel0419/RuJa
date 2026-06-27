@@ -267,3 +267,26 @@ fn optional_chain_deep() {
         Value::Undefined
     );
 }
+
+// --- Number toString (exponential notation) ---
+
+#[test]
+fn number_to_string_large() {
+    assert_eq!(run("1e21 + '';"), Value::String(Rc::from("1e+21")));
+    assert_eq!(run("1e22 + '';"), Value::String(Rc::from("1e+22")));
+}
+
+#[test]
+fn number_to_string_small() {
+    assert_eq!(run("1e-7 + '';"), Value::String(Rc::from("1e-7")));
+    assert_eq!(run("0.0000001 + '';"), Value::String(Rc::from("1e-7")));
+    assert_eq!(run("5e-8 + '';"), Value::String(Rc::from("5e-8")));
+}
+
+#[test]
+fn number_to_string_normal() {
+    assert_eq!(run("(1.5e3) + '';"), Value::String(Rc::from("1500")));
+    assert_eq!(run("42 + '';"), Value::String(Rc::from("42")));
+    assert_eq!(run("0 + '';"), Value::String(Rc::from("0")));
+    assert_eq!(run("3.14 + '';"), Value::String(Rc::from("3.14")));
+}

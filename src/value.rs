@@ -352,7 +352,12 @@ pub fn num_to_string(n: f64) -> String {
     if n == 0.0 {
         return "0".to_string();
     }
-    if n.fract() == 0.0 && n.abs() < 1e21 {
+    // ECMAScript uses exponential notation outside [1e-6, 1e21).
+    let abs = n.abs();
+    if abs >= 1e21 || abs < 1e-6 {
+        return format_exponential(n, abs);
+    }
+    if n.fract() == 0.0 && n.abs() < 1e21 && n.abs() <= i64::MAX as f64 {
         return format!("{}", n as i64);
     }
     let s = format!("{}", n);
@@ -361,4 +366,20 @@ pub fn num_to_string(n: f64) -> String {
     } else {
         s
     }
+}
+
+/// Format a number in ECMAScript exponential notation (e.g. `1e+21`, `1e-7`).
+fn format_exponential(n: f64, abs: f64) -> String {
+    let exp = abs.log10().floor() as i32;
+    let mantissa = n / 10f64.powi(exp);
+    let m = {
+        let s = format!("{}", mantissa);
+        if s.ends_with(".0") {
+            s[..s.len() - 2].to_string()
+        } else {
+            s
+        }
+    };
+    let exp_sign = if exp >= 0 { '+' } else { '-' };
+    format!("{}e{}{}", m, exp_sign, exp.abs())
 }

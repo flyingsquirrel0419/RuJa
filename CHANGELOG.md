@@ -4,6 +4,8 @@
 
 ### Added
 - JSON.stringify now throws TypeError on circular references (was: stack overflow)
+- `Number.toString` now uses ECMAScript exponential notation for values >= 1e21
+  and < 1e-6 (e.g. `1e21` prints as `1e+21`, was full digits)
 - Optional chaining operator `?.` for property access (`a?.b`), computed access
   (`a?.[b]`), and calls (`a?.b()`, `f?.()`) with null/undefined short-circuit
   semantics (new `QuestionDot` token + `optional` flag on Member/Call AST nodes)
