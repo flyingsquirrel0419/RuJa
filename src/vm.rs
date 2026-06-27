@@ -5,6 +5,7 @@ use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{GcIdx, HeapObj, Value};
+use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -632,7 +633,7 @@ impl Vm {
                 }
                 Op::NewObject => {
                     let obj = HeapObj::Object(crate::value::ObjectData {
-                        props: RefCell::new(HashMap::new()),
+                        props: RefCell::new(IndexMap::new()),
                         proto: RefCell::new(Some(self.object_proto.clone())),
                         extensible: std::cell::Cell::new(true),
                         class_name: None,
@@ -648,7 +649,7 @@ impl Vm {
                     items.reverse();
                     let obj = HeapObj::Array(crate::value::ArrayData {
                         items: RefCell::new(items),
-                        props: RefCell::new(HashMap::new()),
+                        props: RefCell::new(IndexMap::new()),
                         proto: RefCell::new(Some(self.array_proto.clone())),
                     });
                     let idx = self.heap.allocate(obj);
@@ -863,7 +864,7 @@ impl Vm {
                         // create a .prototype object for non-arrow functions
                         let proto_val = if !fdef.is_arrow {
                             let proto = HeapObj::Object(crate::value::ObjectData {
-                                props: RefCell::new(HashMap::new()),
+                                props: RefCell::new(IndexMap::new()),
                                 proto: RefCell::new(Some(self.object_proto.clone())),
                                 extensible: std::cell::Cell::new(true),
                                 class_name: None,
@@ -881,7 +882,7 @@ impl Vm {
                             } else {
                                 None
                             }),
-                            props: RefCell::new(HashMap::new()),
+                            props: RefCell::new(IndexMap::new()),
                         };
                         let idx = self.heap.allocate(HeapObj::Function(fd));
                         // link prototype.constructor back to the function
@@ -1431,7 +1432,7 @@ impl Vm {
     /// Allocate a plain object and return its handle.
     pub fn new_object(&mut self) -> GcIdx {
         let obj = HeapObj::Object(crate::value::ObjectData {
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(self.object_proto.clone())),
             extensible: std::cell::Cell::new(true),
             class_name: None,
@@ -1446,7 +1447,7 @@ impl Vm {
             kind: crate::value::FunctionKind::Native { func, length },
             closure: self.global,
             prototype: RefCell::new(None),
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
         };
         GcIdx(self.heap.allocate(HeapObj::Function(fdef)))
     }
@@ -1533,7 +1534,7 @@ impl Vm {
                     };
                     let arr = HeapObj::Array(crate::value::ArrayData {
                         items: RefCell::new(rest),
-                        props: RefCell::new(HashMap::new()),
+                        props: RefCell::new(IndexMap::new()),
                         proto: RefCell::new(Some(self.array_proto.clone())),
                     });
                     env::declare(
@@ -1556,7 +1557,7 @@ impl Vm {
                 }
                 let arr = HeapObj::Array(crate::value::ArrayData {
                     items: RefCell::new(args.to_vec()),
-                    props: RefCell::new(HashMap::new()),
+                    props: RefCell::new(IndexMap::new()),
                     proto: RefCell::new(Some(self.array_proto.clone())),
                 });
                 env::declare(
@@ -1607,7 +1608,7 @@ impl Vm {
             }
         });
         let new_obj = HeapObj::Object(crate::value::ObjectData {
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(proto)),
             extensible: std::cell::Cell::new(true),
             class_name: None,
@@ -1655,7 +1656,7 @@ impl Vm {
                                 .map(|(k, v)| {
                                     let pair = HeapObj::Array(crate::value::ArrayData {
                                         items: RefCell::new(vec![k.clone(), v.clone()]),
-                                        props: RefCell::new(HashMap::new()),
+                                        props: RefCell::new(IndexMap::new()),
                                         proto: RefCell::new(Some(self.array_proto.clone())),
                                     });
                                     Value::Object(GcIdx(self.heap.allocate(pair)))

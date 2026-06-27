@@ -93,8 +93,7 @@ fn main() {
 
 - `async`/`await`, generators (not yet implemented)
 - test262 conformance (targeted for follow-up)
-- Property insertion order is not preserved (HashMap-backed); `for...in`
-  may yield keys out of order in some cases
+- Deeply nested optional method chains (`a?.b?.()`) are not fully short-circuited
 
 ## License
 

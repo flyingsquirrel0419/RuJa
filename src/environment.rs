@@ -2,13 +2,14 @@
 
 use crate::gc::Heap;
 use crate::value::{BindingKind, GcIdx, HeapObj, Value};
+use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> GcIdx {
     let env = HeapObj::Environment(crate::value::EnvironmentData {
-        vars: RefCell::new(HashMap::new()),
+        vars: RefCell::new(IndexMap::new()),
         parent: RefCell::new(parent),
         is_function_scope,
     });

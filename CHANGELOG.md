@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 ### Added
+- Object property insertion order is now preserved (`for...in`, `Object.keys`,
+  `Object.entries`, and `JSON.stringify` yield keys in insertion order) using `IndexMap`
 - JSON.stringify now throws TypeError on circular references (was: stack overflow)
 - `Number.toString` now uses ECMAScript exponential notation for values >= 1e21
   and < 1e-6 (e.g. `1e21` prints as `1e+21`, was full digits)

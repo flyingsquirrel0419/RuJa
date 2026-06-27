@@ -195,24 +195,48 @@ fn json_stringify_circular_array() {
 #[test]
 fn json_stringify_shared_reference_ok() {
     // shared (non-cyclic) references must still serialize both occurrences.
-    let r = match run("var s = {v:1}; var t = {l:s, r:s}; JSON.stringify(t);") {
-        Value::String(s) => s.to_string(),
-        v => format!("{:?}", v),
-    };
-    assert!(r.contains(r#""l":{"v":1}"#), "missing l in {}", r);
-    assert!(r.contains(r#""r":{"v":1}"#), "missing r in {}", r);
+    assert_eq!(
+        run("var s = {v:1}; var t = {l:s, r:s}; JSON.stringify(t);"),
+        Value::String(Rc::from(r#"{"l":{"v":1},"r":{"v":1}}"#))
+    );
 }
 
 #[test]
 fn json_stringify_nested_object() {
-    // Property order is not guaranteed (HashMap-backed); verify all key/value
-    // pairs are present rather than an exact string match.
-    let r = match run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#) {
+    assert_eq!(
+        run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#),
+        Value::String(Rc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
+    );
+}
+
+// Object property insertion order (now preserved via IndexMap)
+
+#[test]
+fn object_keys_insertion_order() {
+    let r = match run("Object.keys({z:1, a:2, m:3, b:4}).join(',')") {
         Value::String(s) => s.to_string(),
         v => format!("{:?}", v),
     };
-    assert!(r.contains(r#""a":1"#), "missing a:1 in {}", r);
-    assert!(r.contains(r#""b":"hi""#), "missing b in {}", r);
-    assert!(r.contains(r#""c":[1,2]"#), "missing c in {}", r);
-    assert!(r.contains(r#""d":{"e":true}"#), "missing d in {}", r);
+    assert_eq!(r, "z,a,m,b");
+}
+
+#[test]
+fn for_in_insertion_order() {
+    let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
+    assert_eq!(run(src), Value::String(Rc::from("a,b,c,d,e")));
+}
+
+#[test]
+fn object_entries_insertion_order() {
+    let src = "Object.entries({z:1,a:2,m:3,b:4}).map(e=>e[0]+'='+e[1]).join(',');";
+    assert_eq!(run(src), Value::String(Rc::from("z=1,a=2,m=3,b=4")));
+}
+
+#[test]
+fn json_stringify_key_order() {
+    // JSON.stringify now preserves insertion order.
+    assert_eq!(
+        run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#),
+        Value::String(Rc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
+    );
 }

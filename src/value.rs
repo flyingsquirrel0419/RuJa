@@ -5,6 +5,7 @@
 //! and reclaims the rest, including reference cycles.
 
 use crate::ast::FunctionExpr;
+use indexmap::IndexMap;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
@@ -135,7 +136,7 @@ pub enum HeapObj {
 
 /// Generic JS object.
 pub struct ObjectData {
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
     pub extensible: Cell<bool>,
     pub class_name: Option<Rc<str>>,
@@ -143,7 +144,7 @@ pub struct ObjectData {
 
 pub struct ArrayData {
     pub items: RefCell<Vec<Value>>,
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -152,7 +153,7 @@ pub struct FunctionData {
     pub kind: FunctionKind,
     pub closure: GcIdx,
     pub prototype: RefCell<Option<Value>>,
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
 }
 
 pub enum FunctionKind {
@@ -171,7 +172,7 @@ pub enum FunctionKind {
 }
 
 pub struct EnvironmentData {
-    pub vars: RefCell<HashMap<Rc<str>, Binding>>,
+    pub vars: RefCell<IndexMap<Rc<str>, Binding>>,
     pub parent: RefCell<Option<GcIdx>>,
     pub is_function_scope: bool,
 }
@@ -190,13 +191,13 @@ pub enum BindingKind {
 
 pub struct MapData {
     pub entries: RefCell<Vec<(Value, Value)>>,
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
 pub struct SetData {
     pub items: RefCell<Vec<Value>>,
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -204,7 +205,7 @@ pub struct PromiseData {
     pub state: Cell<PromiseStatus>,
     pub result: RefCell<Value>,
     pub handlers: RefCell<Vec<PromiseHandler>>,
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -226,7 +227,7 @@ pub struct GeneratorData {
     pub state: RefCell<Vec<Value>>,
     pub ip: Cell<usize>,
     pub done: Cell<bool>,
-    pub props: RefCell<HashMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -279,7 +280,7 @@ impl HeapObj {
     }
 
     /// Common props accessor for any object kind.
-    pub fn props(&self) -> &RefCell<HashMap<Rc<str>, PropertyDescriptor>> {
+    pub fn props(&self) -> &RefCell<IndexMap<Rc<str>, PropertyDescriptor>> {
         match self {
             HeapObj::Object(o) => &o.props,
             HeapObj::Array(a) => &a.props,

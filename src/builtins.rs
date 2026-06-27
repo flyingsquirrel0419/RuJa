@@ -11,6 +11,7 @@ use crate::value::{
     PromiseData, PromiseHandler, PromiseStatus, PropertyDescriptor, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
+use indexmap::IndexMap;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -54,7 +55,7 @@ fn bound_method(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<s
 
 fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
     let obj = HeapObj::Object(ObjectData {
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(proto),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Object")),
@@ -63,7 +64,7 @@ fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
 }
 
 fn new_object_with_props(heap: &Heap, proto: Option<Value>, props: Vec<(&str, Value)>) -> GcIdx {
-    let mut map: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut map: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     for (k, v) in props {
         map.insert(Rc::from(k), data_prop(v));
     }
@@ -176,7 +177,7 @@ fn make_builtin_constructor(
 ) -> (GcIdx, GcIdx) {
     let proto_value = vm.object_proto.clone();
 
-    let mut method_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut method_props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
         let func_idx = vm.new_native_function(n, *f, *len);
         method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
@@ -198,7 +199,7 @@ fn make_builtin_constructor(
         },
         closure: vm.global,
         prototype: RefCell::new(Some(Value::Object(proto_idx))),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     // constructor.prototype
@@ -220,7 +221,7 @@ fn make_builtin_constructor(
 fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
     let error_proto_val = vm.error_proto.clone();
     let proto_obj = HeapObj::Object(ObjectData {
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(error_proto_val.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from(name)),
@@ -235,7 +236,7 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         },
         closure: vm.global,
         prototype: RefCell::new(Some(Value::Object(proto_idx))),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
@@ -430,7 +431,7 @@ fn make_str_array(vm: &mut Vm, strs: Vec<Rc<str>>) -> Value {
     let items: Vec<Value> = strs.into_iter().map(Value::String).collect();
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Value::Object(GcIdx(vm.heap.allocate(arr)))
@@ -464,7 +465,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
     }
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(vals),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
@@ -478,14 +479,14 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
         let v = vm.get_property(&obj, &k)?;
         let pair = HeapObj::Array(ArrayData {
             items: RefCell::new(vec![Value::String(k.clone()), v]),
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(vm.array_proto.clone())),
         });
         pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair))));
     }
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(pairs),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
@@ -862,7 +863,7 @@ fn math_random(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<
 }
 
 fn build_math(vm: &mut Vm) -> Value {
-    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     // build methods first, collect into a temp vec
     let mut method_entries: Vec<(&str, NativeFn, usize)> = vec![
         ("floor", math_floor, 1),
@@ -939,7 +940,7 @@ fn console_log(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
     Ok(Value::Undefined)
 }
 fn build_console(vm: &mut Vm) -> Value {
-    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     for name in &["log", "error", "warn", "info", "debug", "dir", "trace"] {
         let idx = vm.new_native_function(name, console_log, 0);
         props.insert(Rc::from(*name), data_prop(Value::Object(idx)));
@@ -1026,14 +1027,14 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
             }
             seen.push(idx.0);
             let (is_arr, items, props, proto) = vm.heap.with_obj(idx.0, |obj| match obj {
-                HeapObj::Array(a) => (true, a.items.borrow().clone(), HashMap::new(), None),
+                HeapObj::Array(a) => (true, a.items.borrow().clone(), IndexMap::new(), None),
                 HeapObj::Object(o) => (
                     false,
                     Vec::new(),
                     o.props.borrow().clone(),
                     o.proto.borrow().clone(),
                 ),
-                HeapObj::Function(_) => (false, Vec::new(), HashMap::new(), None),
+                HeapObj::Function(_) => (false, Vec::new(), IndexMap::new(), None),
                 _ => (
                     false,
                     Vec::new(),
@@ -1116,7 +1117,7 @@ fn parse_json_obj(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> error::Result<Value> {
-    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     loop {
         while let Some(&c) = chars.peek() {
             if c.is_whitespace() {
@@ -1198,7 +1199,7 @@ fn parse_json_arr(
     }
     let obj = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
@@ -1237,7 +1238,7 @@ fn parse_json_num(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
     Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
 }
 fn build_json(vm: &mut Vm) -> Value {
-    let mut props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     let pi = vm.new_native_function("parse", json_parse, 1);
     let si = vm.new_native_function("stringify", json_stringify, 3);
     props.insert(Rc::from("parse"), data_prop(Value::Object(pi)));
@@ -1392,7 +1393,7 @@ fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
         }
         let arr = HeapObj::Array(ArrayData {
             items: RefCell::new(result),
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(vm.array_proto.clone())),
         });
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
@@ -1426,7 +1427,7 @@ fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         }
         let arr = HeapObj::Array(ArrayData {
             items: RefCell::new(result),
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(vm.array_proto.clone())),
         });
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
@@ -1570,7 +1571,7 @@ fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         };
         let arr = HeapObj::Array(ArrayData {
             items: RefCell::new(sliced),
-            props: RefCell::new(HashMap::new()),
+            props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(vm.array_proto.clone())),
         });
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
@@ -1609,7 +1610,7 @@ fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     }
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
@@ -1700,7 +1701,7 @@ fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     }
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
@@ -2032,7 +2033,7 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
         .collect();
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.array_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
@@ -2303,7 +2304,7 @@ fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
 fn map_constructor(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let obj = HeapObj::Map(MapData {
         entries: RefCell::new(Vec::new()),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.map_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
@@ -2370,7 +2371,7 @@ fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
 fn set_constructor(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let obj = HeapObj::Set(SetData {
         items: RefCell::new(Vec::new()),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.set_proto.clone())),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
@@ -2449,7 +2450,7 @@ pub fn setup_collections(vm: &mut Vm) {
     // value type (not a constructor), so build the proto manually rather than
     // going through make_builtin_constructor.
     let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0);
-    let mut sym_proto_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut sym_proto_props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     sym_proto_props.insert(
         Rc::from("toString"),
         data_prop(Value::Object(sym_tostring_idx)),
@@ -2471,7 +2472,7 @@ fn make_builtin_constructor_with(
     ctor: NativeFn,
     methods: &[(&str, NativeFn, usize)],
 ) -> (GcIdx, GcIdx) {
-    let mut method_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    let mut method_props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
         let func_idx = vm.new_native_function(n, *f, *len);
         method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
@@ -2491,7 +2492,7 @@ fn make_builtin_constructor_with(
         },
         closure: vm.global,
         prototype: RefCell::new(Some(Value::Object(proto_idx))),
-        props: RefCell::new(HashMap::new()),
+        props: RefCell::new(IndexMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
