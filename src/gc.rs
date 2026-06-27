@@ -68,6 +68,21 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
         for v in it.items.borrow().iter() {
             marker.mark_value(v);
         }
+        if let Some(lazy) = it.lazy_iter.borrow().as_ref() {
+            marker.mark_value(lazy);
+        }
+        return;
+    }
+    // Environment records and Iterators do not expose props()/proto()
+    // (those panic by design); trace them via their dedicated fields below
+    // before the generic props/proto walk below.
+    if let HeapObj::Environment(e) = obj {
+        for (_, b) in e.vars.borrow().iter() {
+            marker.mark_value(&b.value.borrow());
+        }
+        if let Some(p) = *e.parent.borrow() {
+            marker.mark_idx(p);
+        }
         return;
     }
     let props = obj.props();
