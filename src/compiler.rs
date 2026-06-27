@@ -15,8 +15,10 @@ pub struct Compiler {
     /// String constant pool for names.
     names: Vec<String>,
     name_map: HashMap<String, usize>,
-    /// Active loops: (continue jump target ip, pending break jump indices).
-    loop_stack: Vec<(usize, Vec<usize>)>,
+    /// Active loops: (continue target ip, pending break jumps, pending continue jumps).
+    /// `continue_target == usize::MAX` means "patch me later" (C-style for, where the
+    /// continue target is the update block, known only after the body is compiled).
+    loop_stack: Vec<(usize, Vec<usize>, Vec<usize>)>,
 }
 
 struct Scope {
@@ -89,6 +91,34 @@ impl Compiler {
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+    }
+
+    /// Begin a loop: `continue_target` is where `continue` jumps (loop start/cond).
+    fn begin_loop(&mut self, continue_target: usize) {
+        self.loop_stack.push((continue_target, Vec::new(), Vec::new()));
+    }
+
+    /// Patch the current loop's continue target (used when the continue target is
+    /// only known after the body, e.g. the update block of a C-style for).
+    fn set_continue_target(&mut self, target: usize) {
+        if let Some((cont, _, cont_jumps)) = self.loop_stack.last_mut() {
+            *cont = target;
+            // patch already-emitted continue jumps to the real target
+            for j in cont_jumps.drain(..) {
+                self.chunk.patch_jump(j, target);
+            }
+        }
+    }
+
+    /// End a loop: patch all pending `break` jumps to `end`.
+    fn end_loop(&mut self, end: usize) {
+        if let Some((cont, breaks, _)) = self.loop_stack.pop() {
+            // any un-patched continue jumps fall back to the loop start/cond.
+            let _ = cont;
+            for j in breaks {
+                self.chunk.patch_jump(j, end);
+            }
+        }
     }
 
     fn declare(&mut self, name: &str, kind: VarKind) {
@@ -218,13 +248,15 @@ impl Compiler {
                     self.chunk.emit(Op::JumpIfFalse(0), 0);
                     Some(jf)
                 } else { None };
-                self.begin_loop(loop_start);
+                // continue target is the update block (known after the body); mark unknown.
+                self.begin_loop(usize::MAX);
                 self.compile_stmt(body)?;
                 let continue_target = self.chunk.code.len();
                 if let Some(u) = update {
                     self.compile_expr(u)?;
                     self.chunk.emit(Op::Pop, 0);
                 }
+                // if there's no update, continue jumps to the condition (loop_start).
                 self.set_continue_target(continue_target);
                 self.chunk.emit(Op::Jump(loop_start), 0);
                 if let Some(jf) = jump_false {
@@ -243,6 +275,7 @@ impl Compiler {
                 let it_name_idx = self.intern("#iter");
                 self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
                 let loop_start = self.chunk.code.len();
+                self.begin_loop(loop_start);
                 // IteratorNext pops the iterator, pushes [value, done(bool)].
                 self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
                 self.chunk.emit(Op::IteratorNext, 0);
@@ -256,6 +289,7 @@ impl Compiler {
                 self.chunk.emit(Op::Jump(loop_start), 0);
                 let end = self.chunk.code.len();
                 self.chunk.patch_jump(done_jump, end);
+                self.end_loop(end);
                 // When done, the stale value is still on the stack; drop it.
                 self.chunk.emit(Op::Pop, 0);
                 self.pop_scope();
@@ -336,7 +370,7 @@ impl Compiler {
             }
             Stmt::Break(_) => {
                 // Jump past the loop body; target patched when the loop ends.
-                if let Some((_, breaks)) = self.loop_stack.last_mut() {
+                if let Some((_, breaks, _)) = self.loop_stack.last_mut() {
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), 0);
                     breaks.push(j);
@@ -344,8 +378,15 @@ impl Compiler {
             }
             Stmt::Continue(_) => {
                 // Jump back to the loop condition/next-iteration target.
-                if let Some((cont, _)) = self.loop_stack.last() {
-                    self.chunk.emit(Op::Jump(*cont), 0);
+                if let Some((cont, _, cont_jumps)) = self.loop_stack.last_mut() {
+                    if *cont != usize::MAX {
+                        self.chunk.emit(Op::Jump(*cont), 0);
+                    } else {
+                        // Target unknown yet (C-style for); record and patch later.
+                        let j = self.chunk.code.len();
+                        self.chunk.emit(Op::Jump(0), 0);
+                        cont_jumps.push(j);
+                    }
                 }
             }
             Stmt::Switch { disc, cases } => {
@@ -426,6 +467,7 @@ impl Compiler {
         let it_name_idx = self.intern("#iter");
         self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
         let loop_start = self.chunk.code.len();
+        self.begin_loop(loop_start);
         self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
         self.chunk.emit(Op::IteratorNext, 0);
         let done_jump = self.chunk.code.len();
@@ -436,6 +478,7 @@ impl Compiler {
         self.chunk.emit(Op::Jump(loop_start), 0);
         let end = self.chunk.code.len();
         self.chunk.patch_jump(done_jump, end);
+        self.end_loop(end);
         self.chunk.emit(Op::Pop, 0);
         self.pop_scope();
         Ok(())
