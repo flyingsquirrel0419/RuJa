@@ -587,3 +587,19 @@ fn generator_yield_undefined() {
         Value::Undefined
     );
 }
+
+// --- JSON.parse error handling + function error propagation ---
+
+#[test]
+fn json_parse_invalid_returns_error() {
+    // Invalid JSON must throw (not hang). run returns Undefined on error.
+    let r = run("var r; try { JSON.parse('{bad}'); } catch(e) { r = e.name; } r;");
+    assert_eq!(r, Value::String(Rc::from("SyntaxError")));
+}
+
+#[test]
+fn function_error_reaches_caller_catch() {
+    let r =
+        run("var r; function f(){ return missing; } try { f(); } catch(e) { r = 'caught'; } r;");
+    assert_eq!(r, Value::String(Rc::from("caught")));
+}

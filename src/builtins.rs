@@ -1327,7 +1327,12 @@ fn parse_json_obj(
             _ => String::new(),
         };
         while chars.peek() != Some(&':') {
-            chars.next();
+            match chars.peek() {
+                None => return Err(Error::syntax("Invalid JSON: expected ':'".to_string())),
+                Some(&_) => {
+                    chars.next();
+                }
+            }
         }
         chars.next();
         let val = parse_json_value(vm, chars)?;
