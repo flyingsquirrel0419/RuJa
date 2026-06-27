@@ -343,10 +343,15 @@ pub struct LazyGeneratorData {
 
 /// Internal iterator state used by `for...of` / `for...in` and the spread operator.
 pub struct IteratorData {
-    /// Remaining values to yield, in order.
+    /// Remaining values to yield, in order (eager mode).
     pub items: RefCell<Vec<Value>>,
-    /// Current position into `items`.
+    /// Current position into `items` (eager mode).
     pub index: Cell<usize>,
+    /// Lazy mode: a JS iterator object whose `next()` method is called on each
+    /// pull. When `Some`, `items`/`index` are ignored. `done` is set once the
+    /// JS `next()` reports `done: true`.
+    pub lazy_iter: RefCell<Option<Value>>,
+    pub done: Cell<bool>,
 }
 
 #[derive(Clone)]

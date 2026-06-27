@@ -1033,17 +1033,13 @@ impl Parser {
                     self.advance();
                     let e = self.parse_assign()?;
                     self.expect(&TokenKind::RBracket, "]")?;
-                    // computed key - store as string for now via a special marker
-                    // We'll use PropertyKey::String with a sentinel; better: extend PropertyKey. For now use Ident of expr text - not possible.
-                    // Simplest: only support computed keys that are identifiers.
-                    let key = if let Expr::Ident(name) = e {
-                        PropertyKey::Ident(name)
-                    } else if let Expr::String(s) = e {
-                        PropertyKey::String(s)
-                    } else {
-                        return Err(error::Error::syntax(
-                            "Complex computed property keys not supported yet".to_string(),
-                        ));
+                    // Computed key: the expression is evaluated at runtime, so even a
+                    // bare identifier `[key]` must become a Computed key (not the
+                    // constant Ident form used by shorthand `{x}`).
+                    let key = match e {
+                        Expr::String(s) => PropertyKey::String(s),
+                        Expr::Number(n) => PropertyKey::Number(n),
+                        other => PropertyKey::Computed(Box::new(other)),
                     };
                     (key, true)
                 }

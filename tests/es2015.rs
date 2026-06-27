@@ -308,3 +308,87 @@ fn symbol_key_survives_round_trip() {
     "#;
     assert_eq!(run(src), Value::String(Rc::from("hi")));
 }
+
+// ---- custom Symbol.iterator ----
+
+#[test]
+fn custom_symbol_iterator_for_of() {
+    let src = r#"
+        let range = {
+            [Symbol.iterator]() {
+                let n = 0;
+                return {
+                    next() {
+                        n++;
+                        if (n <= 3) return { value: n, done: false };
+                        return { value: undefined, done: true };
+                    }
+                };
+            }
+        };
+        let r = [];
+        for (let v of range) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,2,3")));
+}
+
+#[test]
+fn custom_symbol_iterator_spread() {
+    let src = r#"
+        let range = {
+            [Symbol.iterator]() {
+                let n = 0;
+                return {
+                    next() {
+                        n++;
+                        if (n <= 5) return { value: n * 10, done: false };
+                        return { value: undefined, done: true };
+                    }
+                };
+            }
+        };
+        [...range].join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("10,20,30,40,50")));
+}
+
+#[test]
+fn custom_symbol_iterator_infinite_truncated() {
+    let src = r#"
+        let counter = {
+            [Symbol.iterator]() {
+                let n = 0;
+                return { next() { n++; return { value: n, done: false }; } };
+            }
+        };
+        let r = [];
+        for (let v of counter) {
+            if (v > 4) break;
+            r.push(v);
+        }
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,2,3,4")));
+}
+
+#[test]
+fn builtin_array_still_iterable() {
+    // Regression: built-in iterables must keep working after Symbol.iterator support.
+    let src = r#"
+        let r = [];
+        for (let v of [10, 20, 30]) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("10,20,30")));
+}
+
+#[test]
+fn computed_key_in_object_literal() {
+    let src = r#"
+        let key = "dynamic";
+        let o = { [key]: 42, normal: 1 };
+        o["dynamic"] + o.normal;
+    "#;
+    assert_eq!(run(src), Value::Number(43.0));
+}

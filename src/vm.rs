@@ -2567,6 +2567,19 @@ impl Vm {
 
     /// Build a heap iterator object that yields the values of `iterable`.
     pub fn make_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
+        // First, honor a user-defined `Symbol.iterator` method on objects.
+        // Built-in iterables (Array/String/Map/Set/Generator) define their own
+        // fast paths below, but a plain object with `[Symbol.iterator]` is a
+        // custom iterable: call the method and wrap the returned iterator
+        // object in a lazy IteratorData.
+        if let Value::Object(_) = iterable {
+            let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
+            if self.has_property_key(iterable, &sym_key) {
+                let iter_method = self.get_property_by_key(iterable, &sym_key)?;
+                let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
+                return Ok(self.new_lazy_iterator(iter_obj));
+            }
+        }
         let items: Vec<Value> = match iterable {
             Value::String(s) => s
                 .chars()
@@ -2692,30 +2705,94 @@ impl Vm {
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: RefCell::new(items),
             index: std::cell::Cell::new(0),
+            lazy_iter: RefCell::new(None),
+            done: std::cell::Cell::new(false),
         });
         Value::Object(GcIdx(self.heap.allocate(it)))
     }
 
-    pub fn iterator_next(&self, it: &Value) -> error::Result<(Value, bool)> {
-        let idx = match it {
-            Value::Object(idx) => idx.0,
+    /// Build a *lazy* iterator wrapping a JS iterator object (one returned by a
+    /// user-defined `Symbol.iterator` method). Each `next()` call invokes the
+    /// JS object's `next()` method and reads its `value`/`done` properties.
+    fn new_lazy_iterator(&mut self, iter_obj: Value) -> Value {
+        let it = HeapObj::Iterator(crate::value::IteratorData {
+            items: RefCell::new(Vec::new()),
+            index: std::cell::Cell::new(0),
+            lazy_iter: RefCell::new(Some(iter_obj)),
+            done: std::cell::Cell::new(false),
+        });
+        Value::Object(GcIdx(self.heap.allocate(it)))
+    }
+
+    pub fn iterator_next(&mut self, it: &Value) -> error::Result<(Value, bool)> {
+        let (lazy, already_done) = match it {
+            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Iterator(it) = o {
+                    (it.lazy_iter.borrow().is_some(), it.done.get())
+                } else {
+                    (false, true)
+                }
+            }),
             _ => return Err(Error::type_err("not an iterator".to_string())),
         };
-        self.heap.with_obj(idx, |o| {
-            if let HeapObj::Iterator(it) = o {
-                let items = it.items.borrow();
-                let i = it.index.get();
-                if i < items.len() {
-                    let v = items[i].clone();
-                    it.index.set(i + 1);
-                    Ok((v, false))
-                } else {
-                    Ok((Value::Undefined, true))
+        if already_done {
+            return Ok((Value::Undefined, true));
+        }
+        if lazy {
+            // Call the JS iterator object's next() method and read {value, done}.
+            let iter_obj = self.heap.with_obj(
+                match it {
+                    Value::Object(idx) => idx.0,
+                    _ => return Err(Error::type_err("not an iterator".to_string())),
+                },
+                |o| {
+                    if let HeapObj::Iterator(it) = o {
+                        it.lazy_iter.borrow().clone()
+                    } else {
+                        None
+                    }
+                },
+            );
+            let iter_obj =
+                iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
+            let next_fn = self.get_property(&iter_obj, "next")?;
+            let result = self.call_function(&next_fn, &[], Some(iter_obj))?;
+            let value = self.get_property(&result, "value")?;
+            let done = match self.get_property(&result, "done")? {
+                Value::Bool(b) => b,
+                _ => false,
+            };
+            if done {
+                if let Value::Object(idx) = it {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Iterator(it) = o {
+                            it.done.set(true);
+                        }
+                    });
                 }
-            } else {
-                Err(Error::type_err("not an iterator".to_string()))
             }
-        })
+            Ok((value, done))
+        } else {
+            let idx = match it {
+                Value::Object(idx) => idx.0,
+                _ => return Err(Error::type_err("not an iterator".to_string())),
+            };
+            self.heap.with_obj(idx, |o| {
+                if let HeapObj::Iterator(it) = o {
+                    let items = it.items.borrow();
+                    let i = it.index.get();
+                    if i < items.len() {
+                        let v = items[i].clone();
+                        it.index.set(i + 1);
+                        Ok((v, false))
+                    } else {
+                        Ok((Value::Undefined, true))
+                    }
+                } else {
+                    Err(Error::type_err("not an iterator".to_string()))
+                }
+            })
+        }
     }
 
     pub fn iterator_done(&self, it: &Value) -> bool {

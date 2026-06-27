@@ -1290,20 +1290,37 @@ impl Compiler {
                 self.chunk.emit(Op::NewObject, 0);
                 for p in props {
                     self.chunk.emit(Op::Dup, 0);
-                    // key
-                    let key = match &p.key {
-                        PropertyKey::Ident(s) => s.to_string(),
-                        PropertyKey::String(s) => s.to_string(),
-                        PropertyKey::Number(n) => crate::value::num_to_string(*n),
-                        PropertyKey::Computed(_) => String::new(),
-                    };
-                    let key_idx = self
-                        .chunk
-                        .add_constant(Value::String(Rc::from(key.as_str())));
-                    self.chunk.emit(Op::Const(key_idx), 0);
-                    self.compile_expr(&p.value)?;
-                    self.chunk.emit(Op::SetProp, 0);
-                    // SetProp leaves the assigned value on top; pop it so obj remains
+                    match &p.key {
+                        PropertyKey::Computed(e) => {
+                            // Computed key: evaluate the expression and set via SetElem
+                            // (supports Symbol keys, e.g. `[Symbol.iterator]`).
+                            self.compile_expr(e)?;
+                            self.compile_expr(&p.value)?;
+                            self.chunk.emit(Op::SetElem, 0);
+                        }
+                        PropertyKey::Ident(s) => {
+                            let key_idx = self.chunk.add_constant(Value::String(s.clone()));
+                            self.chunk.emit(Op::Const(key_idx), 0);
+                            self.compile_expr(&p.value)?;
+                            self.chunk.emit(Op::SetProp, 0);
+                        }
+                        PropertyKey::String(s) => {
+                            let key_idx = self.chunk.add_constant(Value::String(s.clone()));
+                            self.chunk.emit(Op::Const(key_idx), 0);
+                            self.compile_expr(&p.value)?;
+                            self.chunk.emit(Op::SetProp, 0);
+                        }
+                        PropertyKey::Number(n) => {
+                            let key = crate::value::num_to_string(*n);
+                            let key_idx = self
+                                .chunk
+                                .add_constant(Value::String(Rc::from(key.as_str())));
+                            self.chunk.emit(Op::Const(key_idx), 0);
+                            self.compile_expr(&p.value)?;
+                            self.chunk.emit(Op::SetProp, 0);
+                        }
+                    }
+                    // SetProp/SetElem leaves the assigned value on top; pop it so obj remains
                     self.chunk.emit(Op::Pop, 0);
                 }
             }
