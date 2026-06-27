@@ -649,7 +649,16 @@ impl Compiler {
                     UnOp::Neg => { self.compile_expr(e)?; self.chunk.emit(Op::Neg, 0); }
                     UnOp::Not => { self.compile_expr(e)?; self.chunk.emit(Op::Not, 0); }
                     UnOp::BitNot => { self.compile_expr(e)?; self.chunk.emit(Op::BitNot, 0); }
-                    UnOp::Typeof => { self.compile_expr(e)?; self.chunk.emit(Op::TypeOf, 0); }
+                    UnOp::Typeof => {
+                        // `typeof undeclaredVar` must yield "undefined" instead of throwing.
+                        if let Expr::Ident(name) = e.as_ref() {
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk.emit(Op::TypeofVar(name_idx), 0);
+                        } else {
+                            self.compile_expr(e)?;
+                            self.chunk.emit(Op::TypeOf, 0);
+                        }
+                    }
                     _ => { self.compile_expr(e)?; }
                 }
             }

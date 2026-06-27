@@ -527,6 +527,26 @@ impl Vm {
                     };
                     self.stack.push(Value::String(Rc::from(t)));
                 }
+                Op::TypeofVar(name_idx) => {
+                    // `typeof name`: "undefined" if the name is not bound (must not throw).
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                    };
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let val = crate::environment::get(&self.heap, cur_env, &name)
+                        .or_else(|| crate::environment::get(&self.heap, self.global, &name));
+                    let t = match val {
+                        Some(v) => {
+                            if let Value::Object(idx) = &v {
+                                if self.heap.with_obj(idx.0, |o| o.is_function()) { "function" } else { "object" }
+                            } else { v.type_of() }
+                        }
+                        None => "undefined",
+                    };
+                    self.stack.push(Value::String(Rc::from(t)));
+                }
                 Op::GetIterator => {
                     let iterable = self.stack.pop().unwrap_or(Value::Undefined);
                     let it = self.make_iterator(&iterable)?;

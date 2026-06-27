@@ -608,7 +608,14 @@ fn math_unary(f: fn(f64) -> f64, vm: &mut Vm, args: &[Value]) -> error::Result<V
 }
 fn math_floor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::floor, vm, args) }
 fn math_ceil(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::ceil, vm, args) }
-fn math_round(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(|n| n.round(), vm, args) }
+fn math_round(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    // ES Math.round: round half towards +Infinity (equivalent to floor(x + 0.5)
+    // for finite x), so Math.round(-0.5) === 0, Math.round(0.5) === 1.
+    math_unary(|n| {
+        if n.is_nan() || n.is_infinite() { n }
+        else { (n + 0.5).floor() }
+    }, vm, args)
+}
 fn math_trunc(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::trunc, vm, args) }
 fn math_abs(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> { math_unary(f64::abs, vm, args) }
 fn math_sign(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
