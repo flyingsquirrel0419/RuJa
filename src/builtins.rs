@@ -959,7 +959,14 @@ fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     let target = args.get(0).cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let found = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj { a.items.borrow().iter().any(|i| i == &target) } else { false }
+            // includes uses SameValueZero: NaN matches NaN (unlike indexOf's ===).
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().iter().any(|i| {
+                    if let (Value::Number(x), Value::Number(y)) = (i, &target) {
+                        x.is_nan() && y.is_nan() || x == y
+                    } else { i == &target }
+                })
+            } else { false }
         });
         return Ok(Value::Bool(found));
     }
