@@ -778,30 +778,72 @@ impl Compiler {
                 }
             }
             Expr::Update(op, prefix, target) => {
-                // `x++`/`++x`/`x--`/`--x`: load old, coerce to number, compute new,
-                // store new back, then leave old (postfix) or new (prefix) as the result.
-                self.compile_expr(target)?;
-                self.chunk.emit(Op::TypeCoerce, 0); // [oldNum]
-                self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
-                let delta = match op {
-                    UpdateOp::Inc => 1.0,
-                    UpdateOp::Dec => -1.0,
-                };
+                // `x++`/`++x`/`x--`/`--x`. Stash the old value in a temp env binding
+                // so the store can use a clean [obj, key, value] without fighting it.
+                let delta = match op { UpdateOp::Inc => 1.0, UpdateOp::Dec => -1.0 };
                 let c = self.chunk.add_constant(Value::Number(delta));
-                self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
-                self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
-                                             // Store the new value back to the target (consumes newNum, pushes undefined).
-                self.compile_assign_target(target)?;
-                self.chunk.emit(Op::Pop, 0); // [oldNum]
-                if *prefix {
-                    // prefix result is the new value: recompute from oldNum.
-                    self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
-                    self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
-                    self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
-                    self.chunk.emit(Op::Swap, 0); // [newNum, oldNum]
-                    self.chunk.emit(Op::Pop, 0); // [newNum]
+                match target.as_ref() {
+                    Expr::Member { object, property, computed } => {
+                        // Load the current value.
+                        self.compile_expr(object)?;          // [obj]
+                        if *computed {
+                            self.compile_expr(property)?;    // [obj, key]
+                            self.chunk.emit(Op::GetElem, 0); // [oldVal]
+                        } else {
+                            let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
+                            let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                            self.chunk.emit(Op::Const(key_idx), 0); // [obj, key]
+                            self.chunk.emit(Op::GetProp, 0);        // [oldVal]
+                        }
+                        self.chunk.emit(Op::TypeCoerce, 0);      // [oldNum]
+                        // Stash oldNum; then store newNum back via a clean reload.
+                        let tmp_idx = self.intern("#upd");
+                        self.chunk.emit(Op::DeclareEnv(tmp_idx), 0); // []
+                        // Build [obj, key, newNum] and store.
+                        self.compile_expr(object)?;               // [obj]
+                        if *computed {
+                            self.compile_expr(property)?;         // [obj, key]
+                        } else {
+                            let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
+                            let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                            self.chunk.emit(Op::Const(key_idx), 0); // [obj, key]
+                        }
+                        self.chunk.emit(Op::LoadEnv(tmp_idx), 0);    // [obj, key, oldNum]
+                        self.chunk.emit(Op::Const(c), 0);            // [obj, key, oldNum, delta]
+                        self.chunk.emit(Op::Add, 0);                 // [obj, key, newNum]
+                        if *computed {
+                            self.chunk.emit(Op::SetElem, 0);
+                        } else {
+                            self.chunk.emit(Op::SetProp, 0);
+                        }
+                        self.chunk.emit(Op::Pop, 0); // discard the value SetProp/SetElem leaves
+                        // Result: oldNum (postfix) or newNum (prefix).
+                        if *prefix {
+                            self.chunk.emit(Op::LoadEnv(tmp_idx), 0); // [oldNum]
+                            self.chunk.emit(Op::Const(c), 0);          // [oldNum, delta]
+                            self.chunk.emit(Op::Add, 0);               // [newNum]
+                        } else {
+                            self.chunk.emit(Op::LoadEnv(tmp_idx), 0); // [oldNum]
+                        }
+                    }
+                    _ => {
+                        // Identifier target.
+                        self.compile_expr(target)?;          // [old]
+                        self.chunk.emit(Op::TypeCoerce, 0);  // [oldNum]
+                        self.chunk.emit(Op::Dup, 0);         // [oldNum, oldNum]
+                        self.chunk.emit(Op::Const(c), 0);    // [oldNum, oldNum, delta]
+                        self.chunk.emit(Op::Add, 0);         // [oldNum, newNum]
+                        self.compile_assign_target(target)?;
+                        self.chunk.emit(Op::Pop, 0);         // [oldNum]
+                        if *prefix {
+                            self.chunk.emit(Op::Dup, 0);      // [oldNum, oldNum]
+                            self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
+                            self.chunk.emit(Op::Add, 0);      // [oldNum, newNum]
+                            self.chunk.emit(Op::Swap, 0);     // [newNum, oldNum]
+                            self.chunk.emit(Op::Pop, 0);      // [newNum]
+                        }
+                    }
                 }
-                // postfix: result is oldNum, already on the stack.
             }
             Expr::Binary(op, l, r) => match op {
                 BinOp::In => {
