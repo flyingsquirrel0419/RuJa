@@ -180,6 +180,7 @@ pub struct EnvironmentData {
 pub struct Binding {
     pub value: RefCell<Value>,
     pub kind: BindingKind,
+    pub initialized: Cell<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -3,6 +3,7 @@
 use crate::gc::Heap;
 use crate::value::{BindingKind, GcIdx, HeapObj, Value};
 use indexmap::IndexMap;
+use std::cell::Cell;
 use std::cell::RefCell;
 
 use std::rc::Rc;
@@ -24,12 +25,79 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
                 crate::value::Binding {
                     value: RefCell::new(value.clone()),
                     kind,
+                    initialized: Cell::new(true),
                 },
             );
         }
     });
 }
 
+/// Declare a binding in the TDZ (uninitialized). Reading it before it is
+/// initialized throws a ReferenceError.
+pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.borrow_mut().insert(
+                Rc::from(name),
+                crate::value::Binding {
+                    value: RefCell::new(Value::Undefined),
+                    kind,
+                    initialized: Cell::new(false),
+                },
+            );
+        }
+    });
+}
+
+/// Get a binding, returning an error if it exists but is in the TDZ.
+pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Value, ()> {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (val, in_tdz, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    if !b.initialized.get() {
+                        return (None, true, None);
+                    }
+                    return (Some(b.value.borrow().clone()), false, None);
+                }
+                return (None, false, *e.parent.borrow());
+            }
+            (None, false, None)
+        });
+        if in_tdz {
+            return Err(());
+        }
+        if let Some(v) = val {
+            return Ok(v);
+        }
+        cur = parent;
+    }
+    Err(())
+}
+
+/// Initialize (or re-initialize) a binding's value and mark it initialized.
+pub fn initialize(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (found, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    *b.value.borrow_mut() = value.clone();
+                    b.initialized.set(true);
+                    return (true, None);
+                }
+                return (false, *e.parent.borrow());
+            }
+            (false, None)
+        });
+        if found {
+            return true;
+        }
+        cur = parent;
+    }
+    false
+}
 pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {
@@ -142,6 +210,7 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
                     crate::value::Binding {
                         value: RefCell::new(value),
                         kind: BindingKind::Var,
+                        initialized: Cell::new(true),
                     },
                 );
             }
