@@ -11,6 +11,80 @@ use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
+/// A property key: either a string (possibly numeric-origin) or a Symbol id.
+///
+/// Stored in object `props` maps so that Symbol-keyed properties (e.g.
+/// `Symbol.iterator`) coexist with ordinary string-keyed ones.
+#[derive(Clone, Debug)]
+pub enum PropertyKey {
+    Str(Rc<str>),
+    Symbol(u32),
+}
+
+impl PropertyKey {
+    pub fn from_string(s: String) -> Self {
+        PropertyKey::Str(Rc::from(s.as_str()))
+    }
+    pub fn from_rc(s: Rc<str>) -> Self {
+        PropertyKey::Str(s)
+    }
+
+    /// If this key is a string key, return its text; otherwise `None`.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            PropertyKey::Str(s) => Some(s.as_ref()),
+            PropertyKey::Symbol(_) => None,
+        }
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        matches!(self, PropertyKey::Symbol(_))
+    }
+}
+
+impl From<&str> for PropertyKey {
+    fn from(s: &str) -> Self {
+        PropertyKey::Str(Rc::from(s))
+    }
+}
+impl From<String> for PropertyKey {
+    fn from(s: String) -> Self {
+        PropertyKey::Str(Rc::from(s.as_str()))
+    }
+}
+impl From<Rc<str>> for PropertyKey {
+    fn from(s: Rc<str>) -> Self {
+        PropertyKey::Str(s)
+    }
+}
+
+impl std::hash::Hash for PropertyKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            PropertyKey::Str(s) => {
+                0u8.hash(state);
+                s.hash(state);
+            }
+            PropertyKey::Symbol(id) => {
+                1u8.hash(state);
+                id.hash(state);
+            }
+        }
+    }
+}
+
+impl PartialEq for PropertyKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PropertyKey::Str(a), PropertyKey::Str(b)) => a == b,
+            (PropertyKey::Symbol(a), PropertyKey::Symbol(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for PropertyKey {}
+
 /// A handle into the GC heap.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GcIdx(pub usize);
@@ -137,7 +211,7 @@ pub enum HeapObj {
 
 /// Generic JS object.
 pub struct ObjectData {
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
     pub extensible: Cell<bool>,
     pub class_name: Option<Rc<str>>,
@@ -145,7 +219,7 @@ pub struct ObjectData {
 
 pub struct ArrayData {
     pub items: RefCell<Vec<Value>>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -154,7 +228,7 @@ pub struct FunctionData {
     pub kind: FunctionKind,
     pub closure: GcIdx,
     pub prototype: RefCell<Option<Value>>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
 }
 
 pub enum FunctionKind {
@@ -193,13 +267,13 @@ pub enum BindingKind {
 
 pub struct MapData {
     pub entries: RefCell<Vec<(Value, Value)>>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
 pub struct SetData {
     pub items: RefCell<Vec<Value>>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -207,7 +281,7 @@ pub struct PromiseData {
     pub state: Cell<PromiseStatus>,
     pub result: RefCell<Value>,
     pub handlers: RefCell<Vec<PromiseHandler>>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -230,7 +304,7 @@ pub struct GeneratorData {
     pub state: RefCell<Vec<Value>>,
     pub ip: Cell<usize>,
     pub done: Cell<bool>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -263,7 +337,7 @@ pub struct LazyGeneratorData {
     pub done: Cell<bool>,
     /// The value sent into the generator via `next(v)` (consumed by `yield`).
     pub resume_value: RefCell<Value>,
-    pub props: RefCell<IndexMap<Rc<str>, PropertyDescriptor>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
 
@@ -316,7 +390,7 @@ impl HeapObj {
     }
 
     /// Common props accessor for any object kind.
-    pub fn props(&self) -> &RefCell<IndexMap<Rc<str>, PropertyDescriptor>> {
+    pub fn props(&self) -> &RefCell<IndexMap<PropertyKey, PropertyDescriptor>> {
         match self {
             HeapObj::Object(o) => &o.props,
             HeapObj::Array(a) => &a.props,

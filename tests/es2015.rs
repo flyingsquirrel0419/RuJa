@@ -258,3 +258,53 @@ fn explicit_super_constructor() {
         Value::Number(10.0)
     );
 }
+
+// ---- Symbol-keyed properties ----
+
+#[test]
+fn symbol_key_store_and_read() {
+    let src = r#"
+        let it = Symbol.iterator;
+        let o = {};
+        o[it] = 42;
+        o[it];
+    "#;
+    assert_eq!(run(src), Value::Number(42.0));
+}
+
+#[test]
+fn symbol_key_not_in_for_in() {
+    // Symbol-keyed properties must be skipped by for...in (string keys only).
+    let src = r#"
+        let it = Symbol.iterator;
+        let o = { a: 1, b: 2 };
+        o[it] = 99;
+        let sum = 0;
+        for (let k in o) { sum += o[k]; }
+        sum;
+    "#;
+    assert_eq!(run(src), Value::Number(3.0));
+}
+
+#[test]
+fn symbol_key_not_in_json_stringify() {
+    let src = r#"
+        let it = Symbol.iterator;
+        let o = { a: 1 };
+        o[it] = 99;
+        JSON.stringify(o);
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("{\"a\":1}")));
+}
+
+#[test]
+fn symbol_key_survives_round_trip() {
+    let src = r#"
+        let s1 = Symbol();
+        let o = {};
+        o[s1] = "hi";
+        let out = o[s1];
+        out;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("hi")));
+}

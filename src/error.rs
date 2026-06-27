@@ -91,7 +91,10 @@ fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Object(idx) => heap.with_obj(idx.0, |obj| {
             let props = obj.props();
-            if let Some(desc) = props.borrow().get("message") {
+            if let Some(desc) = props
+                .borrow()
+                .get(&crate::value::PropertyKey::from("message"))
+            {
                 match &desc.value {
                     Value::String(s) => s.to_string(),
                     _ => "[object Error]".to_string(),

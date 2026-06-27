@@ -8,7 +8,7 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, ObjectData,
-    PropertyDescriptor, SetData, Value,
+    PropertyDescriptor, PropertyKey, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::IndexMap;
@@ -65,9 +65,9 @@ fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
 }
 
 fn new_object_with_props(heap: &Heap, proto: Option<Value>, props: Vec<(&str, Value)>) -> GcIdx {
-    let mut map: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut map: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (k, v) in props {
-        map.insert(Rc::from(k), data_prop(v));
+        map.insert(PropertyKey::from(k), data_prop(v));
     }
     let obj = HeapObj::Object(ObjectData {
         props: RefCell::new(map),
@@ -85,7 +85,7 @@ fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Rc<str>, Value)]) {
             for (name, func) in methods {
                 props
                     .borrow_mut()
-                    .insert(name.clone(), data_prop(func.clone()));
+                    .insert(PropertyKey::from(name.clone()), data_prop(func.clone()));
             }
         });
     }
@@ -138,7 +138,7 @@ fn object_to_string(
                         let constructor = vm.heap.with_obj(pidx.0, |p| {
                             p.props()
                                 .borrow()
-                                .get("constructor")
+                                .get(&crate::value::PropertyKey::from("constructor"))
                                 .map(|d| d.value.clone())
                         });
                         if let Some(Value::Object(fidx)) = constructor {
@@ -176,10 +176,10 @@ fn make_builtin_constructor(
 ) -> (GcIdx, GcIdx) {
     let proto_value = vm.object_proto.clone();
 
-    let mut method_props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut method_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
         let func_idx = vm.new_native_function(n, *f, *len);
-        method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
+        method_props.insert(PropertyKey::from(*n), data_prop(Value::Object(func_idx)));
     }
 
     let proto_obj = HeapObj::Object(ObjectData {
@@ -203,15 +203,17 @@ fn make_builtin_constructor(
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     // constructor.prototype
     vm.heap.with_obj(ctor_idx.0, |obj| {
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("prototype"),
+            data_prop(Value::Object(proto_idx)),
+        );
     });
     // prototype.constructor
     vm.heap.with_obj(proto_idx.0, |obj| {
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(ctor_idx)),
+        );
     });
 
     (ctor_idx, proto_idx)
@@ -239,14 +241,16 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("prototype"),
+            data_prop(Value::Object(proto_idx)),
+        );
     });
     vm.heap.with_obj(proto_idx.0, |obj| {
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(ctor_idx)),
+        );
     });
 
     (ctor_idx, proto_idx)
@@ -365,17 +369,20 @@ fn object_has_own_property(
     match &this {
         Value::Object(idx) => {
             let has = vm.heap.with_obj(idx.0, |obj| {
-                obj.props().borrow().contains_key(key.as_str()) || {
-                    if let HeapObj::Array(a) = obj {
-                        if key == "length" {
-                            return true;
+                obj.props()
+                    .borrow()
+                    .contains_key(&crate::value::PropertyKey::from(key.as_str()))
+                    || {
+                        if let HeapObj::Array(a) = obj {
+                            if key == "length" {
+                                return true;
+                            }
+                            if let Ok(i) = key.parse::<usize>() {
+                                return i < a.items.borrow().len();
+                            }
                         }
-                        if let Ok(i) = key.parse::<usize>() {
-                            return i < a.items.borrow().len();
-                        }
+                        false
                     }
-                    false
-                }
             });
             Ok(Value::Bool(has))
         }
@@ -418,7 +425,9 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
             }
             for (k, desc) in o.props().borrow().iter() {
                 if desc.enumerable {
-                    keys.push(k.clone());
+                    if let crate::value::PropertyKey::Str(s) = k {
+                        keys.push(s.clone());
+                    }
                 }
             }
         });
@@ -599,7 +608,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
                     if let HeapObj::Object(obj) = o {
                         obj.props
                             .borrow_mut()
-                            .insert(Rc::from(key.as_str()), data_prop(v));
+                            .insert(PropertyKey::from(key.as_str()), data_prop(v));
                     }
                 });
             }
@@ -637,9 +646,12 @@ fn object_get_own_property_descriptor(
         None => return Ok(Value::Undefined),
     };
     if let Value::Object(idx) = &obj {
-        let desc = vm
-            .heap
-            .with_obj(idx.0, |o| o.props().borrow().get(key.as_str()).cloned());
+        let desc = vm.heap.with_obj(idx.0, |o| {
+            o.props()
+                .borrow()
+                .get(&crate::value::PropertyKey::from(key.as_str()))
+                .cloned()
+        });
         if let Some(d) = desc {
             let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
                 props: RefCell::new(IndexMap::new()),
@@ -650,20 +662,26 @@ fn object_get_own_property_descriptor(
             let mut p = IndexMap::new();
             if d.is_accessor {
                 p.insert(
-                    Rc::from("get"),
+                    PropertyKey::from("get"),
                     data_prop(d.get.clone().unwrap_or(Value::Undefined)),
                 );
                 p.insert(
-                    Rc::from("set"),
+                    PropertyKey::from("set"),
                     data_prop(d.set.clone().unwrap_or(Value::Undefined)),
                 );
             } else {
-                p.insert(Rc::from("value"), data_prop(d.value.clone()));
-                p.insert(Rc::from("writable"), data_prop(Value::Bool(d.writable)));
+                p.insert(PropertyKey::from("value"), data_prop(d.value.clone()));
+                p.insert(
+                    PropertyKey::from("writable"),
+                    data_prop(Value::Bool(d.writable)),
+                );
             }
-            p.insert(Rc::from("enumerable"), data_prop(Value::Bool(d.enumerable)));
             p.insert(
-                Rc::from("configurable"),
+                PropertyKey::from("enumerable"),
+                data_prop(Value::Bool(d.enumerable)),
+            );
+            p.insert(
+                PropertyKey::from("configurable"),
                 data_prop(Value::Bool(d.configurable)),
             );
             vm.heap.with_obj(desc_obj, |o| {
@@ -751,7 +769,7 @@ fn object_define_property(
         vm.heap.with_obj(idx.0, |obj| {
             obj.props()
                 .borrow_mut()
-                .insert(Rc::from(key.as_str()), descriptor);
+                .insert(PropertyKey::from(key.as_str()), descriptor);
         });
     }
     Ok(target)
@@ -800,9 +818,9 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         if let HeapObj::Object(o) = obj {
             o.props
                 .borrow_mut()
-                .insert(Rc::from("message"), data_prop(Value::String(msg)));
+                .insert(PropertyKey::from("message"), data_prop(Value::String(msg)));
             o.props.borrow_mut().insert(
-                Rc::from("name"),
+                PropertyKey::from("name"),
                 data_prop(Value::String(Rc::from("Error"))),
             );
         }
@@ -846,7 +864,7 @@ pub fn setup(vm: &mut Vm) {
         vm.heap.with_obj(object_ctor.0, |obj| {
             obj.props()
                 .borrow_mut()
-                .insert(Rc::from(n), data_prop(Value::Object(m)));
+                .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
         });
     }
     define_global(vm, "Object", Value::Object(object_ctor));
@@ -1037,7 +1055,7 @@ fn math_random(_vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result
 }
 
 fn build_math(vm: &mut Vm) -> Value {
-    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     // build methods first, collect into a temp vec
     let mut method_entries: Vec<(&str, NativeFn, usize)> = vec![
         ("floor", math_floor, 1),
@@ -1074,35 +1092,38 @@ fn build_math(vm: &mut Vm) -> Value {
     ];
     for (name, f, len) in method_entries.drain(..) {
         let idx = vm.new_native_function(name, f, len);
-        props.insert(Rc::from(name), data_prop(Value::Object(idx)));
+        props.insert(PropertyKey::from(name), data_prop(Value::Object(idx)));
     }
     props.insert(
-        Rc::from("PI"),
+        PropertyKey::from("PI"),
         data_prop(Value::Number(std::f64::consts::PI)),
     );
-    props.insert(Rc::from("E"), data_prop(Value::Number(std::f64::consts::E)));
     props.insert(
-        Rc::from("LN2"),
+        PropertyKey::from("E"),
+        data_prop(Value::Number(std::f64::consts::E)),
+    );
+    props.insert(
+        PropertyKey::from("LN2"),
         data_prop(Value::Number(std::f64::consts::LN_2)),
     );
     props.insert(
-        Rc::from("LN10"),
+        PropertyKey::from("LN10"),
         data_prop(Value::Number(std::f64::consts::LN_10)),
     );
     props.insert(
-        Rc::from("LOG2E"),
+        PropertyKey::from("LOG2E"),
         data_prop(Value::Number(std::f64::consts::LOG2_E)),
     );
     props.insert(
-        Rc::from("LOG10E"),
+        PropertyKey::from("LOG10E"),
         data_prop(Value::Number(std::f64::consts::LOG10_E)),
     );
     props.insert(
-        Rc::from("SQRT2"),
+        PropertyKey::from("SQRT2"),
         data_prop(Value::Number(std::f64::consts::SQRT_2)),
     );
     props.insert(
-        Rc::from("SQRT1_2"),
+        PropertyKey::from("SQRT1_2"),
         data_prop(Value::Number(std::f64::consts::FRAC_1_SQRT_2)),
     );
     let obj = HeapObj::Object(ObjectData {
@@ -1126,10 +1147,10 @@ fn console_log(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
     Ok(Value::Undefined)
 }
 fn build_console(vm: &mut Vm) -> Value {
-    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for name in &["log", "error", "warn", "info", "debug", "dir", "trace"] {
         let idx = vm.new_native_function(name, console_log, 0);
-        props.insert(Rc::from(*name), data_prop(Value::Object(idx)));
+        props.insert(PropertyKey::from(*name), data_prop(Value::Object(idx)));
     }
     let obj = HeapObj::Object(ObjectData {
         props: RefCell::new(props),
@@ -1242,8 +1263,12 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
                     if !d.enumerable {
                         continue;
                     }
+                    let key_str = match k {
+                        crate::value::PropertyKey::Str(s) => s.as_ref(),
+                        crate::value::PropertyKey::Symbol(_) => continue,
+                    };
                     if let Some(vs) = stringify_value(vm, &d.value, seen) {
-                        pairs.push(format!("\"{}\":{}", k, vs));
+                        pairs.push(format!("\"{}\":{}", key_str, vs));
                     }
                 }
                 seen.pop();
@@ -1303,7 +1328,7 @@ fn parse_json_obj(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
 ) -> error::Result<Value> {
-    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     loop {
         while let Some(&c) = chars.peek() {
             if c.is_whitespace() {
@@ -1337,7 +1362,7 @@ fn parse_json_obj(
         // JSON-parsed properties are enumerable (data_prop is non-enumerable for builtins).
         let mut desc = data_prop(val);
         desc.enumerable = true;
-        props.insert(Rc::from(key.as_str()), desc);
+        props.insert(PropertyKey::from(key.as_str()), desc);
         while let Some(&c) = chars.peek() {
             if c.is_whitespace() || c == ',' {
                 chars.next();
@@ -1429,11 +1454,11 @@ fn parse_json_num(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
     Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
 }
 fn build_json(vm: &mut Vm) -> Value {
-    let mut props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     let pi = vm.new_native_function("parse", json_parse, 1);
     let si = vm.new_native_function("stringify", json_stringify, 3);
-    props.insert(Rc::from("parse"), data_prop(Value::Object(pi)));
-    props.insert(Rc::from("stringify"), data_prop(Value::Object(si)));
+    props.insert(PropertyKey::from("parse"), data_prop(Value::Object(pi)));
+    props.insert(PropertyKey::from("stringify"), data_prop(Value::Object(si)));
     let obj = HeapObj::Object(ObjectData {
         props: RefCell::new(props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
@@ -1542,7 +1567,7 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
                 let len = o
                     .props()
                     .borrow()
-                    .get("length")
+                    .get(&crate::value::PropertyKey::from("length"))
                     .and_then(|d| {
                         if let Value::Number(n) = d.value {
                             Some(n as usize)
@@ -2651,11 +2676,17 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     // If the search value is a RegExp, use regex replacement.
     if let Some(Value::Object(idx)) = args.first() {
         let source = vm.heap.with_obj(idx.0, |o| {
-            o.props().borrow().get("source").map(|d| d.value.clone())
+            o.props()
+                .borrow()
+                .get(&crate::value::PropertyKey::from("source"))
+                .map(|d| d.value.clone())
         });
         if let Some(Value::String(source)) = source {
             let global = vm.heap.with_obj(idx.0, |o| {
-                o.props().borrow().get("global").map(|d| d.value.clone())
+                o.props()
+                    .borrow()
+                    .get(&crate::value::PropertyKey::from("global"))
+                    .map(|d| d.value.clone())
             }) == Some(Value::Bool(true));
             let re =
                 Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
@@ -2724,7 +2755,10 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     match args.first() {
         Some(Value::Object(idx)) => {
             let source = vm.heap.with_obj(idx.0, |o| {
-                o.props().borrow().get("source").map(|d| d.value.clone())
+                o.props()
+                    .borrow()
+                    .get(&crate::value::PropertyKey::from("source"))
+                    .map(|d| d.value.clone())
             });
             if let Some(Value::String(source)) = source {
                 let re = Regex::new(&source)
@@ -3090,7 +3124,7 @@ pub fn setup_full(vm: &mut Vm) {
         vm.heap.with_obj(array_ctor.0, |obj| {
             obj.props()
                 .borrow_mut()
-                .insert(Rc::from(n), data_prop(Value::Object(m)));
+                .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
         });
     }
     // String
@@ -3169,7 +3203,7 @@ pub fn setup_full(vm: &mut Vm) {
             for (name, val) in &static_props {
                 f.props
                     .borrow_mut()
-                    .insert(name.clone(), data_prop(val.clone()));
+                    .insert(PropertyKey::from(name.clone()), data_prop(val.clone()));
             }
         }
     });
@@ -3203,12 +3237,13 @@ pub fn setup_full(vm: &mut Vm) {
     let reject_static = vm.new_native_function("reject", promise_static_reject, 1);
     vm.heap.with_obj(promise_ctor.0, |obj| {
         obj.props().borrow_mut().insert(
-            Rc::from("resolve"),
+            PropertyKey::from("resolve"),
             data_prop(Value::Object(resolve_static)),
         );
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("reject"), data_prop(Value::Object(reject_static)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("reject"),
+            data_prop(Value::Object(reject_static)),
+        );
     });
     define_global(vm, "Promise", Value::Object(promise_ctor));
     // RegExp
@@ -3220,17 +3255,19 @@ pub fn setup_full(vm: &mut Vm) {
     );
     vm.heap.with_obj(regex_proto.0, |o| {
         if let HeapObj::Object(obj) = o {
-            obj.props
-                .borrow_mut()
-                .insert(Rc::from("__regex_proto__"), data_prop(Value::Bool(true)));
+            obj.props.borrow_mut().insert(
+                PropertyKey::from("__regex_proto__"),
+                data_prop(Value::Bool(true)),
+            );
         }
     });
     // Store regex_proto on the constructor so regexp_constructor can use it.
     vm.heap.with_obj(regex_ctor.0, |o| {
         if let HeapObj::Function(f) = o {
-            f.props
-                .borrow_mut()
-                .insert(Rc::from("__proto__"), data_prop(Value::Object(regex_proto)));
+            f.props.borrow_mut().insert(
+                PropertyKey::from("__proto__"),
+                data_prop(Value::Object(regex_proto)),
+            );
         }
     });
     define_global(vm, "RegExp", Value::Object(regex_ctor));
@@ -3246,7 +3283,7 @@ pub fn setup_full(vm: &mut Vm) {
         vm.heap.with_obj(generator_proto_idx, |o| {
             o.props()
                 .borrow_mut()
-                .insert(Rc::from("next"), data_prop(Value::Object(next_fn)));
+                .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
         });
     }
     vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));
@@ -3655,7 +3692,10 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
             Some(Value::Object(ci)) => vm
                 .heap
                 .with_obj(ci.0, |o| {
-                    o.props().borrow().get("prototype").map(|d| d.value.clone())
+                    o.props()
+                        .borrow()
+                        .get(&crate::value::PropertyKey::from("prototype"))
+                        .map(|d| d.value.clone())
                 })
                 .unwrap_or(vm.object_proto.clone()),
             _ => vm.object_proto.clone(),
@@ -3669,23 +3709,23 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
     }));
     let mut props = IndexMap::new();
     props.insert(
-        Rc::from("source"),
+        PropertyKey::from("source"),
         data_prop(Value::String(Rc::from(pattern.as_str()))),
     );
     props.insert(
-        Rc::from("flags"),
+        PropertyKey::from("flags"),
         data_prop(Value::String(Rc::from(flags.as_str()))),
     );
     props.insert(
-        Rc::from("global"),
+        PropertyKey::from("global"),
         data_prop(Value::Bool(flags.contains('g'))),
     );
     props.insert(
-        Rc::from("ignoreCase"),
+        PropertyKey::from("ignoreCase"),
         data_prop(Value::Bool(flags.contains('i'))),
     );
     props.insert(
-        Rc::from("multiline"),
+        PropertyKey::from("multiline"),
         data_prop(Value::Bool(flags.contains('m'))),
     );
     vm.heap.with_obj(obj_idx, |o| {
@@ -3734,7 +3774,10 @@ fn read_regexp_source(vm: &mut Vm, this: &Option<Value>) -> error::Result<String
     match this {
         Some(Value::Object(idx)) => {
             let s = vm.heap.with_obj(idx.0, |o| {
-                o.props().borrow().get("source").map(|d| d.value.clone())
+                o.props()
+                    .borrow()
+                    .get(&crate::value::PropertyKey::from("source"))
+                    .map(|d| d.value.clone())
             });
             match s {
                 Some(Value::String(s)) => Ok(s.to_string()),
@@ -3786,10 +3829,10 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         if let HeapObj::Object(obj) = o {
             obj.props
                 .borrow_mut()
-                .insert(Rc::from("value"), data_prop(value));
+                .insert(PropertyKey::from("value"), data_prop(value));
             obj.props
                 .borrow_mut()
-                .insert(Rc::from("done"), data_prop(Value::Bool(done)));
+                .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
         }
     });
     Ok(Value::Object(GcIdx(obj_idx)))
@@ -3832,11 +3875,12 @@ pub fn setup_collections(vm: &mut Vm) {
     let sym_for_idx = vm.new_native_function("for", symbol_for, 1);
     if let Value::Object(idx) = Value::Object(sym_idx) {
         vm.heap.with_obj(idx.0, |obj| {
-            obj.props()
-                .borrow_mut()
-                .insert(Rc::from("for"), data_prop(Value::Object(sym_for_idx)));
             obj.props().borrow_mut().insert(
-                Rc::from("iterator"),
+                PropertyKey::from("for"),
+                data_prop(Value::Object(sym_for_idx)),
+            );
+            obj.props().borrow_mut().insert(
+                PropertyKey::from("iterator"),
                 data_prop(Value::Symbol(vm.well_known_symbols.iterator)),
             );
         });
@@ -3845,12 +3889,15 @@ pub fn setup_collections(vm: &mut Vm) {
     // value type (not a constructor), so build the proto manually rather than
     // going through make_builtin_constructor.
     let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0);
-    let mut sym_proto_props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut sym_proto_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     sym_proto_props.insert(
-        Rc::from("toString"),
+        PropertyKey::from("toString"),
         data_prop(Value::Object(sym_tostring_idx)),
     );
-    sym_proto_props.insert(Rc::from("constructor"), data_prop(Value::Object(sym_idx)));
+    sym_proto_props.insert(
+        PropertyKey::from("constructor"),
+        data_prop(Value::Object(sym_idx)),
+    );
     let sym_proto_obj = HeapObj::Object(ObjectData {
         props: RefCell::new(sym_proto_props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
@@ -3867,10 +3914,10 @@ fn make_builtin_constructor_with(
     ctor: NativeFn,
     methods: &[(&str, NativeFn, usize)],
 ) -> (GcIdx, GcIdx) {
-    let mut method_props: IndexMap<Rc<str>, PropertyDescriptor> = IndexMap::new();
+    let mut method_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
         let func_idx = vm.new_native_function(n, *f, *len);
-        method_props.insert(Rc::from(*n), data_prop(Value::Object(func_idx)));
+        method_props.insert(PropertyKey::from(*n), data_prop(Value::Object(func_idx)));
     }
     let proto_obj = HeapObj::Object(ObjectData {
         props: RefCell::new(method_props),
@@ -3891,14 +3938,16 @@ fn make_builtin_constructor_with(
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("prototype"), data_prop(Value::Object(proto_idx)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("prototype"),
+            data_prop(Value::Object(proto_idx)),
+        );
     });
     vm.heap.with_obj(proto_idx.0, |obj| {
-        obj.props()
-            .borrow_mut()
-            .insert(Rc::from("constructor"), data_prop(Value::Object(ctor_idx)));
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(ctor_idx)),
+        );
     });
     (ctor_idx, proto_idx)
 }

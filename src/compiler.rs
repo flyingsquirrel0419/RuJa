@@ -1790,6 +1790,8 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
+                    self.compile_expr(value)?;
+                    self.chunk.emit(Op::SetElem, 0);
                 } else {
                     let key = if let Expr::String(s) = &**property {
                         s.to_string()
@@ -1800,9 +1802,9 @@ impl Compiler {
                         .chunk
                         .add_constant(Value::String(Rc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), 0);
+                    self.compile_expr(value)?;
+                    self.chunk.emit(Op::SetProp, 0);
                 }
-                self.compile_expr(value)?;
-                self.chunk.emit(Op::SetProp, 0);
             }
             Expr::Ident(name) => {
                 self.compile_expr(value)?;

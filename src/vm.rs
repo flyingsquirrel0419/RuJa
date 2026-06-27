@@ -354,7 +354,10 @@ impl Vm {
         // Look up the constructor (e.g. TypeError) and its prototype.
         let proto = match crate::environment::get(&self.heap, self.global, ctor_name) {
             Some(Value::Object(ci)) => self.heap.with_obj(ci.0, |o| {
-                o.props().borrow().get("prototype").map(|d| d.value.clone())
+                o.props()
+                    .borrow()
+                    .get(&crate::value::PropertyKey::from("prototype"))
+                    .map(|d| d.value.clone())
             }),
             _ => None,
         }
@@ -362,15 +365,15 @@ impl Vm {
         .unwrap_or(self.error_proto.clone());
         let mut props = IndexMap::new();
         props.insert(
-            Rc::from("name"),
+            crate::value::PropertyKey::from("name"),
             PropertyDescriptor::data(Value::String(Rc::from(ctor_name))),
         );
         props.insert(
-            Rc::from("message"),
+            crate::value::PropertyKey::from("message"),
             PropertyDescriptor::data(Value::String(Rc::from(e.message.as_str()))),
         );
         props.insert(
-            Rc::from("stack"),
+            crate::value::PropertyKey::from("stack"),
             PropertyDescriptor::data(Value::String(Rc::from(e.stack.join("\n").as_str()))),
         );
         let obj = HeapObj::Object(ObjectData {
@@ -1257,8 +1260,7 @@ impl Vm {
                 Op::GetElem => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    let v = self.get_property(&obj, &key_str)?;
+                    let v = self.get_property_key(&obj, &key)?;
                     self.stack.push(v);
                 }
                 Op::SetProp => {
@@ -1274,21 +1276,17 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    self.set_property(&obj, &key_str, value.clone())?;
+                    self.set_property_key(&obj, &key, value.clone())?;
                     self.stack.push(value);
                 }
                 Op::DeleteProp => {
                     // stack: [obj, key]; remove the own property, push boolean.
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
+                    let pkey = crate::value::PropertyKey::from(self.to_property_key(&key)?);
                     let removed = if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
-                            o.props()
-                                .borrow_mut()
-                                .shift_remove(&Rc::from(key_str.as_str()))
-                                .is_some()
+                            o.props().borrow_mut().shift_remove(&pkey).is_some()
                         })
                     } else {
                         false
@@ -1486,7 +1484,7 @@ impl Vm {
                                 desc.enumerable = false;
                                 obj.props()
                                     .borrow_mut()
-                                    .insert(Rc::from("constructor"), desc);
+                                    .insert(crate::value::PropertyKey::from("constructor"), desc);
                             });
                         }
                         self.stack.push(Value::Object(GcIdx(idx)));
@@ -1790,15 +1788,119 @@ impl Vm {
         }
     }
 
+    /// Coerce a `Value` to a property key as a `String`.
+    ///
+    /// Symbols cannot be converted to a string key and return `Err` (a Symbol
+    /// must be looked up via [`get_property_key`] / [`set_property_key`] using
+    /// the `Value::Symbol` directly).
     pub fn to_property_key(&mut self, v: &Value) -> error::Result<String> {
         match v {
             Value::String(s) => Ok(s.to_string()),
             Value::Number(n) => Ok(crate::value::num_to_string(*n)),
             Value::Symbol(_) => Err(Error::type_err(
-                "Symbol keys not yet supported in property access".to_string(),
+                "Cannot convert a Symbol value to a string key".to_string(),
             )),
             _ => Ok(self.to_string(v)?.to_string()),
         }
+    }
+
+    /// Get a property by a `Value` key, supporting string keys (via the
+    /// existing `get_property(&str)` path) and Symbol keys (looked up directly
+    /// in the object's `props` map as `PropertyKey::Symbol`).
+    pub fn get_property_key(&mut self, obj: &Value, key: &Value) -> error::Result<Value> {
+        match key {
+            Value::Symbol(id) => {
+                let pkey = crate::value::PropertyKey::Symbol(*id);
+                self.get_property_by_key(obj, &pkey)
+            }
+            other => {
+                let s = self.to_property_key(other)?;
+                self.get_property(obj, &s)
+            }
+        }
+    }
+
+    /// Set a property by a `Value` key, supporting string and Symbol keys.
+    pub fn set_property_key(
+        &mut self,
+        obj: &Value,
+        key: &Value,
+        value: Value,
+    ) -> error::Result<()> {
+        match key {
+            Value::Symbol(id) => {
+                if let Value::Object(idx) = obj {
+                    let pkey = crate::value::PropertyKey::Symbol(*id);
+                    self.heap.with_obj(idx.0, |o| {
+                        o.props()
+                            .borrow_mut()
+                            .insert(pkey, crate::value::PropertyDescriptor::data(value.clone()));
+                    });
+                    Ok(())
+                } else {
+                    Err(Error::type_err(
+                        "Cannot set property of primitive".to_string(),
+                    ))
+                }
+            }
+            other => {
+                let s = self.to_property_key(other)?;
+                self.set_property(obj, &s, value)
+            }
+        }
+    }
+
+    /// Look up a property by a `PropertyKey` (string or Symbol), walking the
+    /// prototype chain. Used internally by [`get_property_key`] for Symbol
+    /// keys and by the iterator protocol for `Symbol.iterator`.
+    pub fn get_property_by_key(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> error::Result<Value> {
+        match obj {
+            Value::Object(idx) => {
+                let (found, proto) = self.heap.with_obj(idx.0, |o| {
+                    let props = o.props();
+                    let v = props.borrow().get(key).map(|d| d.value.clone());
+                    let proto = o.proto().borrow().clone();
+                    (v, proto)
+                });
+                if let Some(v) = found {
+                    return Ok(v);
+                }
+                if let Some(proto) = proto {
+                    if !proto.is_undefined() {
+                        return self.get_property_by_key(&proto, key);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            _ => Ok(Value::Undefined),
+        }
+    }
+
+    /// Does `obj` (or its prototype chain) have an own/inherited property for
+    /// the given `PropertyKey`? Used by the iterator protocol to detect a
+    /// user-defined `Symbol.iterator`.
+    pub fn has_property_key(&self, obj: &Value, key: &crate::value::PropertyKey) -> bool {
+        let mut cur = obj.clone();
+        while let Value::Object(idx) = &cur {
+            let (has, proto) = self.heap.with_obj(idx.0, |o| {
+                (
+                    o.props().borrow().contains_key(key),
+                    o.proto().borrow().clone(),
+                )
+            });
+            if has {
+                return true;
+            }
+            cur = proto.unwrap_or(Value::Undefined);
+            if cur.is_undefined() {
+                break;
+            }
+        }
+        false
     }
 
     pub fn to_boolean(&self, v: &Value) -> bool {
@@ -1908,7 +2010,7 @@ impl Vm {
                         }
                     }
                     let props = o.props();
-                    if let Some(desc) = props.borrow().get(key) {
+                    if let Some(desc) = props.borrow().get(&crate::value::PropertyKey::from(key)) {
                         return Ok(desc.value.clone());
                     }
                     // function-specific: .prototype lives in a dedicated field
@@ -1994,9 +2096,10 @@ impl Vm {
                         }
                     }
                     let props = o.props();
-                    props
-                        .borrow_mut()
-                        .insert(Rc::from(key), crate::value::PropertyDescriptor::data(value));
+                    props.borrow_mut().insert(
+                        crate::value::PropertyKey::from(key),
+                        crate::value::PropertyDescriptor::data(value),
+                    );
                 });
                 Ok(())
             }
@@ -2539,7 +2642,9 @@ impl Vm {
                 }
                 for (k, desc) in o.props().borrow().iter() {
                     if desc.enumerable {
-                        own.push(Value::String(k.clone()));
+                        if let crate::value::PropertyKey::Str(s) = k {
+                            own.push(Value::String(s.clone()));
+                        }
                     }
                 }
                 (own, o.proto().borrow().clone())
