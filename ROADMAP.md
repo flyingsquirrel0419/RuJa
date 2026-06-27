@@ -23,11 +23,9 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 ## Remaining known limitations (post v2.0 ES2015 work)
 
-- Derived class constructors do not auto-call `super()` (manual `super.method()` works)
 - `var` hoisting (TDZ) not implemented; only function declarations are hoisted
 - `let`/`const` do not enforce strict block scoping / reassignment errors
-- Property `++`/`--` (e.g. `o.n++`) and call-spread `f(...args)` not yet supported
 - Object property insertion order not preserved (HashMap); affects `for...in`/`Object.keys` order
 - Number-to-string never uses exponential notation
 - Regex literals, optional chaining (`?.`), nullish coalescing (`??`) not supported
-- `JSON.parse` of objects drops properties (arrays work); circular refs crash
+- `JSON.parse` circular references crash (should throw TypeError)
