@@ -34,19 +34,37 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 ## Remaining known limitations (post v2.1)
 
-- **`for await...of`** is not supported (async iteration over async iterables).
-- **`yield*` / async-generator `throw`/`return` delegation** is not wired
-  (values are forwarded, but `throw(v)` / `return(v)` sent into a delegated
-  generator are not propagated).
+- **`for await...of`** is not supported; it now emits a clear `SyntaxError`
+  ("for await...of is not supported") instead of a confusing parse error.
+- **`yield*` delegation** forwards resume values and the delegated return
+  value correctly, but `throw(v)` / `return(v)` sent *into* a delegated
+  generator (via `yield*`) are not yet propagated to the inner generator.
 - **Async generator scheduling** uses the synchronous microtask-drain model
   (a pending Promise is awaited by draining microtasks until it settles);
   there is no real event-loop preemption.
-- **Direct eval scope model**: direct `eval` runs in the caller environment
-  directly (a simplification); the spec's separate var-environment vs
-  lexical-environment split for direct eval is not modeled. A residual
-  interaction between direct eval and the operand stack in nested calls is
-  tracked as a follow-up.
+- **Direct eval lexical-environment isolation**: direct `eval` runs in the
+  caller environment directly, so `let`/`const` declared inside `eval` leak
+  to the caller (the spec's separate eval lexical environment, with an
+  isolated operand stack, is a follow-up). `var`/function declarations
+  leak to the caller's function scope as expected.
+- **`with` statement `this` rebinding**: in sloppy mode, an unqualified
+  function call inside `with` should bind `this` to the `with` object when
+  the callee resolves through the object environment record; this is not
+  implemented (requires name-resolution source tracking).
 - **`with` in strict mode** is not rejected (strict mode is not implemented).
+- **Computed/numeric keys in *declaration* destructuring** (`let {[expr]: x}
+  = o`, `let {1: x} = o`): the `Pattern::Object` AST uses `Rc<str>` keys, so
+  only string/identifier keys work in declaration destructuring. Assignment
+  destructuring (`{[expr]: x} = o`) and object literals (`{[expr]: v}`)
+  support computed keys.
+- **Default-parameter reverse-order TDZ**: `function f(a = b, b = 2)` does
+  not throw for `b` (the parameter binding is initialized from args before
+  defaults evaluate); `function f(a = a)` does throw. Fixing the reverse
+  case requires the `call_function` arg-binding to use uninitialized
+  bindings.
+- **Lexical duplicate-declaration checking** (`let a; let a;`, or a parameter
+  shadowed by a same-name `let` in the body) is not enforced at compile time;
+  later declarations silently overwrite.
 - **Array destructuring of custom iterables** still uses index access rather
   than the iterator protocol (only `for...of`/spread use `Symbol.iterator`).
 - **`Function` constructor** dynamic compilation is not exposed.
