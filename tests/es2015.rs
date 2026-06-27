@@ -392,3 +392,23 @@ fn computed_key_in_object_literal() {
     "#;
     assert_eq!(run(src), Value::Number(43.0));
 }
+
+#[test]
+fn array_prototype_iterator_override_honored() {
+    let src = r#"
+        Array.prototype[Symbol.iterator] = function() {
+            let i = 0; let self = this;
+            return { next() {
+                if (i < self.length) { let v = self[i]*10; i++; return {value: v, done: false}; }
+                return {value: undefined, done: true};
+            }};
+        };
+        let r = [];
+        for (let v of [1,2,3]) r.push(v);
+        delete Array.prototype[Symbol.iterator];
+        let r2 = [];
+        for (let v of [1,2,3]) r2.push(v);
+        r.join(",") + "|" + r2.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("10,20,30|1,2,3")));
+}

@@ -1438,7 +1438,10 @@ impl Vm {
                     // stack: [obj, key]; remove the own property, push boolean.
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let pkey = crate::value::PropertyKey::from(self.to_property_key(&key)?);
+                    let pkey = match &key {
+                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
+                    };
                     let removed = if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
                             o.props().borrow_mut().shift_remove(&pkey).is_some()
@@ -2134,8 +2137,7 @@ impl Vm {
                         (false, 0)
                     }
                 });
-                if is_arr && (name == "length" || name.parse::<usize>().is_ok_and(|i| i < len))
-                {
+                if is_arr && (name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)) {
                     return Ok(true);
                 }
                 Ok(false)
