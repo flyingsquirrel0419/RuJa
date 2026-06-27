@@ -1,3 +1,5 @@
+#![allow(unreachable_patterns)]
+#![allow(dead_code)]
 pub mod ast;
 pub mod builtins;
 pub mod bytecode;

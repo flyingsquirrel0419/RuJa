@@ -614,7 +614,7 @@ impl Compiler {
             is_function: true,
             base: 0,
         });
-        for (i, param) in f.params.iter().enumerate() {
+        for (_i, param) in f.params.iter().enumerate() {
             self.declare(param, VarKind::Let);
             // param is in slot i (VM stores args to locals[0..n])
         }

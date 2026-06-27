@@ -8,12 +8,12 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, ObjectData,
-    PromiseData, PromiseHandler, PromiseStatus, PropertyDescriptor, SetData, Value,
+    PropertyDescriptor, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::IndexMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+
 use std::rc::Rc;
 
 // ---------------------------------------------------------------------------
@@ -393,7 +393,7 @@ fn object_has_own_property(
     }
 }
 
-fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     if let Some(v) = this {
         return Ok(v);
     }
@@ -456,7 +456,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
                     vals.push(v.clone());
                 }
             }
-            for (k, desc) in o.props().borrow().iter() {
+            for (_k, desc) in o.props().borrow().iter() {
                 if desc.enumerable {
                     vals.push(desc.value.clone());
                 }
@@ -566,7 +566,7 @@ fn object_define_property(
         let mut enumerable = false;
         let mut configurable = false;
         let mut is_data = false;
-        if let Value::Object(didx) = desc {
+        if let Value::Object(_didx) = desc {
             if let Some(v) = vm.get_property(&desc, "value").ok() {
                 value = v;
                 is_data = true;
@@ -848,8 +848,7 @@ fn math_min(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
     }
     Ok(Value::Number(m))
 }
-fn math_random(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    use std::cell::Cell;
+fn math_random(_vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
     thread_local! { static STATE: Cell<u64> = Cell::new(0x2545F4914F6CDD1D); }
     let r = STATE.with(|s| {
         let mut x = s.get();
@@ -2095,7 +2094,7 @@ fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
         str_val(vm, &this)?.repeat(n).as_str(),
     )))
 }
-fn str_from_char_code(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let s: String = args
         .iter()
         .filter_map(|v| {
@@ -2301,7 +2300,7 @@ fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
     }
     Ok(Value::Number(0.0))
 }
-fn map_constructor(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+fn map_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let obj = HeapObj::Map(MapData {
         entries: RefCell::new(Vec::new()),
         props: RefCell::new(IndexMap::new()),
@@ -2368,7 +2367,7 @@ fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
     }
     Ok(Value::Number(0.0))
 }
-fn set_constructor(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let obj = HeapObj::Set(SetData {
         items: RefCell::new(Vec::new()),
         props: RefCell::new(IndexMap::new()),

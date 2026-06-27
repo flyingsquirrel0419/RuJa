@@ -7,7 +7,7 @@
 use crate::ast::FunctionExpr;
 use indexmap::IndexMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+
 use std::fmt;
 use std::rc::Rc;
 

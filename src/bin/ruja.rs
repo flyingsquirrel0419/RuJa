@@ -131,7 +131,7 @@ fn main() {
     if args.len() == 1 {
         exit(repl());
     }
-    let mut i = 1;
+    let i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "-h" | "--help" => {
@@ -162,7 +162,6 @@ fn main() {
             }
             file => exit(run_file(file)),
         }
-        i += 1;
     }
     exit(repl());
 }

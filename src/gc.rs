@@ -165,7 +165,7 @@ impl Heap {
         let idx = {
             let mut free = self.free_list.borrow_mut();
             if let Some(idx) = free.pop() {
-                let mut cells = self.cells.borrow_mut();
+                let cells = self.cells.borrow_mut();
                 *cells[idx].obj.borrow_mut() = Some(obj);
                 cells[idx].marked.set(false);
                 idx

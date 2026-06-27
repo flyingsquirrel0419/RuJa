@@ -113,7 +113,7 @@ impl Vm {
         let program = crate::parser::Parser::parse(src)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let base = self.functions.len();
+        let _base = self.functions.len();
         self.functions.extend(funcs);
         self.execute_chunk(chunk, self.global, Value::Undefined)
     }
@@ -729,7 +729,7 @@ impl Vm {
                         self.heap.with_obj(idx.0, |o| {
                             o.props()
                                 .borrow_mut()
-                                .remove(&Rc::from(key_str.as_str()))
+                                .shift_remove(&Rc::from(key_str.as_str()))
                                 .is_some()
                         })
                     } else {
@@ -1017,7 +1017,7 @@ impl Vm {
     fn bin_op<F: Fn(f64, f64) -> Value, G: Fn(&str, &str) -> Value>(
         &mut self,
         numf: F,
-        strf: G,
+        _strf: G,
     ) -> error::Result<()> {
         let (a, b) = self.pop2();
         // string concatenation
@@ -1164,7 +1164,7 @@ impl Vm {
 
     pub fn to_primitive(&mut self, v: &Value) -> error::Result<Value> {
         match v {
-            Value::Object(idx) => {
+            Value::Object(_idx) => {
                 // simplified: arrays/objects -> toString-ish
                 let s = self.to_string(v)?;
                 Ok(Value::String(s))

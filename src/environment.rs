@@ -4,7 +4,7 @@ use crate::gc::Heap;
 use crate::value::{BindingKind, GcIdx, HeapObj, Value};
 use indexmap::IndexMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
+
 use std::rc::Rc;
 
 pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> GcIdx {
