@@ -1085,6 +1085,10 @@ fn parse_json_obj(
             chars.next();
             break;
         }
+        // consume the opening quote of the key string
+        if chars.peek() == Some(&'"') {
+            chars.next();
+        }
         let key = match parse_json_str(chars)? {
             Value::String(s) => s.to_string(),
             _ => String::new(),
@@ -1094,7 +1098,10 @@ fn parse_json_obj(
         }
         chars.next();
         let val = parse_json_value(vm, chars)?;
-        props.insert(Rc::from(key.as_str()), data_prop(val));
+        // JSON-parsed properties are enumerable (data_prop is non-enumerable for builtins).
+        let mut desc = data_prop(val);
+        desc.enumerable = true;
+        props.insert(Rc::from(key.as_str()), desc);
         while let Some(&c) = chars.peek() {
             if c.is_whitespace() || c == ',' {
                 chars.next();

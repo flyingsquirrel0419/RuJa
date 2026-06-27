@@ -152,3 +152,17 @@ fn error_subclass() {
         Value::String(Rc::from("x"))
     );
 }
+
+#[test]
+fn json_parse_object() {
+    assert_eq!(run(r#"JSON.parse("{\"a\":1}").a;"#), Value::Number(1.0));
+    assert_eq!(
+        run(r#"JSON.stringify(JSON.parse("{\"a\":1,\"b\":2}"));"#),
+        Value::String(Rc::from("{\"a\":1,\"b\":2}"))
+    );
+}
+
+#[test]
+fn json_parse_nested() {
+    assert_eq!(run(r#"JSON.parse("{\"nested\":{\"x\":5}}").nested.x;"#), Value::Number(5.0));
+}
