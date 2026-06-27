@@ -215,3 +215,48 @@ fn const_reassign_throws() {
 fn const_read_ok() {
     assert_eq!(run("const x=42; x;"), Value::Number(42.0));
 }
+
+// --- try/catch routing for runtime errors (not just JS throw) ---
+
+#[test]
+fn catch_type_error_null_property() {
+    // `null.x` raises a TypeError that must be catchable.
+    let r = run("var r; try { null.x; } catch(e) { r = e.message; } r;");
+    assert!(matches!(r, Value::String(_)));
+    let s = match r {
+        Value::String(s) => s.to_string(),
+        _ => String::new(),
+    };
+    assert!(s.contains("Cannot read properties"), "got: {}", s);
+}
+
+#[test]
+fn catch_undefined_property() {
+    let r = run("var r; try { (undefined).foo; } catch(e) { r = 'caught'; } r;");
+    assert_eq!(r, Value::String(Rc::from("caught")));
+}
+
+#[test]
+fn catch_reference_error() {
+    let r = run("var r; try { missingVar; } catch(e) { r = 'ref'; } r;");
+    assert_eq!(r, Value::String(Rc::from("ref")));
+}
+
+#[test]
+fn catch_call_non_function() {
+    let r = run("var r; try { (5)(); } catch(e) { r = 'call'; } r;");
+    assert_eq!(r, Value::String(Rc::from("call")));
+}
+
+#[test]
+fn catch_rethrow() {
+    let r = run("var r; try { try { throw 'inner'; } catch(e) { throw 'rethrow'; } } catch(e) { r = e; } r;");
+    assert_eq!(r, Value::String(Rc::from("rethrow")));
+}
+
+#[test]
+fn catch_native_error_has_name_and_message() {
+    let r =
+        run("var r; try { null.x; } catch(e) { r = e.name + ':' + (e.message.length > 0); } r;");
+    assert_eq!(r, Value::String(Rc::from("TypeError:true")));
+}

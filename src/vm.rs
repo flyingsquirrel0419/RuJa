@@ -6,7 +6,7 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use indexmap::IndexMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -52,6 +52,14 @@ pub struct CallFrame {
     pub env: GcIdx,
     pub catch_stack: Vec<usize>,
     pub this_val: Value,
+}
+
+/// Outcome of executing a single bytecode instruction.
+enum Flow {
+    /// Keep dispatching the next instruction.
+    Continue,
+    /// A Halt/Return ended execution with a value.
+    Value(Value),
 }
 
 pub enum Microtask {
@@ -165,11 +173,95 @@ impl Vm {
     }
 
     fn interpret(&mut self) -> error::Result<Value> {
-        self.interpret_inner(None)
+        self.interpret_catch(None)
     }
 
     fn interpret_to_depth(&mut self, target_depth: usize) -> error::Result<Value> {
-        self.interpret_inner(Some(target_depth))
+        self.interpret_catch(Some(target_depth))
+    }
+
+    /// Build a catchable `Error` object for a native (non-thrown) error, so
+    /// `try/catch` receives a real object with `message` and `name`.
+    fn make_error_value(&mut self, e: &Error) -> Value {
+        use crate::value::{ObjectData, PropertyDescriptor};
+        let ctor_name = match e.kind {
+            crate::error::ErrorKind::Type => "TypeError",
+            crate::error::ErrorKind::Range => "RangeError",
+            crate::error::ErrorKind::Reference => "ReferenceError",
+            crate::error::ErrorKind::Syntax => "SyntaxError",
+            crate::error::ErrorKind::Eval => "EvalError",
+            crate::error::ErrorKind::Uri => "URIError",
+            _ => "Error",
+        };
+        // Look up the constructor (e.g. TypeError) and its prototype.
+        let proto = match crate::environment::get(&self.heap, self.global, ctor_name) {
+            Some(Value::Object(ci)) => self.heap.with_obj(ci.0, |o| {
+                o.props().borrow().get("prototype").map(|d| d.value.clone())
+            }),
+            _ => None,
+        }
+        .or_else(|| crate::environment::get(&self.heap, self.global, "Error").map(|v| v))
+        .unwrap_or(self.error_proto.clone());
+        let mut props = IndexMap::new();
+        props.insert(
+            Rc::from("name"),
+            PropertyDescriptor::data(Value::String(Rc::from(ctor_name))),
+        );
+        props.insert(
+            Rc::from("message"),
+            PropertyDescriptor::data(Value::String(Rc::from(e.message.as_str()))),
+        );
+        props.insert(
+            Rc::from("stack"),
+            PropertyDescriptor::data(Value::String(Rc::from(e.stack.join("\n").as_str()))),
+        );
+        let obj = HeapObj::Object(ObjectData {
+            props: RefCell::new(props),
+            proto: RefCell::new(Some(proto)),
+            extensible: Cell::new(true),
+            class_name: Some(Rc::from(ctor_name)),
+        });
+        Value::Object(GcIdx(self.heap.allocate(obj)))
+    }
+
+    /// Run the dispatch loop, routing runtime errors to an active try/catch
+    /// handler when one is present on the current frame's catch stack. A JS
+    /// `throw` already routes through `Op::Throw`; this wrapper additionally
+    /// converts errors raised by builtins/operators (TypeError, ReferenceError,
+    /// ...) into catchable exceptions so that `try { f() } catch(e)` works for
+    /// native errors too.
+    fn interpret_catch(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
+        loop {
+            match self.interpret_inner(return_depth) {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    // If a catch handler is active, convert the error to a thrown
+                    // value and resume at the handler.
+                    let handler = self
+                        .frames
+                        .last()
+                        .and_then(|f| f.catch_stack.last().copied());
+                    match handler {
+                        Some(handler) => {
+                            let thrown = match e.thrown_value.clone() {
+                                Some(v) => v,
+                                None => {
+                                    // Synthesize an Error object for native errors.
+                                    self.make_error_value(&e)
+                                }
+                            };
+                            // Pop the handler so we don't loop, push the thrown value
+                            // for the catch binding, and jump to the handler ip.
+                            self.frames.last_mut().unwrap().catch_stack.pop();
+                            self.stack.push(thrown);
+                            self.frames.last_mut().unwrap().ip = handler;
+                            continue;
+                        }
+                        None => return Err(e),
+                    }
+                }
+            }
+        }
     }
 
     fn interpret_inner(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
@@ -1267,6 +1359,11 @@ impl Vm {
             Value::Number(_) => self.get_proto_property(obj, key),
             Value::Bool(_) => self.get_proto_property(obj, key),
             Value::Symbol(_) => self.get_proto_property(obj, key),
+            Value::Undefined | Value::Null => Err(Error::type_err(format!(
+                "Cannot read properties of {} (reading '{}')",
+                obj.type_of(),
+                key
+            ))),
             Value::Object(idx) => {
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
