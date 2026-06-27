@@ -27,6 +27,10 @@ struct Scope {
     is_function: bool,
     /// Starting offset; locals in this scope are numbered from `base` upward.
     base: usize,
+    /// True when this scope corresponds to a `with` environment record; used
+    /// to emit `PopWithEnv` (rather than `PopScope`) when unwinding on
+    /// break/continue.
+    is_with: bool,
 }
 
 /// A step in the access path used while compiling destructuring patterns.
@@ -51,6 +55,7 @@ impl Compiler {
                 bindings: HashMap::new(),
                 is_function: true,
                 base: 0,
+                is_with: false,
             }],
             funcs: Vec::new(),
             names: Vec::new(),
@@ -134,7 +139,35 @@ impl Compiler {
             bindings: HashMap::new(),
             is_function,
             base,
+            is_with: false,
         });
+    }
+
+    /// Push a scope flagged as a `with` environment record.
+    fn push_with_scope(&mut self) {
+        let base = self
+            .scopes
+            .last()
+            .map(|s| s.base + s.bindings.len())
+            .unwrap_or(0);
+        self.scopes.push(Scope {
+            bindings: HashMap::new(),
+            is_function: false,
+            base,
+            is_with: true,
+        });
+    }
+
+    /// Emit PopScope/PopWithEnv ops to unwind scopes opened since `loop_depth`,
+    /// so `break`/`continue` don't leak `with` or block scopes past the loop.
+    fn emit_scope_unwind(&mut self, loop_depth: usize) {
+        for i in (loop_depth..self.scopes.len()).rev() {
+            if self.scopes[i].is_with {
+                self.chunk.emit(Op::PopWithEnv, 0);
+            } else {
+                self.chunk.emit(Op::PopScope, 0);
+            }
+        }
     }
 
     fn pop_scope(&mut self) {
@@ -461,12 +494,7 @@ impl Compiler {
             }
             Stmt::ForIn { left, right, body } => self.compile_for_in(left, right, body)?,
             Stmt::With { object, body } => {
-                // `with (object) body`: evaluate the object, push a `with`
-                // environment record, run the body, then pop it. A dedicated
-                // compiler scope forces identifier loads to use LoadEnvName
-                // (so the VM's `with`-object fallback applies) rather than the
-                // top-level LoadGlobal path.
-                self.push_scope(false);
+                self.push_with_scope();
                 self.compile_expr(object)?;
                 self.chunk.emit(Op::PushWithEnv, 0);
                 self.compile_stmt(body)?;
@@ -697,6 +725,7 @@ impl Compiler {
             bindings: HashMap::new(),
             is_function: true,
             base: 0,
+            is_with: false,
         });
         for param in f.params.iter() {
             self.declare(param, VarKind::Let);

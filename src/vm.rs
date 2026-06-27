@@ -2789,24 +2789,29 @@ impl Vm {
                         }
                     })
                 } else if is_map {
-                    self.heap.with_obj(idx.0, |o| {
+                    // Extract (k, v) pairs out of the borrow first; allocate the
+                    // pair arrays afterwards so we never call heap.allocate while
+                    // with_obj holds an immutable borrow of the heap cells (which
+                    // would panic on RefCell reborrow).
+                    let pairs: Vec<(Value, Value)> = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Map(m) = o {
-                            m.entries
-                                .borrow()
-                                .iter()
-                                .map(|(k, v)| {
-                                    let pair = HeapObj::Array(crate::value::ArrayData {
-                                        items: RefCell::new(vec![k.clone(), v.clone()]),
-                                        props: RefCell::new(IndexMap::new()),
-                                        proto: RefCell::new(Some(self.array_proto.clone())),
-                                    });
-                                    Value::Object(GcIdx(self.heap.allocate(pair)))
-                                })
-                                .collect::<Vec<_>>()
+                            m.entries.borrow().iter().cloned().collect()
                         } else {
                             Vec::new()
                         }
-                    })
+                    });
+                    let array_proto = self.array_proto.clone();
+                    pairs
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let pair = HeapObj::Array(crate::value::ArrayData {
+                                items: RefCell::new(vec![k, v]),
+                                props: RefCell::new(IndexMap::new()),
+                                proto: RefCell::new(Some(array_proto.clone())),
+                            });
+                            Value::Object(GcIdx(self.heap.allocate(pair)))
+                        })
+                        .collect::<Vec<_>>()
                 } else if is_set {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Set(s) = o {
