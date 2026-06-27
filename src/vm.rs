@@ -212,7 +212,10 @@ impl Vm {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
                         if crate::environment::has(&self.heap, cur_env, &name) {
-                            return Err(Error::type_err(format!("Assignment to constant variable '{}'", name)));
+                            return Err(Error::type_err(format!(
+                                "Assignment to constant variable '{}'",
+                                name
+                            )));
                         }
                         crate::environment::declare(
                             &self.heap,
@@ -245,9 +248,9 @@ impl Vm {
                         cur_env,
                         &name,
                         value,
-                       crate::value::BindingKind::Let,
-                   );
-               }
+                        crate::value::BindingKind::Let,
+                    );
+                }
                 Op::DeclareVar(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
@@ -269,22 +272,50 @@ impl Vm {
                 Op::DeclareLet(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Let);
+                    crate::environment::declare(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value,
+                        crate::value::BindingKind::Let,
+                    );
                 }
                 Op::DeclareConst(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Const);
+                    crate::environment::declare(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value,
+                        crate::value::BindingKind::Const,
+                    );
                 }
                 Op::LoadEnv(name_idx) => {
                     let name = {
@@ -329,7 +360,10 @@ impl Vm {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
                         if crate::environment::has(&self.heap, cur_env, &name) {
-                            return Err(Error::type_err(format!("Assignment to constant variable '{}'", name)));
+                            return Err(Error::type_err(format!(
+                                "Assignment to constant variable '{}'",
+                                name
+                            )));
                         }
                         crate::environment::declare(
                             &self.heap,
@@ -384,7 +418,10 @@ impl Vm {
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, env, &name, value.clone()) {
                         if crate::environment::has(&self.heap, env, &name) {
-                            return Err(Error::type_err(format!("Assignment to constant variable '{}'", name)));
+                            return Err(Error::type_err(format!(
+                                "Assignment to constant variable '{}'",
+                                name
+                            )));
                         }
                         crate::environment::declare(
                             &self.heap,
@@ -419,7 +456,11 @@ impl Vm {
                 Op::PopScope => {
                     let parent = self.frames.last().and_then(|f| {
                         self.heap.with_obj(f.env.0, |o| {
-                            if let HeapObj::Environment(e) = o { *e.parent.borrow() } else { None }
+                            if let HeapObj::Environment(e) = o {
+                                *e.parent.borrow()
+                            } else {
+                                None
+                            }
                         })
                     });
                     if let Some(p) = parent {
@@ -549,6 +590,18 @@ impl Vm {
                 Op::JumpIfTrue(target) => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     if v.is_truthy() {
+                        self.frames.last_mut().unwrap().ip = target;
+                    }
+                }
+                Op::JumpIfNullish(target) => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    if v.is_nullish() {
+                        self.frames.last_mut().unwrap().ip = target;
+                    }
+                }
+                Op::JumpIfNotNullish(target) => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    if !v.is_nullish() {
                         self.frames.last_mut().unwrap().ip = target;
                     }
                 }

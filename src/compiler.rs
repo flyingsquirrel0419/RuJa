@@ -77,7 +77,11 @@ impl Compiler {
         }
         // Hoist `var` declarations as undefined at the top level.
         for stmt in &program.body {
-            if let Stmt::VarDecl { kind: VarKind::Var, decls } = stmt {
+            if let Stmt::VarDecl {
+                kind: VarKind::Var,
+                decls,
+            } = stmt
+            {
                 for (name, _) in decls {
                     self.declare(name, VarKind::Var);
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -245,7 +249,11 @@ impl Compiler {
                 }
                 // Hoist `var` declarations: declare them as undefined before the body runs.
                 for s in body {
-                    if let Stmt::VarDecl { kind: VarKind::Var, decls } = s {
+                    if let Stmt::VarDecl {
+                        kind: VarKind::Var,
+                        decls,
+                    } = s
+                    {
                         for (name, _) in decls {
                             self.declare(name, VarKind::Var);
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -643,7 +651,11 @@ impl Compiler {
         }
         // Hoist `var` declarations within the function body as undefined.
         for stmt in &f.body {
-            if let Stmt::VarDecl { kind: VarKind::Var, decls } = stmt {
+            if let Stmt::VarDecl {
+                kind: VarKind::Var,
+                decls,
+            } = stmt
+            {
                 for (name, _) in decls {
                     self.declare(name, VarKind::Var);
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -1014,39 +1026,54 @@ impl Compiler {
                 self.compile_expr(l)?;
                 match op {
                     LogicalOp::And => {
+                        // `a && b`: if a is falsy, keep a as the result;
+                        // otherwise drop a and evaluate b.
+                        self.chunk.emit(Op::Dup, 0);
                         let jf = self.chunk.code.len();
                         self.chunk.emit(Op::JumpIfFalse(0), 0);
+                        // a is truthy: drop the duplicate and evaluate b.
                         self.chunk.emit(Op::Pop, 0);
                         self.compile_expr(r)?;
-                        self.chunk.patch_jump(jf, self.chunk.code.len());
+                        let end = self.chunk.code.len();
+                        self.chunk.patch_jump(jf, end);
                     }
                     LogicalOp::Or => {
+                        // `a || b`: if a is truthy, keep a as the result;
+                        // otherwise drop a and evaluate b.
+                        self.chunk.emit(Op::Dup, 0);
                         let jt = self.chunk.code.len();
                         self.chunk.emit(Op::JumpIfTrue(0), 0);
+                        // a is falsy: drop the duplicate and evaluate b.
                         self.chunk.emit(Op::Pop, 0);
                         self.compile_expr(r)?;
-                        self.chunk.patch_jump(jt, self.chunk.code.len());
+                        let end = self.chunk.code.len();
+                        self.chunk.patch_jump(jt, end);
                     }
                     LogicalOp::Nullish => {
-                        let jf = self.chunk.code.len();
-                        self.chunk.emit(Op::JumpIfFalse(0), 0); // simplified
+                        // `a ?? b`: if a is NOT null/undefined, keep a;
+                        // otherwise drop a and evaluate b.
+                        self.chunk.emit(Op::Dup, 0);
+                        let jn = self.chunk.code.len();
+                        self.chunk.emit(Op::JumpIfNotNullish(0), 0);
+                        // a is nullish: drop the duplicate and evaluate b.
                         self.chunk.emit(Op::Pop, 0);
                         self.compile_expr(r)?;
-                        self.chunk.patch_jump(jf, self.chunk.code.len());
+                        let end = self.chunk.code.len();
+                        self.chunk.patch_jump(jn, end);
                     }
                 }
             }
             Expr::Assign(op, target, value) => {
                 if matches!(op, AssignOp::Assign) {
                     self.compile_assign_target_store(target, value)?;
+                } else if matches!(
+                    op,
+                    AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign
+                ) {
+                    self.compile_logical_assign(op, target, value)?;
                 } else {
-                    // compound: load, op, store
-                    self.compile_expr(target)?;
-                    self.compile_expr(value)?;
-                    let bin = self.assign_bin_op(op);
-                    self.chunk.emit(bin, 0);
-                    self.chunk.emit(Op::Dup, 0);
-                    self.compile_assign_target(target)?;
+                    // numeric/bitwise compound assignment: load, op, store
+                    self.compile_compound_assign(op, target, value)?;
                 }
             }
             Expr::Conditional(c, t, f) => {
@@ -1532,6 +1559,154 @@ impl Compiler {
             _ => {
                 self.chunk.emit(Op::Pop, 0);
             }
+        }
+        Ok(())
+    }
+
+    /// Compile a numeric/bitwise compound assignment (`+=`, `-=`, `<<=`, ...).
+    /// Handles both identifier and member targets. For member targets the
+    /// object/key pair is re-evaluated for the store (consistent with the
+    /// simple-assignment codegen), since RuJa has no pair-duplication opcode.
+    fn compile_compound_assign(
+        &mut self,
+        op: &AssignOp,
+        target: &Expr,
+        value: &Expr,
+    ) -> error::Result<()> {
+        let bin = self.assign_bin_op(op);
+        match target {
+            Expr::Member {
+                object,
+                property,
+                computed,
+            } => {
+                // Load current value via GetProp/GetElem.
+                self.compile_member_load(object, property, *computed)?;
+                // value, bin -> result
+                self.compile_expr(value)?;
+                self.chunk.emit(bin, 0);
+                // Store: re-push object/key, then SetProp consumes [obj, key, result].
+                // result is currently on top; rotate so obj,key land below it.
+                self.compile_member_key(object, property, *computed)?;
+                // stack: [result, obj, key] -> Rot3 -> [obj, key, result] for SetProp.
+                self.chunk.emit(Op::Rot3, 0);
+                self.chunk.emit(Op::SetProp, 0);
+            }
+            _ => {
+                self.compile_expr(target)?;
+                self.compile_expr(value)?;
+                self.chunk.emit(bin, 0);
+                self.chunk.emit(Op::Dup, 0);
+                self.compile_assign_target(target)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Compile a logical compound assignment (`&&=`, `||=`, `??=`) with
+    /// short-circuit semantics.
+    fn compile_logical_assign(
+        &mut self,
+        op: &AssignOp,
+        target: &Expr,
+        value: &Expr,
+    ) -> error::Result<()> {
+        match target {
+            Expr::Member {
+                object,
+                property,
+                computed,
+            } => {
+                // Load current value.
+                self.compile_member_load(object, property, *computed)?;
+                self.chunk.emit(Op::Dup, 0);
+                let (cond_jump, fires_when) = match op {
+                    AssignOp::AndAssign => (Op::JumpIfFalse(0), "falsy"),
+                    AssignOp::OrAssign => (Op::JumpIfTrue(0), "truthy"),
+                    AssignOp::NullishAssign => (Op::JumpIfNotNullish(0), "not-nullish"),
+                    _ => unreachable!(),
+                };
+                let _ = fires_when;
+                let jskip = self.chunk.code.len();
+                self.chunk.emit(cond_jump, 0);
+                // Short-circuit fired: drop the old value, evaluate the RHS, store it.
+                self.chunk.emit(Op::Pop, 0);
+                self.compile_expr(value)?;
+                // stack: [result]; re-push object/key and store via SetProp.
+                self.compile_member_key(object, property, *computed)?;
+                // stack: [result, obj, key] -> Rot3 -> [obj, key, result] for SetProp.
+                self.chunk.emit(Op::Rot3, 0);
+                self.chunk.emit(Op::SetProp, 0);
+                self.chunk.patch_jump(jskip, self.chunk.code.len());
+            }
+            _ => {
+                self.compile_expr(target)?;
+                self.chunk.emit(Op::Dup, 0);
+                let cond_jump = match op {
+                    AssignOp::AndAssign => Op::JumpIfFalse(0),
+                    AssignOp::OrAssign => Op::JumpIfTrue(0),
+                    AssignOp::NullishAssign => Op::JumpIfNotNullish(0),
+                    _ => unreachable!(),
+                };
+                let jskip = self.chunk.code.len();
+                self.chunk.emit(cond_jump, 0);
+                // Short-circuit fired: drop old value, evaluate RHS, store, keep result.
+                self.chunk.emit(Op::Pop, 0);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Dup, 0);
+                self.compile_assign_target(target)?;
+                self.chunk.patch_jump(jskip, self.chunk.code.len());
+            }
+        }
+        Ok(())
+    }
+
+    /// Push the current value of a member expression onto the stack.
+    fn compile_member_load(
+        &mut self,
+        object: &Expr,
+        property: &Expr,
+        computed: bool,
+    ) -> error::Result<()> {
+        self.compile_expr(object)?;
+        if computed {
+            self.compile_expr(property)?;
+            self.chunk.emit(Op::GetElem, 0);
+        } else {
+            let key = if let Expr::String(s) = property {
+                s.to_string()
+            } else {
+                String::new()
+            };
+            let key_idx = self
+                .chunk
+                .add_constant(Value::String(Rc::from(key.as_str())));
+            self.chunk.emit(Op::Const(key_idx), 0);
+            self.chunk.emit(Op::GetProp, 0);
+        }
+        Ok(())
+    }
+
+    /// Push the object and key for a member store (without the value).
+    fn compile_member_key(
+        &mut self,
+        object: &Expr,
+        property: &Expr,
+        computed: bool,
+    ) -> error::Result<()> {
+        self.compile_expr(object)?;
+        if computed {
+            self.compile_expr(property)?;
+        } else {
+            let key = if let Expr::String(s) = property {
+                s.to_string()
+            } else {
+                String::new()
+            };
+            let key_idx = self
+                .chunk
+                .add_constant(Value::String(Rc::from(key.as_str())));
+            self.chunk.emit(Op::Const(key_idx), 0);
         }
         Ok(())
     }

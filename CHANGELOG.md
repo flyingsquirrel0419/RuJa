@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- Nullish coalescing operator `a ?? b` (JumpIfNotNullish opcode) with correct
+  short-circuit semantics (`0 ?? 2` returns `0`, not `2`)
+- Logical assignment operators `&&=`, `||=`, `??=` with short-circuit semantics
+  on identifier, member, and element targets
+- Compound assignment (`+=`, `-=`, ...) on member and element targets
+  (previously only identifiers worked)
 - `for...of` / `for...in` iteration with iterator protocol (HeapObj::Iterator, GetIterator/IteratorNext/GetForInKeys opcodes)
 - ES2015 `class extends` with prototype-chain linking and static inheritance
 - `super.method()` calls (CallSuper opcode, `#super` binding)

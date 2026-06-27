@@ -124,7 +124,9 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     let exists = heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             e.vars.borrow().contains_key(name)
-        } else { false }
+        } else {
+            false
+        }
     });
     let _ = exists;
     heap.with_obj(root.0, |obj| {

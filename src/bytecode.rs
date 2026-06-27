@@ -35,8 +35,11 @@ impl Chunk {
 
     /// Patch a jump target after the destination is known.
     pub fn patch_jump(&mut self, op_idx: usize, target: usize) {
-        if let Op::Jump(ref mut dst) | Op::JumpIfFalse(ref mut dst) | Op::JumpIfTrue(ref mut dst) =
-            self.code[op_idx]
+        if let Op::Jump(ref mut dst)
+        | Op::JumpIfFalse(ref mut dst)
+        | Op::JumpIfTrue(ref mut dst)
+        | Op::JumpIfNullish(ref mut dst)
+        | Op::JumpIfNotNullish(ref mut dst) = self.code[op_idx]
         {
             *dst = target;
         }
@@ -105,6 +108,8 @@ pub enum Op {
     Jump(usize),
     JumpIfFalse(usize),
     JumpIfTrue(usize),
+    JumpIfNullish(usize),    // pop; jump if null or undefined (for ?? operator)
+    JumpIfNotNullish(usize), // pop; jump if NOT (null or undefined)
 
     // Objects/arrays
     NewObject,
