@@ -13,7 +13,7 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 7. [x] ES2015: class/extends + super, Map/Set, Symbol, iterator protocol (for-of/for-in)
 8. [ ] async/await + generator state machine
 9. [ ] Built-in spec conformance + TDZ
-10. [~] regression tests (101 passing, split across 4 files)
+10. [~] regression tests (112 passing, split across 5 files)
 11. [x] Release prep (README/CHANGELOG/CI)
 12. [~] Release verification (tests + CLI + metadata)
 
@@ -23,9 +23,9 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 ## Remaining known limitations (post v2.0 ES2015 work)
 
-- `var` hoisting (TDZ) not implemented; only function declarations are hoisted
-- `let`/`const` do not enforce strict block scoping / reassignment errors
+- `const` reassignment does not throw (should be TypeError)
 - Object property insertion order not preserved (HashMap); affects `for...in`/`Object.keys` order
-- Number-to-string never uses exponential notation
+- Number-to-string never uses exponential notation (e.g. 1e21 prints in full)
 - Regex literals, optional chaining (`?.`), nullish coalescing (`??`) not supported
 - `JSON.parse` circular references crash (should throw TypeError)
+- `var` hoisting only covers direct declarations (not nested inside if/for blocks)
