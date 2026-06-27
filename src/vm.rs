@@ -539,6 +539,40 @@ impl Vm {
                     let idx = self.heap.allocate(obj);
                     self.stack.push(Value::Object(GcIdx(idx)));
                 }
+                Op::ArrayPush => {
+                    // stack: [array, value]; append value to the array's items.
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let arr = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &arr {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Array(a) = o {
+                                a.items.borrow_mut().push(value.clone());
+                            }
+                        });
+                    }
+                    self.stack.push(arr);
+                }
+                Op::SpreadPush => {
+                    // stack: [array, iterable]; spread iterable's values into the array.
+                    let iterable = self.stack.pop().unwrap_or(Value::Undefined);
+                    let arr = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(arr_idx) = &arr {
+                        let it = self.make_iterator(&iterable)?;
+                        // drain the iterator into the array
+                        loop {
+                            let (v, done) = self.iterator_next(&it)?;
+                            if done {
+                                break;
+                            }
+                            self.heap.with_obj(arr_idx.0, |o| {
+                                if let HeapObj::Array(a) = o {
+                                    a.items.borrow_mut().push(v.clone());
+                                }
+                            });
+                        }
+                    }
+                    self.stack.push(arr);
+                }
                 Op::GetProp => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);

@@ -208,7 +208,16 @@ impl Compiler {
             }
             Stmt::Block(body) => {
                 self.push_scope(false);
+                // Hoist function declarations within the block.
                 for s in body {
+                    if matches!(s, Stmt::FunctionDecl(_)) {
+                        self.compile_stmt(s)?;
+                    }
+                }
+                for s in body {
+                    if matches!(s, Stmt::FunctionDecl(_)) {
+                        continue;
+                    }
                     self.compile_stmt(s)?;
                 }
                 self.pop_scope();
@@ -955,14 +964,22 @@ impl Compiler {
                 }
             }
             Expr::Array(elements) => {
+                // Build incrementally: start with an empty array, then push each element
+                // (or spread each iterable). ArrayPush/SpreadPush pop [array, operand] and
+                // leave the array back on the stack.
+                self.chunk.emit(Op::NewArray(0), 0); // [arr]
                 for e in elements {
-                    if let Expr::Spread(_) = e {
-                        // simplified: skip spread
-                    } else {
-                        self.compile_expr(e)?;
+                    match e {
+                        Expr::Spread(inner) => {
+                            self.compile_expr(inner)?; // [arr, iterable]
+                            self.chunk.emit(Op::SpreadPush, 0); // [arr]
+                        }
+                        _ => {
+                            self.compile_expr(e)?; // [arr, value]
+                            self.chunk.emit(Op::ArrayPush, 0); // [arr]
+                        }
                     }
                 }
-                self.chunk.emit(Op::NewArray(elements.len()), 0);
             }
             Expr::Call { callee, args } => {
                 // check if method call

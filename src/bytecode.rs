@@ -109,6 +109,8 @@ pub enum Op {
     // Objects/arrays
     NewObject,
     NewArray(usize), // count of elements already on stack
+    ArrayPush,       // pop [value, array]; append value to the array's items
+    SpreadPush,      // pop [iterable, array]; spread iterable's values into the array
     GetProp,
     SetProp,
     GetElem, // computed member
