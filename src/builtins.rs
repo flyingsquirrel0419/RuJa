@@ -1523,6 +1523,62 @@ fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
 // =========================================================================
 // Array prototype + constructor
 // =========================================================================
+
+fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let src_val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let map_fn = args.get(1).cloned();
+    // Array-like or iterable
+    let mut items: Vec<Value> = Vec::new();
+    if let Value::Object(idx) = &src_val {
+        let (is_arr, arr_items, len) = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Array(a) = o {
+                (true, a.items.borrow().clone(), 0)
+            } else if let HeapObj::Iterator(_) = o {
+                (false, Vec::new(), 0)
+            } else {
+                let len = o
+                    .props()
+                    .borrow()
+                    .get("length")
+                    .and_then(|d| {
+                        if let Value::Number(n) = d.value {
+                            Some(n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                (false, Vec::new(), len)
+            }
+        });
+        if is_arr {
+            items = arr_items;
+        } else {
+            // array-like: read index 0..len
+            for i in 0..len {
+                let key = i.to_string();
+                let v = vm.get_property(&src_val, &key)?;
+                items.push(v);
+            }
+        }
+    } else if let Value::String(s) = &src_val {
+        for ch in s.chars() {
+            items.push(Value::String(Rc::from(ch.to_string().as_str())));
+        }
+    }
+    if let Some(mfn) = map_fn {
+        let mut mapped = Vec::new();
+        for (i, v) in items.iter().enumerate() {
+            mapped.push(vm.call_function(&mfn, &[v.clone(), Value::Number(i as f64)], None)?);
+        }
+        items = mapped;
+    }
+    Ok(make_value_array(vm, items))
+}
+fn array_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(make_value_array(vm, args.to_vec()))
+}
+
 fn array_is_array(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(is_array(
         args.get(0).unwrap_or(&Value::Undefined),
@@ -2965,6 +3021,19 @@ pub fn setup_full(vm: &mut Vm) {
     // override the constructor function to use array_constructor
     vm.array_proto = Value::Object(array_proto);
     define_global(vm, "Array", Value::Object(array_ctor));
+    // Array statics
+    for (n, f, len) in [
+        ("isArray", array_is_array as NativeFn, 1),
+        ("from", array_from as NativeFn, 1),
+        ("of", array_of as NativeFn, 0),
+    ] {
+        let m = vm.new_native_function(n, f, len);
+        vm.heap.with_obj(array_ctor.0, |obj| {
+            obj.props()
+                .borrow_mut()
+                .insert(Rc::from(n), data_prop(Value::Object(m)));
+        });
+    }
     // String
     let (str_ctor, str_proto) = make_builtin_constructor(
         vm,

@@ -470,3 +470,35 @@ fn division_not_regex() {
     assert_eq!(run("10 / 4;"), Value::Number(2.5));
     assert_eq!(run("var x = 20; x / 5;"), Value::Number(4.0));
 }
+
+// --- Array.from / Array.of ---
+
+#[test]
+fn array_from_iterable_and_map() {
+    assert_eq!(
+        run("Array.from('abc').join(',');"),
+        Value::String(Rc::from("a,b,c"))
+    );
+    assert_eq!(
+        run("Array.from([1,2,3], x=>x*2).join(',');"),
+        Value::String(Rc::from("2,4,6"))
+    );
+}
+
+#[test]
+fn array_from_arraylike() {
+    assert_eq!(
+        run("Array.from({0:'a',1:'b',length:2}).join(',');"),
+        Value::String(Rc::from("a,b"))
+    );
+}
+
+#[test]
+fn array_of_and_isarray() {
+    assert_eq!(
+        run("Array.of(1,2,3).join(',');"),
+        Value::String(Rc::from("1,2,3"))
+    );
+    assert_eq!(run("Array.isArray([]);"), Value::Bool(true));
+    assert_eq!(run("Array.isArray({});"), Value::Bool(false));
+}
