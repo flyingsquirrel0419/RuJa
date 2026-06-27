@@ -23,3 +23,6 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 ## Remaining known limitations (post v2.0 ES2015 work)
 
+- async/await and generators (Promise is implemented; async state machine pending)
+- try/catch only catches JS throw, not runtime TypeError/ReferenceError yet
+- Deeply nested optional method chains (`a?.b?.()`) are not fully short-circuited
