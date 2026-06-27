@@ -112,26 +112,9 @@ impl Parser {
     }
 
     fn parse_var_decl(&mut self) -> error::Result<Stmt> {
-        let kind = match self.advance() {
-            TokenKind::Var => VarKind::Var,
-            TokenKind::Let => VarKind::Let,
-            TokenKind::Const => VarKind::Const,
-            _ => unreachable!(),
-        };
-        let mut decls = Vec::new();
-        loop {
-            let name = match self.advance() {
-                TokenKind::Ident(s) => Rc::from(s.as_str()),
-                other => return Err(error::Error::syntax(format!("Expected identifier in decl, got {:?}", other))),
-            };
-            let init = if self.eat(&TokenKind::Assign) {
-                Some(self.parse_assign()?)
-            } else { None };
-            decls.push((name, init));
-            if !self.eat(&TokenKind::Comma) { break; }
-        }
+        let stmt = self.parse_var_decl_no_semi()?;
         self.expect_semi()?;
-        Ok(Stmt::VarDecl { kind, decls })
+        Ok(stmt)
     }
 
     fn parse_function_decl(&mut self) -> error::Result<Stmt> {
@@ -269,6 +252,15 @@ impl Parser {
         };
         let mut decls = Vec::new();
         loop {
+            // Destructuring pattern: `let [a,b] = ...` / `let {x,y} = ...`.
+            if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
+                let pattern = self.parse_destructure_pattern()?;
+                // `for (let [a,b] of ...)` has no `=`; a plain decl requires one.
+                let init = if self.eat(&TokenKind::Assign) {
+                    Some(self.parse_assign()?)
+                } else { None };
+                return Ok(Stmt::Destructure { kind, pattern, init });
+            }
             let name = match self.advance() {
                 TokenKind::Ident(s) => Rc::from(s.as_str()),
                 other => return Err(error::Error::syntax(format!("Expected identifier, got {:?}", other))),
@@ -939,6 +931,66 @@ impl Parser {
             Ok(Pattern::Ident(Rc::from(s.as_str())))
         } else {
             Err(error::Error::syntax("expected pattern".to_string()))
+        }
+    }
+
+    /// Parse a destructuring pattern: `[a, b, ...rest]` or `{x, y: z, k = d}`.
+    fn parse_destructure_pattern(&mut self) -> error::Result<Pattern> {
+        match self.peek().clone() {
+            TokenKind::LBracket => {
+                self.advance(); // [
+                let mut elems: Vec<Pattern> = Vec::new();
+                while !self.check(&TokenKind::RBracket) {
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                        // hole: represent as Ident("_hole") is messy; use a default-only pattern skip.
+                        // For simplicity, push a hole as a Rest-less placeholder pattern.
+                        continue;
+                    }
+                    if self.check(&TokenKind::Spread) {
+                        self.advance();
+                        let inner = self.parse_destructure_pattern()?;
+                        elems.push(Pattern::Rest(Box::new(inner)));
+                        // rest must be last
+                        if !self.check(&TokenKind::RBracket) {
+                            return Err(error::Error::syntax("rest element must be last in array pattern".to_string()));
+                        }
+                        break;
+                    }
+                    let p = self.parse_destructure_pattern()?;
+                    elems.push(p);
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                self.expect(&TokenKind::RBracket, "]")?;
+                Ok(Pattern::Array(elems))
+            }
+            TokenKind::LBrace => {
+                self.advance(); // {
+                let mut props: Vec<(Rc<str>, Pattern)> = Vec::new();
+                while !self.check(&TokenKind::RBrace) {
+                    let key: Rc<str> = match self.advance() {
+                        TokenKind::Ident(s) => Rc::from(s.as_str()),
+                        other => return Err(error::Error::syntax(format!("Expected property name in object pattern, got {:?}", other))),
+                    };
+                    // `key: target` renames; otherwise bind to same name.
+                    let target = if self.eat(&TokenKind::Colon) {
+                        self.parse_destructure_pattern()?
+                    } else {
+                        Pattern::Ident(key.clone())
+                    };
+                    // default value: `key = default`
+                    let target = if self.eat(&TokenKind::Assign) {
+                        let d = self.parse_assign()?;
+                        Pattern::Assign(Box::new(target), d)
+                    } else { target };
+                    props.push((key, target));
+                    if !self.eat(&TokenKind::Comma) { break; }
+                }
+                self.expect(&TokenKind::RBrace, "}")?;
+                Ok(Pattern::Object(props))
+            }
+            TokenKind::Ident(s) => { self.advance(); Ok(Pattern::Ident(Rc::from(s.as_str()))) }
+            other => Err(error::Error::syntax(format!("Expected pattern, got {:?}", other))),
         }
     }
 }

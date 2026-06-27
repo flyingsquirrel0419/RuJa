@@ -183,6 +183,8 @@ pub enum Stmt {
     Labeled(Rc<str>, Box<Stmt>),
     Empty,
     Switch { disc: Expr, cases: Vec<SwitchCase> },
+    /// Destructuring declaration: `let [a,b] = expr` / `const {x,y} = expr`.
+    Destructure { kind: VarKind, pattern: Pattern, init: Option<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

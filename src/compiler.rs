@@ -27,6 +27,14 @@ struct Scope {
 
 
 
+/// A step in the access path used while compiling destructuring patterns.
+#[derive(Clone)]
+enum PathStep {
+    Index(usize),
+    Prop(Rc<str>),
+    RestFrom(usize),
+}
+
 impl Compiler {
     pub fn new() -> Self {
         Compiler {
@@ -296,6 +304,18 @@ impl Compiler {
                     }
                 }
             }
+            Stmt::Destructure { kind, pattern, init } => {
+                // Evaluate the source (if any), stash it in a temp env binding, then bind each
+                // pattern element by indexing/property access on the temp. When `init` is None
+                // (for-of/for-in) the value is already on the stack.
+                if let Some(e) = init {
+                    self.compile_expr(e)?;
+                }
+                let temp_idx = self.intern("#destr");
+                self.chunk.emit(Op::DeclareEnv(temp_idx), 0);
+                self.compile_pattern(pattern, temp_idx, &[])?;
+                let _ = kind;
+            }
             Stmt::Break(_) => {
                 // simplified: jump to end (proper impl needs a jump stack)
                 self.chunk.emit(Op::Pop, 0); // placeholder
@@ -353,9 +373,16 @@ impl Compiler {
                     self.declare(name, *kind);
                     let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::DeclareEnv(name_idx), 0);
-                } else {
+            } else {
                     self.chunk.emit(Op::Pop, 0);
                 }
+            }
+            Stmt::Destructure { kind, pattern, .. } => {
+                // for-of/for-in with a destructuring pattern: the value is on the stack.
+                let temp_idx = self.intern("#destr");
+                self.chunk.emit(Op::DeclareEnv(temp_idx), 0);
+                self.compile_pattern(pattern, temp_idx, &[])?;
+                let _ = kind;
             }
             other => {
                 // Non-declaration left side (e.g. `for (x of ...)`): treat as assignment target.
@@ -428,6 +455,116 @@ impl Compiler {
         self.name_map = saved_names;
         self.chunk = saved_chunk;
         Ok(func_chunk)
+    }
+
+    /// A path step to reach a destructured value from the source temp.
+    fn load_path(&mut self, temp_idx: usize, path: &[PathStep]) {
+        self.chunk.emit(Op::LoadEnv(temp_idx), 0);
+        for step in path {
+            match step {
+                PathStep::Index(i) => {
+                    let k = self.chunk.add_constant(Value::Number(*i as f64));
+                    self.chunk.emit(Op::Const(k), 0);
+                    self.chunk.emit(Op::GetElem, 0);
+                }
+                PathStep::Prop(name) => {
+                    let k = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.emit(Op::Const(k), 0);
+                    self.chunk.emit(Op::GetProp, 0);
+                }
+                PathStep::RestFrom(_) => {} // handled by bind_rest
+            }
+        }
+    }
+
+    /// Compile a destructuring pattern against the source held in env var `temp_idx`,
+    /// reaching nested values via `path`.
+    fn compile_pattern(&mut self, pattern: &Pattern, temp_idx: usize, path: &[PathStep]) -> error::Result<()> {
+        match pattern {
+            Pattern::Ident(name) => {
+                self.declare(name, VarKind::Let);
+                self.load_path(temp_idx, path);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::DeclareEnv(name_idx), 0);
+            }
+            Pattern::Array(elems) => {
+                for (i, el) in elems.iter().enumerate() {
+                    match el {
+                        Pattern::Rest(inner) => {
+                            self.bind_rest(inner, temp_idx, path, i)?;
+                        }
+                        _ => {
+                            let mut new_path = path.to_vec();
+                            new_path.push(PathStep::Index(i));
+                            self.compile_pattern(el, temp_idx, &new_path)?;
+                        }
+                    }
+                }
+            }
+            Pattern::Object(props) => {
+                for (key, target) in props {
+                    let mut new_path = path.to_vec();
+                    new_path.push(PathStep::Prop(key.clone()));
+                    match target {
+                        Pattern::Assign(inner, default) => {
+                            self.load_path(temp_idx, &new_path);
+                            self.chunk.emit(Op::Dup, 0);
+                            self.chunk.emit(Op::Undefined, 0);
+                            self.chunk.emit(Op::StrictEq, 0);
+                            let skip = self.chunk.code.len();
+                            self.chunk.emit(Op::JumpIfFalse(0), 0);
+                            self.chunk.emit(Op::Pop, 0);
+                            self.compile_expr(default)?;
+                            let after = self.chunk.code.len();
+                            self.chunk.patch_jump(skip, after);
+                            let t2 = self.intern("#d2");
+                            self.chunk.emit(Op::DeclareEnv(t2), 0);
+                            self.compile_pattern(inner, t2, &[])?;
+                        }
+                        other => {
+                            self.compile_pattern(other, temp_idx, &new_path)?;
+                        }
+                    }
+                }
+            }
+            Pattern::Assign(inner, default) => {
+                self.load_path(temp_idx, path);
+                self.chunk.emit(Op::Dup, 0);
+                self.chunk.emit(Op::Undefined, 0);
+                self.chunk.emit(Op::StrictEq, 0);
+                let skip = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfFalse(0), 0);
+                self.chunk.emit(Op::Pop, 0);
+                self.compile_expr(default)?;
+                let after = self.chunk.code.len();
+                self.chunk.patch_jump(skip, after);
+                let t2 = self.intern("#d2");
+                self.chunk.emit(Op::DeclareEnv(t2), 0);
+                self.compile_pattern(inner, t2, &[])?;
+            }
+            Pattern::Rest(inner) => {
+                self.load_path(temp_idx, path);
+                let t2 = self.intern("#d2");
+                self.chunk.emit(Op::DeclareEnv(t2), 0);
+                self.compile_pattern(inner, t2, &[])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind a rest pattern: build an array from temp[i..] (i relative to current path end).
+    fn bind_rest(&mut self, inner: &Pattern, temp_idx: usize, path: &[PathStep], from: usize) -> error::Result<()> {
+        // Load the value at path (the array to slice), then call .slice(from).
+        self.load_path(temp_idx, path);
+        let slice_key = self.chunk.add_constant(Value::String(Rc::from("slice")));
+        self.chunk.emit(Op::Const(slice_key), 0);
+        let from_c = self.chunk.add_constant(Value::Number(from as f64));
+        self.chunk.emit(Op::Const(from_c), 0);
+        self.chunk.emit(Op::CallMethod(1), 0); // value.slice(from)
+        let t2 = self.intern("#d2");
+        self.chunk.emit(Op::DeclareEnv(t2), 0);
+        self.compile_pattern(inner, t2, &[])?;
+        Ok(())
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> error::Result<()> {
