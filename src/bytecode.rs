@@ -115,6 +115,7 @@ pub enum Op {
 
     // Iteration
     GetIterator,
+    GetForInKeys,        // pop object, push iterator over enumerable string keys
     IteratorNext,
     IteratorDone,
 

@@ -113,6 +113,7 @@ pub enum HeapObj {
     Set(SetData),
     Promise(PromiseData),
     Generator(GeneratorData),
+    Iterator(IteratorData),
 }
 
 /// Generic JS object.
@@ -212,6 +213,14 @@ pub struct GeneratorData {
     pub proto: RefCell<Option<Value>>,
 }
 
+/// Internal iterator state used by `for...of` / `for...in` and the spread operator.
+pub struct IteratorData {
+    /// Remaining values to yield, in order.
+    pub items: RefCell<Vec<Value>>,
+    /// Current position into `items`.
+    pub index: Cell<usize>,
+}
+
 #[derive(Clone)]
 pub struct PropertyDescriptor {
     pub value: Value,
@@ -259,6 +268,7 @@ impl HeapObj {
             HeapObj::Set(s) => &s.props,
             HeapObj::Promise(p) => &p.props,
             HeapObj::Generator(g) => &g.props,
+            HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
     }
@@ -274,6 +284,7 @@ impl HeapObj {
             HeapObj::Promise(p) => &p.proto,
             HeapObj::Generator(g) => &g.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
+            HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
     }
 
@@ -287,6 +298,7 @@ impl HeapObj {
             HeapObj::Set(_) => "Set",
             HeapObj::Promise(_) => "Promise",
             HeapObj::Generator(_) => "Generator",
+            HeapObj::Iterator(_) => "Iterator",
             HeapObj::Environment(_) => "Environment",
         }
     }

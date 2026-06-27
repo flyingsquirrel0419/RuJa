@@ -499,6 +499,28 @@ impl Vm {
                     };
                     self.stack.push(Value::String(Rc::from(t)));
                 }
+                Op::GetIterator => {
+                    let iterable = self.stack.pop().unwrap_or(Value::Undefined);
+                    let it = self.make_iterator(&iterable)?;
+                    self.stack.push(it);
+                }
+                Op::GetForInKeys => {
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let it = self.make_for_in_keys(&obj)?;
+                    self.stack.push(it);
+                }
+                Op::IteratorNext => {
+                    // pop iterator, push [value, done]
+                    let it = self.stack.pop().unwrap_or(Value::Undefined);
+                    let (value, done) = self.iterator_next(&it)?;
+                    self.stack.push(value);
+                    self.stack.push(Value::Bool(done));
+                }
+                Op::IteratorDone => {
+                    let it = self.stack.pop().unwrap_or(Value::Undefined);
+                    let done = self.iterator_done(&it);
+                    self.stack.push(Value::Bool(done));
+                }
                 _ => {
                     // Unimplemented op: skip for now
                 }
@@ -958,12 +980,125 @@ impl Vm {
             class_name: None,
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)));
-        let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
-        if matches!(result, Value::Object(_)) {
-            Ok(result)
-        } else {
-            Ok(this_obj)
+       let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
+       if matches!(result, Value::Object(_)) {
+           Ok(result)
+       } else {
+           Ok(this_obj)
+       }
+   }
+
+    // ---- iteration ----
+
+    /// Build a heap iterator object that yields the values of `iterable`.
+    pub fn make_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
+        let items: Vec<Value> = match iterable {
+            Value::String(s) => {
+                s.chars().map(|c| Value::String(Rc::from(c.to_string().as_str()))).collect()
+            }
+            Value::Object(idx) => {
+                let (is_array, is_map, is_set) = self.heap.with_obj(idx.0, |o| {
+                    (matches!(o, HeapObj::Array(_)), matches!(o, HeapObj::Map(_)), matches!(o, HeapObj::Set(_)))
+                });
+                if is_array {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Array(a) = o { a.items.borrow().clone() } else { Vec::new() }
+                    })
+                } else if is_map {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Map(m) = o {
+                            m.entries.borrow().iter().map(|(k, v)| {
+                                let pair = HeapObj::Array(crate::value::ArrayData {
+                                    items: RefCell::new(vec![k.clone(), v.clone()]),
+                                    props: RefCell::new(HashMap::new()),
+                                    proto: RefCell::new(Some(self.array_proto.clone())),
+                                });
+                                Value::Object(GcIdx(self.heap.allocate(pair)))
+                            }).collect::<Vec<_>>()
+                        } else { Vec::new() }
+                    })
+                } else if is_set {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Set(s) = o { s.items.borrow().clone() } else { Vec::new() }
+                    })
+                } else {
+                    return Err(Error::type_err("value is not iterable".to_string()));
+                }
+            }
+            _ => return Err(Error::type_err(format!("{} is not iterable", iterable.type_of()))),
+        };
+        Ok(self.new_iterator(items))
+    }
+
+    /// Build an iterator over an object's enumerable string keys (for `for...in`).
+    pub fn make_for_in_keys(&mut self, obj: &Value) -> error::Result<Value> {
+        let mut keys: Vec<Value> = Vec::new();
+        let mut cur = obj.clone();
+        while let Value::Object(idx) = &cur {
+            let (own, proto) = self.heap.with_obj(idx.0, |o| {
+                let mut own = Vec::new();
+                if let HeapObj::Array(a) = o {
+                    for i in 0..a.items.borrow().len() {
+                        own.push(Value::String(Rc::from(i.to_string().as_str())));
+                    }
+                }
+                if let HeapObj::Map(m) = o {
+                    for (k, _) in m.entries.borrow().iter() {
+                        if let Value::String(s) = k { own.push(Value::String(s.clone())); }
+                    }
+                }
+                for (k, desc) in o.props().borrow().iter() {
+                    if desc.enumerable {
+                        own.push(Value::String(k.clone()));
+                    }
+                }
+                (own, o.proto().borrow().clone())
+            });
+            for k in own {
+                if !keys.contains(&k) { keys.push(k); }
+            }
+            cur = proto.unwrap_or(Value::Undefined);
+            if cur.is_undefined() { break; }
         }
+        Ok(self.new_iterator(keys))
+    }
+
+    fn new_iterator(&mut self, items: Vec<Value>) -> Value {
+        let it = HeapObj::Iterator(crate::value::IteratorData {
+            items: RefCell::new(items),
+            index: std::cell::Cell::new(0),
+        });
+        Value::Object(GcIdx(self.heap.allocate(it)))
+    }
+
+    pub fn iterator_next(&self, it: &Value) -> error::Result<(Value, bool)> {
+        let idx = match it { Value::Object(idx) => idx.0, _ => return Err(Error::type_err("not an iterator".to_string())) };
+        self.heap.with_obj(idx, |o| {
+            if let HeapObj::Iterator(it) = o {
+                let items = it.items.borrow();
+                let i = it.index.get();
+                if i < items.len() {
+                    let v = items[i].clone();
+                    it.index.set(i + 1);
+                    Ok((v, false))
+                } else {
+                    Ok((Value::Undefined, true))
+                }
+            } else {
+                Err(Error::type_err("not an iterator".to_string()))
+            }
+        })
+    }
+
+    pub fn iterator_done(&self, it: &Value) -> bool {
+        if let Value::Object(idx) = it {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Iterator(it) = o {
+                    return it.index.get() >= it.items.borrow().len();
+                }
+                false
+            })
+        } else { false }
     }
 }
 

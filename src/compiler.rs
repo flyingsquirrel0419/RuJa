@@ -208,6 +208,33 @@ impl Compiler {
                 }
                 self.pop_scope();
             }
+            Stmt::ForOf { left, right, body } => {
+               // for (let x of iterable): iterate values.
+               self.push_scope(false);
+               self.compile_expr(right)?;
+                // GetIterator pops the iterable, pushes an iterator object.
+                self.chunk.emit(Op::GetIterator, 0);
+                let it_name_idx = self.intern("#iter");
+                self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
+                let loop_start = self.chunk.code.len();
+                // IteratorNext pops the iterator, pushes [value, done(bool)].
+                self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
+                self.chunk.emit(Op::IteratorNext, 0);
+                // JumpIfTrue pops `done`; when true (done==true), jump past the body.
+                let done_jump = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfTrue(0), 0);
+                // Bind the value into the loop variable, then run the body.
+                self.compile_for_var(left)?;
+                self.compile_stmt(body)?;
+                self.chunk.emit(Op::Pop, 0); // discard body's expr result
+                self.chunk.emit(Op::Jump(loop_start), 0);
+                let end = self.chunk.code.len();
+                self.chunk.patch_jump(done_jump, end);
+                // When done, the stale value is still on the stack; drop it.
+                self.chunk.emit(Op::Pop, 0);
+                self.pop_scope();
+            }
+            Stmt::ForIn { left, right, body } => self.compile_for_in(left, right, body)?,
             Stmt::Throw(e) => {
                 self.compile_expr(e)?;
                 self.chunk.emit(Op::Throw, 0);
@@ -310,7 +337,54 @@ impl Compiler {
                 }
             }
             _ => {}
+       }
+       Ok(())
+   }
+
+    /// Bind the value on top of the stack into the loop variable of a `for`/`for-in`/`for-of`.
+    /// `left` is the statement produced by `parse_var_decl_no_semi` (a `VarDecl` with one name)
+    /// or an expression (implicit assignment to an existing binding).
+    fn compile_for_var(&mut self, left: &Stmt) -> error::Result<()> {
+        match left {
+            Stmt::VarDecl { kind, decls } => {
+                // Single declarator: bind the on-stack value as a let/const in the loop scope.
+                if let Some((name, _)) = decls.first() {
+                    self.declare(name, *kind);
+                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    self.chunk.emit(Op::DeclareEnv(name_idx), 0);
+                } else {
+                    self.chunk.emit(Op::Pop, 0);
+                }
+            }
+            other => {
+                // Non-declaration left side (e.g. `for (x of ...)`): treat as assignment target.
+                self.compile_stmt(other)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Compile `for (left in right)`: iterate enumerable own+inherited string keys.
+    fn compile_for_in(&mut self, left: &Stmt, right: &Expr, body: &Stmt) -> error::Result<()> {
+        self.push_scope(false);
+        self.compile_expr(right)?;
+        // GetForInKeys pops the object and pushes an iterator over its string keys.
+        self.chunk.emit(Op::GetForInKeys, 0);
+        let it_name_idx = self.intern("#iter");
+        self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
+        let loop_start = self.chunk.code.len();
+        self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
+        self.chunk.emit(Op::IteratorNext, 0);
+        let done_jump = self.chunk.code.len();
+        self.chunk.emit(Op::JumpIfTrue(0), 0);
+        self.compile_for_var(left)?;
+        self.compile_stmt(body)?;
+        self.chunk.emit(Op::Pop, 0);
+        self.chunk.emit(Op::Jump(loop_start), 0);
+        let end = self.chunk.code.len();
+        self.chunk.patch_jump(done_jump, end);
+        self.chunk.emit(Op::Pop, 0);
+        self.pop_scope();
         Ok(())
     }
 

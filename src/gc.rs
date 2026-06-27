@@ -64,6 +64,12 @@ impl<'a> Marker<'a> {
 
 /// Trace a HeapObj's children. Free function to keep value.rs clean.
 pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
+    if let HeapObj::Iterator(it) = obj {
+        for v in it.items.borrow().iter() {
+            marker.mark_value(v);
+        }
+        return;
+    }
     let props = obj.props();
     for (_, desc) in props.borrow().iter() {
         if !desc.is_accessor {
@@ -122,6 +128,11 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
         HeapObj::Generator(g) => {
             marker.mark_idx(g.closure);
             for v in g.state.borrow().iter() {
+                marker.mark_value(v);
+            }
+        }
+        HeapObj::Iterator(it) => {
+            for v in it.items.borrow().iter() {
                 marker.mark_value(v);
             }
         }
