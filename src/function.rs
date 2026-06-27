@@ -7,6 +7,7 @@ use std::rc::Rc;
 pub struct FunctionDef {
     pub name: Option<Rc<str>>,
     pub params: Vec<Rc<str>>,
+    pub rest_param: Option<Rc<str>>,
     pub chunk: Rc<Chunk>,
     pub num_locals: usize,
     pub is_arrow: bool,

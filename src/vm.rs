@@ -958,11 +958,23 @@ impl Vm {
         match kind_info {
             Some(FuncCallInfo::Native(f)) => f(self, args, this),
             Some(FuncCallInfo::Interpreted { func, closure, is_arrow }) => {
-                let call_env = env::new_env(&self.heap, Some(closure), true);
-                // store parameters into the call environment (enables closures + recursion)
-                for (i, param) in func.params.iter().enumerate() {
-                    let v = args.get(i).cloned().unwrap_or(Value::Undefined);
-                    env::declare(&self.heap, call_env, param, v, crate::value::BindingKind::Let);
+               let call_env = env::new_env(&self.heap, Some(closure), true);
+               // store parameters into the call environment (enables closures + recursion)
+               for (i, param) in func.params.iter().enumerate() {
+                   let v = args.get(i).cloned().unwrap_or(Value::Undefined);
+                   env::declare(&self.heap, call_env, param, v, crate::value::BindingKind::Let);
+               }
+                // rest parameter: collect remaining args into an array.
+                if let Some(rest_name) = &func.rest_param {
+                    let rest: Vec<Value> = if func.params.len() <= args.len() {
+                        args[func.params.len()..].to_vec()
+                    } else { Vec::new() };
+                    let arr = HeapObj::Array(crate::value::ArrayData {
+                        items: RefCell::new(rest),
+                        props: RefCell::new(HashMap::new()),
+                        proto: RefCell::new(Some(self.array_proto.clone())),
+                    });
+                    env::declare(&self.heap, call_env, rest_name, Value::Object(GcIdx(self.heap.allocate(arr))), crate::value::BindingKind::Const);
                 }
                 // make the function visible to itself by its name (for recursion)
                 if let Some(name) = &func.name {

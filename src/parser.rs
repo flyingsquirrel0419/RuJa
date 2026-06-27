@@ -7,11 +7,20 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     last_arrow_params: Option<Vec<Rc<str>>>,
+    /// Parameter defaults collected by the most recent `parse_params` / arrow parse.
+    cur_param_defaults: Vec<Option<Expr>>,
+    /// Rest parameter name from the most recent `parse_params` / arrow parse.
+    cur_rest_param: Option<Rc<str>>,
+    /// Arrow-specific defaults/rest (carried alongside `last_arrow_params`).
+    arrow_defaults: Vec<Option<Expr>>,
+    arrow_rest: Option<Rc<str>>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0, last_arrow_params: None }
+        Parser { tokens, pos: 0, last_arrow_params: None,
+            cur_param_defaults: Vec::new(), cur_rest_param: None,
+            arrow_defaults: Vec::new(), arrow_rest: None }
     }
 
     pub fn parse(src: &str) -> error::Result<Program> {
@@ -132,22 +141,43 @@ impl Parser {
             other => return Err(error::Error::syntax(format!("Expected function name, got {:?}", other))),
         };
         let params = self.parse_params()?;
+        let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+        let rest_param = self.cur_rest_param.take();
         let body = self.parse_fn_body()?;
-        Ok(Stmt::FunctionDecl(FunctionExpr { name, params, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }))
+        Ok(Stmt::FunctionDecl(FunctionExpr { name, params, param_defaults, rest_param, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }))
     }
 
     fn parse_params(&mut self) -> error::Result<Vec<Rc<str>>> {
         self.expect(&TokenKind::LParen, "(")?;
         let mut params = Vec::new();
         while !self.check(&TokenKind::RParen) {
-            if let TokenKind::Ident(s) = self.advance() {
-                params.push(Rc::from(s.as_str()));
-            } else {
-                return Err(error::Error::syntax("Expected parameter name".to_string()));
+            if self.check(&TokenKind::Spread) {
+                // rest parameter: ...name (must be last)
+                self.advance();
+                if let TokenKind::Ident(s) = self.advance() {
+                    self.cur_rest_param = Some(Rc::from(s.as_str()));
+                } else {
+                    return Err(error::Error::syntax("Expected rest parameter name".to_string()));
+                }
+                break;
+            }
+            match self.advance() {
+                TokenKind::Ident(s) => {
+                    params.push(Rc::from(s.as_str()));
+                    let default = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else { None };
+                    self.cur_param_defaults.push(default);
+                }
+                _ => return Err(error::Error::syntax("Expected parameter name".to_string())),
             }
             if !self.eat(&TokenKind::Comma) { break; }
         }
         self.expect(&TokenKind::RParen, ")")?;
+        // Pad defaults to match params length.
+        while self.cur_param_defaults.len() < params.len() {
+            self.cur_param_defaults.push(None);
+        }
         Ok(params)
     }
 
@@ -607,6 +637,8 @@ impl Parser {
             TokenKind::Ident(s) => {
                 // Could be arrow: x => ...
                 if let TokenKind::Arrow = self.peek_at_tok(1).kind {
+                    self.arrow_defaults = Vec::new();
+                    self.arrow_rest = None;
                     self.advance(); // ident
                     self.advance(); // =>
                     return self.parse_arrow_body(vec![Rc::from(s.as_str())]);
@@ -712,8 +744,10 @@ impl Parser {
             // method shorthand or value
             if self.check(&TokenKind::LParen) {
                 let params = self.parse_params()?;
+                let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+                let rest_param = self.cur_rest_param.take();
                 let body = self.parse_fn_body()?;
-                props.push(Property { key, value: Expr::Function(FunctionExpr { name: None, params, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }), computed, method: true, shorthand: false });
+                props.push(Property { key, value: Expr::Function(FunctionExpr { name: None, params, param_defaults, rest_param, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }), computed, method: true, shorthand: false });
             } else {
                 self.expect(&TokenKind::Colon, ":")?;
                 let value = self.parse_assign()?;
@@ -732,8 +766,10 @@ impl Parser {
             _ => None,
         };
         let params = self.parse_params()?;
+        let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+        let rest_param = self.cur_rest_param.take();
         let body = self.parse_fn_body()?;
-        Ok(Expr::Function(FunctionExpr { name, params, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }))
+        Ok(Expr::Function(FunctionExpr { name, params, param_defaults, rest_param, body, is_arrow: false, is_async: false, is_generator: false, param_decls: Vec::new() }))
     }
 
     fn parse_new(&mut self) -> error::Result<Expr> {
@@ -762,26 +798,36 @@ impl Parser {
     fn try_parse_arrow_params(&mut self) -> error::Result<bool> {
         let save = self.pos;
         let mut params = Vec::new();
+        let mut defaults: Vec<Option<Expr>> = Vec::new();
+        let mut rest: Option<Rc<str>> = None;
         // empty params: () =>
         if self.check(&TokenKind::RParen) {
             self.advance();
             if self.check(&TokenKind::Arrow) {
                 self.last_arrow_params = Some(params);
+                self.arrow_defaults = defaults;
+                self.arrow_rest = rest;
                 return Ok(true);
             }
             self.pos = save;
             return Ok(false);
         }
         loop {
+            if self.check(&TokenKind::Spread) {
+                self.advance();
+                if let TokenKind::Ident(s) = self.advance() {
+                    rest = Some(Rc::from(s.as_str()));
+                } else {
+                    self.pos = save; return Ok(false);
+                }
+                break;
+            }
             match self.peek().clone() {
-                TokenKind::Ident(s) => { self.advance(); params.push(Rc::from(s.as_str())); }
-                TokenKind::Spread => {
+                TokenKind::Ident(s) => {
                     self.advance();
-                    if let TokenKind::Ident(s) = self.advance() {
-                        let mut name = String::from("...");
-                        name.push_str(&s);
-                        params.push(Rc::from(name.as_str()));
-                    }
+                    params.push(Rc::from(s.as_str()));
+                    let d = if self.eat(&TokenKind::Assign) { Some(self.parse_assign()?) } else { None };
+                    defaults.push(d);
                 }
                 _ => { self.pos = save; return Ok(false); }
             }
@@ -791,7 +837,10 @@ impl Parser {
         if self.check(&TokenKind::RParen) {
             self.advance();
             if self.check(&TokenKind::Arrow) {
+                while defaults.len() < params.len() { defaults.push(None); }
                 self.last_arrow_params = Some(params);
+                self.arrow_defaults = defaults;
+                self.arrow_rest = rest;
                 return Ok(true);
             }
             self.pos = save;
@@ -802,13 +851,15 @@ impl Parser {
     }
 
     fn parse_arrow_body(&mut self, params: Vec<Rc<str>>) -> error::Result<Expr> {
+        let param_defaults = std::mem::take(&mut self.arrow_defaults);
+        let rest_param = self.arrow_rest.take();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
             let body = self.parse_fn_body()?;
-            Ok(Expr::Arrow(FunctionExpr { name: None, params, body, is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
+            Ok(Expr::Arrow(FunctionExpr { name: None, params, param_defaults, rest_param, body, is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
         } else {
             let e = self.parse_assign()?;
-            Ok(Expr::Arrow(FunctionExpr { name: None, params, body: vec![Stmt::Return(Some(e))], is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
+            Ok(Expr::Arrow(FunctionExpr { name: None, params, param_defaults, rest_param, body: vec![Stmt::Return(Some(e))], is_arrow: true, is_async: false, is_generator: false, param_decls: Vec::new() }))
         }
     }
 
@@ -861,10 +912,14 @@ impl Parser {
                 Rc::from(self.read_property_name()?.as_str())
             };
             let params = self.parse_params()?;
+            let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+            let rest_param = self.cur_rest_param.take();
             let body = self.parse_fn_body()?;
             methods.push(ClassMethod {
                 name: method_name,
                 params,
+                param_defaults,
+                rest_param,
                 body,
                 is_static,
                 is_constructor,

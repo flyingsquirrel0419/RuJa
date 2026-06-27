@@ -276,6 +276,7 @@ impl Compiler {
                 let fdef = crate::function::FunctionDef {
                     name: f.name.clone(),
                     params: f.params.clone(),
+                    rest_param: f.rest_param.clone(),
                     chunk: Rc::new(func_chunk),
                     num_locals: f.params.len() + 16,
                     is_arrow: f.is_arrow,
@@ -395,6 +396,28 @@ impl Compiler {
         for (i, param) in f.params.iter().enumerate() {
             self.declare(param, VarKind::Let);
             // param is in slot i (VM stores args to locals[0..n])
+        }
+        // Parameter defaults: for each param with a default, if it is undefined,
+        // evaluate and assign the default expression.
+        for (i, param) in f.params.iter().enumerate() {
+            if let Some(default) = f.param_defaults.get(i).and_then(|d| d.as_ref()) {
+                // load param, check if undefined
+                let name_idx = self.chunk.add_constant(Value::String(param.clone()));
+                self.chunk.emit(Op::LoadEnvName(name_idx), 0);
+                self.chunk.emit(Op::Dup, 0);
+                self.chunk.emit(Op::Undefined, 0);
+                self.chunk.emit(Op::StrictEq, 0);
+                // stack: [param, isUndefined]; if not undefined, skip the default
+                let skip = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfFalse(0), 0);
+                // is undefined: JumpIfFalse already popped the bool. Pop the old param,
+                // evaluate the default, and store it back.
+                self.chunk.emit(Op::Pop, 0);
+                self.compile_expr(default)?;
+                self.chunk.emit(Op::StoreEnvName(name_idx), 0);
+                let after = self.chunk.code.len();
+                self.chunk.patch_jump(skip, after);
+            }
         }
         for stmt in &f.body {
             self.compile_stmt(stmt)?;
@@ -632,6 +655,7 @@ impl Compiler {
                 let fdef = crate::function::FunctionDef {
                     name: f.name.clone(),
                     params: f.params.clone(),
+                    rest_param: f.rest_param.clone(),
                     chunk: Rc::new(func_chunk),
                     num_locals: f.params.len() + 16,
                     is_arrow: f.is_arrow,
@@ -648,6 +672,10 @@ impl Compiler {
                     name: cls.name.clone(),
                     params: cls.methods.iter().find(|m| m.is_constructor)
                         .map(|m| m.params.clone()).unwrap_or_default(),
+                    param_defaults: cls.methods.iter().find(|m| m.is_constructor)
+                        .map(|m| m.param_defaults.clone()).unwrap_or_default(),
+                    rest_param: cls.methods.iter().find(|m| m.is_constructor)
+                        .and_then(|m| m.rest_param.clone()),
                     body: cls.methods.iter().find(|m| m.is_constructor)
                         .map(|m| m.body.clone()).unwrap_or_default(),
                     is_arrow: false,
@@ -660,6 +688,7 @@ impl Compiler {
                 let fdef = crate::function::FunctionDef {
                     name: cls.name.clone(),
                     params: ctor_fn.params.clone(),
+                    rest_param: ctor_fn.rest_param.clone(),
                     chunk: Rc::new(func_chunk),
                     num_locals: ctor_fn.params.len() + 16,
                     is_arrow: false,
@@ -715,6 +744,8 @@ impl Compiler {
                     let m_fn = FunctionExpr {
                         name: Some(method.name.clone()),
                         params: method.params.clone(),
+                        param_defaults: method.param_defaults.clone(),
+                        rest_param: method.rest_param.clone(),
                         body: method.body.clone(),
                         is_arrow: false, is_async: false, is_generator: false,
                         param_decls: Vec::new(),
@@ -724,6 +755,7 @@ impl Compiler {
                     let mdef = crate::function::FunctionDef {
                         name: Some(method.name.clone()),
                         params: method.params.clone(),
+                        rest_param: method.rest_param.clone(),
                         chunk: Rc::new(m_chunk),
                         num_locals: method.params.len() + 16,
                         is_arrow: false, is_async: false, is_generator: false,

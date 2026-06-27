@@ -11,6 +11,8 @@ pub struct ClassExpr {
 pub struct ClassMethod {
     pub name: Rc<str>,
     pub params: Vec<Rc<str>>,
+    pub param_defaults: Vec<Option<Expr>>,
+    pub rest_param: Option<Rc<str>>,
     pub body: Vec<Stmt>,
     pub is_static: bool,
     pub is_constructor: bool,
@@ -67,6 +69,10 @@ pub enum PropertyKey {
 pub struct FunctionExpr {
     pub name: Option<Rc<str>>,
     pub params: Vec<Rc<str>>,
+    /// Optional default expression for each parameter (None = no default).
+    pub param_defaults: Vec<Option<Expr>>,
+    /// Name of the rest parameter (`...rest`), if any.
+    pub rest_param: Option<Rc<str>>,
     pub body: Vec<Stmt>,
     pub is_arrow: bool,
     pub is_async: bool,
