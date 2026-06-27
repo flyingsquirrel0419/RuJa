@@ -372,6 +372,12 @@ impl Vm {
 
         let result = self.interpret_to_depth(target_depth);
 
+        // Clear the resume value on the frame so a subsequent resume (or a
+        // GC pass between resumes) does not observe a stale value.
+        if self.frames.len() > target_depth {
+            *self.frames[target_depth].gen_resume_value.borrow_mut() = Value::Undefined;
+        }
+
         // Reclaim the generator's (possibly modified) operand stack and restore
         // the caller's stack.
         let gen_stack = std::mem::replace(&mut self.stack, caller_stack);
@@ -2329,6 +2335,19 @@ impl Vm {
                     roots.push(idx.0);
                 }
             }
+            // Per-frame generator run-state can hold live heap values
+            // (resume value sent via next(obj), and the yielded value before
+            // it is moved into the LazyGenerator). Root them so a GC during
+            // resume_generator does not collect them.
+            if let Value::Object(idx) = &*f.gen_resume_value.borrow() {
+                roots.push(idx.0);
+            }
+            // gen_yield is Cell<Option<Value>>; peek without consuming via take+set.
+            let y = f.gen_yield.take();
+            if let Some(Value::Object(idx)) = &y {
+                roots.push(idx.0);
+            }
+            f.gen_yield.set(y);
         }
         for proto in [
             &self.object_proto,
