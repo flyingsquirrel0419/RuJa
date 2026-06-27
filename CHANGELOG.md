@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- JSON.stringify now throws TypeError on circular references (was: stack overflow)
 - Optional chaining operator `?.` for property access (`a?.b`), computed access
   (`a?.[b]`), and calls (`a?.b()`, `f?.()`) with null/undefined short-circuit
   semantics (new `QuestionDot` token + `optional` flag on Member/Call AST nodes)

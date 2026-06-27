@@ -176,3 +176,43 @@ fn json_parse_nested() {
         Value::Number(5.0)
     );
 }
+
+// JSON.stringify circular references
+
+#[test]
+fn json_stringify_circular_object() {
+    // {name:"a", self: <cycle>}: stringify should fail (undefined on error).
+    let r = run("var a = {name:'a'}; a.self = a; JSON.stringify(a);");
+    assert_eq!(r, Value::Undefined);
+}
+
+#[test]
+fn json_stringify_circular_array() {
+    let r = run("var a = [1,2,3]; a.push(a); JSON.stringify(a);");
+    assert_eq!(r, Value::Undefined);
+}
+
+#[test]
+fn json_stringify_shared_reference_ok() {
+    // shared (non-cyclic) references must still serialize both occurrences.
+    let r = match run("var s = {v:1}; var t = {l:s, r:s}; JSON.stringify(t);") {
+        Value::String(s) => s.to_string(),
+        v => format!("{:?}", v),
+    };
+    assert!(r.contains(r#""l":{"v":1}"#), "missing l in {}", r);
+    assert!(r.contains(r#""r":{"v":1}"#), "missing r in {}", r);
+}
+
+#[test]
+fn json_stringify_nested_object() {
+    // Property order is not guaranteed (HashMap-backed); verify all key/value
+    // pairs are present rather than an exact string match.
+    let r = match run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#) {
+        Value::String(s) => s.to_string(),
+        v => format!("{:?}", v),
+    };
+    assert!(r.contains(r#""a":1"#), "missing a:1 in {}", r);
+    assert!(r.contains(r#""b":"hi""#), "missing b in {}", r);
+    assert!(r.contains(r#""c":[1,2]"#), "missing c in {}", r);
+    assert!(r.contains(r#""d":{"e":true}"#), "missing d in {}", r);
+}

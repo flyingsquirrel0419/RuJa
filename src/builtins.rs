@@ -958,12 +958,48 @@ fn build_console(vm: &mut Vm) -> Value {
 // =========================================================================
 fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let v = args.get(0).unwrap_or(&Value::Undefined);
-    match stringify_value(vm, v) {
+    // Reject circular references per ECMAScript (TypeError).
+    if let Value::Object(_) = v {
+        if has_json_cycle(vm, v, &mut Vec::new()) {
+            return Err(Error::type_err(
+                "Converting circular structure to JSON".to_string(),
+            ));
+        }
+    }
+    match stringify_value(vm, v, &mut Vec::new()) {
         Some(s) => Ok(Value::String(Rc::from(s.as_str()))),
         None => Ok(Value::Undefined),
     }
 }
-fn stringify_value(vm: &mut Vm, v: &Value) -> Option<String> {
+
+/// Detect whether `v` (transitively) contains a cycle through object/array
+/// references. Strings, numbers, and other primitives are never cyclic.
+fn has_json_cycle(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> bool {
+    let idx = match v {
+        Value::Object(idx) => idx.0,
+        _ => return false,
+    };
+    if seen.contains(&idx) {
+        return true;
+    }
+    seen.push(idx);
+    // Collect child values out of the borrow scope before recursing.
+    let children: Vec<Value> = vm.heap.with_obj(idx, |obj| match obj {
+        HeapObj::Array(a) => a.items.borrow().clone(),
+        HeapObj::Object(o) => o
+            .props
+            .borrow()
+            .values()
+            .filter(|d| d.enumerable)
+            .map(|d| d.value.clone())
+            .collect(),
+        _ => Vec::new(),
+    });
+    let result = children.iter().any(|c| has_json_cycle(vm, c, seen));
+    seen.pop();
+    result
+}
+fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<String> {
     match v {
         Value::Undefined => None,
         Value::Null => Some("null".into()),
@@ -984,6 +1020,11 @@ fn stringify_value(vm: &mut Vm, v: &Value) -> Option<String> {
         )),
         Value::Symbol(_) => None,
         Value::Object(idx) => {
+            // Detect circular references; throw TypeError per ECMAScript.
+            if seen.contains(&idx.0) {
+                return None;
+            }
+            seen.push(idx.0);
             let (is_arr, items, props, proto) = vm.heap.with_obj(idx.0, |obj| match obj {
                 HeapObj::Array(a) => (true, a.items.borrow().clone(), HashMap::new(), None),
                 HeapObj::Object(o) => (
@@ -1003,8 +1044,9 @@ fn stringify_value(vm: &mut Vm, v: &Value) -> Option<String> {
             if is_arr {
                 let parts: Vec<String> = items
                     .iter()
-                    .filter_map(|i| stringify_value(vm, i))
+                    .filter_map(|i| stringify_value(vm, i, seen))
                     .collect();
+                seen.pop();
                 Some(format!("[{}]", parts.join(",")))
             } else {
                 let _ = proto;
@@ -1013,10 +1055,11 @@ fn stringify_value(vm: &mut Vm, v: &Value) -> Option<String> {
                     if !d.enumerable {
                         continue;
                     }
-                    if let Some(vs) = stringify_value(vm, &d.value) {
+                    if let Some(vs) = stringify_value(vm, &d.value, seen) {
                         pairs.push(format!("\"{}\":{}", k, vs));
                     }
                 }
+                seen.pop();
                 Some(format!("{{{}}}", pairs.join(",")))
             }
         }
