@@ -336,3 +336,44 @@ fn yield_star_forwards_resume_value() {
     "#;
     assert_eq!(run(src), Value::String(Rc::from("1,105,true,true")));
 }
+
+// ---- generator.return / generator.throw ----
+
+#[test]
+fn generator_return_terminates() {
+    let src = r#"
+        function* g() { yield 1; yield 2; yield 3; }
+        let it = g();
+        it.next();
+        let r = it.return(99);
+        let after = it.next();
+        r.value + "," + r.done + "," + after.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("99,true,true")));
+}
+
+#[test]
+fn generator_throw_propagates() {
+    let mut vm = ruja::Vm::new();
+    let res = vm.run(
+        r#"
+            function* g() { yield 1; yield 2; }
+            let it = g();
+            it.next();
+            it.throw("boom");
+        "#,
+    );
+    assert!(res.is_err(), "expected throw to propagate");
+}
+
+#[test]
+fn async_generator_return_promise() {
+    let src = r#"
+        async function* g() { yield 1; yield 2; }
+        let it = g();
+        await it.next();
+        let r = await it.return(42);
+        r.value + "," + r.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("42,true")));
+}

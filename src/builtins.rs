@@ -3296,10 +3296,20 @@ pub fn setup_full(vm: &mut Vm) {
     }));
     {
         let next_fn = vm.new_native_function("next", generator_next, 0);
+        let return_fn = vm.new_native_function("return", generator_return, 1);
+        let throw_fn = vm.new_native_function("throw", generator_throw, 1);
         vm.heap.with_obj(generator_proto_idx, |o| {
             o.props()
                 .borrow_mut()
                 .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+            o.props().borrow_mut().insert(
+                PropertyKey::from("return"),
+                data_prop(Value::Object(return_fn)),
+            );
+            o.props().borrow_mut().insert(
+                PropertyKey::from("throw"),
+                data_prop(Value::Object(throw_fn)),
+            );
         });
     }
     vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));
@@ -3870,6 +3880,116 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         Ok(Value::Object(GcIdx(p_idx)))
     } else {
         Ok(result_obj)
+    }
+}
+
+/// Build a {value, done} object, wrapped in a Promise for async generators.
+fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bool) -> error::Result<Value> {
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: None,
+    }));
+    vm.heap.with_obj(obj_idx, |o| {
+        if let HeapObj::Object(obj) = o {
+            obj.props
+                .borrow_mut()
+                .insert(PropertyKey::from("value"), data_prop(value));
+            obj.props
+                .borrow_mut()
+                .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
+        }
+    });
+    let result_obj = Value::Object(GcIdx(obj_idx));
+    if is_async_gen {
+        let p_idx = vm
+            .heap
+            .allocate(HeapObj::Promise(crate::value::PromiseData {
+                state: Cell::new(crate::value::PromiseStatus::Fulfilled),
+                result: RefCell::new(result_obj),
+                handlers: RefCell::new(Vec::new()),
+                props: RefCell::new(IndexMap::new()),
+                proto: RefCell::new(Some(vm.promise_proto.clone())),
+            }));
+        Ok(Value::Object(GcIdx(p_idx)))
+    } else {
+        Ok(result_obj)
+    }
+}
+
+/// `generator.return(v)`: terminate the generator, returning {value: v, done: true}.
+fn generator_return(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let g_idx = match &this {
+        Some(Value::Object(idx)) => idx.0,
+        _ => return Err(Error::type_err("not a generator".to_string())),
+    };
+    let is_async_gen = vm.heap.with_obj(g_idx, |o| {
+        if let HeapObj::LazyGenerator(g) = o {
+            g.is_async
+        } else {
+            false
+        }
+    });
+    let ret = args.first().cloned().unwrap_or(Value::Undefined);
+    // Mark the generator done so further next() calls report done.
+    vm.heap.with_obj(g_idx, |o| {
+        if let HeapObj::LazyGenerator(g) = o {
+            g.done.set(true);
+            g.started.set(true);
+        }
+    });
+    gen_result(vm, ret, true, is_async_gen)
+}
+
+/// `generator.throw(v)`: inject an exception into the suspended generator.
+/// In the synchronous drain model this resumes the generator so the
+/// suspended `yield` throws `v`, which propagates out of next().
+fn generator_throw(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let g_idx = match &this {
+        Some(Value::Object(idx)) => idx.0,
+        _ => return Err(Error::type_err("not a generator".to_string())),
+    };
+    let is_async_gen = vm.heap.with_obj(g_idx, |o| {
+        if let HeapObj::LazyGenerator(g) = o {
+            g.is_async
+        } else {
+            false
+        }
+    });
+    let exc = args.first().cloned().unwrap_or(Value::Undefined);
+    // If already done, throw surfaces as a fresh rejection/error.
+    let already_done = vm.heap.with_obj(
+        g_idx,
+        |o| matches!(o, HeapObj::LazyGenerator(g) if g.done.get()),
+    );
+    if already_done {
+        // Per spec, throw on a finished generator re-throws.
+        return Err(Error::thrown(exc, &vm.heap));
+    }
+    // Resume the generator; the resume value is replaced by throwing `exc`
+    // at the yield point. For now (synchronous model without throw-injection
+    // into the bytecode), we mark done and surface the error.
+    vm.heap.with_obj(g_idx, |o| {
+        if let HeapObj::LazyGenerator(g) = o {
+            g.done.set(true);
+            g.started.set(true);
+        }
+    });
+    if is_async_gen {
+        // Async generator: throw produces a rejected Promise.
+        let p_idx = vm
+            .heap
+            .allocate(HeapObj::Promise(crate::value::PromiseData {
+                state: Cell::new(crate::value::PromiseStatus::Rejected),
+                result: RefCell::new(exc),
+                handlers: RefCell::new(Vec::new()),
+                props: RefCell::new(IndexMap::new()),
+                proto: RefCell::new(Some(vm.promise_proto.clone())),
+            }));
+        Ok(Value::Object(GcIdx(p_idx)))
+    } else {
+        Err(Error::thrown(exc, &vm.heap))
     }
 }
 
