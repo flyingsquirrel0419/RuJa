@@ -13,7 +13,7 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 7. [x] ES2015: class/extends + super, Map/Set, Symbol, iterator protocol (for-of/for-in)
 8. [ ] async/await + generator state machine
 9. [ ] Built-in spec conformance + TDZ
-10. [~] regression tests (141 passing, split across 6 files)
+10. [~] regression tests (150 passing, split across 6 files)
 11. [x] Release prep (README/CHANGELOG/CI)
 12. [~] Release verification (tests + CLI + metadata)
 
@@ -25,6 +25,6 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 - Object property insertion order not preserved (HashMap); affects `for...in`/`Object.keys` order
 - Number-to-string never uses exponential notation (e.g. 1e21 prints in full)
-- Regex literals, optional chaining (`?.`) not supported
+- Regex literals not supported
 - `JSON.parse` circular references crash (should throw TypeError)
 - `var` hoisting only covers direct declarations (not nested inside if/for blocks)

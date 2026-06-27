@@ -859,6 +859,7 @@ impl Compiler {
                         object,
                         property,
                         computed,
+                        ..
                     } => {
                         // Load the current value.
                         self.compile_expr(object)?; // [obj]
@@ -991,6 +992,7 @@ impl Compiler {
                                 object,
                                 property,
                                 computed,
+                                ..
                             } => {
                                 self.compile_expr(object)?;
                                 if *computed {
@@ -1126,7 +1128,11 @@ impl Compiler {
                     }
                 }
             }
-            Expr::Call { callee, args } => {
+            Expr::Call {
+                callee,
+                args,
+                optional: call_opt,
+            } => {
                 // check if method call
                 // `super(args)`: call the parent constructor with `this`.
                 if matches!(callee.as_ref(), Expr::Super) {
@@ -1148,6 +1154,7 @@ impl Compiler {
                         object,
                         property,
                         computed,
+                        optional: m_opt,
                     } => {
                         if matches!(object.as_ref(), Expr::Super) {
                             // super.m(args): call parent proto's m with `this`.
@@ -1178,6 +1185,19 @@ impl Compiler {
                             return Ok(());
                         }
                         self.compile_expr(object)?;
+                        let mut jend = 0usize;
+                        if *m_opt {
+                            // `o?.m(args)`: if `o` is null/undefined, short-circuit the
+                            // whole method call to undefined.
+                            self.chunk.emit(Op::Dup, 0);
+                            let jskip = self.chunk.code.len();
+                            self.chunk.emit(Op::JumpIfNotNullish(0), 0);
+                            self.chunk.emit(Op::Pop, 0);
+                            self.chunk.emit(Op::Undefined, 0);
+                            jend = self.chunk.code.len();
+                            self.chunk.emit(Op::Jump(0), 0);
+                            self.chunk.patch_jump(jskip, self.chunk.code.len());
+                        }
                         let key = if !*computed {
                             if let Expr::String(s) = property.as_ref() {
                                 s.to_string()
@@ -1199,12 +1219,29 @@ impl Compiler {
                             }
                         }
                         self.chunk.emit(Op::CallMethod(args.len()), 0);
+                        if *m_opt {
+                            let end = self.chunk.code.len();
+                            self.chunk.patch_jump(jend, end);
+                        }
                     }
                     _ => {
                         // If any argument is a spread, build an args array and use CallSpread.
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
+                        let mut jend = 0usize;
+                        self.compile_expr(callee)?; // [callee]
+                        if *call_opt {
+                            // `f?.(args)`: if `f` is null/undefined, short-circuit to
+                            // undefined without evaluating the arguments or the call.
+                            self.chunk.emit(Op::Dup, 0);
+                            let jskip = self.chunk.code.len();
+                            self.chunk.emit(Op::JumpIfNotNullish(0), 0);
+                            self.chunk.emit(Op::Pop, 0);
+                            self.chunk.emit(Op::Undefined, 0);
+                            jend = self.chunk.code.len();
+                            self.chunk.emit(Op::Jump(0), 0);
+                            self.chunk.patch_jump(jskip, self.chunk.code.len());
+                        }
                         if has_spread {
-                            self.compile_expr(callee)?; // [callee]
                             self.chunk.emit(Op::NewArray(0), 0); // [callee, argsArr]
                             for a in args {
                                 match a {
@@ -1220,7 +1257,6 @@ impl Compiler {
                             }
                             self.chunk.emit(Op::CallSpread, 0); // pops argsArr then callee
                         } else {
-                            self.compile_expr(callee)?;
                             for a in args {
                                 if let Expr::Spread(_) = a {
                                 } else {
@@ -1228,6 +1264,10 @@ impl Compiler {
                                 }
                             }
                             self.chunk.emit(Op::Call(args.len()), 0);
+                        }
+                        if *call_opt {
+                            let end = self.chunk.code.len();
+                            self.chunk.patch_jump(jend, end);
                         }
                     }
                 }
@@ -1246,8 +1286,24 @@ impl Compiler {
                 object,
                 property,
                 computed,
+                optional,
             } => {
                 self.compile_expr(object)?;
+                let mut jend = 0usize;
+                if *optional {
+                    // `a?.b` / `a?.[b]`: if `a` is null/undefined, short-circuit to
+                    // undefined without evaluating the property access.
+                    self.chunk.emit(Op::Dup, 0);
+                    let jskip = self.chunk.code.len();
+                    self.chunk.emit(Op::JumpIfNotNullish(0), 0);
+                    // a is nullish: drop it, push undefined, jump to end.
+                    self.chunk.emit(Op::Pop, 0);
+                    self.chunk.emit(Op::Undefined, 0);
+                    jend = self.chunk.code.len();
+                    self.chunk.emit(Op::Jump(0), 0);
+                    // a is not nullish: perform the property access on [a].
+                    self.chunk.patch_jump(jskip, self.chunk.code.len());
+                }
                 if *computed {
                     self.compile_expr(property)?;
                     self.chunk.emit(Op::GetElem, 0);
@@ -1262,6 +1318,10 @@ impl Compiler {
                         .add_constant(Value::String(Rc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), 0);
                     self.chunk.emit(Op::GetProp, 0);
+                }
+                if *optional {
+                    let end = self.chunk.code.len();
+                    self.chunk.patch_jump(jend, end);
                 }
             }
             Expr::Function(f) | Expr::Arrow(f) => {
@@ -1334,6 +1394,7 @@ impl Compiler {
                                 Some(vec![Stmt::ExprStmt(Expr::Call {
                                     callee: Box::new(Expr::Super),
                                     args,
+                                    optional: false,
                                 })])
                             } else {
                                 None
@@ -1490,6 +1551,7 @@ impl Compiler {
                 object,
                 property,
                 computed,
+                ..
             } => {
                 self.compile_expr(object)?;
                 if *computed {
@@ -1538,6 +1600,7 @@ impl Compiler {
                 object,
                 property,
                 computed,
+                ..
             } => {
                 self.compile_expr(object)?;
                 if *computed {
@@ -1579,6 +1642,7 @@ impl Compiler {
                 object,
                 property,
                 computed,
+                ..
             } => {
                 // Load current value via GetProp/GetElem.
                 self.compile_member_load(object, property, *computed)?;
@@ -1616,6 +1680,7 @@ impl Compiler {
                 object,
                 property,
                 computed,
+                ..
             } => {
                 // Load current value.
                 self.compile_member_load(object, property, *computed)?;

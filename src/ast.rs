@@ -47,6 +47,7 @@ pub enum Expr {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        optional: bool,
     },
     New {
         callee: Box<Expr>,
@@ -56,6 +57,7 @@ pub enum Expr {
         object: Box<Expr>,
         property: Box<Expr>,
         computed: bool,
+        optional: bool,
     },
     Spread(Box<Expr>),
     Sequence(Vec<Expr>),

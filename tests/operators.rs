@@ -196,3 +196,74 @@ fn or_assign_element() {
         Value::Number(99.0)
     );
 }
+
+// --- optional chaining (?.) ---
+
+#[test]
+fn optional_member_present() {
+    assert_eq!(
+        run("var o = {a:{b:{c:42}}}; o?.a?.b?.c;"),
+        Value::Number(42.0)
+    );
+    assert_eq!(run("var o = {x: 7}; o?.x;"), Value::Number(7.0));
+}
+
+#[test]
+fn optional_member_null() {
+    assert_eq!(run("null?.foo;"), Value::Undefined);
+    assert_eq!(run("undefined?.foo;"), Value::Undefined);
+}
+
+#[test]
+fn optional_member_missing() {
+    assert_eq!(run("var o = {a:1}; o?.b?.c;"), Value::Undefined);
+    assert_eq!(run("var o = {a:{b:1}}; o?.a?.b?.c;"), Value::Undefined);
+}
+
+#[test]
+fn optional_computed() {
+    assert_eq!(
+        run("var o = {a:{b:5}}; o?.[\"a\"]?.[\"b\"];"),
+        Value::Number(5.0)
+    );
+    assert_eq!(run("var o = {a:1}; o?.[\"x\"]?.[\"y\"];"), Value::Undefined);
+}
+
+#[test]
+fn optional_method_call() {
+    assert_eq!(
+        run("var o = {greet: function(){return 'hi';}}; o?.greet();"),
+        Value::String(Rc::from("hi"))
+    );
+}
+
+#[test]
+fn optional_method_on_null() {
+    // null?.greet() short-circuits the whole chain to undefined.
+    assert_eq!(run("null?.greet();"), Value::Undefined);
+}
+
+#[test]
+fn optional_call_null() {
+    assert_eq!(run("var f = null; f?.();"), Value::Undefined);
+}
+
+#[test]
+fn optional_call_present() {
+    assert_eq!(
+        run("var g = function(){return 99;}; g?.();"),
+        Value::Number(99.0)
+    );
+}
+
+#[test]
+fn optional_chain_deep() {
+    assert_eq!(
+        run("var d = {a:{b:{c:{d:5}}}}; d?.a?.b?.c?.d;"),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        run("var d = {a:{b:{c:{d:5}}}}; d?.a?.x?.y?.z;"),
+        Value::Undefined
+    );
+}

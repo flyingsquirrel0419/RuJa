@@ -94,6 +94,7 @@ pub enum TokenKind {
     Ushr,
     Nullish, // ??
     Question,
+    QuestionDot, // ?.
     Colon,
     Dot,
     Spread, // ...

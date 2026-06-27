@@ -735,7 +735,44 @@ impl Parser {
                         object: Box::new(e),
                         property: Box::new(prop),
                         computed: false,
+                        optional: false,
                     };
+                }
+                TokenKind::QuestionDot => {
+                    self.advance();
+                    match self.peek() {
+                        TokenKind::LParen => {
+                            self.advance();
+                            let args = self.parse_args()?;
+                            self.expect(&TokenKind::RParen, ")")?;
+                            e = Expr::Call {
+                                callee: Box::new(e),
+                                args,
+                                optional: true,
+                            };
+                        }
+                        TokenKind::LBracket => {
+                            self.advance();
+                            let prop = self.parse_expr()?;
+                            self.expect(&TokenKind::RBracket, "]")?;
+                            e = Expr::Member {
+                                object: Box::new(e),
+                                property: Box::new(prop),
+                                computed: true,
+                                optional: true,
+                            };
+                        }
+                        _ => {
+                            let name = self.read_property_name()?;
+                            let prop = Expr::String(Rc::from(name.as_str()));
+                            e = Expr::Member {
+                                object: Box::new(e),
+                                property: Box::new(prop),
+                                computed: false,
+                                optional: true,
+                            };
+                        }
+                    }
                 }
                 TokenKind::LBracket => {
                     self.advance();
@@ -745,6 +782,7 @@ impl Parser {
                         object: Box::new(e),
                         property: Box::new(prop),
                         computed: true,
+                        optional: false,
                     };
                 }
                 TokenKind::LParen => {
@@ -754,6 +792,7 @@ impl Parser {
                     e = Expr::Call {
                         callee: Box::new(e),
                         args,
+                        optional: false,
                     };
                 }
                 _ => break,
@@ -1029,6 +1068,7 @@ impl Parser {
                 object: Box::new(callee),
                 property: Box::new(prop),
                 computed: false,
+                optional: false,
             };
         }
         if self.check(&TokenKind::LParen) {

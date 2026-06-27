@@ -446,6 +446,12 @@ impl<'a> Lexer<'a> {
                     }
                     return Some(TokenKind::Nullish);
                 }
+                // `?.` is optional chaining, but NOT when the `.` is followed by a
+                // digit (`?.5` parses as the number `0.5`).
+                if self.peek() == Some(b'.') && !matches!(self.peek_at(1), Some(b'0'..=b'9')) {
+                    self.advance();
+                    return Some(TokenKind::QuestionDot);
+                }
                 return Some(TokenKind::Question);
             }
             b'.' => {

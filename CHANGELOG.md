@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Optional chaining operator `?.` for property access (`a?.b`), computed access
+  (`a?.[b]`), and calls (`a?.b()`, `f?.()`) with null/undefined short-circuit
+  semantics (new `QuestionDot` token + `optional` flag on Member/Call AST nodes)
 - Nullish coalescing operator `a ?? b` (JumpIfNotNullish opcode) with correct
   short-circuit semantics (`0 ?? 2` returns `0`, not `2`)
 - Logical assignment operators `&&=`, `||=`, `??=` with short-circuit semantics
