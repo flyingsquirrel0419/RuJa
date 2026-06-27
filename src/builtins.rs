@@ -2715,6 +2715,61 @@ fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
         str_val(vm, &this)?.repeat(n).as_str(),
     )))
 }
+
+fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    match args.get(0) {
+        Some(Value::Object(idx)) => {
+            let source = vm.heap.with_obj(idx.0, |o| {
+                o.props().borrow().get("source").map(|d| d.value.clone())
+            });
+            if let Some(Value::String(source)) = source {
+                let re = Regex::new(&source)
+                    .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+                match re.captures(&s) {
+                    Some(caps) => {
+                        let items: Vec<Value> = caps
+                            .iter()
+                            .map(|c| match c {
+                                Some(m) => Value::String(Rc::from(m.as_str())),
+                                None => Value::Undefined,
+                            })
+                            .collect();
+                        Ok(make_value_array(vm, items))
+                    }
+                    None => Ok(Value::Null),
+                }
+            } else {
+                Ok(Value::Null)
+            }
+        }
+        _ => Ok(Value::Null),
+    }
+}
+fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let fn_val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        for (i, v) in items.iter().enumerate().rev() {
+            let result = vm.call_function(
+                &fn_val,
+                &[v.clone(), Value::Number(i as f64), Value::Object(idx)],
+                None,
+            )?;
+            if result.is_truthy() {
+                return Ok(Value::Number(i as f64));
+            }
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+
 fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let target = match args.get(0) {
@@ -3000,6 +3055,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("find", array_find, 1),
             ("findIndex", array_find_index, 1),
             ("findLast", array_find_last, 1),
+            ("findLastIndex", array_find_last_index, 1),
             ("fill", array_fill, 1),
             ("some", array_some, 1),
             ("every", array_every, 1),
@@ -3052,6 +3108,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("startsWith", str_starts_with, 1),
             ("endsWith", str_ends_with, 1),
             ("repeat", str_repeat, 1),
+            ("match", str_match, 1),
             ("padStart", str_pad_start, 1),
             ("padEnd", str_pad_end, 1),
             ("at", str_at, 1),
