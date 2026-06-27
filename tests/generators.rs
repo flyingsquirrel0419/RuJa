@@ -296,3 +296,43 @@ fn async_generator_done_signal() {
     "#;
     assert_eq!(run(src), Value::Bool(true));
 }
+
+// ---- yield* resume forwarding + return value (#8 fix) ----
+
+#[test]
+fn yield_star_preserves_inner_return_value() {
+    let src = r#"
+        function* inner() { yield 1; yield 2; return 99; }
+        function* outer() {
+            let r = yield* inner();
+            return r;
+        }
+        let g = outer();
+        let a = g.next();
+        let b = g.next();
+        let c = g.next();
+        let d = g.next();
+        a.value + "," + b.value + "," + c.value + "," + c.done + "," + d.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,2,99,true,true")));
+}
+
+#[test]
+fn yield_star_forwards_resume_value() {
+    let src = r#"
+        function* inner() {
+            let x = yield 1;
+            return x + 100;
+        }
+        function* outer() {
+            let r = yield* inner();
+            return r;
+        }
+        let g = outer();
+        let a = g.next();
+        let b = g.next(5);
+        let c = g.next();
+        a.value + "," + b.value + "," + b.done + "," + c.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,105,true,true")));
+}

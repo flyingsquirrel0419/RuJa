@@ -1637,27 +1637,35 @@ impl Compiler {
             Expr::YieldDelegate(inner) => {
                 // `yield* expr`: obtain an iterator from `expr` and forward each
                 // of its values to the outer generator via YieldValue, until the
-                // iterator is done. The result of the `yield*` expression is the
-                // iterator's final value (undefined for arrays/strings).
+                // iterator is done. The outer resume value (sent via next(v)) is
+                // forwarded to the delegated iterator's next(v). The result of
+                // the `yield*` expression is the iterator's final value.
                 self.compile_expr(inner)?;
                 self.chunk.emit(Op::GetIterator, 0);
                 let it_name_idx = self.intern("#yldel-iter");
                 self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
+                // Track the value to forward to the delegated iterator's next().
+                // First pull uses no resume value (undefined).
+                let resume_name_idx = self.intern("#yldel-resume");
+                self.chunk.emit(Op::Undefined, 0);
+                self.chunk.emit(Op::DeclareEnv(resume_name_idx), 0);
                 let loop_start = self.chunk.code.len();
+                // [iterator, resume] -> IteratorNextResume -> [value, done]
                 self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
-                self.chunk.emit(Op::IteratorNext, 0); // [value, done]
+                self.chunk.emit(Op::LoadEnv(resume_name_idx), 0);
+                self.chunk.emit(Op::IteratorNextResume, 0); // [value, done]
                 let done_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfTrue(0), 0); // if done, jump to end
                                                        // value is on the stack; yield it to the outer generator.
-                self.chunk.emit(Op::YieldValue, 0); // yields `value`, leaves undefined (resume value)
-                self.chunk.emit(Op::Pop, 0); // discard the resume value result
+                self.chunk.emit(Op::YieldValue, 0); // yields `value`; leaves resume value
+                                                    // Save the resume value for the next delegated next(v).
+                self.chunk.emit(Op::StoreEnv(resume_name_idx), 0);
+                self.chunk.emit(Op::Pop, 0); // discard StoreEnv's return
                 self.chunk.emit(Op::Jump(loop_start), 0);
                 let end = self.chunk.code.len();
                 self.chunk.patch_jump(done_jump, end);
-                // Iterator done: leave the iterator's final value (top of stack
-                // is `done` boolean; pop it, push undefined as the yield* result).
-                self.chunk.emit(Op::Pop, 0); // discard `done`
-                self.chunk.emit(Op::Undefined, 0);
+                // Iterator done: JumpIfTrue already popped `done`, leaving the
+                // iterator's return value on the stack as the yield* result.
             }
             Expr::Function(f) | Expr::Arrow(f) => {
                 let func_chunk = self.compile_function(f)?;

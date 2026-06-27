@@ -356,6 +356,10 @@ pub struct IteratorData {
     /// pull. When `Some`, `items`/`index` are ignored. `done` is set once the
     /// JS `next()` reports `done: true`.
     pub lazy_iter: RefCell<Option<Value>>,
+    /// Lazy mode: a generator object to pull via `resume_generator` on each
+    /// `next()`. Mutually exclusive with `lazy_iter`. Preserves the
+    /// generator's return value (used by `yield*`).
+    pub generator: RefCell<Option<Value>>,
     pub done: Cell<bool>,
 }
 

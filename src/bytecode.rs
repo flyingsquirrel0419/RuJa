@@ -154,6 +154,9 @@ pub enum Op {
     GetIterator,
     GetForInKeys, // pop object, push iterator over enumerable string keys
     IteratorNext,
+    /// Like IteratorNext but pops a resume value and forwards it to a lazy
+    /// iterator's `next()` (used by `yield*` delegation).
+    IteratorNextResume,
     IteratorDone,
 
     // Spread

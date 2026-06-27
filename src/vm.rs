@@ -1780,6 +1780,14 @@ impl Vm {
                     self.stack.push(value);
                     self.stack.push(Value::Bool(done));
                 }
+                Op::IteratorNextResume => {
+                    // stack (bottom->top): [iterator, resume] -> pop both, push [value, done]
+                    let resume = self.stack.pop().unwrap_or(Value::Undefined);
+                    let it = self.stack.pop().unwrap_or(Value::Undefined);
+                    let (value, done) = self.iterator_next_resume(&it, resume)?;
+                    self.stack.push(value);
+                    self.stack.push(Value::Bool(done));
+                }
                 Op::IteratorDone => {
                     let it = self.stack.pop().unwrap_or(Value::Undefined);
                     let done = self.iterator_done(&it);
@@ -2764,22 +2772,11 @@ impl Vm {
                     )
                 });
                 if is_generator {
-                    // Pull values via next() until the generator is done.
-                    let mut out = Vec::new();
-                    loop {
-                        let g = *idx;
-                        let (value, done) = self.resume_generator(g, Value::Undefined)?;
-                        if done {
-                            break;
-                        }
-                        out.push(value);
-                        // Guard against runaway infinite generators used directly
-                        // in for-of/spread (which would never terminate in JS too).
-                        if out.len() > 50_000_000 {
-                            break;
-                        }
-                    }
-                    out
+                    // Wrap the generator in a lazy iterator that resumes it per
+                    // pull. This preserves the generator's return value (needed
+                    // by `yield*`) and avoids eagerly draining infinite
+                    // generators before the loop even starts.
+                    return Ok(self.new_generator_iterator(iterable.clone()));
                 } else if is_array {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
@@ -2880,6 +2877,7 @@ impl Vm {
             items: RefCell::new(items),
             index: std::cell::Cell::new(0),
             lazy_iter: RefCell::new(None),
+            generator: RefCell::new(None),
             done: std::cell::Cell::new(false),
         });
         Value::Object(GcIdx(self.heap.allocate(it)))
@@ -2893,24 +2891,87 @@ impl Vm {
             items: RefCell::new(Vec::new()),
             index: std::cell::Cell::new(0),
             lazy_iter: RefCell::new(Some(iter_obj)),
+            generator: RefCell::new(None),
+            done: std::cell::Cell::new(false),
+        });
+        Value::Object(GcIdx(self.heap.allocate(it)))
+    }
+
+    /// Build a lazy iterator wrapping a generator object. Each `next()` resumes
+    /// the generator via `resume_generator`, preserving its return value (so
+    /// `yield* gen()` yields the generator's return value as the result).
+    fn new_generator_iterator(&mut self, gen: Value) -> Value {
+        let it = HeapObj::Iterator(crate::value::IteratorData {
+            items: RefCell::new(Vec::new()),
+            index: std::cell::Cell::new(0),
+            lazy_iter: RefCell::new(None),
+            generator: RefCell::new(Some(gen)),
             done: std::cell::Cell::new(false),
         });
         Value::Object(GcIdx(self.heap.allocate(it)))
     }
 
     pub fn iterator_next(&mut self, it: &Value) -> error::Result<(Value, bool)> {
-        let (lazy, already_done) = match it {
+        self.iterator_next_resume(it, Value::Undefined)
+    }
+
+    /// Like [`iterator_next`] but passes `resume` to a lazy iterator's JS
+    /// `next()` method (used by `yield*` to forward the outer resume value to
+    /// the delegated iterator). Eager (Vec-backed) iterators ignore `resume`.
+    pub fn iterator_next_resume(
+        &mut self,
+        it: &Value,
+        resume: Value,
+    ) -> error::Result<(Value, bool)> {
+        let (lazy, is_gen, already_done) = match it {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(it) = o {
-                    (it.lazy_iter.borrow().is_some(), it.done.get())
+                    (
+                        it.lazy_iter.borrow().is_some(),
+                        it.generator.borrow().is_some(),
+                        it.done.get(),
+                    )
                 } else {
-                    (false, true)
+                    (false, false, true)
                 }
             }),
             _ => return Err(Error::type_err("not an iterator".to_string())),
         };
         if already_done {
             return Ok((Value::Undefined, true));
+        }
+        if is_gen {
+            // Resume the wrapped generator with `resume`. The generator's
+            // return value (when done) is preserved as the iterator value.
+            let gen = self.heap.with_obj(
+                match it {
+                    Value::Object(idx) => idx.0,
+                    _ => return Err(Error::type_err("not an iterator".to_string())),
+                },
+                |o| {
+                    if let HeapObj::Iterator(it) = o {
+                        it.generator.borrow().clone()
+                    } else {
+                        None
+                    }
+                },
+            );
+            let gen = gen.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
+            let g_idx = match &gen {
+                Value::Object(idx) => *idx,
+                _ => return Err(Error::type_err("not a generator".to_string())),
+            };
+            let (value, done) = self.resume_generator(g_idx, resume)?;
+            if done {
+                if let Value::Object(idx) = it {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Iterator(it) = o {
+                            it.done.set(true);
+                        }
+                    });
+                }
+            }
+            return Ok((value, done));
         }
         if lazy {
             // Call the JS iterator object's next() method and read {value, done}.
@@ -2930,7 +2991,7 @@ impl Vm {
             let iter_obj =
                 iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
             let next_fn = self.get_property(&iter_obj, "next")?;
-            let result = self.call_function(&next_fn, &[], Some(iter_obj))?;
+            let result = self.call_function(&next_fn, &[resume], Some(iter_obj))?;
             let value = self.get_property(&result, "value")?;
             let done = match self.get_property(&result, "done")? {
                 Value::Bool(b) => b,
