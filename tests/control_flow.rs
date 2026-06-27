@@ -174,3 +174,26 @@ fn decrement() {
     assert_eq!(run("var c=5; c--; c;"), Value::Number(4.0));
     assert_eq!(run("var c=5; --c;"), Value::Number(4.0));
 }
+
+#[test]
+fn var_hoisting_toplevel() {
+    assert_eq!(run("console.log(v); var v=5; v;"), Value::Number(5.0));
+}
+
+#[test]
+fn var_hoisting_function() {
+    // console.log prints "undefined" then returns 5; check the return value.
+    assert_eq!(run("function f(){ var x=5; return x; } f();"), Value::Number(5.0));
+}
+
+#[test]
+fn var_function_scope() {
+    assert_eq!(run("function f(){ if(true){ var y=10; } return y; } f();"), Value::Number(10.0));
+}
+
+#[test]
+fn let_block_scope() {
+    // inner let shadows outer; outer retains its value.
+    let r = run("{let x=1;{let x=2;} x;}");
+    assert_eq!(r, Value::Number(1.0));
+}

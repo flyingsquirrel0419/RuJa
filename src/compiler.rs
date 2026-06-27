@@ -75,6 +75,17 @@ impl Compiler {
                 let _ = f;
             }
         }
+        // Hoist `var` declarations as undefined at the top level.
+        for stmt in &program.body {
+            if let Stmt::VarDecl { kind: VarKind::Var, decls } = stmt {
+                for (name, _) in decls {
+                    self.declare(name, VarKind::Var);
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.emit(Op::Const(name_idx), 0);
+                    self.chunk.emit(Op::StoreGlobal, 0);
+                }
+            }
+        }
         for (i, stmt) in program.body.iter().enumerate() {
             // Function declarations were hoisted above; skip them in the body pass.
             if matches!(stmt, Stmt::FunctionDecl(_)) {
@@ -184,7 +195,20 @@ impl Compiler {
                     } else {
                         self.chunk.emit(Op::Undefined, 0);
                     }
-                    if self.scopes.len() == 1 {
+                    if *kind == VarKind::Var {
+                        // `var` is function-scoped: declare at the function-scope root
+                        // (or global at top level), regardless of block nesting.
+                        self.declare(name, *kind);
+                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                        if self.scopes.len() == 1 {
+                            // top-level var: store as global
+                            self.chunk.emit(Op::Const(name_idx), 0);
+                            self.chunk.emit(Op::StoreGlobal, 0);
+                        } else {
+                            // var was hoisted to function-scope root; just set the value.
+                            self.chunk.emit(Op::DeclareVar(name_idx), 0);
+                        }
+                    } else if self.scopes.len() == 1 {
                         // top-level: global
                         self.declare(name, *kind);
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
@@ -208,10 +232,27 @@ impl Compiler {
             }
             Stmt::Block(body) => {
                 self.push_scope(false);
+                self.chunk.emit(Op::PushScope, 0);
                 // Hoist function declarations within the block.
                 for s in body {
                     if matches!(s, Stmt::FunctionDecl(_)) {
                         self.compile_stmt(s)?;
+                    }
+                }
+                // Hoist `var` declarations: declare them as undefined before the body runs.
+                for s in body {
+                    if let Stmt::VarDecl { kind: VarKind::Var, decls } = s {
+                        for (name, _) in decls {
+                            self.declare(name, VarKind::Var);
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            if self.scopes.len() == 1 {
+                                self.chunk.emit(Op::Const(name_idx), 0);
+                                self.chunk.emit(Op::StoreGlobal, 0);
+                            } else {
+                                self.chunk.emit(Op::Undefined, 0);
+                                self.chunk.emit(Op::DeclareVar(name_idx), 0);
+                            }
+                        }
                     }
                 }
                 for s in body {
@@ -220,6 +261,7 @@ impl Compiler {
                     }
                     self.compile_stmt(s)?;
                 }
+                self.chunk.emit(Op::PopScope, 0);
                 self.pop_scope();
             }
             Stmt::If { cond, then, else_ } => {
@@ -593,6 +635,17 @@ impl Compiler {
                 self.chunk.patch_jump(defined_jump, pop_param);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(over_pop, after);
+            }
+        }
+        // Hoist `var` declarations within the function body as undefined.
+        for stmt in &f.body {
+            if let Stmt::VarDecl { kind: VarKind::Var, decls } = stmt {
+                for (name, _) in decls {
+                    self.declare(name, VarKind::Var);
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.emit(Op::Undefined, 0);
+                    self.chunk.emit(Op::DeclareVar(name_idx), 0);
+                }
             }
         }
         for stmt in &f.body {

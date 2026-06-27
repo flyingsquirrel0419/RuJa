@@ -242,8 +242,26 @@ impl Vm {
                         cur_env,
                         &name,
                         value,
-                        crate::value::BindingKind::Let,
-                    );
+                       crate::value::BindingKind::Let,
+                   );
+               }
+                Op::DeclareVar(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare_var(&self.heap, cur_env, &name, value);
                 }
                 Op::LoadEnv(name_idx) => {
                     let name = {
@@ -363,6 +381,21 @@ impl Vm {
                 Op::False => self.stack.push(Value::Bool(false)),
                 Op::Pop => {
                     self.stack.pop();
+                }
+                Op::PushScope => {
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let new_env = env::new_env(&self.heap, Some(cur_env), false);
+                    self.frames.last_mut().unwrap().env = new_env;
+                }
+                Op::PopScope => {
+                    let parent = self.frames.last().and_then(|f| {
+                        self.heap.with_obj(f.env.0, |o| {
+                            if let HeapObj::Environment(e) = o { *e.parent.borrow() } else { None }
+                        })
+                    });
+                    if let Some(p) = parent {
+                        self.frames.last_mut().unwrap().env = p;
+                    }
                 }
                 Op::Dup => {
                     let v = self.stack.last().cloned().unwrap_or(Value::Undefined);

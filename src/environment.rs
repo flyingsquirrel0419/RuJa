@@ -99,10 +99,19 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
 
 pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     let root = function_scope_root(heap, env);
+    // Check existence first (drop the borrow) before mutating.
+    let exists = heap.with_obj(root.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.borrow().contains_key(name)
+        } else { false }
+    });
+    let _ = exists;
     heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            if let Some(b) = e.vars.borrow().get(name) {
-                *b.value.borrow_mut() = value;
+            if e.vars.borrow().contains_key(name) {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    *b.value.borrow_mut() = value;
+                }
             } else {
                 e.vars.borrow_mut().insert(
                     Rc::from(name),
