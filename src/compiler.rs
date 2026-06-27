@@ -427,25 +427,34 @@ impl Compiler {
         // Parameter defaults: for each param with a default, if it is undefined,
         // evaluate and assign the default expression.
         for (i, param) in f.params.iter().enumerate() {
-            if let Some(default) = f.param_defaults.get(i).and_then(|d| d.as_ref()) {
-                // load param, check if undefined
-                let name_idx = self.chunk.add_constant(Value::String(param.clone()));
-                self.chunk.emit(Op::LoadEnvName(name_idx), 0);
-                self.chunk.emit(Op::Dup, 0);
-                self.chunk.emit(Op::Undefined, 0);
-                self.chunk.emit(Op::StrictEq, 0);
-                // stack: [param, isUndefined]; if not undefined, skip the default
-                let skip = self.chunk.code.len();
+           if let Some(default) = f.param_defaults.get(i).and_then(|d| d.as_ref()) {
+               // load param, check if undefined
+               let name_idx = self.chunk.add_constant(Value::String(param.clone()));
+               self.chunk.emit(Op::LoadEnvName(name_idx), 0);
+               self.chunk.emit(Op::Dup, 0);
+               self.chunk.emit(Op::Undefined, 0);
+               self.chunk.emit(Op::StrictEq, 0);
+                // stack: [param, isUndefined]; JumpIfFalse pops isUndefined.
+                // If defined (isUndefined == false), jump to `pop_param`.
+                let defined_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfFalse(0), 0);
-                // is undefined: JumpIfFalse already popped the bool. Pop the old param,
-                // evaluate the default, and store it back.
+                // Undefined path: pop the old param, eval the default, store it, and
+                // discard the undefined that StoreEnvName pushes.
                 self.chunk.emit(Op::Pop, 0);
                 self.compile_expr(default)?;
                 self.chunk.emit(Op::StoreEnvName(name_idx), 0);
+                self.chunk.emit(Op::Pop, 0);
+                // Jump over the defined-path pop (stack is already empty here).
+                let over_pop = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), 0);
+                // Defined path lands here with [param] on the stack; pop it.
+                let pop_param = self.chunk.code.len();
+                self.chunk.emit(Op::Pop, 0);
+                self.chunk.patch_jump(defined_jump, pop_param);
                 let after = self.chunk.code.len();
-                self.chunk.patch_jump(skip, after);
-            }
-        }
+                self.chunk.patch_jump(over_pop, after);
+           }
+       }
         for stmt in &f.body {
             self.compile_stmt(stmt)?;
         }

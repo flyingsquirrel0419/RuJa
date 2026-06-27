@@ -593,6 +593,10 @@ pub fn setup(vm: &mut Vm) {
 
     let (error_ctor, _error_proto) = make_error_constructor(vm, "Error");
     define_global(vm, "Error", Value::Object(error_ctor));
+    for name in ["TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError"] {
+        let (ctor, _) = make_error_constructor(vm, name);
+        define_global(vm, name, Value::Object(ctor));
+    }
 }
 
 // =========================================================================
