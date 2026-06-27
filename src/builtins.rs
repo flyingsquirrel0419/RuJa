@@ -1548,6 +1548,20 @@ fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
     Ok(Value::Bool(n.is_finite()))
 }
 
+/// `eval(x)`: if `x` is not a string, return it as-is. Otherwise parse and
+/// run it. A direct `eval(...)` call (detected via the CallDirectEval opcode)
+/// runs in the caller's scope; an indirect eval runs in the global scope.
+fn global_eval(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    let src = match &arg {
+        Value::String(s) => s.to_string(),
+        // Non-string: return unchanged.
+        _ => return Ok(arg),
+    };
+    // Default (indirect) behavior: run in the global scope.
+    vm.eval_indirect(&src)
+}
+
 // =========================================================================
 // Array prototype + constructor
 // =========================================================================
@@ -3221,6 +3235,8 @@ pub fn setup_full(vm: &mut Vm) {
     define_global(vm, "isNaN", Value::Object(idx));
     let idx = vm.new_native_function("isFinite", global_is_finite, 1);
     define_global(vm, "isFinite", Value::Object(idx));
+    let eval_idx = vm.new_native_function("eval", global_eval, 1);
+    define_global(vm, "eval", Value::Object(eval_idx));
     define_global(vm, "NaN", Value::Number(f64::NAN));
     define_global(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global(vm, "undefined", Value::Undefined);

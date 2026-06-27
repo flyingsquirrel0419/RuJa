@@ -129,6 +129,9 @@ pub enum Op {
     CallMethod(usize),    // arg count (method call: this is on stack)
     CallMethodOpt(usize), // arg count (optional method call: skip if method is nullish)
     CallSpread,           // callee + args-array on stack; spread array into call args
+    /// Direct `eval(src)`: compile `src` and run it in the caller's scope.
+    /// Stack: [src, argCount-extras...]; uses the current frame's env + this.
+    CallDirectEval(usize), // arg count
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
     New(usize),           // constructor call, arg count

@@ -1464,6 +1464,27 @@ impl Compiler {
                     _ => {
                         // If any argument is a spread, build an args array and use CallSpread.
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
+                        // Direct eval: a plain `eval(...)` call (callee is the
+                        // unqualified identifier `eval`) runs in the caller's
+                        // scope. Compile the first argument (the source) and
+                        // emit CallDirectEval so the VM can compile+run it
+                        // against the current frame's environment.
+                        if !*call_opt
+                            && !has_spread
+                            && matches!(callee.as_ref(), Expr::Ident(name) if &**name == "eval")
+                        {
+                            // Ensure `eval` is the built-in (not a local shadow):
+                            // only treat as direct eval when the name resolves to
+                            // the global (no lexical binding shadows it).
+                            let is_global_eval = self.resolve("eval").is_none();
+                            if is_global_eval {
+                                for a in args {
+                                    self.compile_expr(a)?;
+                                }
+                                self.chunk.emit(Op::CallDirectEval(args.len()), 0);
+                                return Ok(());
+                            }
+                        }
                         let mut jend = 0usize;
                         self.compile_expr(callee)?; // [callee]
                         if *call_opt {

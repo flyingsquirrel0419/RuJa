@@ -180,6 +180,81 @@ impl Vm {
         self.interpret()
     }
 
+    /// Like execute_chunk but guarantees the pushed frame is popped on return,
+    /// so eval (which reuses the VM afterwards) leaves the caller's frame stack
+    /// intact. Used by eval paths only.
+    fn execute_chunk_scoped(
+        &mut self,
+        chunk: Chunk,
+        env: GcIdx,
+        this_val: Value,
+    ) -> error::Result<Value> {
+        let chunk = Rc::new(chunk);
+        self.frames.push(CallFrame::new(
+            chunk.clone(),
+            0,
+            vec![Value::Undefined; 256],
+            env,
+            this_val,
+        ));
+        let depth_before = self.frames.len();
+        let result = self.interpret();
+        // Pop any frames we pushed for the eval (Halt leaves it; Return popped it).
+        while self.frames.len() >= depth_before && self.frames.len() > 1 {
+            let top_is_ours = self
+                .frames
+                .last()
+                .map(|f| Rc::ptr_eq(&f.chunk, &chunk))
+                .unwrap_or(false);
+            if top_is_ours {
+                self.frames.pop();
+            } else {
+                break;
+            }
+        }
+        result
+    }
+
+    /// Evaluate a source string as an *indirect* eval: parse and compile it,
+    /// then run it in the global scope (var/function declarations leak to
+    /// global). Non-string inputs are returned as-is.
+    pub fn eval_indirect(&mut self, src: &str) -> error::Result<Value> {
+        let program = crate::parser::Parser::parse(src)?;
+        let mut compiler = crate::compiler::Compiler::new();
+        let (chunk, funcs) = compiler.compile_program(&program)?;
+        self.functions.extend(funcs);
+        let result = self.execute_chunk_scoped(chunk, self.global, Value::Undefined);
+        if !self.microtask_queue.is_empty() {
+            self.run_microtasks()?;
+        }
+        result
+    }
+
+    /// Evaluate a source string as a *direct* eval: run it in a child of the
+    /// caller's current environment, so it can read/assign the caller's
+    /// variables. `var`/function declarations leak to the caller's function
+    /// scope root (sloppy mode). `this_val` is the caller's `this`.
+    pub fn eval_direct(
+        &mut self,
+        src: &str,
+        caller_env: GcIdx,
+        this_val: Value,
+    ) -> error::Result<Value> {
+        let program = crate::parser::Parser::parse(src)?;
+        let mut compiler = crate::compiler::Compiler::new();
+        let (chunk, funcs) = compiler.compile_program(&program)?;
+        self.functions.extend(funcs);
+        // Run directly in the caller's environment so `var`/function
+        // declarations and name lookups behave as sloppy-mode direct eval
+        // (declarations leak into the caller's scope). This is a simplification
+        // of the spec's separate var-environment vs lexical-environment model.
+        let result = self.execute_chunk_scoped(chunk, caller_env, this_val);
+        if !self.microtask_queue.is_empty() {
+            self.run_microtasks()?;
+        }
+        result
+    }
+
     /// Execute a compiled function's chunk in a new frame.
     fn execute_chunk_func(
         &mut self,
@@ -1518,6 +1593,35 @@ impl Vm {
                         });
                     }
                     let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
+                    self.stack.push(result);
+                }
+                Op::CallDirectEval(arg_count) => {
+                    // Direct `eval(src, ...)`: per spec only the first argument
+                    // is the source string; extras are ignored. Compile and run
+                    // it in the caller's scope (current frame env + this).
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let src = match args.first() {
+                        Some(Value::String(s)) => s.to_string(),
+                        // Non-string first arg: return it as-is.
+                        Some(v) => {
+                            self.stack.push(v.clone());
+                            continue;
+                        }
+                        None => {
+                            self.stack.push(Value::Undefined);
+                            continue;
+                        }
+                    };
+                    let (caller_env, this_val) = self
+                        .frames
+                        .last()
+                        .map(|f| (f.env, f.this_val.clone()))
+                        .unwrap_or((self.global, Value::Undefined));
+                    let result = self.eval_direct(&src, caller_env, this_val)?;
                     self.stack.push(result);
                 }
                 Op::New(arg_count) => {
