@@ -20,7 +20,10 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
         if let HeapObj::Environment(e) = obj {
             e.vars.borrow_mut().insert(
                 Rc::from(name),
-                crate::value::Binding { value: RefCell::new(value.clone()), kind },
+                crate::value::Binding {
+                    value: RefCell::new(value.clone()),
+                    kind,
+                },
             );
         }
     });
@@ -86,7 +89,9 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
             }
             (false, None)
         });
-        if found { return true; }
+        if found {
+            return true;
+        }
         cur = parent;
     }
     false
@@ -116,7 +121,9 @@ pub fn function_scope_root(heap: &Heap, env: GcIdx) -> GcIdx {
     loop {
         let parent = heap.with_obj(cur.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if e.is_function_scope { return None; }
+                if e.is_function_scope {
+                    return None;
+                }
                 return *e.parent.borrow();
             }
             None

@@ -29,8 +29,6 @@ struct Scope {
     base: usize,
 }
 
-
-
 /// A step in the access path used while compiling destructuring patterns.
 #[derive(Clone)]
 enum PathStep {
@@ -43,7 +41,11 @@ impl Compiler {
     pub fn new() -> Self {
         Compiler {
             chunk: Chunk::new(),
-            scopes: vec![Scope { bindings: HashMap::new(), is_function: true, base: 0 }],
+            scopes: vec![Scope {
+                bindings: HashMap::new(),
+                is_function: true,
+                base: 0,
+            }],
             funcs: Vec::new(),
             names: Vec::new(),
             name_map: HashMap::new(),
@@ -60,7 +62,10 @@ impl Compiler {
         idx
     }
 
-    pub fn compile_program(&mut self, program: &Program) -> error::Result<(Chunk, Vec<Rc<crate::function::FunctionDef>>)> {
+    pub fn compile_program(
+        &mut self,
+        program: &Program,
+    ) -> error::Result<(Chunk, Vec<Rc<crate::function::FunctionDef>>)> {
         let n = program.body.len();
         for (i, stmt) in program.body.iter().enumerate() {
             if i + 1 == n {
@@ -81,7 +86,11 @@ impl Compiler {
     }
 
     fn push_scope(&mut self, is_function: bool) {
-        let base = self.scopes.last().map(|s| s.base + s.bindings.len()).unwrap_or(0);
+        let base = self
+            .scopes
+            .last()
+            .map(|s| s.base + s.bindings.len())
+            .unwrap_or(0);
         self.scopes.push(Scope {
             bindings: HashMap::new(),
             is_function,
@@ -95,7 +104,8 @@ impl Compiler {
 
     /// Begin a loop: `continue_target` is where `continue` jumps (loop start/cond).
     fn begin_loop(&mut self, continue_target: usize) {
-        self.loop_stack.push((continue_target, Vec::new(), Vec::new()));
+        self.loop_stack
+            .push((continue_target, Vec::new(), Vec::new()));
     }
 
     /// Patch the current loop's continue target (used when the continue target is
@@ -234,7 +244,12 @@ impl Compiler {
                 let end = self.chunk.code.len();
                 self.end_loop(end);
             }
-            Stmt::For { init, cond, update, body } => {
+            Stmt::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
                 self.push_scope(false);
                 if let Some(init_stmt) = init {
                     self.compile_stmt(init_stmt)?;
@@ -247,7 +262,9 @@ impl Compiler {
                     let jf = self.chunk.code.len();
                     self.chunk.emit(Op::JumpIfFalse(0), 0);
                     Some(jf)
-                } else { None };
+                } else {
+                    None
+                };
                 // continue target is the update block (known after the body); mark unknown.
                 self.begin_loop(usize::MAX);
                 self.compile_stmt(body)?;
@@ -267,9 +284,9 @@ impl Compiler {
                 self.pop_scope();
             }
             Stmt::ForOf { left, right, body } => {
-               // for (let x of iterable): iterate values.
-               self.push_scope(false);
-               self.compile_expr(right)?;
+                // for (let x of iterable): iterate values.
+                self.push_scope(false);
+                self.compile_expr(right)?;
                 // GetIterator pops the iterable, pushes an iterator object.
                 self.chunk.emit(Op::GetIterator, 0);
                 let it_name_idx = self.intern("#iter");
@@ -299,7 +316,12 @@ impl Compiler {
                 self.compile_expr(e)?;
                 self.chunk.emit(Op::Throw, 0);
             }
-            Stmt::TryCatch { try_body, catch_param, catch_body, finally_body } => {
+            Stmt::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => {
                 let try_start = self.chunk.code.len();
                 self.chunk.emit(Op::PushTry(0), 0); // placeholder
                 self.compile_stmt(try_body)?;
@@ -308,7 +330,7 @@ impl Compiler {
                 self.chunk.emit(Op::Jump(0), 0);
                 let catch_start = self.chunk.code.len();
                 self.chunk.patch_jump(try_start + 0, catch_start); // patch PushTry handler
-                // patch the PushTry's handler ip
+                                                                   // patch the PushTry's handler ip
                 {
                     let try_ip = try_start;
                     if let Op::PushTry(ref mut h) = self.chunk.code[try_ip] {
@@ -356,7 +378,11 @@ impl Compiler {
                     }
                 }
             }
-            Stmt::Destructure { kind, pattern, init } => {
+            Stmt::Destructure {
+                kind,
+                pattern,
+                init,
+            } => {
                 // Evaluate the source (if any), stash it in a temp env binding, then bind each
                 // pattern element by indexing/property access on the temp. When `init` is None
                 // (for-of/for-in) the value is already on the stack.
@@ -390,14 +416,18 @@ impl Compiler {
                 }
             }
             Stmt::Switch { disc, cases } => {
-                // Switch with fall-through and break. Tests use Dup so the disc survives
-                // for the next test; a matched case jumps to its body which Pops the dup.
+                // Evaluate the discriminant once into a temp env binding, so tests can
+                // re-load it without stack gymnastics. Supports fall-through and break.
+                self.compile_expr(disc)?;
+                let sw_idx = self.intern("#switch");
+                self.chunk.emit(Op::DeclareEnv(sw_idx), 0);
                 self.begin_loop(usize::MAX);
-                let mut match_jumps: Vec<(usize, usize)> = Vec::new();
+                // Tests: for each case, load disc, compare, jump to body on match.
+                let mut match_jumps: Vec<(usize, usize)> = Vec::new(); // (case_idx, jump_pos)
                 let mut default_idx: Option<usize> = None;
                 for (i, case) in cases.iter().enumerate() {
                     if let Some(test) = &case.test {
-                        self.chunk.emit(Op::Dup, 0);
+                        self.chunk.emit(Op::LoadEnv(sw_idx), 0);
                         self.compile_expr(test)?;
                         self.chunk.emit(Op::StrictEq, 0);
                         let j = self.chunk.code.len();
@@ -407,50 +437,36 @@ impl Compiler {
                         default_idx = Some(i);
                     }
                 }
-                // No test matched: pop disc and jump to default body or end.
-                let no_match_pop = self.chunk.code.len();
-                self.chunk.emit(Op::Pop, 0);
-                let no_match_jump = self.chunk.code.len();
+                // No match: jump to default body (patched later) or end.
+                let no_match = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), 0);
-                // Bodies: each matched case jumps to pop_i (Pop then body). Fall-through
-                // from the previous body jumps directly to the next body (past its Pop),
-                // so we record both the Pop-entry and the body-entry positions.
-                let mut pop_entries: Vec<Option<usize>> = vec![None; cases.len()];
-                let mut body_entries: Vec<Option<usize>> = vec![None; cases.len()];
-                let mut fallthrough_jumps: Vec<usize> = Vec::new();
+                // Bodies compile sequentially; fall-through is automatic.
+                let mut body_starts: Vec<Option<usize>> = vec![None; cases.len()];
                 for (i, case) in cases.iter().enumerate() {
-                    if i > 0 {
-                        // patch previous body's fall-through jump to this body entry
-                        let prev_jump = fallthrough_jumps[i - 1];
-                        self.chunk.patch_jump(prev_jump, self.chunk.code.len());
+                    body_starts[i] = Some(self.chunk.code.len());
+                    for s in &case.body {
+                        self.compile_stmt(s)?;
                     }
-                    pop_entries[i] = Some(self.chunk.code.len());
-                    self.chunk.emit(Op::Pop, 0); // pop the dup'd disc on entry from a match
-                    body_entries[i] = Some(self.chunk.code.len());
-                    for s in &case.body { self.compile_stmt(s)?; }
-                    // emit a fall-through jump to the next body (skips its Pop)
-                    let j = self.chunk.code.len();
-                    self.chunk.emit(Op::Jump(0), 0);
-                    fallthrough_jumps.push(j);
                 }
-                // patch the last fall-through jump to end
-                if let Some(j) = fallthrough_jumps.last() { self.chunk.patch_jump(*j, self.chunk.code.len()); }
-                let _ = pop_entries;
                 let end = self.chunk.code.len();
                 for (i, j) in &match_jumps {
-                    if let Some(pos) = pop_entries[*i] { self.chunk.patch_jump(*j, pos); }
+                    if let Some(pos) = body_starts[*i] {
+                        self.chunk.patch_jump(*j, pos);
+                    }
                 }
                 if let Some(di) = default_idx {
-                    if let Some(pos) = pop_entries[di] { self.chunk.patch_jump(no_match_jump, pos); }
+                    if let Some(pos) = body_starts[di] {
+                        self.chunk.patch_jump(no_match, pos);
+                    }
                 } else {
-                    self.chunk.patch_jump(no_match_jump, end);
+                    self.chunk.patch_jump(no_match, end);
                 }
                 self.end_loop(end);
             }
             _ => {}
-       }
-       Ok(())
-   }
+        }
+        Ok(())
+    }
 
     /// Bind the value on top of the stack into the loop variable of a `for`/`for-in`/`for-of`.
     /// `left` is the statement produced by `parse_var_decl_no_semi` (a `VarDecl` with one name)
@@ -463,7 +479,7 @@ impl Compiler {
                     self.declare(name, *kind);
                     let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::DeclareEnv(name_idx), 0);
-            } else {
+                } else {
                     self.chunk.emit(Op::Pop, 0);
                 }
             }
@@ -511,7 +527,11 @@ impl Compiler {
     fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<Chunk> {
         let saved_chunk = std::mem::take(&mut self.chunk);
         let saved_names = std::mem::take(&mut self.name_map);
-        self.scopes.push(Scope { bindings: HashMap::new(), is_function: true, base: 0 });
+        self.scopes.push(Scope {
+            bindings: HashMap::new(),
+            is_function: true,
+            base: 0,
+        });
         for (i, param) in f.params.iter().enumerate() {
             self.declare(param, VarKind::Let);
             // param is in slot i (VM stores args to locals[0..n])
@@ -519,13 +539,13 @@ impl Compiler {
         // Parameter defaults: for each param with a default, if it is undefined,
         // evaluate and assign the default expression.
         for (i, param) in f.params.iter().enumerate() {
-           if let Some(default) = f.param_defaults.get(i).and_then(|d| d.as_ref()) {
-               // load param, check if undefined
-               let name_idx = self.chunk.add_constant(Value::String(param.clone()));
-               self.chunk.emit(Op::LoadEnvName(name_idx), 0);
-               self.chunk.emit(Op::Dup, 0);
-               self.chunk.emit(Op::Undefined, 0);
-               self.chunk.emit(Op::StrictEq, 0);
+            if let Some(default) = f.param_defaults.get(i).and_then(|d| d.as_ref()) {
+                // load param, check if undefined
+                let name_idx = self.chunk.add_constant(Value::String(param.clone()));
+                self.chunk.emit(Op::LoadEnvName(name_idx), 0);
+                self.chunk.emit(Op::Dup, 0);
+                self.chunk.emit(Op::Undefined, 0);
+                self.chunk.emit(Op::StrictEq, 0);
                 // stack: [param, isUndefined]; JumpIfFalse pops isUndefined.
                 // If defined (isUndefined == false), jump to `pop_param`.
                 let defined_jump = self.chunk.code.len();
@@ -545,8 +565,8 @@ impl Compiler {
                 self.chunk.patch_jump(defined_jump, pop_param);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(over_pop, after);
-           }
-       }
+            }
+        }
         for stmt in &f.body {
             self.compile_stmt(stmt)?;
         }
@@ -580,7 +600,12 @@ impl Compiler {
 
     /// Compile a destructuring pattern against the source held in env var `temp_idx`,
     /// reaching nested values via `path`.
-    fn compile_pattern(&mut self, pattern: &Pattern, temp_idx: usize, path: &[PathStep]) -> error::Result<()> {
+    fn compile_pattern(
+        &mut self,
+        pattern: &Pattern,
+        temp_idx: usize,
+        path: &[PathStep],
+    ) -> error::Result<()> {
         match pattern {
             Pattern::Ident(name) => {
                 self.declare(name, VarKind::Let);
@@ -654,7 +679,13 @@ impl Compiler {
     }
 
     /// Bind a rest pattern: build an array from temp[i..] (i relative to current path end).
-    fn bind_rest(&mut self, inner: &Pattern, temp_idx: usize, path: &[PathStep], from: usize) -> error::Result<()> {
+    fn bind_rest(
+        &mut self,
+        inner: &Pattern,
+        temp_idx: usize,
+        path: &[PathStep],
+        from: usize,
+    ) -> error::Result<()> {
         // Load the value at path (the array to slice), then call .slice(from).
         self.load_path(temp_idx, path);
         let slice_key = self.chunk.add_constant(Value::String(Rc::from("slice")));
@@ -686,7 +717,9 @@ impl Compiler {
                 for (i, e) in exprs.iter().enumerate() {
                     self.compile_expr(e)?;
                     self.chunk.emit(Op::Add, 0); // string + value -> string concat
-                    let q_idx = self.chunk.add_constant(Value::String(quasis[i + 1].clone()));
+                    let q_idx = self
+                        .chunk
+                        .add_constant(Value::String(quasis[i + 1].clone()));
                     self.chunk.emit(Op::Const(q_idx), 0);
                     self.chunk.emit(Op::Add, 0);
                 }
@@ -720,42 +753,55 @@ impl Compiler {
                 // load current value
                 self.compile_expr(target)?;
                 self.chunk.emit(Op::Dup, 0); // keep a copy for storing
-                let delta = match op { UpdateOp::Inc => 1.0, UpdateOp::Dec => -1.0 };
+                let delta = match op {
+                    UpdateOp::Inc => 1.0,
+                    UpdateOp::Dec => -1.0,
+                };
                 let c = self.chunk.add_constant(Value::Number(delta));
                 self.chunk.emit(Op::Const(c), 0);
                 self.chunk.emit(Op::Add, 0); // new value on stack
-                // store new value back
+                                             // store new value back
                 self.chunk.emit(Op::Dup, 0); // duplicate for result
                 self.compile_assign_target(target)?;
                 // stack now has the result; if postfix, we need old value
                 // simplified: return new value (prefix semantics) for now
                 let _ = prefix;
             }
-            Expr::Binary(op, l, r) => {
-                match op {
-                    BinOp::In => {
-                        self.compile_expr(l)?;
-                        self.compile_expr(r)?;
-                        self.chunk.emit(Op::In, 0);
-                    }
-                    BinOp::Instanceof => {
-                        self.compile_expr(l)?;
-                        self.compile_expr(r)?;
-                        self.chunk.emit(Op::InstanceOf, 0);
-                    }
-                    _ => {
-                        self.compile_expr(l)?;
-                        self.compile_expr(r)?;
-                        self.chunk.emit(self.bin_op(op), 0);
-                    }
+            Expr::Binary(op, l, r) => match op {
+                BinOp::In => {
+                    self.compile_expr(l)?;
+                    self.compile_expr(r)?;
+                    self.chunk.emit(Op::In, 0);
                 }
-            }
+                BinOp::Instanceof => {
+                    self.compile_expr(l)?;
+                    self.compile_expr(r)?;
+                    self.chunk.emit(Op::InstanceOf, 0);
+                }
+                _ => {
+                    self.compile_expr(l)?;
+                    self.compile_expr(r)?;
+                    self.chunk.emit(self.bin_op(op), 0);
+                }
+            },
             Expr::Unary(op, e) => {
                 match op {
-                    UnOp::Neg => { self.compile_expr(e)?; self.chunk.emit(Op::Neg, 0); }
-                    UnOp::Plus => { self.compile_expr(e)?; self.chunk.emit(Op::TypeCoerce, 0); }
-                    UnOp::Not => { self.compile_expr(e)?; self.chunk.emit(Op::Not, 0); }
-                    UnOp::BitNot => { self.compile_expr(e)?; self.chunk.emit(Op::BitNot, 0); }
+                    UnOp::Neg => {
+                        self.compile_expr(e)?;
+                        self.chunk.emit(Op::Neg, 0);
+                    }
+                    UnOp::Plus => {
+                        self.compile_expr(e)?;
+                        self.chunk.emit(Op::TypeCoerce, 0);
+                    }
+                    UnOp::Not => {
+                        self.compile_expr(e)?;
+                        self.chunk.emit(Op::Not, 0);
+                    }
+                    UnOp::BitNot => {
+                        self.compile_expr(e)?;
+                        self.chunk.emit(Op::BitNot, 0);
+                    }
                     // unary `+` coerces its operand to a number
                     UnOp::Typeof => {
                         // `typeof undeclaredVar` must yield "undefined" instead of throwing.
@@ -775,14 +821,24 @@ impl Compiler {
                     UnOp::Delete => {
                         // `delete obj.prop` / `delete obj[expr]`
                         match e.as_ref() {
-                            Expr::Member { object, property, computed } => {
+                            Expr::Member {
+                                object,
+                                property,
+                                computed,
+                            } => {
                                 self.compile_expr(object)?;
                                 if *computed {
                                     self.compile_expr(property)?;
                                     self.chunk.emit(Op::DeleteProp, 0);
                                 } else {
-                                    let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
-                                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                                    let key = if let Expr::String(s) = property.as_ref() {
+                                        s.to_string()
+                                    } else {
+                                        String::new()
+                                    };
+                                    let key_idx = self
+                                        .chunk
+                                        .add_constant(Value::String(Rc::from(key.as_str())));
                                     self.chunk.emit(Op::Const(key_idx), 0);
                                     self.chunk.emit(Op::DeleteProp, 0);
                                 }
@@ -795,7 +851,9 @@ impl Compiler {
                             }
                         }
                     }
-                    _ => { self.compile_expr(e)?; }
+                    _ => {
+                        self.compile_expr(e)?;
+                    }
                 }
             }
             Expr::Logical(op, l, r) => {
@@ -859,7 +917,9 @@ impl Compiler {
                         PropertyKey::Number(n) => crate::value::num_to_string(*n),
                         PropertyKey::Computed(_) => String::new(),
                     };
-                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                    let key_idx = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), 0);
                     self.compile_expr(&p.value)?;
                     self.chunk.emit(Op::SetProp, 0);
@@ -880,7 +940,11 @@ impl Compiler {
             Expr::Call { callee, args } => {
                 // check if method call
                 match callee.as_ref() {
-                    Expr::Member { object, property, computed } => {
+                    Expr::Member {
+                        object,
+                        property,
+                        computed,
+                    } => {
                         if matches!(object.as_ref(), Expr::Super) {
                             // super.m(args): call parent proto's m with `this`.
                             let this_idx = self.intern("this");
@@ -890,32 +954,55 @@ impl Compiler {
                             if *computed {
                                 self.compile_expr(property)?;
                             } else {
-                                let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
-                                let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                                let key = if let Expr::String(s) = property.as_ref() {
+                                    s.to_string()
+                                } else {
+                                    String::new()
+                                };
+                                let key_idx = self
+                                    .chunk
+                                    .add_constant(Value::String(Rc::from(key.as_str())));
                                 self.chunk.emit(Op::Const(key_idx), 0);
                             }
                             for a in args {
-                                if let Expr::Spread(_) = a {} else { self.compile_expr(a)?; }
+                                if let Expr::Spread(_) = a {
+                                } else {
+                                    self.compile_expr(a)?;
+                                }
                             }
                             self.chunk.emit(Op::CallSuper(args.len()), 0);
                             return Ok(());
                         }
                         self.compile_expr(object)?;
                         let key = if !*computed {
-                            if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() }
-                        } else { String::new() };
-                        let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                            if let Expr::String(s) = property.as_ref() {
+                                s.to_string()
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        let key_idx = self
+                            .chunk
+                            .add_constant(Value::String(Rc::from(key.as_str())));
                         self.chunk.emit(Op::Const(key_idx), 0);
                         // push args
                         for a in args {
-                            if let Expr::Spread(_) = a {} else { self.compile_expr(a)?; }
+                            if let Expr::Spread(_) = a {
+                            } else {
+                                self.compile_expr(a)?;
+                            }
                         }
                         self.chunk.emit(Op::CallMethod(args.len()), 0);
                     }
                     _ => {
                         self.compile_expr(callee)?;
                         for a in args {
-                            if let Expr::Spread(_) = a {} else { self.compile_expr(a)?; }
+                            if let Expr::Spread(_) = a {
+                            } else {
+                                self.compile_expr(a)?;
+                            }
                         }
                         self.chunk.emit(Op::Call(args.len()), 0);
                     }
@@ -924,18 +1011,31 @@ impl Compiler {
             Expr::New { callee, args } => {
                 self.compile_expr(callee)?;
                 for a in args {
-                    if let Expr::Spread(_) = a {} else { self.compile_expr(a)?; }
+                    if let Expr::Spread(_) = a {
+                    } else {
+                        self.compile_expr(a)?;
+                    }
                 }
                 self.chunk.emit(Op::New(args.len()), 0);
             }
-            Expr::Member { object, property, computed } => {
+            Expr::Member {
+                object,
+                property,
+                computed,
+            } => {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
                     self.chunk.emit(Op::GetElem, 0);
                 } else {
-                    let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
-                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                    let key = if let Expr::String(s) = property.as_ref() {
+                        s.to_string()
+                    } else {
+                        String::new()
+                    };
+                    let key_idx = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), 0);
                     self.chunk.emit(Op::GetProp, 0);
                 }
@@ -961,14 +1061,29 @@ impl Compiler {
                 // Methods become prototype properties (or static on the constructor).
                 let ctor_fn = FunctionExpr {
                     name: cls.name.clone(),
-                    params: cls.methods.iter().find(|m| m.is_constructor)
-                        .map(|m| m.params.clone()).unwrap_or_default(),
-                    param_defaults: cls.methods.iter().find(|m| m.is_constructor)
-                        .map(|m| m.param_defaults.clone()).unwrap_or_default(),
-                    rest_param: cls.methods.iter().find(|m| m.is_constructor)
+                    params: cls
+                        .methods
+                        .iter()
+                        .find(|m| m.is_constructor)
+                        .map(|m| m.params.clone())
+                        .unwrap_or_default(),
+                    param_defaults: cls
+                        .methods
+                        .iter()
+                        .find(|m| m.is_constructor)
+                        .map(|m| m.param_defaults.clone())
+                        .unwrap_or_default(),
+                    rest_param: cls
+                        .methods
+                        .iter()
+                        .find(|m| m.is_constructor)
                         .and_then(|m| m.rest_param.clone()),
-                    body: cls.methods.iter().find(|m| m.is_constructor)
-                        .map(|m| m.body.clone()).unwrap_or_default(),
+                    body: cls
+                        .methods
+                        .iter()
+                        .find(|m| m.is_constructor)
+                        .map(|m| m.body.clone())
+                        .unwrap_or_default(),
                     is_arrow: false,
                     is_async: false,
                     is_generator: false,
@@ -995,34 +1110,40 @@ impl Compiler {
                     // stack: [ctor]
                     self.compile_expr(super_expr)?;
                     // stack: [ctor, parentCtor]
-                    let proto_key = self.chunk.add_constant(Value::String(Rc::from("prototype")));
+                    let proto_key = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from("prototype")));
                     self.chunk.emit(Op::Const(proto_key), 0);
                     // stack: [ctor, parentCtor, "prototype"]; GetProp pops key then obj
                     self.chunk.emit(Op::GetProp, 0); // -> [ctor, parentProto]
-                    // stack: [ctor, parentProto]
-                    // Bind parentProto as `#super` in the current env so method closures capture it.
+                                                     // stack: [ctor, parentProto]
+                                                     // Bind parentProto as `#super` in the current env so method closures capture it.
                     let super_name_idx = self.intern("#super");
                     self.chunk.emit(Op::DeclareEnv(super_name_idx), 0);
                     // stack: [ctor]
                     // Set childCtor.prototype.__proto__ = parentProto (link prototype chain).
                     self.chunk.emit(Op::Dup, 0); // [ctor, ctor]
-                    let cp_key = self.chunk.add_constant(Value::String(Rc::from("prototype")));
+                    let cp_key = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from("prototype")));
                     self.chunk.emit(Op::Const(cp_key), 0);
                     self.chunk.emit(Op::GetProp, 0); // [ctor, childProto]
                     self.chunk.emit(Op::LoadEnv(super_name_idx), 0); // [ctor, childProto, parentProto]
                     self.chunk.emit(Op::SetProto, 0); // pop parentProto,childProto; set childProto.__proto__
-                    // stack: [ctor]
-                    // Also link the constructors: childCtor.__proto__ = parentCtor (static inheritance).
+                                                      // stack: [ctor]
+                                                      // Also link the constructors: childCtor.__proto__ = parentCtor (static inheritance).
                     self.chunk.emit(Op::Dup, 0); // [ctor, ctor]
                     self.chunk.emit(Op::LoadEnv(super_name_idx), 0); // [ctor, ctor, parentProto]
-                    // We need parentCtor, not parentProto, for static chain; re-derive by getting
-                    // constructor from parentProto. Simpler: parentCtor is the superclass expr;
-                    // but it's already consumed. Use parentProto.constructor.
-                    let ctor_key = self.chunk.add_constant(Value::String(Rc::from("constructor")));
+                                                                     // We need parentCtor, not parentProto, for static chain; re-derive by getting
+                                                                     // constructor from parentProto. Simpler: parentCtor is the superclass expr;
+                                                                     // but it's already consumed. Use parentProto.constructor.
+                    let ctor_key = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from("constructor")));
                     self.chunk.emit(Op::Const(ctor_key), 0); // [ctor, ctor, parentProto, "constructor"]
                     self.chunk.emit(Op::GetProp, 0); // pop "constructor",parentProto -> [ctor, ctor, parentCtor]
                     self.chunk.emit(Op::SetProto, 0); // set ctor.__proto__ = parentCtor
-                    // stack: [ctor]
+                                                      // stack: [ctor]
                 } else {
                     // No superclass: clear any stale #super binding so methods don't capture one.
                     let super_name_idx = self.intern("#super");
@@ -1031,14 +1152,18 @@ impl Compiler {
                 }
                 // assign each non-constructor method to prototype (or constructor if static)
                 for method in &cls.methods {
-                    if method.is_constructor { continue; }
+                    if method.is_constructor {
+                        continue;
+                    }
                     let m_fn = FunctionExpr {
                         name: Some(method.name.clone()),
                         params: method.params.clone(),
                         param_defaults: method.param_defaults.clone(),
                         rest_param: method.rest_param.clone(),
                         body: method.body.clone(),
-                        is_arrow: false, is_async: false, is_generator: false,
+                        is_arrow: false,
+                        is_async: false,
+                        is_generator: false,
                         param_decls: Vec::new(),
                     };
                     let m_chunk = self.compile_function(&m_fn)?;
@@ -1049,7 +1174,9 @@ impl Compiler {
                         rest_param: method.rest_param.clone(),
                         chunk: Rc::new(m_chunk),
                         num_locals: method.params.len() + 16,
-                        is_arrow: false, is_async: false, is_generator: false,
+                        is_arrow: false,
+                        is_async: false,
+                        is_generator: false,
                     };
                     self.funcs.push(Rc::new(mdef));
                     if method.is_static {
@@ -1063,7 +1190,9 @@ impl Compiler {
                     } else {
                         // Constructor.prototype.method = fn
                         self.chunk.emit(Op::Dup, 0); // dup constructor
-                        let proto_key = self.chunk.add_constant(Value::String(Rc::from("prototype")));
+                        let proto_key = self
+                            .chunk
+                            .add_constant(Value::String(Rc::from("prototype")));
                         self.chunk.emit(Op::Const(proto_key), 0);
                         self.chunk.emit(Op::GetProp, 0);
                         // stack: [ctor, proto_obj] — push key then value then SetProp
@@ -1097,13 +1226,23 @@ impl Compiler {
 
     fn compile_assign_target_store(&mut self, target: &Expr, value: &Expr) -> error::Result<()> {
         match target {
-            Expr::Member { object, property, computed } => {
+            Expr::Member {
+                object,
+                property,
+                computed,
+            } => {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
                 } else {
-                    let key = if let Expr::String(s) = &**property { s.to_string() } else { String::new() };
-                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                    let key = if let Expr::String(s) = &**property {
+                        s.to_string()
+                    } else {
+                        String::new()
+                    };
+                    let key_idx = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), 0);
                 }
                 self.compile_expr(value)?;
@@ -1135,14 +1274,24 @@ impl Compiler {
                     self.chunk.emit(Op::StoreGlobal, 0);
                 }
             }
-            Expr::Member { object, property, computed } => {
+            Expr::Member {
+                object,
+                property,
+                computed,
+            } => {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
                     self.chunk.emit(Op::SetElem, 0);
                 } else {
-                    let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
-                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                    let key = if let Expr::String(s) = property.as_ref() {
+                        s.to_string()
+                    } else {
+                        String::new()
+                    };
+                    let key_idx = self
+                        .chunk
+                        .add_constant(Value::String(Rc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), 0);
                     self.chunk.emit(Op::SetProp, 0);
                 }

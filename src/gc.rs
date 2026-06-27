@@ -75,8 +75,12 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
         if !desc.is_accessor {
             marker.mark_value(&desc.value);
         } else {
-            if let Some(g) = &desc.get { marker.mark_value(g); }
-            if let Some(s) = &desc.set { marker.mark_value(s); }
+            if let Some(g) = &desc.get {
+                marker.mark_value(g);
+            }
+            if let Some(s) = &desc.set {
+                marker.mark_value(s);
+            }
         }
     }
     if let Some(proto) = obj.proto().borrow().as_ref() {
@@ -93,10 +97,17 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
             if let Some(p) = f.prototype.borrow().as_ref() {
                 marker.mark_value(p);
             }
-            if let crate::value::FunctionKind::Bound { target, this_val, bound_args } = &f.kind {
+            if let crate::value::FunctionKind::Bound {
+                target,
+                this_val,
+                bound_args,
+            } = &f.kind
+            {
                 marker.mark_idx(*target);
                 marker.mark_value(this_val);
-                for a in bound_args { marker.mark_value(a); }
+                for a in bound_args {
+                    marker.mark_value(a);
+                }
             }
         }
         HeapObj::Environment(e) => {
@@ -176,7 +187,10 @@ impl Heap {
         let cells_len = self.cells.borrow().len();
         let marked = RefCell::new(vec![false; cells_len]);
         {
-            let mut marker = Marker { heap: self, marked: &marked };
+            let mut marker = Marker {
+                heap: self,
+                marked: &marked,
+            };
             for &root in roots {
                 marker.mark_cell(root);
             }

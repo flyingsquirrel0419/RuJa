@@ -12,8 +12,8 @@ pub mod token;
 pub mod value;
 pub mod vm;
 
-pub use vm::Vm;
-pub use value::Value;
+pub use compiler::Compiler;
 pub use lexer::Lexer;
 pub use parser::Parser;
-pub use compiler::Compiler;
+pub use value::Value;
+pub use vm::Vm;

@@ -27,16 +27,34 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn undefined() -> Self { Value::Undefined }
-    pub fn null() -> Self { Value::Null }
-    pub fn from_bool(b: bool) -> Self { Value::Bool(b) }
-    pub fn from_num(n: f64) -> Self { Value::Number(n) }
-    pub fn from_str(s: &str) -> Self { Value::String(Rc::from(s)) }
+    pub fn undefined() -> Self {
+        Value::Undefined
+    }
+    pub fn null() -> Self {
+        Value::Null
+    }
+    pub fn from_bool(b: bool) -> Self {
+        Value::Bool(b)
+    }
+    pub fn from_num(n: f64) -> Self {
+        Value::Number(n)
+    }
+    pub fn from_str(s: &str) -> Self {
+        Value::String(Rc::from(s))
+    }
 
-    pub fn is_undefined(&self) -> bool { matches!(self, Value::Undefined) }
-    pub fn is_null(&self) -> bool { matches!(self, Value::Null) }
-    pub fn is_nullish(&self) -> bool { matches!(self, Value::Null | Value::Undefined) }
-    pub fn is_object(&self) -> bool { matches!(self, Value::Object(_)) }
+    pub fn is_undefined(&self) -> bool {
+        matches!(self, Value::Undefined)
+    }
+    pub fn is_null(&self) -> bool {
+        matches!(self, Value::Null)
+    }
+    pub fn is_nullish(&self) -> bool {
+        matches!(self, Value::Null | Value::Undefined)
+    }
+    pub fn is_object(&self) -> bool {
+        matches!(self, Value::Object(_))
+    }
 
     pub fn is_truthy(&self) -> bool {
         match self {
@@ -75,7 +93,6 @@ impl PartialEq for Value {
         }
     }
 }
-
 
 /// Quick string conversion for argument handling (not spec-compliant ToString).
 pub fn value_to_debug_string(v: &Value) -> String {
@@ -248,7 +265,10 @@ impl Default for PropertyDescriptor {
 
 impl PropertyDescriptor {
     pub fn data(value: Value) -> Self {
-        PropertyDescriptor { value, ..Default::default() }
+        PropertyDescriptor {
+            value,
+            ..Default::default()
+        }
     }
 }
 
@@ -291,7 +311,11 @@ impl HeapObj {
     /// Class name for `Object.prototype.toString`.
     pub fn class_name(&self) -> &str {
         match self {
-            HeapObj::Object(o) => o.class_name.as_ref().map(|s| s.as_ref()).unwrap_or("Object"),
+            HeapObj::Object(o) => o
+                .class_name
+                .as_ref()
+                .map(|s| s.as_ref())
+                .unwrap_or("Object"),
             HeapObj::Array(_) => "Array",
             HeapObj::Function(_) => "Function",
             HeapObj::Map(_) => "Map",
@@ -303,7 +327,9 @@ impl HeapObj {
         }
     }
 
-    pub fn is_array(&self) -> bool { matches!(self, HeapObj::Array(_)) }
+    pub fn is_array(&self) -> bool {
+        matches!(self, HeapObj::Array(_))
+    }
     pub fn is_extensible(&self) -> bool {
         match self {
             HeapObj::Object(o) => o.extensible.get(),
@@ -312,16 +338,27 @@ impl HeapObj {
     }
 }
 
-
 /// Render an f64 the way JS `String(n)` would.
 pub fn num_to_string(n: f64) -> String {
-    if n.is_nan() { return "NaN".to_string(); }
-    if n == f64::INFINITY { return "Infinity".to_string(); }
-    if n == f64::NEG_INFINITY { return "-Infinity".to_string(); }
-    if n == 0.0 { return "0".to_string(); }
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n == f64::INFINITY {
+        return "Infinity".to_string();
+    }
+    if n == f64::NEG_INFINITY {
+        return "-Infinity".to_string();
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
     if n.fract() == 0.0 && n.abs() < 1e21 {
         return format!("{}", n as i64);
     }
     let s = format!("{}", n);
-    if s.ends_with(".0") { s[..s.len()-2].to_string() } else { s }
+    if s.ends_with(".0") {
+        s[..s.len() - 2].to_string()
+    } else {
+        s
+    }
 }

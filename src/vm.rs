@@ -54,11 +54,20 @@ pub struct CallFrame {
 }
 
 pub enum Microtask {
-    Then { promise: GcIdx, on_fulfilled: Value, on_rejected: Value },
-    Resolve { promise: GcIdx, value: Value },
-    Reject { promise: GcIdx, reason: Value },
+    Then {
+        promise: GcIdx,
+        on_fulfilled: Value,
+        on_rejected: Value,
+    },
+    Resolve {
+        promise: GcIdx,
+        value: Value,
+    },
+    Reject {
+        promise: GcIdx,
+        reason: Value,
+    },
 }
-
 
 impl Vm {
     pub fn new() -> Self {
@@ -122,10 +131,18 @@ impl Vm {
     }
 
     /// Execute a compiled function's chunk in a new frame.
-    fn execute_chunk_func(&mut self, fdef: Rc<crate::function::FunctionDef>, env: GcIdx, this_val: Value, args: &[Value]) -> error::Result<Value> {
+    fn execute_chunk_func(
+        &mut self,
+        fdef: Rc<crate::function::FunctionDef>,
+        env: GcIdx,
+        this_val: Value,
+        args: &[Value],
+    ) -> error::Result<Value> {
         let mut locals = vec![Value::Undefined; fdef.num_locals.max(256)];
         for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
-            if i < locals.len() { locals[i] = a.clone(); }
+            if i < locals.len() {
+                locals[i] = a.clone();
+            }
         }
         self.frames.push(CallFrame {
             chunk: fdef.chunk.clone(),
@@ -194,73 +211,141 @@ impl Vm {
                     // try to set in current scope chain first, else declare in global
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
-                        crate::environment::declare(&self.heap, self.global, &name, value, crate::value::BindingKind::Var);
+                        crate::environment::declare(
+                            &self.heap,
+                            self.global,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Var,
+                        );
                     }
                     self.stack.push(Value::Undefined);
                 }
                 Op::DeclareEnv(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Let);
+                    crate::environment::declare(
+                        &self.heap,
+                        cur_env,
+                        &name,
+                        value,
+                        crate::value::BindingKind::Let,
+                    );
                 }
                 Op::LoadEnv(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     match crate::environment::get(&self.heap, cur_env, &name) {
                         Some(v) => self.stack.push(v),
                         None => match crate::environment::get(&self.heap, self.global, &name) {
                             Some(v) => self.stack.push(v),
-                            None => return Err(Error::reference(format!("{} is not defined", name))),
-                        }
+                            None => {
+                                return Err(Error::reference(format!("{} is not defined", name)))
+                            }
+                        },
                     }
                 }
                 Op::StoreEnv(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
-                        crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Var);
+                        crate::environment::declare(
+                            &self.heap,
+                            cur_env,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Var,
+                        );
                     }
                     self.stack.push(Value::Undefined);
                 }
                 Op::LoadEnvName(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     match crate::environment::get(&self.heap, env, &name) {
                         Some(v) => self.stack.push(v),
                         None => match crate::environment::get(&self.heap, self.global, &name) {
                             Some(v) => self.stack.push(v),
-                            None => return Err(Error::reference(format!("{} is not defined", name))),
-                        }
+                            None => {
+                                return Err(Error::reference(format!("{} is not defined", name)))
+                            }
+                        },
                     }
                 }
                 Op::StoreEnvName(name_idx) => {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, env, &name, value.clone()) {
-                        crate::environment::declare(&self.heap, env, &name, value, crate::value::BindingKind::Var);
+                        crate::environment::declare(
+                            &self.heap,
+                            env,
+                            &name,
+                            value,
+                            crate::value::BindingKind::Var,
+                        );
                     }
                     self.stack.push(Value::Undefined);
                 }
@@ -276,32 +361,70 @@ impl Vm {
                 Op::Undefined => self.stack.push(Value::Undefined),
                 Op::True => self.stack.push(Value::Bool(true)),
                 Op::False => self.stack.push(Value::Bool(false)),
-                Op::Pop => { self.stack.pop(); }
-                Op::Dup => { let v = self.stack.last().cloned().unwrap_or(Value::Undefined); self.stack.push(v); }
+                Op::Pop => {
+                    self.stack.pop();
+                }
+                Op::Dup => {
+                    let v = self.stack.last().cloned().unwrap_or(Value::Undefined);
+                    self.stack.push(v);
+                }
                 Op::Swap => {
                     let len = self.stack.len();
-                    if len >= 2 { self.stack.swap(len-1, len-2); }
+                    if len >= 2 {
+                        self.stack.swap(len - 1, len - 2);
+                    }
                 }
                 Op::Rot3 => {
                     let len = self.stack.len();
                     if len >= 3 {
-                        let c = self.stack.remove(len-3);
+                        let c = self.stack.remove(len - 3);
                         self.stack.push(c);
                     }
                 }
-                Op::Add => self.bin_op(|a, b| Value::Number(a + b), |a, b| Value::String(Rc::from(format!("{}{}", a, b).as_str())))?,
+                Op::Add => self.bin_op(
+                    |a, b| Value::Number(a + b),
+                    |a, b| Value::String(Rc::from(format!("{}{}", a, b).as_str())),
+                )?,
                 Op::Sub => self.num_bin(|a, b| a - b)?,
                 Op::Mul => self.num_bin(|a, b| a * b)?,
                 Op::Div => self.num_bin(|a, b| a / b)?,
                 Op::Mod => self.num_bin(|a, b| a % b)?,
                 Op::Pow => self.num_bin(|a, b| a.powf(b))?,
-                Op::Neg => { let v = self.stack.pop().unwrap_or(Value::Undefined); let n = self.to_number(&v)?; self.stack.push(Value::Number(-n)); }
-                Op::Not => { let v = self.stack.pop().unwrap_or(Value::Undefined); let b = v.is_truthy(); self.stack.push(Value::Bool(!b)); }
-                Op::BitNot => { let v = self.stack.pop().unwrap_or(Value::Undefined); let n = self.to_number(&v)? as i32; self.stack.push(Value::Number(!n as f64)); }
-                Op::Eq => { let (a, b) = self.pop2(); let r = self.loose_eq(&a, &b)?; self.stack.push(Value::Bool(r)); }
-                Op::NotEq => { let (a, b) = self.pop2(); let r = self.loose_eq(&a, &b)?; self.stack.push(Value::Bool(!r)); }
-                Op::StrictEq => { let (a, b) = self.pop2(); let r = self.strict_eq(&a, &b); self.stack.push(Value::Bool(r)); }
-                Op::StrictNotEq => { let (a, b) = self.pop2(); let r = self.strict_eq(&a, &b); self.stack.push(Value::Bool(!r)); }
+                Op::Neg => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let n = self.to_number(&v)?;
+                    self.stack.push(Value::Number(-n));
+                }
+                Op::Not => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let b = v.is_truthy();
+                    self.stack.push(Value::Bool(!b));
+                }
+                Op::BitNot => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let n = self.to_number(&v)? as i32;
+                    self.stack.push(Value::Number(!n as f64));
+                }
+                Op::Eq => {
+                    let (a, b) = self.pop2();
+                    let r = self.loose_eq(&a, &b)?;
+                    self.stack.push(Value::Bool(r));
+                }
+                Op::NotEq => {
+                    let (a, b) = self.pop2();
+                    let r = self.loose_eq(&a, &b)?;
+                    self.stack.push(Value::Bool(!r));
+                }
+                Op::StrictEq => {
+                    let (a, b) = self.pop2();
+                    let r = self.strict_eq(&a, &b);
+                    self.stack.push(Value::Bool(r));
+                }
+                Op::StrictNotEq => {
+                    let (a, b) = self.pop2();
+                    let r = self.strict_eq(&a, &b);
+                    self.stack.push(Value::Bool(!r));
+                }
                 Op::Lt => self.compare(|a, b| a < b, |a: &str, b: &str| a < b)?,
                 Op::Gt => self.compare(|a, b| a > b, |a: &str, b: &str| a > b)?,
                 Op::Lte => self.compare(|a, b| a <= b, |a: &str, b: &str| a <= b)?,
@@ -320,15 +443,28 @@ impl Vm {
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let ctor_proto = if let Value::Object(ci) = &ctor {
                         self.heap.with_obj(ci.0, |o| {
-                            if let HeapObj::Function(f) = o { f.prototype.borrow().clone().unwrap_or(Value::Undefined) } else { Value::Undefined }
+                            if let HeapObj::Function(f) = o {
+                                f.prototype.borrow().clone().unwrap_or(Value::Undefined)
+                            } else {
+                                Value::Undefined
+                            }
                         })
-                    } else { Value::Undefined };
+                    } else {
+                        Value::Undefined
+                    };
                     let mut cur = obj;
                     let mut result = false;
                     while let Value::Object(oi) = &cur {
-                        if Value::Object(*oi) == ctor_proto { result = true; break; }
-                        cur = self.heap.with_obj(oi.0, |o| o.proto().borrow().clone().unwrap_or(Value::Undefined));
-                        if cur.is_undefined() { break; }
+                        if Value::Object(*oi) == ctor_proto {
+                            result = true;
+                            break;
+                        }
+                        cur = self.heap.with_obj(oi.0, |o| {
+                            o.proto().borrow().clone().unwrap_or(Value::Undefined)
+                        });
+                        if cur.is_undefined() {
+                            break;
+                        }
                     }
                     let _ = ctor;
                     self.stack.push(Value::Bool(result));
@@ -339,14 +475,20 @@ impl Vm {
                 Op::Shl => self.int_bin(|a, b| a << (b as u32 & 31))?,
                 Op::Shr => self.int_bin(|a, b| a >> (b as u32 & 31))?,
                 Op::Ushr => self.int_bin(|a, b| ((a as u32) >> (b as u32 & 31)) as i32)?,
-                Op::Jump(target) => { self.frames.last_mut().unwrap().ip = target; }
+                Op::Jump(target) => {
+                    self.frames.last_mut().unwrap().ip = target;
+                }
                 Op::JumpIfFalse(target) => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    if !v.is_truthy() { self.frames.last_mut().unwrap().ip = target; }
+                    if !v.is_truthy() {
+                        self.frames.last_mut().unwrap().ip = target;
+                    }
                 }
                 Op::JumpIfTrue(target) => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    if v.is_truthy() { self.frames.last_mut().unwrap().ip = target; }
+                    if v.is_truthy() {
+                        self.frames.last_mut().unwrap().ip = target;
+                    }
                 }
                 Op::Return => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
@@ -434,8 +576,15 @@ impl Vm {
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
                     let removed = if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| o.props().borrow_mut().remove(&Rc::from(key_str.as_str())).is_some())
-                    } else { false };
+                        self.heap.with_obj(idx.0, |o| {
+                            o.props()
+                                .borrow_mut()
+                                .remove(&Rc::from(key_str.as_str()))
+                                .is_some()
+                        })
+                    } else {
+                        false
+                    };
                     self.stack.push(Value::Bool(removed || obj.is_object()));
                 }
                 Op::SetProto => {
@@ -533,23 +682,33 @@ impl Vm {
                                 class_name: None,
                             });
                             Value::Object(GcIdx(self.heap.allocate(proto)))
-                        } else { Value::Undefined };
+                        } else {
+                            Value::Undefined
+                        };
                         let fd = crate::value::FunctionData {
                             name: fdef.name.clone(),
                             kind: crate::value::FunctionKind::Interpreted { func: fdef },
                             closure: env_idx,
-                            prototype: RefCell::new(if !is_arrow { Some(proto_val.clone()) } else { None }),
+                            prototype: RefCell::new(if !is_arrow {
+                                Some(proto_val.clone())
+                            } else {
+                                None
+                            }),
                             props: RefCell::new(HashMap::new()),
                         };
                         let idx = self.heap.allocate(HeapObj::Function(fd));
-                       // link prototype.constructor back to the function
-                       if let Value::Object(pidx) = &proto_val {
-                           self.heap.with_obj(pidx.0, |obj| {
-                                let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(idx)));
+                        // link prototype.constructor back to the function
+                        if let Value::Object(pidx) = &proto_val {
+                            self.heap.with_obj(pidx.0, |obj| {
+                                let mut desc = crate::value::PropertyDescriptor::data(
+                                    Value::Object(GcIdx(idx)),
+                                );
                                 desc.enumerable = false;
-                                obj.props().borrow_mut().insert(Rc::from("constructor"), desc);
-                           });
-                       }
+                                obj.props()
+                                    .borrow_mut()
+                                    .insert(Rc::from("constructor"), desc);
+                            });
+                        }
                         self.stack.push(Value::Object(GcIdx(idx)));
                     } else {
                         self.stack.push(Value::Undefined);
@@ -558,9 +717,16 @@ impl Vm {
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     let t = if let Value::Object(idx) = &v {
-                        if self.heap.with_obj(idx.0, |o| o.is_function()) { "function" } else { "object" }
+                        if self.heap.with_obj(idx.0, |o| o.is_function()) {
+                            "function"
+                        } else {
+                            "object"
+                        }
                     } else {
-                        match &v { Value::Object(_) => "object", _ => v.type_of() }
+                        match &v {
+                            Value::Object(_) => "object",
+                            _ => v.type_of(),
+                        }
                     };
                     self.stack.push(Value::String(Rc::from(t)));
                 }
@@ -574,8 +740,16 @@ impl Vm {
                     // `typeof name`: "undefined" if the name is not bound (must not throw).
                     let name = {
                         let frame = self.frames.last().unwrap();
-                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
-                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let val = crate::environment::get(&self.heap, cur_env, &name)
@@ -583,8 +757,14 @@ impl Vm {
                     let t = match val {
                         Some(v) => {
                             if let Value::Object(idx) = &v {
-                                if self.heap.with_obj(idx.0, |o| o.is_function()) { "function" } else { "object" }
-                            } else { v.type_of() }
+                                if self.heap.with_obj(idx.0, |o| o.is_function()) {
+                                    "function"
+                                } else {
+                                    "object"
+                                }
+                            } else {
+                                v.type_of()
+                            }
                         }
                         None => "undefined",
                     };
@@ -646,7 +826,11 @@ impl Vm {
         Ok(())
     }
 
-    fn bin_op<F: Fn(f64, f64) -> Value, G: Fn(&str, &str) -> Value>(&mut self, numf: F, strf: G) -> error::Result<()> {
+    fn bin_op<F: Fn(f64, f64) -> Value, G: Fn(&str, &str) -> Value>(
+        &mut self,
+        numf: F,
+        strf: G,
+    ) -> error::Result<()> {
         let (a, b) = self.pop2();
         // string concatenation
         let ap = self.to_primitive(&a)?;
@@ -655,7 +839,8 @@ impl Vm {
             (Value::String(_), _) | (_, Value::String(_)) => {
                 let sa = self.to_string(&ap)?;
                 let sb = self.to_string(&bp)?;
-                self.stack.push(Value::String(Rc::from(format!("{}{}", sa, sb).as_str())));
+                self.stack
+                    .push(Value::String(Rc::from(format!("{}{}", sa, sb).as_str())));
             }
             _ => {
                 let av = self.to_number(&ap)?;
@@ -666,7 +851,11 @@ impl Vm {
         Ok(())
     }
 
-    fn compare<F: Fn(f64, f64) -> bool, S: Fn(&str, &str) -> bool>(&mut self, f: F, sf: S) -> error::Result<()> {
+    fn compare<F: Fn(f64, f64) -> bool, S: Fn(&str, &str) -> bool>(
+        &mut self,
+        f: F,
+        sf: S,
+    ) -> error::Result<()> {
         let (a, b) = self.pop2();
         let pa = self.to_primitive(&a)?;
         let pb = self.to_primitive(&b)?;
@@ -690,26 +879,46 @@ impl Vm {
         Ok(match v {
             Value::Undefined => f64::NAN,
             Value::Null => 0.0,
-            Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+            Value::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             Value::Number(n) => *n,
             Value::String(s) => {
                 let t = s.trim();
-                if t.is_empty() { 0.0 } else { t.parse::<f64>().unwrap_or(f64::NAN) }
+                if t.is_empty() {
+                    0.0
+                } else {
+                    t.parse::<f64>().unwrap_or(f64::NAN)
+                }
             }
             Value::Object(idx) => {
                 self.heap.with_obj(idx.0, |obj| {
                     match obj {
                         HeapObj::Array(a) => {
                             let items = a.items.borrow();
-                            if items.is_empty() { 0.0 }
-                            else if items.len() == 1 { 0.0 } // recurse needed
-                            else { f64::NAN }
+                            if items.is_empty() {
+                                0.0
+                            } else if items.len() == 1 {
+                                0.0
+                            }
+                            // recurse needed
+                            else {
+                                f64::NAN
+                            }
                         }
                         _ => f64::NAN,
                     }
                 })
             }
-            Value::Symbol(_) => { return Err(Error::type_err("Cannot convert Symbol to number".to_string())); }
+            Value::Symbol(_) => {
+                return Err(Error::type_err(
+                    "Cannot convert Symbol to number".to_string(),
+                ));
+            }
         })
     }
 
@@ -721,28 +930,47 @@ impl Vm {
             Value::Number(n) => Rc::from(crate::value::num_to_string(*n).as_str()),
             Value::String(s) => s.clone(),
             Value::Object(idx) => {
-                let is_array = self.heap.with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_)));
+                let is_array = self
+                    .heap
+                    .with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_)));
                 if is_array {
                     // join items outside the borrow
                     let items = self.heap.with_obj(idx.0, |obj| {
-                        if let HeapObj::Array(a) = obj { a.items.borrow().clone() } else { Vec::new() }
+                        if let HeapObj::Array(a) = obj {
+                            a.items.borrow().clone()
+                        } else {
+                            Vec::new()
+                        }
                     });
-                    let parts: Vec<String> = items.iter()
-                        .map(|i| if i.is_nullish() { String::new() } else { self.to_string(i).map(|s| s.to_string()).unwrap_or_default() })
+                    let parts: Vec<String> = items
+                        .iter()
+                        .map(|i| {
+                            if i.is_nullish() {
+                                String::new()
+                            } else {
+                                self.to_string(i).map(|s| s.to_string()).unwrap_or_default()
+                            }
+                        })
                         .collect();
                     Rc::from(parts.join(",").as_str())
                 } else {
-                    self.heap.with_obj(idx.0, |obj| {
-                        match obj {
-                            HeapObj::Object(o) => {
-                                if let Some(cn) = &o.class_name { cn.clone() } else { Rc::from("[object Object]") }
+                    self.heap.with_obj(idx.0, |obj| match obj {
+                        HeapObj::Object(o) => {
+                            if let Some(cn) = &o.class_name {
+                                cn.clone()
+                            } else {
+                                Rc::from("[object Object]")
                             }
-                            _ => Rc::from("[object Object]"),
                         }
+                        _ => Rc::from("[object Object]"),
                     })
                 }
             }
-            Value::Symbol(_) => { return Err(Error::type_err("Cannot convert Symbol to string".to_string())); }
+            Value::Symbol(_) => {
+                return Err(Error::type_err(
+                    "Cannot convert Symbol to string".to_string(),
+                ));
+            }
         })
     }
 
@@ -761,19 +989,27 @@ impl Vm {
         match v {
             Value::String(s) => Ok(s.to_string()),
             Value::Number(n) => Ok(crate::value::num_to_string(*n)),
-            Value::Symbol(_) => Err(Error::type_err("Symbol keys not yet supported in property access".to_string())),
+            Value::Symbol(_) => Err(Error::type_err(
+                "Symbol keys not yet supported in property access".to_string(),
+            )),
             _ => Ok(self.to_string(v)?.to_string()),
         }
     }
 
-    pub fn to_boolean(&self, v: &Value) -> bool { v.is_truthy() }
+    pub fn to_boolean(&self, v: &Value) -> bool {
+        v.is_truthy()
+    }
 
     pub fn strict_eq(&self, a: &Value, b: &Value) -> bool {
         match (a, b) {
             (Value::Undefined, Value::Undefined) => true,
             (Value::Null, Value::Null) => true,
             (Value::Number(x), Value::Number(y)) => {
-                if x.is_nan() || y.is_nan() { false } else { x == y }
+                if x.is_nan() || y.is_nan() {
+                    false
+                } else {
+                    x == y
+                }
             }
             (Value::Bool(x), Value::Bool(y)) => x == y,
             (Value::String(x), Value::String(y)) => x == y,
@@ -797,26 +1033,26 @@ impl Vm {
                 let an = self.to_number(a)?;
                 self.strict_eq(&Value::Number(an), b)
             }
-           (Value::Bool(_), _) => {
-               let an = self.to_number(a)?;
+            (Value::Bool(_), _) => {
+                let an = self.to_number(a)?;
                 self.loose_eq(&Value::Number(an), b)?
-           }
-          (_, Value::Bool(_)) => {
-              let bn = self.to_number(b)?;
-               self.loose_eq(a, &Value::Number(bn))?
-          }
-           // Object vs primitive: ToPrimitive the object, then compare.
-           (Value::Object(_), _) if !b.is_object() => {
-               let ap = self.to_primitive(a)?;
-               self.loose_eq(&ap, b)?
-           }
-           (_, Value::Object(_)) if !a.is_object() => {
-               let bp = self.to_primitive(b)?;
-               self.loose_eq(a, &bp)?
-           }
-           _ => false,
-       })
-   }
+            }
+            (_, Value::Bool(_)) => {
+                let bn = self.to_number(b)?;
+                self.loose_eq(a, &Value::Number(bn))?
+            }
+            // Object vs primitive: ToPrimitive the object, then compare.
+            (Value::Object(_), _) if !b.is_object() => {
+                let ap = self.to_primitive(a)?;
+                self.loose_eq(&ap, b)?
+            }
+            (_, Value::Object(_)) if !a.is_object() => {
+                let bp = self.to_primitive(b)?;
+                self.loose_eq(a, &bp)?
+            }
+            _ => false,
+        })
+    }
 
     // ---- property access ----
 
@@ -842,53 +1078,57 @@ impl Vm {
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
                         if key == "length" {
-                            return Ok::<Value, Error>(Value::Number(a.items.borrow().len() as f64));
+                            return Ok::<Value, Error>(
+                                Value::Number(a.items.borrow().len() as f64),
+                            );
                         }
                         if let Ok(i) = key.parse::<usize>() {
                             let items = a.items.borrow();
-                           return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
-                       }
-                   }
-                if let HeapObj::Map(m) = o {
-                    if key == "size" {
-                        return Ok(Value::Number(m.entries.borrow().len() as f64));
-                    }
-                }
-                if let HeapObj::Set(s) = o {
-                    if key == "size" {
-                        return Ok(Value::Number(s.items.borrow().len() as f64));
-                    }
-                }
-                let props = o.props();
-                if let Some(desc) = props.borrow().get(key) {
-                    return Ok(desc.value.clone());
-                }
-                // function-specific: .prototype lives in a dedicated field
-                if let HeapObj::Function(f) = o {
-                    if key == "prototype" {
-                        if let Some(p) = f.prototype.borrow().as_ref() {
-                            return Ok(p.clone());
+                            return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
                         }
                     }
-                    if key == "name" {
-                        if let Some(n) = &f.name {
-                            return Ok(Value::String(n.clone()));
-                        }
-                        return Ok(Value::String(Rc::from("")));
-                    }
-                    if key == "length" {
-                        if let crate::value::FunctionKind::Native { length, .. } = &f.kind {
-                            return Ok(Value::Number(*length as f64));
-                        }
-                        if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                            return Ok(Value::Number(func.params.len() as f64));
+                    if let HeapObj::Map(m) = o {
+                        if key == "size" {
+                            return Ok(Value::Number(m.entries.borrow().len() as f64));
                         }
                     }
-                }
-                Ok(Value::Undefined)
-            });
+                    if let HeapObj::Set(s) = o {
+                        if key == "size" {
+                            return Ok(Value::Number(s.items.borrow().len() as f64));
+                        }
+                    }
+                    let props = o.props();
+                    if let Some(desc) = props.borrow().get(key) {
+                        return Ok(desc.value.clone());
+                    }
+                    // function-specific: .prototype lives in a dedicated field
+                    if let HeapObj::Function(f) = o {
+                        if key == "prototype" {
+                            if let Some(p) = f.prototype.borrow().as_ref() {
+                                return Ok(p.clone());
+                            }
+                        }
+                        if key == "name" {
+                            if let Some(n) = &f.name {
+                                return Ok(Value::String(n.clone()));
+                            }
+                            return Ok(Value::String(Rc::from("")));
+                        }
+                        if key == "length" {
+                            if let crate::value::FunctionKind::Native { length, .. } = &f.kind {
+                                return Ok(Value::Number(*length as f64));
+                            }
+                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
+                                return Ok(Value::Number(func.params.len() as f64));
+                            }
+                        }
+                    }
+                    Ok(Value::Undefined)
+                });
                 let val = proto?;
-                if !val.is_undefined() { return Ok(val); }
+                if !val.is_undefined() {
+                    return Ok(val);
+                }
                 // walk proto chain
                 let p = self.heap.with_obj(idx.0, |o| o.proto().borrow().clone());
                 if let Some(proto) = p {
@@ -928,23 +1168,31 @@ impl Vm {
                                 let mut items = a.items.borrow_mut();
                                 let new_len = len as usize;
                                 items.truncate(new_len);
-                                while items.len() < new_len { items.push(Value::Undefined); }
+                                while items.len() < new_len {
+                                    items.push(Value::Undefined);
+                                }
                             }
                             return;
                         }
                         if let Ok(i) = key.parse::<usize>() {
                             let mut items = a.items.borrow_mut();
-                            while items.len() <= i { items.push(Value::Undefined); }
+                            while items.len() <= i {
+                                items.push(Value::Undefined);
+                            }
                             items[i] = value;
                             return;
                         }
                     }
                     let props = o.props();
-                    props.borrow_mut().insert(Rc::from(key), crate::value::PropertyDescriptor::data(value));
+                    props
+                        .borrow_mut()
+                        .insert(Rc::from(key), crate::value::PropertyDescriptor::data(value));
                 });
                 Ok(())
             }
-            _ => Err(Error::type_err("Cannot set property of primitive".to_string())),
+            _ => Err(Error::type_err(
+                "Cannot set property of primitive".to_string(),
+            )),
         }
     }
 
@@ -952,20 +1200,38 @@ impl Vm {
     pub fn collect_roots(&self) -> Vec<usize> {
         let mut roots = vec![self.global.0];
         for v in &self.stack {
-            if let Value::Object(idx) = v { roots.push(idx.0); }
+            if let Value::Object(idx) = v {
+                roots.push(idx.0);
+            }
         }
         for f in &self.frames {
             roots.push(f.env.0);
-            if let Value::Object(idx) = &f.this_val { roots.push(idx.0); }
+            if let Value::Object(idx) = &f.this_val {
+                roots.push(idx.0);
+            }
             for l in &f.locals {
-                if let Value::Object(idx) = l { roots.push(idx.0); }
+                if let Value::Object(idx) = l {
+                    roots.push(idx.0);
+                }
             }
         }
-        for proto in [&self.object_proto, &self.array_proto, &self.function_proto,
-                      &self.string_proto, &self.number_proto, &self.boolean_proto,
-                      &self.error_proto, &self.symbol_proto, &self.promise_proto,
-                      &self.iterator_proto, &self.map_proto, &self.set_proto] {
-            if let Value::Object(idx) = proto { roots.push(idx.0); }
+        for proto in [
+            &self.object_proto,
+            &self.array_proto,
+            &self.function_proto,
+            &self.string_proto,
+            &self.number_proto,
+            &self.boolean_proto,
+            &self.error_proto,
+            &self.symbol_proto,
+            &self.promise_proto,
+            &self.iterator_proto,
+            &self.map_proto,
+            &self.set_proto,
+        ] {
+            if let Value::Object(idx) = proto {
+                roots.push(idx.0);
+            }
         }
         roots
     }
@@ -998,7 +1264,6 @@ impl Vm {
         GcIdx(self.heap.allocate(HeapObj::Function(fdef)))
     }
 
-
     /// Minimal stub for `Object(value)` coercion.
     pub fn to_object(&mut self, value: &Value) -> error::Result<Value> {
         Ok(match value {
@@ -1010,65 +1275,127 @@ impl Vm {
 
 impl Vm {
     /// Call a function value with the given arguments and `this` binding.
-    pub fn call_function(&mut self, func: &Value, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    pub fn call_function(
+        &mut self,
+        func: &Value,
+        args: &[Value],
+        this: Option<Value>,
+    ) -> error::Result<Value> {
         let idx = match func {
             Value::Object(idx) => *idx,
-            _ => return Err(Error::type_err(format!("{} is not a function", func.type_of()))),
+            _ => {
+                return Err(Error::type_err(format!(
+                    "{} is not a function",
+                    func.type_of()
+                )))
+            }
         };
         // read function kind without holding borrow
         let kind_info = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {
                 match &f.kind {
-                    crate::value::FunctionKind::Native { func, .. } => Some(FuncCallInfo::Native(*func)),
-                    crate::value::FunctionKind::Interpreted { func } => Some(FuncCallInfo::Interpreted {
-                        func: func.clone(),
-                        closure: f.closure,
-                        is_arrow: func.is_arrow,
-                    }),
-                    crate::value::FunctionKind::Bound { target, this_val, bound_args } => Some(FuncCallInfo::Bound {
-                        target: *target, this_val: this_val.clone(), bound_args: bound_args.clone(),
+                    crate::value::FunctionKind::Native { func, .. } => {
+                        Some(FuncCallInfo::Native(*func))
+                    }
+                    crate::value::FunctionKind::Interpreted { func } => {
+                        Some(FuncCallInfo::Interpreted {
+                            func: func.clone(),
+                            closure: f.closure,
+                            is_arrow: func.is_arrow,
+                        })
+                    }
+                    crate::value::FunctionKind::Bound {
+                        target,
+                        this_val,
+                        bound_args,
+                    } => Some(FuncCallInfo::Bound {
+                        target: *target,
+                        this_val: this_val.clone(),
+                        bound_args: bound_args.clone(),
                     }),
                 }
-            } else { None }
+            } else {
+                None
+            }
         });
         match kind_info {
             Some(FuncCallInfo::Native(f)) => f(self, args, this),
-            Some(FuncCallInfo::Interpreted { func, closure, is_arrow }) => {
-               let call_env = env::new_env(&self.heap, Some(closure), true);
-               // store parameters into the call environment (enables closures + recursion)
-               for (i, param) in func.params.iter().enumerate() {
-                   let v = args.get(i).cloned().unwrap_or(Value::Undefined);
-                   env::declare(&self.heap, call_env, param, v, crate::value::BindingKind::Let);
-               }
+            Some(FuncCallInfo::Interpreted {
+                func,
+                closure,
+                is_arrow,
+            }) => {
+                let call_env = env::new_env(&self.heap, Some(closure), true);
+                // store parameters into the call environment (enables closures + recursion)
+                for (i, param) in func.params.iter().enumerate() {
+                    let v = args.get(i).cloned().unwrap_or(Value::Undefined);
+                    env::declare(
+                        &self.heap,
+                        call_env,
+                        param,
+                        v,
+                        crate::value::BindingKind::Let,
+                    );
+                }
                 // rest parameter: collect remaining args into an array.
                 if let Some(rest_name) = &func.rest_param {
                     let rest: Vec<Value> = if func.params.len() <= args.len() {
                         args[func.params.len()..].to_vec()
-                    } else { Vec::new() };
+                    } else {
+                        Vec::new()
+                    };
                     let arr = HeapObj::Array(crate::value::ArrayData {
                         items: RefCell::new(rest),
                         props: RefCell::new(HashMap::new()),
                         proto: RefCell::new(Some(self.array_proto.clone())),
                     });
-                    env::declare(&self.heap, call_env, rest_name, Value::Object(GcIdx(self.heap.allocate(arr))), crate::value::BindingKind::Const);
+                    env::declare(
+                        &self.heap,
+                        call_env,
+                        rest_name,
+                        Value::Object(GcIdx(self.heap.allocate(arr))),
+                        crate::value::BindingKind::Const,
+                    );
                 }
                 // make the function visible to itself by its name (for recursion)
                 if let Some(name) = &func.name {
-                    env::declare(&self.heap, call_env, name, Value::Object(idx), crate::value::BindingKind::Const);
+                    env::declare(
+                        &self.heap,
+                        call_env,
+                        name,
+                        Value::Object(idx),
+                        crate::value::BindingKind::Const,
+                    );
                 }
                 let arr = HeapObj::Array(crate::value::ArrayData {
                     items: RefCell::new(args.to_vec()),
                     props: RefCell::new(HashMap::new()),
                     proto: RefCell::new(Some(self.array_proto.clone())),
                 });
-                env::declare(&self.heap, call_env, "arguments", Value::Object(GcIdx(self.heap.allocate(arr))), crate::value::BindingKind::Const);
+                env::declare(
+                    &self.heap,
+                    call_env,
+                    "arguments",
+                    Value::Object(GcIdx(self.heap.allocate(arr))),
+                    crate::value::BindingKind::Const,
+                );
                 let this_val = this.unwrap_or(Value::Undefined);
-                env::declare(&self.heap, call_env, "this", this_val.clone(), crate::value::BindingKind::Const);
+                env::declare(
+                    &self.heap,
+                    call_env,
+                    "this",
+                    this_val.clone(),
+                    crate::value::BindingKind::Const,
+                );
                 let _ = is_arrow;
                 // execute the compiled function chunk
                 self.execute_chunk_func(func.clone(), call_env, this_val, args)
             }
-            Some(FuncCallInfo::Bound { target, this_val, bound_args }) => {
+            Some(FuncCallInfo::Bound {
+                target,
+                this_val,
+                bound_args,
+            }) => {
                 let mut all = bound_args;
                 all.extend_from_slice(args);
                 self.call_function(&Value::Object(target), &all, Some(this_val))
@@ -1084,8 +1411,13 @@ impl Vm {
         };
         let proto = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {
-                f.prototype.borrow().clone().unwrap_or(self.object_proto.clone())
-            } else { self.object_proto.clone() }
+                f.prototype
+                    .borrow()
+                    .clone()
+                    .unwrap_or(self.object_proto.clone())
+            } else {
+                self.object_proto.clone()
+            }
         });
         let new_obj = HeapObj::Object(crate::value::ObjectData {
             props: RefCell::new(HashMap::new()),
@@ -1094,52 +1426,76 @@ impl Vm {
             class_name: None,
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)));
-       let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
-       if matches!(result, Value::Object(_)) {
-           Ok(result)
-       } else {
-           Ok(this_obj)
-       }
-   }
+        let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
+        if matches!(result, Value::Object(_)) {
+            Ok(result)
+        } else {
+            Ok(this_obj)
+        }
+    }
 
     // ---- iteration ----
 
     /// Build a heap iterator object that yields the values of `iterable`.
     pub fn make_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
         let items: Vec<Value> = match iterable {
-            Value::String(s) => {
-                s.chars().map(|c| Value::String(Rc::from(c.to_string().as_str()))).collect()
-            }
+            Value::String(s) => s
+                .chars()
+                .map(|c| Value::String(Rc::from(c.to_string().as_str())))
+                .collect(),
             Value::Object(idx) => {
                 let (is_array, is_map, is_set) = self.heap.with_obj(idx.0, |o| {
-                    (matches!(o, HeapObj::Array(_)), matches!(o, HeapObj::Map(_)), matches!(o, HeapObj::Set(_)))
+                    (
+                        matches!(o, HeapObj::Array(_)),
+                        matches!(o, HeapObj::Map(_)),
+                        matches!(o, HeapObj::Set(_)),
+                    )
                 });
                 if is_array {
                     self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Array(a) = o { a.items.borrow().clone() } else { Vec::new() }
+                        if let HeapObj::Array(a) = o {
+                            a.items.borrow().clone()
+                        } else {
+                            Vec::new()
+                        }
                     })
                 } else if is_map {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Map(m) = o {
-                            m.entries.borrow().iter().map(|(k, v)| {
-                                let pair = HeapObj::Array(crate::value::ArrayData {
-                                    items: RefCell::new(vec![k.clone(), v.clone()]),
-                                    props: RefCell::new(HashMap::new()),
-                                    proto: RefCell::new(Some(self.array_proto.clone())),
-                                });
-                                Value::Object(GcIdx(self.heap.allocate(pair)))
-                            }).collect::<Vec<_>>()
-                        } else { Vec::new() }
+                            m.entries
+                                .borrow()
+                                .iter()
+                                .map(|(k, v)| {
+                                    let pair = HeapObj::Array(crate::value::ArrayData {
+                                        items: RefCell::new(vec![k.clone(), v.clone()]),
+                                        props: RefCell::new(HashMap::new()),
+                                        proto: RefCell::new(Some(self.array_proto.clone())),
+                                    });
+                                    Value::Object(GcIdx(self.heap.allocate(pair)))
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        }
                     })
                 } else if is_set {
                     self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Set(s) = o { s.items.borrow().clone() } else { Vec::new() }
+                        if let HeapObj::Set(s) = o {
+                            s.items.borrow().clone()
+                        } else {
+                            Vec::new()
+                        }
                     })
                 } else {
                     return Err(Error::type_err("value is not iterable".to_string()));
                 }
             }
-            _ => return Err(Error::type_err(format!("{} is not iterable", iterable.type_of()))),
+            _ => {
+                return Err(Error::type_err(format!(
+                    "{} is not iterable",
+                    iterable.type_of()
+                )))
+            }
         };
         Ok(self.new_iterator(items))
     }
@@ -1158,7 +1514,9 @@ impl Vm {
                 }
                 if let HeapObj::Map(m) = o {
                     for (k, _) in m.entries.borrow().iter() {
-                        if let Value::String(s) = k { own.push(Value::String(s.clone())); }
+                        if let Value::String(s) = k {
+                            own.push(Value::String(s.clone()));
+                        }
                     }
                 }
                 for (k, desc) in o.props().borrow().iter() {
@@ -1169,10 +1527,14 @@ impl Vm {
                 (own, o.proto().borrow().clone())
             });
             for k in own {
-                if !keys.contains(&k) { keys.push(k); }
+                if !keys.contains(&k) {
+                    keys.push(k);
+                }
             }
             cur = proto.unwrap_or(Value::Undefined);
-            if cur.is_undefined() { break; }
+            if cur.is_undefined() {
+                break;
+            }
         }
         Ok(self.new_iterator(keys))
     }
@@ -1186,7 +1548,10 @@ impl Vm {
     }
 
     pub fn iterator_next(&self, it: &Value) -> error::Result<(Value, bool)> {
-        let idx = match it { Value::Object(idx) => idx.0, _ => return Err(Error::type_err("not an iterator".to_string())) };
+        let idx = match it {
+            Value::Object(idx) => idx.0,
+            _ => return Err(Error::type_err("not an iterator".to_string())),
+        };
         self.heap.with_obj(idx, |o| {
             if let HeapObj::Iterator(it) = o {
                 let items = it.items.borrow();
@@ -1212,14 +1577,24 @@ impl Vm {
                 }
                 false
             })
-        } else { false }
+        } else {
+            false
+        }
     }
 }
 
 enum FuncCallInfo {
     Native(NativeFn),
-    Interpreted { func: std::rc::Rc<crate::function::FunctionDef>, closure: GcIdx, is_arrow: bool },
-    Bound { target: GcIdx, this_val: Value, bound_args: Vec<Value> },
+    Interpreted {
+        func: std::rc::Rc<crate::function::FunctionDef>,
+        closure: GcIdx,
+        is_arrow: bool,
+    },
+    Bound {
+        target: GcIdx,
+        this_val: Value,
+        bound_args: Vec<Value>,
+    },
 }
 
 impl Vm {

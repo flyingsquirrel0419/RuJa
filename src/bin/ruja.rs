@@ -1,4 +1,4 @@
-use ruja::{Vm, Value};
+use ruja::{Value, Vm};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -44,18 +44,30 @@ fn run_file(path: &str) -> i32 {
             let mut vm = Vm::new();
             match vm.run(&src) {
                 Ok(_) => 0,
-                Err(e) => { eprintln!("{}", e); 1 }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    1
+                }
             }
         }
-        Err(e) => { eprintln!("ruja: cannot read '{}': {}", path, e); 1 }
+        Err(e) => {
+            eprintln!("ruja: cannot read '{}': {}", path, e);
+            1
+        }
     }
 }
 
 fn run_eval(code: &str) -> i32 {
     let mut vm = Vm::new();
     match vm.run(code) {
-        Ok(v) => { print_value(&mut vm, &v); 0 }
-        Err(e) => { eprintln!("{}", e); 1 }
+        Ok(v) => {
+            print_value(&mut vm, &v);
+            0
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            1
+        }
     }
 }
 
@@ -67,26 +79,46 @@ fn repl() -> i32 {
 
     println!("RuJa v{} - JavaScript REPL (Ctrl+C to exit)", VERSION);
     loop {
-        let prompt = if buffer.matches('{').count() > buffer.matches('}').count() { "  ... " } else { "ruja> " };
+        let prompt = if buffer.matches('{').count() > buffer.matches('}').count() {
+            "  ... "
+        } else {
+            "ruja> "
+        };
         print!("{}", prompt);
-        if stdout.flush().is_err() { break; }
+        if stdout.flush().is_err() {
+            break;
+        }
 
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
-            Ok(0) => { println!(); break; }
+            Ok(0) => {
+                println!();
+                break;
+            }
             Ok(_) => {}
             Err(_) => break,
         }
 
         buffer.push_str(&line);
-        if buffer.matches('{').count() > buffer.matches('}').count() { continue; }
+        if buffer.matches('{').count() > buffer.matches('}').count() {
+            continue;
+        }
 
         let trimmed = buffer.trim();
-        if trimmed.is_empty() { buffer.clear(); continue; }
-        if trimmed == ".exit" || trimmed == ".quit" { break; }
+        if trimmed.is_empty() {
+            buffer.clear();
+            continue;
+        }
+        if trimmed == ".exit" || trimmed == ".quit" {
+            break;
+        }
 
         match vm.run(&buffer) {
-            Ok(v) => { if !v.is_undefined() { print_value(&mut vm, &v); } }
+            Ok(v) => {
+                if !v.is_undefined() {
+                    print_value(&mut vm, &v);
+                }
+            }
             Err(e) => eprintln!("{}", e),
         }
         buffer.clear();
@@ -96,17 +128,33 @@ fn repl() -> i32 {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() == 1 { exit(repl()); }
+    if args.len() == 1 {
+        exit(repl());
+    }
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "-h" | "--help" => { print!("{}", HELP); exit(0); }
-            "-V" | "--version" => { println!("ruja {}", VERSION); exit(0); }
+            "-h" | "--help" => {
+                print!("{}", HELP);
+                exit(0);
+            }
+            "-V" | "--version" => {
+                println!("ruja {}", VERSION);
+                exit(0);
+            }
             "-e" | "--eval" => {
-                if i + 1 >= args.len() { eprintln!("ruja: -e requires an argument"); exit(2); }
+                if i + 1 >= args.len() {
+                    eprintln!("ruja: -e requires an argument");
+                    exit(2);
+                }
                 exit(run_eval(&args[i + 1]));
             }
-            "--" => { if i + 1 < args.len() { exit(run_file(&args[i + 1])); } exit(0); }
+            "--" => {
+                if i + 1 < args.len() {
+                    exit(run_file(&args[i + 1]));
+                }
+                exit(0);
+            }
             arg if arg.starts_with('-') => {
                 eprintln!("ruja: unknown option '{}'", arg);
                 eprintln!("Try 'ruja --help' for more information.");

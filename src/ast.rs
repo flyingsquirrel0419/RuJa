@@ -23,7 +23,10 @@ pub enum Expr {
     Number(f64),
     String(Rc<str>),
     TemplateStr(Rc<str>),
-    TemplateInterp { quasis: Vec<Rc<str>>, exprs: Vec<Expr> },
+    TemplateInterp {
+        quasis: Vec<Rc<str>>,
+        exprs: Vec<Expr>,
+    },
     Bool(bool),
     Null,
     Undefined,
@@ -41,9 +44,19 @@ pub enum Expr {
     Logical(LogicalOp, Box<Expr>, Box<Expr>),
     Assign(AssignOp, Box<Expr>, Box<Expr>),
     Conditional(Box<Expr>, Box<Expr>, Box<Expr>), // cond ? then : else
-    Call { callee: Box<Expr>, args: Vec<Expr> },
-    New { callee: Box<Expr>, args: Vec<Expr> },
-    Member { object: Box<Expr>, property: Box<Expr>, computed: bool },
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    New {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    Member {
+        object: Box<Expr>,
+        property: Box<Expr>,
+        computed: bool,
+    },
     Spread(Box<Expr>),
     Sequence(Vec<Expr>),
 }
@@ -91,7 +104,7 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnOp {
-    Plus,   // unary + (ToNumber coercion)
+    Plus, // unary + (ToNumber coercion)
     Neg,
     Not,
     BitNot,
@@ -161,31 +174,64 @@ pub enum AssignOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    VarDecl { kind: VarKind, decls: Vec<(Rc<str>, Option<Expr>)> },
+    VarDecl {
+        kind: VarKind,
+        decls: Vec<(Rc<str>, Option<Expr>)>,
+    },
     ExprStmt(Expr),
     Block(Vec<Stmt>),
-    If { cond: Expr, then: Box<Stmt>, else_: Option<Box<Stmt>> },
-    While { cond: Expr, body: Box<Stmt> },
-    DoWhile { body: Box<Stmt>, cond: Expr },
+    If {
+        cond: Expr,
+        then: Box<Stmt>,
+        else_: Option<Box<Stmt>>,
+    },
+    While {
+        cond: Expr,
+        body: Box<Stmt>,
+    },
+    DoWhile {
+        body: Box<Stmt>,
+        cond: Expr,
+    },
     For {
         init: Option<Box<Stmt>>,
         cond: Option<Expr>,
         update: Option<Expr>,
         body: Box<Stmt>,
     },
-    ForIn { left: Box<Stmt>, right: Expr, body: Box<Stmt> },
-    ForOf { left: Box<Stmt>, right: Expr, body: Box<Stmt> },
+    ForIn {
+        left: Box<Stmt>,
+        right: Expr,
+        body: Box<Stmt>,
+    },
+    ForOf {
+        left: Box<Stmt>,
+        right: Expr,
+        body: Box<Stmt>,
+    },
     Break(Option<Rc<str>>),
     Continue(Option<Rc<str>>),
     Return(Option<Expr>),
     Throw(Expr),
-    TryCatch { try_body: Box<Stmt>, catch_param: Option<Rc<str>>, catch_body: Box<Stmt>, finally_body: Option<Box<Stmt>> },
+    TryCatch {
+        try_body: Box<Stmt>,
+        catch_param: Option<Rc<str>>,
+        catch_body: Box<Stmt>,
+        finally_body: Option<Box<Stmt>>,
+    },
     FunctionDecl(FunctionExpr),
     Labeled(Rc<str>, Box<Stmt>),
     Empty,
-    Switch { disc: Expr, cases: Vec<SwitchCase> },
+    Switch {
+        disc: Expr,
+        cases: Vec<SwitchCase>,
+    },
     /// Destructuring declaration: `let [a,b] = expr` / `const {x,y} = expr`.
-    Destructure { kind: VarKind, pattern: Pattern, init: Option<Expr> },
+    Destructure {
+        kind: VarKind,
+        pattern: Pattern,
+        init: Option<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

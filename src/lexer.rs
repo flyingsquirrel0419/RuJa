@@ -14,18 +14,34 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
-        Lexer { src: src.as_bytes(), pos: 0, line: 1, col: 1, saw_newline: true, template_state: 0 }
+        Lexer {
+            src: src.as_bytes(),
+            pos: 0,
+            line: 1,
+            col: 1,
+            saw_newline: true,
+            template_state: 0,
+        }
     }
 
-    fn peek(&self) -> Option<u8> { self.src.get(self.pos).copied() }
-    fn peek_at(&self, off: usize) -> Option<u8> { self.src.get(self.pos + off).copied() }
+    fn peek(&self) -> Option<u8> {
+        self.src.get(self.pos).copied()
+    }
+    fn peek_at(&self, off: usize) -> Option<u8> {
+        self.src.get(self.pos + off).copied()
+    }
 
     fn advance(&mut self) -> Option<u8> {
         let c = self.src.get(self.pos).copied();
         if let Some(b) = c {
             self.pos += 1;
-            if b == b'\n' { self.line += 1; self.col = 1; self.saw_newline = true; }
-            else { self.col += 1; }
+            if b == b'\n' {
+                self.line += 1;
+                self.col = 1;
+                self.saw_newline = true;
+            } else {
+                self.col += 1;
+            }
         }
         c
     }
@@ -33,19 +49,27 @@ impl<'a> Lexer<'a> {
     fn skip_ws_and_comments(&mut self) {
         loop {
             match self.peek() {
-                Some(b' ') | Some(b'\t') | Some(b'\r') => { self.advance(); }
-                Some(b'\n') => { self.advance(); }
+                Some(b' ') | Some(b'\t') | Some(b'\r') => {
+                    self.advance();
+                }
+                Some(b'\n') => {
+                    self.advance();
+                }
                 Some(b'/') if self.peek_at(1) == Some(b'/') => {
                     while let Some(c) = self.peek() {
-                        if c == b'\n' { break; }
+                        if c == b'\n' {
+                            break;
+                        }
                         self.advance();
                     }
                 }
                 Some(b'/') if self.peek_at(1) == Some(b'*') => {
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     while let Some(c) = self.peek() {
                         if c == b'*' && self.peek_at(1) == Some(b'/') {
-                            self.advance(); self.advance();
+                            self.advance();
+                            self.advance();
                             break;
                         }
                         self.advance();
@@ -58,35 +82,64 @@ impl<'a> Lexer<'a> {
 
     fn read_number(&mut self) -> TokenKind {
         let start = self.pos;
-        if self.peek() == Some(b'0') && (self.peek_at(1) == Some(b'x') || self.peek_at(1) == Some(b'X')) {
-            self.advance(); self.advance();
+        if self.peek() == Some(b'0')
+            && (self.peek_at(1) == Some(b'x') || self.peek_at(1) == Some(b'X'))
+        {
+            self.advance();
+            self.advance();
             while let Some(c) = self.peek() {
-                if c.is_ascii_hexdigit() { self.advance(); } else { break; }
+                if c.is_ascii_hexdigit() {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
             return TokenKind::Number(i64::from_str_radix(&s[2..], 16).unwrap_or(0) as f64);
         }
-        if self.peek() == Some(b'0') && (self.peek_at(1) == Some(b'o') || self.peek_at(1) == Some(b'O')) {
-            self.advance(); self.advance();
+        if self.peek() == Some(b'0')
+            && (self.peek_at(1) == Some(b'o') || self.peek_at(1) == Some(b'O'))
+        {
+            self.advance();
+            self.advance();
             while let Some(c) = self.peek() {
-                if (b'0'..=b'7').contains(&c) { self.advance(); } else { break; }
+                if (b'0'..=b'7').contains(&c) {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
-            let s = std::str::from_utf8(&self.src[start+2..self.pos]).unwrap_or("0");
+            let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
             return TokenKind::Number(i64::from_str_radix(s, 8).unwrap_or(0) as f64);
         }
-        if self.peek() == Some(b'0') && (self.peek_at(1) == Some(b'b') || self.peek_at(1) == Some(b'B')) {
-            self.advance(); self.advance();
+        if self.peek() == Some(b'0')
+            && (self.peek_at(1) == Some(b'b') || self.peek_at(1) == Some(b'B'))
+        {
+            self.advance();
+            self.advance();
             while let Some(c) = self.peek() {
-                if c == b'0' || c == b'1' { self.advance(); } else { break; }
+                if c == b'0' || c == b'1' {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
-            let s = std::str::from_utf8(&self.src[start+2..self.pos]).unwrap_or("0");
+            let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
             return TokenKind::Number(i64::from_str_radix(s, 2).unwrap_or(0) as f64);
         }
         while let Some(c) = self.peek() {
-            if c.is_ascii_digit() || c == b'.' || c == b'e' || c == b'E'
-                || (c == b'+' || c == b'-') && (self.src.get(self.pos.wrapping_sub(1)) == Some(&b'e') || self.src.get(self.pos.wrapping_sub(1)) == Some(&b'E')) {
+            if c.is_ascii_digit()
+                || c == b'.'
+                || c == b'e'
+                || c == b'E'
+                || (c == b'+' || c == b'-')
+                    && (self.src.get(self.pos.wrapping_sub(1)) == Some(&b'e')
+                        || self.src.get(self.pos.wrapping_sub(1)) == Some(&b'E'))
+            {
                 self.advance();
-            } else { break; }
+            } else {
+                break;
+            }
         }
         let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
         TokenKind::Number(s.parse::<f64>().unwrap_or(f64::NAN))
@@ -96,7 +149,10 @@ impl<'a> Lexer<'a> {
         self.advance(); // opening quote
         let mut s = String::new();
         while let Some(c) = self.peek() {
-            if c == quote { self.advance(); break; }
+            if c == quote {
+                self.advance();
+                break;
+            }
             if c == b'\\' {
                 self.advance();
                 match self.advance() {
@@ -125,17 +181,26 @@ impl<'a> Lexer<'a> {
                             self.advance();
                             let mut hex = String::new();
                             while let Some(c) = self.peek() {
-                                if c == b'}' { self.advance(); break; }
+                                if c == b'}' {
+                                    self.advance();
+                                    break;
+                                }
                                 hex.push(c as char);
                                 self.advance();
                             }
                             if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(n) { s.push(ch); }
+                                if let Some(ch) = char::from_u32(n) {
+                                    s.push(ch);
+                                }
                             }
                         } else {
-                            let h: String = (0..4).filter_map(|_| self.advance().map(|c| c as char)).collect();
+                            let h: String = (0..4)
+                                .filter_map(|_| self.advance().map(|c| c as char))
+                                .collect();
                             if let Ok(n) = u32::from_str_radix(&h, 16) {
-                                if let Some(ch) = char::from_u32(n) { s.push(ch); }
+                                if let Some(ch) = char::from_u32(n) {
+                                    s.push(ch);
+                                }
                             }
                         }
                     }
@@ -155,7 +220,9 @@ impl<'a> Lexer<'a> {
         while let Some(c) = self.peek() {
             if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
                 self.advance();
-            } else { break; }
+            } else {
+                break;
+            }
         }
         let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("");
         match s {
@@ -179,9 +246,9 @@ impl<'a> Lexer<'a> {
             "false" => TokenKind::False,
             "undefined" => TokenKind::Undefined,
             "new" => TokenKind::New,
-           "this" => TokenKind::This,
+            "this" => TokenKind::This,
             "super" => TokenKind::Super,
-           "typeof" => TokenKind::Typeof,
+            "typeof" => TokenKind::Typeof,
             "instanceof" => TokenKind::Instanceof,
             "in" => TokenKind::In,
             "of" => TokenKind::Of,
@@ -203,76 +270,124 @@ impl<'a> Lexer<'a> {
         match c {
             b'+' => {
                 self.advance();
-                if self.peek() == Some(b'+') { self.advance(); return Some(TokenKind::Inc); }
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::PlusAssign); }
+                if self.peek() == Some(b'+') {
+                    self.advance();
+                    return Some(TokenKind::Inc);
+                }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::PlusAssign);
+                }
                 return Some(TokenKind::Plus);
             }
             b'-' => {
                 self.advance();
-                if self.peek() == Some(b'-') { self.advance(); return Some(TokenKind::Dec); }
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::MinusAssign); }
+                if self.peek() == Some(b'-') {
+                    self.advance();
+                    return Some(TokenKind::Dec);
+                }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::MinusAssign);
+                }
                 return Some(TokenKind::Minus);
             }
             b'*' => {
                 self.advance();
                 if self.peek() == Some(b'*') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::StarStarAssign); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::StarStarAssign);
+                    }
                     return Some(TokenKind::StarStar);
                 }
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::StarAssign); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::StarAssign);
+                }
                 return Some(TokenKind::Star);
             }
             b'/' => {
                 self.advance();
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::SlashAssign); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::SlashAssign);
+                }
                 return Some(TokenKind::Slash);
             }
             b'%' => {
                 self.advance();
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::PercentAssign); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::PercentAssign);
+                }
                 return Some(TokenKind::Percent);
             }
             b'=' => {
                 self.advance();
                 if self.peek() == Some(b'=') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::EqEqEq); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::EqEqEq);
+                    }
                     return Some(TokenKind::Eq);
                 }
-                if self.peek() == Some(b'>') { self.advance(); return Some(TokenKind::Arrow); }
+                if self.peek() == Some(b'>') {
+                    self.advance();
+                    return Some(TokenKind::Arrow);
+                }
                 return Some(TokenKind::Assign);
             }
             b'!' => {
                 self.advance();
                 if self.peek() == Some(b'=') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::NotEqEqEq); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::NotEqEqEq);
+                    }
                     return Some(TokenKind::NotEq);
                 }
                 return Some(TokenKind::Not);
             }
             b'<' => {
                 self.advance();
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::Lte); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::Lte);
+                }
                 if self.peek() == Some(b'<') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::ShlAssign); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::ShlAssign);
+                    }
                     return Some(TokenKind::Shl);
                 }
                 return Some(TokenKind::Lt);
             }
             b'>' => {
                 self.advance();
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::Gte); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::Gte);
+                }
                 if self.peek() == Some(b'>') {
                     self.advance();
                     if self.peek() == Some(b'>') {
                         self.advance();
-                        if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::UshrAssign); }
+                        if self.peek() == Some(b'=') {
+                            self.advance();
+                            return Some(TokenKind::UshrAssign);
+                        }
                         return Some(TokenKind::Ushr);
                     }
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::ShrAssign); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::ShrAssign);
+                    }
                     return Some(TokenKind::Shr);
                 }
                 return Some(TokenKind::Gt);
@@ -281,33 +396,54 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.peek() == Some(b'&') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::AndAssign); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::AndAssign);
+                    }
                     return Some(TokenKind::And);
                 }
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::AmpAssign); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::AmpAssign);
+                }
                 return Some(TokenKind::BitAnd);
             }
             b'|' => {
                 self.advance();
                 if self.peek() == Some(b'|') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::OrAssign); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::OrAssign);
+                    }
                     return Some(TokenKind::Or);
                 }
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::PipeAssign); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::PipeAssign);
+                }
                 return Some(TokenKind::BitOr);
             }
             b'^' => {
                 self.advance();
-                if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::CaretAssign); }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    return Some(TokenKind::CaretAssign);
+                }
                 return Some(TokenKind::BitXor);
             }
-            b'~' => { self.advance(); return Some(TokenKind::BitNot); }
+            b'~' => {
+                self.advance();
+                return Some(TokenKind::BitNot);
+            }
             b'?' => {
                 self.advance();
                 if self.peek() == Some(b'?') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); return Some(TokenKind::NullishAssign); }
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        return Some(TokenKind::NullishAssign);
+                    }
                     return Some(TokenKind::Nullish);
                 }
                 return Some(TokenKind::Question);
@@ -315,20 +451,48 @@ impl<'a> Lexer<'a> {
             b'.' => {
                 self.advance();
                 if self.peek() == Some(b'.') && self.peek_at(1) == Some(b'.') {
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     return Some(TokenKind::Spread);
                 }
                 return Some(TokenKind::Dot);
             }
-            b':' => { self.advance(); return Some(TokenKind::Colon); }
-            b',' => { self.advance(); return Some(TokenKind::Comma); }
-            b';' => { self.advance(); return Some(TokenKind::Semicolon); }
-            b'(' => { self.advance(); return Some(TokenKind::LParen); }
-            b')' => { self.advance(); return Some(TokenKind::RParen); }
-            b'{' => { self.advance(); return Some(TokenKind::LBrace); }
-            b'}' => { self.advance(); return Some(TokenKind::RBrace); }
-            b'[' => { self.advance(); return Some(TokenKind::LBracket); }
-            b']' => { self.advance(); return Some(TokenKind::RBracket); }
+            b':' => {
+                self.advance();
+                return Some(TokenKind::Colon);
+            }
+            b',' => {
+                self.advance();
+                return Some(TokenKind::Comma);
+            }
+            b';' => {
+                self.advance();
+                return Some(TokenKind::Semicolon);
+            }
+            b'(' => {
+                self.advance();
+                return Some(TokenKind::LParen);
+            }
+            b')' => {
+                self.advance();
+                return Some(TokenKind::RParen);
+            }
+            b'{' => {
+                self.advance();
+                return Some(TokenKind::LBrace);
+            }
+            b'}' => {
+                self.advance();
+                return Some(TokenKind::RBrace);
+            }
+            b'[' => {
+                self.advance();
+                return Some(TokenKind::LBracket);
+            }
+            b']' => {
+                self.advance();
+                return Some(TokenKind::RBracket);
+            }
             _ => None,
         }
     }
@@ -342,7 +506,10 @@ impl<'a> Lexer<'a> {
 
         // Template-literal state machine.
         match self.template_state {
-            1 => { self.template_state = 2; return Token::new(TokenKind::TemplateExprStart, line, col); }
+            1 => {
+                self.template_state = 2;
+                return Token::new(TokenKind::TemplateExprStart, line, col);
+            }
             2 => {
                 // Inside an interpolation; a top-level `}` closes it.
                 if self.peek() == Some(b'}') {
@@ -351,25 +518,38 @@ impl<'a> Lexer<'a> {
                     return Token::new(TokenKind::TemplateExprEnd, line, col);
                 }
             }
-            3 => { return self.read_template_segment(line, col, preceded_by_newline); }
+            3 => {
+                return self.read_template_segment(line, col, preceded_by_newline);
+            }
             _ => {}
         }
 
         let kind = match self.peek() {
             None => TokenKind::Eof,
             Some(c) if c.is_ascii_digit() => self.read_number(),
-            Some(c) if c == b'.' && self.peek_at(1).map(|d| d.is_ascii_digit()).unwrap_or(false) => self.read_number(),
+            Some(c)
+                if c == b'.' && self.peek_at(1).map(|d| d.is_ascii_digit()).unwrap_or(false) =>
+            {
+                self.read_number()
+            }
             Some(b'"') => self.read_string(b'"'),
             Some(b'\'') => self.read_string(b'\''),
             Some(b'`') => return self.read_template_start(line, col, preceded_by_newline),
-            Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => self.read_ident_or_keyword(),
-            Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') => { return self.next_token(); }
+            Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => {
+                self.read_ident_or_keyword()
+            }
+            Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') => {
+                return self.next_token();
+            }
             _ => {
                 if let Some(k) = self.read_operator() {
                     k
                 } else {
                     self.advance();
-                    TokenKind::Ident(format!("Unexpected char '{}'", self.src.get(self.pos-1).copied().unwrap_or(b'?') as char))
+                    TokenKind::Ident(format!(
+                        "Unexpected char '{}'",
+                        self.src.get(self.pos - 1).copied().unwrap_or(b'?') as char
+                    ))
                 }
             }
         };
@@ -386,12 +566,21 @@ impl<'a> Lexer<'a> {
 
     /// Read the next segment of a template literal, starting at the current position
     /// (after the opening backtick or after a `}` that closed an interpolation).
-    fn read_template_segment(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {
+    fn read_template_segment(
+        &mut self,
+        line: usize,
+        col: usize,
+        preceded_by_newline: bool,
+    ) -> Token {
         let mut s = String::new();
         while let Some(c) = self.peek() {
-            if c == b'`' { self.advance(); break; }
+            if c == b'`' {
+                self.advance();
+                break;
+            }
             if c == b'$' && self.peek_at(1) == Some(b'{') {
-                self.advance(); self.advance();
+                self.advance();
+                self.advance();
                 self.template_state = 1;
                 let mut tok = Token::new(TokenKind::TemplateString(s), line, col);
                 tok.preceded_by_newline = preceded_by_newline;
@@ -419,7 +608,12 @@ impl<'a> Lexer<'a> {
         tok
     }
 
-    fn read_template_continue(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {
+    fn read_template_continue(
+        &mut self,
+        line: usize,
+        col: usize,
+        preceded_by_newline: bool,
+    ) -> Token {
         self.read_template_segment(line, col, preceded_by_newline)
     }
 
@@ -429,7 +623,9 @@ impl<'a> Lexer<'a> {
             let t = self.next_token();
             let is_eof = t.kind == TokenKind::Eof;
             out.push(t);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         out
     }
@@ -441,7 +637,11 @@ mod tests {
     use crate::token::TokenKind::*;
 
     fn kinds(src: &str) -> Vec<TokenKind> {
-        Lexer::new(src).tokens().into_iter().map(|t| t.kind).collect()
+        Lexer::new(src)
+            .tokens()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect()
     }
 
     #[test]

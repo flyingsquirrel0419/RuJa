@@ -7,8 +7,8 @@ pub enum TokenKind {
     String(String),
     TemplateString(String),
     Ident(String),
-    TemplateExprStart,  // ${
-    TemplateExprEnd,    // } inside template
+    TemplateExprStart, // ${
+    TemplateExprEnd,   // } inside template
 
     // Keywords
     Var,
@@ -55,12 +55,12 @@ pub enum TokenKind {
     // Operators
     Plus,
     Minus,
-    Inc,        // ++
-    Dec,        // --
+    Inc, // ++
+    Dec, // --
     Star,
     Slash,
     Percent,
-    StarStar,        // **
+    StarStar, // **
     Assign,
     PlusAssign,
     MinusAssign,
@@ -92,12 +92,12 @@ pub enum TokenKind {
     Shl,
     Shr,
     Ushr,
-    Nullish,         // ??
+    Nullish, // ??
     Question,
     Colon,
     Dot,
-    Spread,          // ...
-    Arrow,           // =>
+    Spread, // ...
+    Arrow,  // =>
     NullishAssign,
     AndAssign,
     OrAssign,
@@ -127,7 +127,12 @@ pub struct Token {
 
 impl Token {
     pub fn new(kind: TokenKind, line: usize, col: usize) -> Self {
-        Token { kind, line, col, preceded_by_newline: false }
+        Token {
+            kind,
+            line,
+            col,
+            preceded_by_newline: false,
+        }
     }
 }
 
