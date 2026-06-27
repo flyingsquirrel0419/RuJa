@@ -401,6 +401,16 @@ impl Vm {
                     self.set_property(&obj, &key_str, value.clone())?;
                     self.stack.push(value);
                 }
+                Op::DeleteProp => {
+                    // stack: [obj, key]; remove the own property, push boolean.
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    let removed = if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| o.props().borrow_mut().remove(&Rc::from(key_str.as_str())).is_some())
+                    } else { false };
+                    self.stack.push(Value::Bool(removed || obj.is_object()));
+                }
                 Op::SetProto => {
                     // stack (top->bottom): [proto, obj]; set obj's [[Prototype]] to proto.
                     let proto = self.stack.pop().unwrap_or(Value::Undefined);
@@ -526,6 +536,12 @@ impl Vm {
                         match &v { Value::Object(_) => "object", _ => v.type_of() }
                     };
                     self.stack.push(Value::String(Rc::from(t)));
+                }
+                Op::TypeCoerce => {
+                    // unary +: ToNumber coercion.
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let n = self.to_number(&v)?;
+                    self.stack.push(Value::Number(n));
                 }
                 Op::TypeofVar(name_idx) => {
                     // `typeof name`: "undefined" if the name is not bound (must not throw).
@@ -758,13 +774,22 @@ impl Vm {
                let an = self.to_number(a)?;
                 self.loose_eq(&Value::Number(an), b)?
            }
-           (_, Value::Bool(_)) => {
-               let bn = self.to_number(b)?;
-                self.loose_eq(a, &Value::Number(bn))?
+          (_, Value::Bool(_)) => {
+              let bn = self.to_number(b)?;
+               self.loose_eq(a, &Value::Number(bn))?
+          }
+           // Object vs primitive: ToPrimitive the object, then compare.
+           (Value::Object(_), _) if !b.is_object() => {
+               let ap = self.to_primitive(a)?;
+               self.loose_eq(&ap, b)?
            }
-            _ => false,
-        })
-    }
+           (_, Value::Object(_)) if !a.is_object() => {
+               let bp = self.to_primitive(b)?;
+               self.loose_eq(a, &bp)?
+           }
+           _ => false,
+       })
+   }
 
     // ---- property access ----
 

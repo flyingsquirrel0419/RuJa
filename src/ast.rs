@@ -91,6 +91,7 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnOp {
+    Plus,   // unary + (ToNumber coercion)
     Neg,
     Not,
     BitNot,

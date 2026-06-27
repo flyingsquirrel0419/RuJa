@@ -1177,7 +1177,15 @@ fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
 fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let sep = args.get(0).map(|v| crate::value::value_to_debug_string(v));
-    let parts: Vec<String> = match sep { None => vec![s], Some(sep) if sep.is_empty() => s.chars().map(|c| c.to_string()).collect(), Some(sep) => s.split(&sep).map(|p| p.to_string()).collect() };
+    let limit = match args.get(1) {
+        Some(Value::Undefined) | None => usize::MAX,
+        Some(v) => vm.to_number(v).map(|n| n as usize).unwrap_or(usize::MAX),
+    };
+    let parts: Vec<String> = match sep {
+        None => vec![s],
+        Some(sep) if sep.is_empty() => s.chars().take(limit).map(|c| c.to_string()).collect(),
+        Some(sep) => s.split(&sep).take(limit).map(|p| p.to_string()).collect(),
+    };
     let items: Vec<Value> = parts.into_iter().map(|p| Value::String(Rc::from(p.as_str()))).collect();
     let arr = HeapObj::Array(ArrayData { items: RefCell::new(items), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))

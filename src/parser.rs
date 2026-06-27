@@ -547,7 +547,7 @@ impl Parser {
         }
         let op = match self.peek() {
             TokenKind::Minus => Some(UnOp::Neg),
-            TokenKind::Plus => Some(UnOp::Neg), // will coerce to number; reuse for now
+            TokenKind::Plus => Some(UnOp::Plus),
             TokenKind::Not => Some(UnOp::Not),
             TokenKind::BitNot => Some(UnOp::BitNot),
             TokenKind::Typeof => Some(UnOp::Typeof),

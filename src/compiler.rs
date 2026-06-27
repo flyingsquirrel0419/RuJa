@@ -715,8 +715,11 @@ impl Compiler {
             Expr::Unary(op, e) => {
                 match op {
                     UnOp::Neg => { self.compile_expr(e)?; self.chunk.emit(Op::Neg, 0); }
+                    UnOp::Plus => { self.compile_expr(e)?; self.chunk.emit(Op::TypeCoerce, 0); }
                     UnOp::Not => { self.compile_expr(e)?; self.chunk.emit(Op::Not, 0); }
                     UnOp::BitNot => { self.compile_expr(e)?; self.chunk.emit(Op::BitNot, 0); }
+                    // unary `+` coerces its operand to a number
+                    UnOp::Plus => { self.compile_expr(e)?; self.chunk.emit(Op::TypeCoerce, 0); }
                     UnOp::Typeof => {
                         // `typeof undeclaredVar` must yield "undefined" instead of throwing.
                         if let Expr::Ident(name) = e.as_ref() {
@@ -725,6 +728,34 @@ impl Compiler {
                         } else {
                             self.compile_expr(e)?;
                             self.chunk.emit(Op::TypeOf, 0);
+                        }
+                    }
+                    UnOp::Void => {
+                        self.compile_expr(e)?;
+                        self.chunk.emit(Op::Pop, 0);
+                        self.chunk.emit(Op::Undefined, 0);
+                    }
+                    UnOp::Delete => {
+                        // `delete obj.prop` / `delete obj[expr]`
+                        match e.as_ref() {
+                            Expr::Member { object, property, computed } => {
+                                self.compile_expr(object)?;
+                                if *computed {
+                                    self.compile_expr(property)?;
+                                    self.chunk.emit(Op::DeleteProp, 0);
+                                } else {
+                                    let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
+                                    let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                                    self.chunk.emit(Op::Const(key_idx), 0);
+                                    self.chunk.emit(Op::DeleteProp, 0);
+                                }
+                            }
+                            _ => {
+                                // delete of a variable or other expression always succeeds.
+                                self.compile_expr(e)?;
+                                self.chunk.emit(Op::Pop, 0);
+                                self.chunk.emit(Op::True, 0);
+                            }
                         }
                     }
                     _ => { self.compile_expr(e)?; }
