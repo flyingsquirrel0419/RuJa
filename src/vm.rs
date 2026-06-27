@@ -891,6 +891,25 @@ impl Vm {
                     let result = self.call_function(&method, &args, Some(obj))?;
                     self.stack.push(result);
                 }
+                Op::CallMethodOpt(arg_count) => {
+                    // Optional method call: like CallMethod but if the resolved
+                    // method is null/undefined, short-circuit to undefined.
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    let method = self.get_property(&obj, &key_str)?;
+                    if method.is_nullish() {
+                        self.stack.push(Value::Undefined);
+                    } else {
+                        let result = self.call_function(&method, &args, Some(obj))?;
+                        self.stack.push(result);
+                    }
+                }
                 Op::CallSuperCtor(arg_count) => {
                     // stack: [this, superCtor, args...]; call superCtor with this.
                     let mut args = Vec::with_capacity(arg_count);

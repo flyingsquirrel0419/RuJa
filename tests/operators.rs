@@ -290,3 +290,26 @@ fn number_to_string_normal() {
     assert_eq!(run("0 + '';"), Value::String(Rc::from("0")));
     assert_eq!(run("3.14 + '';"), Value::String(Rc::from("3.14")));
 }
+
+// --- deep optional method chains ---
+
+#[test]
+fn optional_method_chain_missing() {
+    assert_eq!(
+        run("var o = {g: function(){return 1;}}; o?.missing?.();"),
+        Value::Undefined
+    );
+}
+
+#[test]
+fn optional_method_chain_null_root() {
+    assert_eq!(run("null?.missing?.();"), Value::Undefined);
+}
+
+#[test]
+fn optional_method_chain_present() {
+    assert_eq!(
+        run("var o = {greet: function(){return 'hi';}}; o?.greet?.();"),
+        Value::String(Rc::from("hi"))
+    );
+}

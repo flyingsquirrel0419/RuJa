@@ -1219,6 +1219,13 @@ impl Compiler {
                             }
                         }
                         self.chunk.emit(Op::CallMethod(args.len()), 0);
+                        if *call_opt {
+                            // `a?.b?.()`: the method value was fetched; if it was
+                            // nullish the optional call short-circuits to undefined.
+                            // Replace the just-emitted CallMethod with CallMethodOpt.
+                            let pos = self.chunk.code.len() - 1;
+                            self.chunk.code[pos] = Op::CallMethodOpt(args.len());
+                        }
                         if *m_opt {
                             let end = self.chunk.code.len();
                             self.chunk.patch_jump(jend, end);

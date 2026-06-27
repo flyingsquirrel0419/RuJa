@@ -127,6 +127,7 @@ pub enum Op {
     MakeFunction(usize),  // function index in a function table
     Call(usize),          // arg count
     CallMethod(usize),    // arg count (method call: this is on stack)
+    CallMethodOpt(usize), // arg count (optional method call: skip if method is nullish)
     CallSpread,           // callee + args-array on stack; spread array into call args
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
