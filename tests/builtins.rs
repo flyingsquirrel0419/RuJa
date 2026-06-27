@@ -240,3 +240,131 @@ fn json_stringify_key_order() {
         Value::String(Rc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
     );
 }
+
+// --- Array/Number/Object/Math coverage expansion ---
+
+#[test]
+fn array_flat_flatmap() {
+    assert_eq!(
+        run("[1,[2,[3]]].flat().join(',')"),
+        Value::String(Rc::from("1,2,3"))
+    );
+    assert_eq!(
+        run("[1,[2,[3]]].flat(2).join(',')"),
+        Value::String(Rc::from("1,2,3"))
+    );
+    assert_eq!(
+        run("[1,2,3].flatMap(x=>[x,x*10]).join(',')"),
+        Value::String(Rc::from("1,10,2,20,3,30"))
+    );
+}
+
+#[test]
+fn array_at_shift_unshift_splice() {
+    assert_eq!(run("[1,2,3].at(-1);"), Value::Number(3.0));
+    assert_eq!(run("[1,2,3].at(0);"), Value::Number(1.0));
+    assert_eq!(
+        run("var a=[1,2,3]; a.shift(); a.join(',');"),
+        Value::String(Rc::from("2,3"))
+    );
+    assert_eq!(
+        run("var b=[1,2,3]; b.unshift(0); b.join(',');"),
+        Value::String(Rc::from("0,1,2,3"))
+    );
+    assert_eq!(
+        run("var c=[1,2,3,4,5]; c.splice(1,2); c.join(',');"),
+        Value::String(Rc::from("1,4,5"))
+    );
+}
+
+#[test]
+fn array_last_index_of() {
+    assert_eq!(run("[1,2,3,2].lastIndexOf(2);"), Value::Number(3.0));
+    assert_eq!(run("[1,2,3].lastIndexOf(9);"), Value::Number(-1.0));
+}
+
+#[test]
+fn string_pad_at_replaceall_substring() {
+    assert_eq!(
+        run("'abc'.padStart(6,'0');"),
+        Value::String(Rc::from("000abc"))
+    );
+    assert_eq!(
+        run("'abc'.padEnd(6,'0');"),
+        Value::String(Rc::from("abc000"))
+    );
+    assert_eq!(run("'abc'.at(-1);"), Value::String(Rc::from("c")));
+    assert_eq!(
+        run("'a-b-a'.replaceAll('-','_');"),
+        Value::String(Rc::from("a_b_a"))
+    );
+    assert_eq!(
+        run("'hello'.substring(1,3);"),
+        Value::String(Rc::from("el"))
+    );
+    assert_eq!(
+        run("'  hi  '.trimStart();"),
+        Value::String(Rc::from("hi  "))
+    );
+}
+
+#[test]
+fn number_static_methods() {
+    assert_eq!(run("Number.isInteger(5);"), Value::Bool(true));
+    assert_eq!(run("Number.isInteger(5.5);"), Value::Bool(false));
+    assert_eq!(run("Number.isFinite(Infinity);"), Value::Bool(false));
+    assert_eq!(run("Number.isNaN(NaN);"), Value::Bool(true));
+    assert_eq!(run("Number.isNaN('NaN');"), Value::Bool(false));
+    assert_eq!(run("Number.isSafeInteger(2**53);"), Value::Bool(false));
+}
+
+#[test]
+fn number_constants_and_radix() {
+    assert_eq!(
+        run("Number.MAX_SAFE_INTEGER;"),
+        Value::Number(9007199254740991.0)
+    );
+    assert_eq!(run("Number.EPSILON > 0;"), Value::Bool(true));
+    assert_eq!(run("(255).toString(16);"), Value::String(Rc::from("ff")));
+    assert_eq!(
+        run("(3.14159).toFixed(2);"),
+        Value::String(Rc::from("3.14"))
+    );
+}
+
+#[test]
+fn parse_int_prefix() {
+    assert_eq!(run("parseInt('42px');"), Value::Number(42.0));
+    assert_eq!(run("parseInt('0xff');"), Value::Number(255.0));
+    assert_eq!(run("parseInt('  -17  ');"), Value::Number(-17.0));
+    assert_eq!(run("parseInt('3.14');"), Value::Number(3.0));
+    assert_eq!(run("parseInt('zz',36);"), Value::Number(1295.0));
+    assert_eq!(run("Number.parseInt('42px');"), Value::Number(42.0));
+}
+
+#[test]
+fn object_statics() {
+    assert_eq!(run("Object.is(NaN, NaN);"), Value::Bool(true));
+    assert_eq!(run("Object.is(0, -0);"), Value::Bool(false));
+    assert_eq!(run("Object.is(1, 1);"), Value::Bool(true));
+    assert_eq!(
+        run("var o = Object.fromEntries([['a',1],['b',2]]); o.a + o.b;"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("typeof Object.create(null);"),
+        Value::String(Rc::from("object"))
+    );
+}
+
+#[test]
+fn math_expanded() {
+    assert_eq!(run("Math.hypot(3,4);"), Value::Number(5.0));
+    assert_eq!(
+        run("Math.atan2(1,0);"),
+        Value::Number(std::f64::consts::FRAC_PI_2)
+    );
+    assert_eq!(run("Math.clz32(1);"), Value::Number(31.0));
+    assert_eq!(run("Math.sign(-5);"), Value::Number(-1.0));
+    assert_eq!(run("Math.sinh(0);"), Value::Number(0.0));
+}

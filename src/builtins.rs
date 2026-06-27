@@ -427,6 +427,22 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
     keys
 }
 
+fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> Value {
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(items),
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Value::Object(GcIdx(vm.heap.allocate(arr)))
+}
+fn norm_idx(n: f64, len: f64) -> f64 {
+    if n < 0.0 {
+        (len + n).max(0.0)
+    } else {
+        n.min(len)
+    }
+}
+
 fn make_str_array(vm: &mut Vm, strs: Vec<Rc<str>>) -> Value {
     let items: Vec<Value> = strs.into_iter().map(Value::String).collect();
     let arr = HeapObj::Array(ArrayData {
@@ -532,6 +548,136 @@ fn object_is_prototype_of(
     Ok(Value::Bool(false))
 }
 
+fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let a = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let b = args.get(1).cloned().unwrap_or(Value::Undefined);
+    // Object.is: SameValue (distinguishes -0/+0 and treats NaN as equal)
+    let same = match (&a, &b) {
+        (Value::Number(x), Value::Number(y)) => {
+            if x.is_nan() && y.is_nan() {
+                true
+            } else if *x == 0.0 && *y == 0.0 {
+                x.is_sign_negative() == y.is_sign_negative()
+            } else {
+                x == y
+            }
+        }
+        _ => vm.strict_eq(&a, &b),
+    };
+    Ok(Value::Bool(same))
+}
+fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let entries = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: None,
+    }));
+    if let Value::Object(arr_idx) = &entries {
+        let items: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
+            if let HeapObj::Array(a) = o {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        for pair in &items {
+            if let Value::Object(pi) = pair {
+                let (k, v) = vm.heap.with_obj(pi.0, |o| {
+                    if let HeapObj::Array(a) = o {
+                        let it = a.items.borrow();
+                        (
+                            it.get(0).cloned().unwrap_or(Value::Undefined),
+                            it.get(1).cloned().unwrap_or(Value::Undefined),
+                        )
+                    } else {
+                        (Value::Undefined, Value::Undefined)
+                    }
+                });
+                let key = vm.to_property_key(&k)?;
+                vm.heap.with_obj(obj_idx, |o| {
+                    if let HeapObj::Object(obj) = o {
+                        obj.props
+                            .borrow_mut()
+                            .insert(Rc::from(key.as_str()), data_prop(v));
+                    }
+                });
+            }
+        }
+    }
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let proto = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(if proto.is_null() { None } else { Some(proto) }),
+        extensible: Cell::new(true),
+        class_name: None,
+    }));
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+fn object_get_own_property_names(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let keys = own_string_keys(vm, &obj);
+    Ok(make_str_array(vm, keys))
+}
+fn object_get_own_property_descriptor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let key = match args.get(1) {
+        Some(v) => vm.to_property_key(v)?,
+        None => return Ok(Value::Undefined),
+    };
+    if let Value::Object(idx) = &obj {
+        let desc = vm
+            .heap
+            .with_obj(idx.0, |o| o.props().borrow().get(key.as_str()).cloned());
+        if let Some(d) = desc {
+            let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+                props: RefCell::new(IndexMap::new()),
+                proto: RefCell::new(Some(vm.object_proto.clone())),
+                extensible: Cell::new(true),
+                class_name: None,
+            }));
+            let mut p = IndexMap::new();
+            if d.is_accessor {
+                p.insert(
+                    Rc::from("get"),
+                    data_prop(d.get.clone().unwrap_or(Value::Undefined)),
+                );
+                p.insert(
+                    Rc::from("set"),
+                    data_prop(d.set.clone().unwrap_or(Value::Undefined)),
+                );
+            } else {
+                p.insert(Rc::from("value"), data_prop(d.value.clone()));
+                p.insert(Rc::from("writable"), data_prop(Value::Bool(d.writable)));
+            }
+            p.insert(Rc::from("enumerable"), data_prop(Value::Bool(d.enumerable)));
+            p.insert(
+                Rc::from("configurable"),
+                data_prop(Value::Bool(d.configurable)),
+            );
+            vm.heap.with_obj(desc_obj, |o| {
+                if let HeapObj::Object(od) = o {
+                    *od.props.borrow_mut() = p;
+                }
+            });
+            return Ok(Value::Object(GcIdx(desc_obj)));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.get(0).cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = target {
@@ -612,50 +758,6 @@ fn object_define_property(
     Ok(target)
 }
 
-fn object_get_own_property_descriptor(
-    vm: &mut Vm,
-    args: &[Value],
-    _this: Option<Value>,
-) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let key = args
-        .get(1)
-        .map(|v| vm.to_property_key(v))
-        .transpose()?
-        .unwrap_or_default();
-    let object_proto = vm.object_proto.clone();
-    if let Value::Object(idx) = target {
-        let value = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                if key == "length" {
-                    return Some(Value::Number(a.items.borrow().len() as f64));
-                }
-                if let Ok(i) = key.parse::<usize>() {
-                    return a.items.borrow().get(i).cloned();
-                }
-            }
-            obj.props()
-                .borrow()
-                .get(key.as_str())
-                .map(|d| d.value.clone())
-        });
-        if let Some(v) = value {
-            let desc = new_object_with_props(
-                &vm.heap,
-                Some(object_proto),
-                vec![
-                    ("value", v),
-                    ("writable", Value::Bool(true)),
-                    ("enumerable", Value::Bool(true)),
-                    ("configurable", Value::Bool(true)),
-                ],
-            );
-            return Ok(Value::Object(desc));
-        }
-    }
-    Ok(Value::Undefined)
-}
-
 fn object_define_properties(
     vm: &mut Vm,
     args: &[Value],
@@ -725,6 +827,21 @@ pub fn setup(vm: &mut Vm) {
         ("values", object_values as NativeFn, 1),
         ("entries", object_entries as NativeFn, 1),
         ("assign", object_assign as NativeFn, 2),
+        ("is", object_is as NativeFn, 2),
+        ("fromEntries", object_from_entries as NativeFn, 1),
+        ("create", object_create as NativeFn, 2),
+        ("freeze", object_freeze as NativeFn, 1),
+        (
+            "getOwnPropertyNames",
+            object_get_own_property_names as NativeFn,
+            1,
+        ),
+        (
+            "getOwnPropertyDescriptor",
+            object_get_own_property_descriptor as NativeFn,
+            2,
+        ),
+        ("defineProperty", object_define_property as NativeFn, 3),
     ] {
         let m = vm.new_native_function(n, f, len);
         vm.heap.with_obj(object_ctor.0, |obj| {
@@ -814,6 +931,65 @@ fn math_log2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
 fn math_log10(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     math_unary(f64::log10, vm, args)
 }
+
+fn math_hypot(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let mut sum = 0.0f64;
+    let mut has_inf = false;
+    for a in args {
+        let n = vm.to_number(a)?;
+        if n.is_infinite() {
+            has_inf = true;
+        } else {
+            sum += n * n;
+        }
+    }
+    Ok(Value::Number(if has_inf {
+        f64::INFINITY
+    } else {
+        sum.sqrt()
+    }))
+}
+fn math_atan2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let y = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    let x = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Number(y.atan2(x)))
+}
+fn math_asin(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::asin, vm, args)
+}
+fn math_acos(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::acos, vm, args)
+}
+fn math_atan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::atan, vm, args)
+}
+fn math_sinh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::sinh, vm, args)
+}
+fn math_cosh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::cosh, vm, args)
+}
+fn math_tanh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::tanh, vm, args)
+}
+fn math_expm1(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::exp_m1, vm, args)
+}
+fn math_log1p(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::ln_1p, vm, args)
+}
+fn math_clz32(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))? as u32;
+    Ok(Value::Number(n.leading_zeros() as f64))
+}
+fn math_fround(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let n = vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Number(n as f32 as f64))
+}
+fn math_trunc2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::trunc, vm, args)
+}
+
 fn math_sin(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     math_unary(f64::sin, vm, args)
 }
@@ -877,7 +1053,19 @@ fn build_math(vm: &mut Vm) -> Value {
         ("log", math_log, 1),
         ("log2", math_log2, 1),
         ("log10", math_log10, 1),
+        ("log1p", math_log1p, 1),
+        ("expm1", math_expm1, 1),
         ("sin", math_sin, 1),
+        ("asin", math_asin, 1),
+        ("acos", math_acos, 1),
+        ("atan", math_atan, 1),
+        ("atan2", math_atan2, 2),
+        ("sinh", math_sinh, 1),
+        ("cosh", math_cosh, 1),
+        ("tanh", math_tanh, 1),
+        ("hypot", math_hypot, 2),
+        ("clz32", math_clz32, 1),
+        ("fround", math_fround, 1),
         ("cos", math_cos, 1),
         ("tan", math_tan, 1),
         ("pow", math_pow, 2),
@@ -1255,12 +1443,12 @@ fn build_json(vm: &mut Vm) -> Value {
 // Global functions
 // =========================================================================
 fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let s = match args.get(0) {
+    let input = match args.get(0) {
         Some(Value::String(s)) => s.trim().to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
         None => return Ok(Value::Number(f64::NAN)),
     };
-    let radix = args
+    let mut radix = args
         .get(1)
         .and_then(|v| {
             if let Value::Number(n) = v {
@@ -1269,18 +1457,48 @@ fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
                 None
             }
         })
-        .unwrap_or(10);
-    let radix = if radix == 0 { 10 } else { radix };
-    let s = s.trim_start_matches('+');
-    let neg = s.starts_with('-');
-    let s = s.trim_start_matches('-');
-    let s = if radix == 16 && (s.starts_with("0x") || s.starts_with("0X")) {
-        &s[2..]
-    } else {
-        s
+        .unwrap_or(0);
+    let strip_hex = radix == 0 || radix == 16;
+    let mut chars = input.char_indices().peekable();
+    let neg = match chars.peek() {
+        Some((_, '+')) => {
+            chars.next();
+            false
+        }
+        Some((_, '-')) => {
+            chars.next();
+            true
+        }
+        _ => false,
     };
-    match i64::from_str_radix(s, radix) {
-        Ok(n) => Ok(Value::Number((if neg { -n } else { n }) as f64)),
+    if strip_hex {
+        let is_hex = matches!(chars.peek(), Some((_, '0')))
+            && matches!(chars.clone().nth(1), Some((_, 'x')) | Some((_, 'X')));
+        if is_hex {
+            chars.next();
+            chars.next();
+            radix = 16;
+        }
+    }
+    if radix == 0 {
+        radix = 10;
+    }
+    if !(2..=36).contains(&radix) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let valid = |c: char| c.to_digit(radix).is_some();
+    let start = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
+    let digits_end = input[start..]
+        .char_indices()
+        .find(|(_, c)| !valid(*c))
+        .map(|(i, _)| start + i)
+        .unwrap_or(input.len());
+    let digits = &input[start..digits_end];
+    if digits.is_empty() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    match i64::from_str_radix(digits, radix) {
+        Ok(n) => Ok(Value::Number(if neg { -(n as f64) } else { n as f64 })),
         Err(_) => Ok(Value::Number(f64::NAN)),
     }
 }
@@ -1685,6 +1903,333 @@ fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     }
     Ok(Value::Undefined)
 }
+
+fn array_shift(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        return Ok(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                let mut items = a.items.borrow_mut();
+                if items.is_empty() {
+                    Value::Undefined
+                } else {
+                    items.remove(0)
+                }
+            } else {
+                Value::Undefined
+            }
+        }));
+    }
+    Ok(Value::Undefined)
+}
+fn array_unshift(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                let mut items = a.items.borrow_mut();
+                for (i, v) in args.iter().enumerate() {
+                    items.insert(i, v.clone());
+                }
+            }
+        });
+        let len = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().len()
+            } else {
+                0
+            }
+        });
+        return Ok(Value::Number(len as f64));
+    }
+    Ok(Value::Number(0.0))
+}
+fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let items_clone = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let len = items_clone.len() as f64;
+        let start = match args.get(0) {
+            Some(v) => vm.to_number(v)?,
+            None => 0.0,
+        };
+        let start = if start < 0.0 {
+            (len + start).max(0.0) as usize
+        } else {
+            (start as usize).min(items_clone.len())
+        };
+        let delete_count = match args.get(1) {
+            Some(v) => vm.to_number(v)?,
+            None => 0.0,
+        };
+        let delete_count = if delete_count < 0.0 {
+            0
+        } else {
+            (delete_count as usize).min(items_clone.len() - start)
+        };
+        let removed: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                let mut items = a.items.borrow_mut();
+                let r: Vec<Value> = items.drain(start..start + delete_count).collect();
+                for (i, v) in args.iter().skip(2).enumerate() {
+                    items.insert(start + i, v.clone());
+                }
+                r
+            } else {
+                Vec::new()
+            }
+        });
+        let arr = make_value_array(vm, removed);
+        return Ok(arr);
+    }
+    Ok(Value::Undefined)
+}
+fn array_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).unwrap_or(&Value::Undefined).clone();
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        for (i, v) in items.iter().enumerate().rev() {
+            if vm.strict_eq(v, &target) {
+                return Ok(Value::Number(i as f64));
+            }
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let n = match args.get(0) {
+            Some(v) => vm.to_number(v)?,
+            None => 0.0,
+        };
+        let len = items.len() as isize;
+        let idx = if n < 0.0 {
+            len + n as isize
+        } else {
+            n as isize
+        };
+        if idx >= 0 && idx < len {
+            return Ok(items[idx as usize].clone());
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let depth = match args.get(0) {
+        Some(v) => vm.to_number(v)?,
+        None => 1.0,
+    };
+    let depth = if depth < 0.0 { 0 } else { depth as usize };
+    fn flatten(vm: &mut Vm, items: &[Value], depth: usize, out: &mut Vec<Value>) {
+        for v in items {
+            let is_arr = match v {
+                Value::Object(idx) => vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_))),
+                _ => false,
+            };
+            if is_arr && depth > 0 {
+                let sub = vm.heap.with_obj(
+                    match v {
+                        Value::Object(i) => i.0,
+                        _ => 0,
+                    },
+                    |o| {
+                        if let HeapObj::Array(a) = o {
+                            a.items.borrow().clone()
+                        } else {
+                            Vec::new()
+                        }
+                    },
+                );
+                flatten(vm, &sub, depth - 1, out);
+            } else {
+                out.push(v.clone());
+            }
+        }
+    }
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let mut out = Vec::new();
+        flatten(vm, &items, depth, &mut out);
+        return Ok(make_value_array(vm, out));
+    }
+    Ok(Value::Undefined)
+}
+fn array_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    // flatMap(fn) = map(fn).flat(1)
+    let items = if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    let fn_val = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let mut mapped: Vec<Value> = Vec::new();
+    for (i, v) in items.iter().enumerate() {
+        let result = vm.call_function(
+            &fn_val,
+            &[
+                v.clone(),
+                Value::Number(i as f64),
+                this.clone().unwrap_or(Value::Undefined),
+            ],
+            None,
+        )?;
+        mapped.push(result);
+    }
+    let mut out = Vec::new();
+    for v in &mapped {
+        let is_arr = match v {
+            Value::Object(idx) => vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_))),
+            _ => false,
+        };
+        if is_arr {
+            let sub = vm.heap.with_obj(
+                match v {
+                    Value::Object(i) => i.0,
+                    _ => 0,
+                },
+                |o| {
+                    if let HeapObj::Array(a) = o {
+                        a.items.borrow().clone()
+                    } else {
+                        Vec::new()
+                    }
+                },
+            );
+            out.extend(sub);
+        } else {
+            out.push(v.clone());
+        }
+    }
+    Ok(make_value_array(vm, out))
+}
+fn array_copy_within(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let len = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().len()
+            } else {
+                0
+            }
+        }) as f64;
+        let target = match args.get(0) {
+            Some(v) => vm.to_number(v)?,
+            None => 0.0,
+        };
+        let start = match args.get(1) {
+            Some(v) => vm.to_number(v)?,
+            None => 0.0,
+        };
+        let end = match args.get(2) {
+            Some(v) => vm.to_number(v)?,
+            None => len,
+        };
+        let to = norm_idx(target, len) as usize;
+        let from = norm_idx(start, len) as usize;
+        let last = if end < 0.0 {
+            (len + end).max(0.0) as usize
+        } else {
+            (end as usize).min(len as usize)
+        };
+        if from >= last || to >= len as usize {
+            return Ok(Value::Object(idx));
+        }
+        let count = (last - from).min(len as usize - to);
+        let src: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow()[from..from + count].to_vec()
+            } else {
+                Vec::new()
+            }
+        });
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                let mut items = a.items.borrow_mut();
+                for (i, v) in src.into_iter().enumerate() {
+                    items[to + i] = v;
+                }
+            }
+        });
+        return Ok(Value::Object(idx));
+    }
+    Ok(Value::Undefined)
+}
+fn array_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let len = if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().len()
+            } else {
+                0
+            }
+        })
+    } else {
+        0
+    };
+    let items: Vec<Value> = (0..len).map(|i| Value::Number(i as f64)).collect();
+    Ok(make_value_array(vm, items))
+}
+fn array_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let items = if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    Ok(make_value_array(vm, items))
+}
+fn array_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let items = if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    let pairs: Vec<Value> = items
+        .iter()
+        .enumerate()
+        .map(|(i, v)| make_value_array(vm, vec![Value::Number(i as f64), v.clone()]))
+        .collect();
+    Ok(make_value_array(vm, pairs))
+}
+
 fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let items = if args.len() == 1 {
         if let Some(Value::Number(n)) = args.get(0) {
@@ -2094,6 +2639,127 @@ fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
         str_val(vm, &this)?.repeat(n).as_str(),
     )))
 }
+fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let target = match args.get(0) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    } as usize;
+    let pad = match args.get(1) {
+        Some(Value::String(p)) => p.to_string(),
+        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
+        _ => " ".to_string(),
+    };
+    if pad.is_empty() || s.len() >= target {
+        return Ok(Value::String(Rc::from(s.as_str())));
+    }
+    let need = target - s.len();
+    let mut out = String::new();
+    while out.len() < need {
+        out.push_str(&pad);
+    }
+    out.truncate(need);
+    out.push_str(&s);
+    Ok(Value::String(Rc::from(out.as_str())))
+}
+fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let target = match args.get(0) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    } as usize;
+    let pad = match args.get(1) {
+        Some(Value::String(p)) => p.to_string(),
+        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
+        _ => " ".to_string(),
+    };
+    if pad.is_empty() || s.len() >= target {
+        return Ok(Value::String(Rc::from(s.as_str())));
+    }
+    let mut out = s.clone();
+    while out.len() < target {
+        out.push_str(&pad);
+    }
+    out.truncate(target);
+    Ok(Value::String(Rc::from(out.as_str())))
+}
+fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let n = match args.get(0) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    } as isize;
+    let len = s.chars().count() as isize;
+    let idx = if n < 0 { len + n } else { n };
+    if idx >= 0 && idx < len {
+        let ch = s.chars().nth(idx as usize).unwrap();
+        return Ok(Value::String(Rc::from(ch.to_string().as_str())));
+    }
+    Ok(Value::Undefined)
+}
+fn str_trim_start(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    Ok(Value::String(Rc::from(s.trim_start())))
+}
+fn str_trim_end(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    Ok(Value::String(Rc::from(s.trim_end())))
+}
+fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let from = match args.get(0) {
+        Some(Value::String(p)) => p.to_string(),
+        Some(v) => vm.to_string(v)?.to_string(),
+        None => return Ok(Value::String(Rc::from(s.as_str()))),
+    };
+    let to = match args.get(1) {
+        Some(Value::String(p)) => p.to_string(),
+        Some(v) => vm.to_string(v)?.to_string(),
+        None => "undefined".to_string(),
+    };
+    if from.is_empty() {
+        let mut out = String::new();
+        for ch in s.chars() {
+            out.push_str(&to);
+            out.push(ch);
+        }
+        out.push_str(&to);
+        return Ok(Value::String(Rc::from(out.as_str())));
+    }
+    Ok(Value::String(Rc::from(s.replace(&from, &to))))
+}
+fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let len = s.chars().count() as f64;
+    let mut start = match args.get(0) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let mut end = match args.get(1) {
+        Some(v) => vm.to_number(v)?,
+        None => len,
+    };
+    if start < 0.0 || start.is_nan() {
+        start = 0.0;
+    }
+    if end < 0.0 || end.is_nan() {
+        end = 0.0;
+    }
+    if start > len {
+        start = len;
+    }
+    if end > len {
+        end = len;
+    }
+    if start > end {
+        std::mem::swap(&mut start, &mut end);
+    }
+    let start = start as usize;
+    let end = end as usize;
+    let result: String = s.chars().skip(start).take(end - start).collect();
+    Ok(Value::String(Rc::from(result.as_str())))
+}
+
 fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let s: String = args
         .iter()
@@ -2117,6 +2783,108 @@ fn number_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::R
         vm.to_number(args.get(0).unwrap_or(&Value::Undefined))?,
     ))
 }
+
+fn number_is_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    match args.get(0) {
+        Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0 => Ok(Value::Bool(true)),
+        _ => Ok(Value::Bool(false)),
+    }
+}
+fn number_is_finite(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    match args.get(0) {
+        Some(Value::Number(n)) if n.is_finite() => Ok(Value::Bool(true)),
+        _ => Ok(Value::Bool(false)),
+    }
+}
+fn number_is_nan(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    match args.get(0) {
+        Some(Value::Number(n)) if n.is_nan() => Ok(Value::Bool(true)),
+        _ => Ok(Value::Bool(false)),
+    }
+}
+fn number_is_safe_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    match args.get(0) {
+        Some(Value::Number(n))
+            if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0 =>
+        {
+            Ok(Value::Bool(true))
+        }
+        _ => Ok(Value::Bool(false)),
+    }
+}
+fn number_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    global_parse_int(vm, args, None)
+}
+fn number_parse_float(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    global_parse_float(vm, args, None)
+}
+fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let n = match &this {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if n.is_nan() {
+        return Ok(Value::String(Rc::from("NaN")));
+    }
+    if !n.is_finite() {
+        return Ok(Value::String(Rc::from(if n > 0.0 {
+            "Infinity"
+        } else {
+            "-Infinity"
+        })));
+    }
+    let digits = match args.get(0) {
+        Some(v) => vm.to_number(v)? as usize,
+        None => 0,
+    };
+    Ok(Value::String(Rc::from(format!("{:.*}", digits, n))))
+}
+fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let n = match &this {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let radix = match args.get(0) {
+        Some(v) => vm.to_number(v)?,
+        None => 10.0,
+    } as u32;
+    if radix == 10 || radix == 0 {
+        return Ok(Value::String(Rc::from(
+            crate::value::num_to_string(n).as_str(),
+        )));
+    }
+    if radix < 2 || radix > 36 {
+        return Err(Error::range(
+            "toString() radix must be between 2 and 36".to_string(),
+        ));
+    }
+    if n.fract() == 0.0 {
+        let i = n as i64;
+        if i >= 0 {
+            return Ok(Value::String(Rc::from(format_i64_radix(i, radix).as_str())));
+        }
+    }
+    Ok(Value::String(Rc::from(
+        crate::value::num_to_string(n).as_str(),
+    )))
+}
+fn format_i64_radix(n: i64, radix: u32) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut n = n.unsigned_abs();
+    let mut out = Vec::new();
+    while n > 0 {
+        out.push(digits[(n % radix as u64) as usize]);
+        n /= radix as u64;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
+}
+
 fn boolean_constructor(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
         args.get(0).unwrap_or(&Value::Undefined).is_truthy(),
@@ -2161,6 +2929,17 @@ pub fn setup_full(vm: &mut Vm) {
             ("every", array_every, 1),
             ("reverse", array_reverse, 0),
             ("sort", array_sort, 1),
+            ("shift", array_shift, 0),
+            ("unshift", array_unshift, 1),
+            ("splice", array_splice, 2),
+            ("lastIndexOf", array_last_index_of, 1),
+            ("at", array_at, 1),
+            ("flat", array_flat, 0),
+            ("flatMap", array_flat_map, 1),
+            ("copyWithin", array_copy_within, 2),
+            ("keys", array_keys, 0),
+            ("values", array_values, 0),
+            ("entries", array_entries, 0),
         ],
     );
     // override the constructor function to use array_constructor
@@ -2184,13 +2963,67 @@ pub fn setup_full(vm: &mut Vm) {
             ("startsWith", str_starts_with, 1),
             ("endsWith", str_ends_with, 1),
             ("repeat", str_repeat, 1),
+            ("padStart", str_pad_start, 1),
+            ("padEnd", str_pad_end, 1),
+            ("at", str_at, 1),
+            ("trimStart", str_trim_start, 0),
+            ("trimEnd", str_trim_end, 0),
+            ("replaceAll", str_replace_all, 2),
+            ("substring", str_substring, 2),
         ],
     );
     vm.string_proto = Value::Object(str_proto);
     define_global(vm, "String", Value::Object(str_ctor));
     // Number
-    let (num_ctor, num_proto) = make_builtin_constructor(vm, "Number", &[]);
+    let (num_ctor, num_proto) = make_builtin_constructor(
+        vm,
+        "Number",
+        &[
+            ("toFixed", num_to_fixed, 1),
+            ("toString", num_proto_to_string, 1),
+        ],
+    );
     vm.number_proto = Value::Object(num_proto);
+    // Number static methods + constants
+    let statics: &[(&str, NativeFn, usize)] = &[
+        ("isInteger", number_is_integer, 1),
+        ("isFinite", number_is_finite, 1),
+        ("isNaN", number_is_nan, 1),
+        ("isSafeInteger", number_is_safe_integer, 1),
+        ("parseInt", number_parse_int, 2),
+        ("parseFloat", number_parse_float, 1),
+    ];
+    let mut static_props: Vec<(Rc<str>, Value)> = Vec::new();
+    for (name, fnp, len) in statics {
+        let idx = vm.new_native_function(name, *fnp, *len);
+        static_props.push((Rc::from(*name), Value::Object(idx)));
+    }
+    static_props.push((
+        Rc::from("MAX_SAFE_INTEGER"),
+        Value::Number(9007199254740991.0),
+    ));
+    static_props.push((
+        Rc::from("MIN_SAFE_INTEGER"),
+        Value::Number(-9007199254740991.0),
+    ));
+    static_props.push((Rc::from("EPSILON"), Value::Number(f64::EPSILON)));
+    static_props.push((Rc::from("MAX_VALUE"), Value::Number(f64::MAX)));
+    static_props.push((Rc::from("MIN_VALUE"), Value::Number(f64::MIN_POSITIVE)));
+    static_props.push((Rc::from("POSITIVE_INFINITY"), Value::Number(f64::INFINITY)));
+    static_props.push((
+        Rc::from("NEGATIVE_INFINITY"),
+        Value::Number(f64::NEG_INFINITY),
+    ));
+    static_props.push((Rc::from("NaN"), Value::Number(f64::NAN)));
+    vm.heap.with_obj(num_ctor.0, |o| {
+        if let HeapObj::Function(f) = o {
+            for (name, val) in &static_props {
+                f.props
+                    .borrow_mut()
+                    .insert(name.clone(), data_prop(val.clone()));
+            }
+        }
+    });
     define_global(vm, "Number", Value::Object(num_ctor));
     // Boolean
     let (bool_ctor, bool_proto) = make_builtin_constructor(vm, "Boolean", &[]);
