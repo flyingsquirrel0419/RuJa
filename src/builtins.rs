@@ -3794,9 +3794,13 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         _ => return Err(Error::type_err("not a generator".to_string())),
     };
     // Lazy generators run their body incrementally across next() calls.
-    let is_lazy = vm
-        .heap
-        .with_obj(g_idx, |o| matches!(o, HeapObj::LazyGenerator(_)));
+    let (is_lazy, is_async_gen) = vm.heap.with_obj(g_idx, |o| {
+        if let HeapObj::LazyGenerator(g) = o {
+            (true, g.is_async)
+        } else {
+            (matches!(o, HeapObj::Generator(_)), false)
+        }
+    });
     let (value, done) = if is_lazy {
         let resume = _args.first().cloned().unwrap_or(Value::Undefined);
         vm.resume_generator(GcIdx(g_idx), resume)?
@@ -3835,7 +3839,22 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
                 .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
         }
     });
-    Ok(Value::Object(GcIdx(obj_idx)))
+    let result_obj = Value::Object(GcIdx(obj_idx));
+    if is_async_gen {
+        // async function*: next() returns a Promise resolved with {value, done}.
+        let p_idx = vm
+            .heap
+            .allocate(HeapObj::Promise(crate::value::PromiseData {
+                state: Cell::new(crate::value::PromiseStatus::Fulfilled),
+                result: RefCell::new(result_obj.clone()),
+                handlers: RefCell::new(Vec::new()),
+                props: RefCell::new(IndexMap::new()),
+                proto: RefCell::new(Some(vm.promise_proto.clone())),
+            }));
+        Ok(Value::Object(GcIdx(p_idx)))
+    } else {
+        Ok(result_obj)
+    }
 }
 
 pub fn setup_collections(vm: &mut Vm) {

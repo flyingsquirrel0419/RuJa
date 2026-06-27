@@ -238,3 +238,61 @@ fn yield_star_interleaved_with_own_yields() {
     "#;
     assert_eq!(run(src), Value::String(Rc::from("o1,i1,i2,o2,i1,i2")));
 }
+
+// ---- async function* ----
+
+#[test]
+fn async_generator_next_returns_promise() {
+    let src = r#"
+        async function* gen() { yield 1; yield 2; }
+        let g = gen();
+        let r = await g.next();
+        r.value;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
+}
+
+#[test]
+fn async_generator_consumes_all() {
+    let src = r#"
+        async function* gen() { yield 1; yield 2; yield 3; }
+        let g = gen();
+        let out = [];
+        let r;
+        r = await g.next(); if (!r.done) out.push(r.value);
+        r = await g.next(); if (!r.done) out.push(r.value);
+        r = await g.next(); if (!r.done) out.push(r.value);
+        r = await g.next();
+        out.join(",") + "|" + r.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,2,3|true")));
+}
+
+#[test]
+fn async_generator_await_inside_body() {
+    let src = r#"
+        async function* gen() {
+            let x = await Promise.resolve(10);
+            yield x;
+            let y = await Promise.resolve(20);
+            yield x + y;
+        }
+        let g = gen();
+        let a = await g.next();
+        let b = await g.next();
+        a.value + "," + b.value;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("10,30")));
+}
+
+#[test]
+fn async_generator_done_signal() {
+    let src = r#"
+        async function* gen() { yield "x"; }
+        let g = gen();
+        await g.next();
+        let last = await g.next();
+        last.done;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}

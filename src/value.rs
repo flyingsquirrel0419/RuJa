@@ -337,6 +337,8 @@ pub struct LazyGeneratorData {
     pub done: Cell<bool>,
     /// The value sent into the generator via `next(v)` (consumed by `yield`).
     pub resume_value: RefCell<Value>,
+    /// True for `async function*`: `next()` wraps results in a Promise.
+    pub is_async: bool,
     pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }

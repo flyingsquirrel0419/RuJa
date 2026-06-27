@@ -2495,6 +2495,7 @@ impl Vm {
                             started: Cell::new(false),
                             done: Cell::new(false),
                             resume_value: RefCell::new(Value::Undefined),
+                            is_async,
                             props: RefCell::new(IndexMap::new()),
                             proto: RefCell::new(Some(self.generator_proto.clone())),
                         },
