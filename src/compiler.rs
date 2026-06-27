@@ -1551,6 +1551,31 @@ impl Compiler {
                 }
                 self.chunk.emit(Op::YieldValue, 0);
             }
+            Expr::YieldDelegate(inner) => {
+                // `yield* expr`: obtain an iterator from `expr` and forward each
+                // of its values to the outer generator via YieldValue, until the
+                // iterator is done. The result of the `yield*` expression is the
+                // iterator's final value (undefined for arrays/strings).
+                self.compile_expr(inner)?;
+                self.chunk.emit(Op::GetIterator, 0);
+                let it_name_idx = self.intern("#yldel-iter");
+                self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
+                let loop_start = self.chunk.code.len();
+                self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
+                self.chunk.emit(Op::IteratorNext, 0); // [value, done]
+                let done_jump = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfTrue(0), 0); // if done, jump to end
+                                                       // value is on the stack; yield it to the outer generator.
+                self.chunk.emit(Op::YieldValue, 0); // yields `value`, leaves undefined (resume value)
+                self.chunk.emit(Op::Pop, 0); // discard the resume value result
+                self.chunk.emit(Op::Jump(loop_start), 0);
+                let end = self.chunk.code.len();
+                self.chunk.patch_jump(done_jump, end);
+                // Iterator done: leave the iterator's final value (top of stack
+                // is `done` boolean; pop it, push undefined as the yield* result).
+                self.chunk.emit(Op::Pop, 0); // discard `done`
+                self.chunk.emit(Op::Undefined, 0);
+            }
             Expr::Function(f) | Expr::Arrow(f) => {
                 let func_chunk = self.compile_function(f)?;
                 let func_idx = self.funcs.len();

@@ -64,6 +64,9 @@ pub enum Expr {
     Regex(Rc<str>, Rc<str>),
     Await(Box<Expr>),
     Yield(Option<Box<Expr>>),
+    /// `yield* expr` - delegate to another iterable/generator, forwarding each
+    /// yielded value to the outer generator.
+    YieldDelegate(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

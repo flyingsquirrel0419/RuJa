@@ -172,3 +172,69 @@ fn two_generators_pulled_independently() {
     "#;
     assert_eq!(run(src), Value::String(Rc::from("0,1,0,2,1")));
 }
+
+// ---- yield* delegation ----
+
+#[test]
+fn yield_star_delegates_to_generator() {
+    let src = r#"
+        function* inner() { yield 1; yield 2; yield 3; }
+        function* outer() { yield 0; yield* inner(); yield 4; }
+        let r = [];
+        for (let v of outer()) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("0,1,2,3,4")));
+}
+
+#[test]
+fn yield_star_delegates_to_array() {
+    let src = r#"
+        function* g() { yield* [10, 20, 30]; }
+        let r = [];
+        for (let v of g()) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("10,20,30")));
+}
+
+#[test]
+fn yield_star_delegates_to_string() {
+    let src = r#"
+        function* g() { yield* "ab"; }
+        let r = [];
+        for (let v of g()) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("a,b")));
+}
+
+#[test]
+fn yield_star_nested_delegation() {
+    let src = r#"
+        function* a() { yield 1; yield 2; }
+        function* b() { yield* a(); yield 3; }
+        function* c() { yield* b(); yield 4; }
+        let r = [];
+        for (let v of c()) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,2,3,4")));
+}
+
+#[test]
+fn yield_star_interleaved_with_own_yields() {
+    let src = r#"
+        function* inner() { yield "i1"; yield "i2"; }
+        function* outer() {
+            yield "o1";
+            yield* inner();
+            yield "o2";
+            yield* inner();
+        }
+        let r = [];
+        for (let v of outer()) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("o1,i1,i2,o2,i1,i2")));
+}

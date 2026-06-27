@@ -841,6 +841,12 @@ impl Parser {
             }
             TokenKind::Yield => {
                 self.advance();
+                // `yield* expr` - delegate to another iterable/generator.
+                if matches!(self.peek(), TokenKind::Star) {
+                    self.advance(); // consume '*'
+                    let inner = self.parse_assign()?;
+                    return Ok(Expr::YieldDelegate(Box::new(inner)));
+                }
                 let inner = if matches!(
                     self.peek(),
                     TokenKind::Semicolon
