@@ -23,4 +23,3 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 ## Remaining known limitations (post v2.0 ES2015 work)
 
-- Regex literals not supported

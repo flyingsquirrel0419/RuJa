@@ -412,3 +412,61 @@ fn promise_keyword_method_names() {
     let r = run("typeof Promise.prototype.then;");
     assert_eq!(r, Value::String(Rc::from("function")));
 }
+
+// --- RegExp ---
+
+#[test]
+fn regex_literal_test() {
+    assert_eq!(run("/abc/.test('xabcy');"), Value::Bool(true));
+    assert_eq!(run("/abc/.test('xyz');"), Value::Bool(false));
+    assert_eq!(run("/\\d+/.test('abc123');"), Value::Bool(true));
+    assert_eq!(run("/\\d+/.test('abc');"), Value::Bool(false));
+}
+
+#[test]
+fn regex_exec_captures() {
+    let r = run("/(\\w+)@(\\w+)/.exec('user@host');");
+    assert!(matches!(r, Value::Object(_)));
+    assert_eq!(
+        run("/(\\w+)@(\\w+)/.exec('user@host')[0];"),
+        Value::String(Rc::from("user@host"))
+    );
+    assert_eq!(
+        run("/(\\w+)@(\\w+)/.exec('user@host')[1];"),
+        Value::String(Rc::from("user"))
+    );
+    assert_eq!(
+        run("/(\\w+)@(\\w+)/.exec('user@host')[2];"),
+        Value::String(Rc::from("host"))
+    );
+}
+
+#[test]
+fn regex_exec_no_match() {
+    assert_eq!(run("/zzz/.exec('abc');"), Value::Null);
+}
+
+#[test]
+fn regex_source_flags() {
+    assert_eq!(run("/abc/gi.source;"), Value::String(Rc::from("abc")));
+    assert_eq!(run("/abc/gi.flags;"), Value::String(Rc::from("gi")));
+}
+
+#[test]
+fn string_replace_with_regex() {
+    assert_eq!(
+        run("'hello'.replace(/l/, 'L');"),
+        Value::String(Rc::from("heLlo"))
+    );
+    assert_eq!(
+        run("'hello world'.replace(/o/g, '0');"),
+        Value::String(Rc::from("hell0 w0rld"))
+    );
+}
+
+#[test]
+fn division_not_regex() {
+    // Ensure `/` after a value is division, not a regex.
+    assert_eq!(run("10 / 4;"), Value::Number(2.5));
+    assert_eq!(run("var x = 20; x / 5;"), Value::Number(4.0));
+}

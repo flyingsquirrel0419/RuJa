@@ -94,7 +94,8 @@ pub enum TokenKind {
     Ushr,
     Nullish, // ??
     Question,
-    QuestionDot, // ?.
+    QuestionDot,           // ?.
+    Regex(String, String), // /pattern/flags
     Colon,
     Dot,
     Spread, // ...

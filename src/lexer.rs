@@ -6,6 +6,9 @@ pub struct Lexer<'a> {
     line: usize,
     col: usize,
     saw_newline: bool,
+    /// Whether the previous significant token ended an expression (so a `/`
+    /// means division rather than a regex literal).
+    prev_value_ending: bool,
     /// Template-literal scanner state.
     /// 0 = normal, 1 = emit TemplateExprStart next, 2 = inside interpolation expr,
     /// 3 = read next segment after an interpolation closed.
@@ -20,6 +23,7 @@ impl<'a> Lexer<'a> {
             line: 1,
             col: 1,
             saw_newline: true,
+            prev_value_ending: false,
             template_state: 0,
         }
     }
@@ -541,6 +545,15 @@ impl<'a> Lexer<'a> {
             Some(b'"') => self.read_string(b'"'),
             Some(b'\'') => self.read_string(b'\''),
             Some(b'`') => return self.read_template_start(line, col, preceded_by_newline),
+            Some(b'/') => {
+                // Regex literal vs division, decided by the previous token.
+                if self.prev_value_ending {
+                    self.read_operator()
+                        .unwrap_or(TokenKind::Ident(String::from("/")))
+                } else {
+                    self.read_regex()
+                }
+            }
             Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => {
                 self.read_ident_or_keyword()
             }
@@ -560,9 +573,72 @@ impl<'a> Lexer<'a> {
             }
         };
 
+        // Update the regex/division disambiguator for the next token.
+        self.prev_value_ending = matches!(
+            &kind,
+            TokenKind::Ident(_)
+                | TokenKind::Number(_)
+                | TokenKind::String(_)
+                | TokenKind::TemplateString(_)
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Null
+                | TokenKind::Undefined
+                | TokenKind::This
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::Regex(_, _)
+        );
         let mut tok = Token::new(kind, line, col);
         tok.preceded_by_newline = preceded_by_newline;
         tok
+    }
+
+    /// Read a regex literal `/pattern/flags`. The leading `/` is NOT yet consumed.
+    fn read_regex(&mut self) -> TokenKind {
+        self.advance(); // consume opening `/`
+        let mut pattern = String::new();
+        let mut in_class = false;
+        while let Some(c) = self.peek() {
+            if c == b'\\' {
+                // Escaped char: keep the backslash and the following char.
+                self.advance(); // consume backslash
+                pattern.push('\\');
+                if let Some(n) = self.peek() {
+                    pattern.push(n as char);
+                    self.advance();
+                }
+                continue;
+            }
+            if c == b'[' {
+                in_class = true;
+                pattern.push('[');
+                self.advance();
+                continue;
+            }
+            if c == b']' && in_class {
+                in_class = false;
+                pattern.push(']');
+                self.advance();
+                continue;
+            }
+            if c == b'/' && !in_class {
+                self.advance();
+                break;
+            }
+            pattern.push(c as char);
+            self.advance();
+        }
+        let mut flags = String::new();
+        while let Some(c) = self.peek() {
+            if c.is_ascii_alphabetic() {
+                flags.push(c as char);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        TokenKind::Regex(pattern, flags)
     }
 
     fn read_template_start(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {

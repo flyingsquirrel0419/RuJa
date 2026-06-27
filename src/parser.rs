@@ -819,6 +819,13 @@ impl Parser {
 
     fn parse_primary(&mut self) -> error::Result<Expr> {
         match self.peek().clone() {
+            TokenKind::Regex(pat, flags) => {
+                self.advance();
+                Ok(Expr::Regex(
+                    Rc::from(pat.as_str()),
+                    Rc::from(flags.as_str()),
+                ))
+            }
             TokenKind::Number(n) => {
                 self.advance();
                 Ok(Expr::Number(n))

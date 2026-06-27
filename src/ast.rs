@@ -61,6 +61,7 @@ pub enum Expr {
     },
     Spread(Box<Expr>),
     Sequence(Vec<Expr>),
+    Regex(Rc<str>, Rc<str>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

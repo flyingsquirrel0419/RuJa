@@ -1324,6 +1324,17 @@ impl Compiler {
                     self.chunk.patch_jump(jend, end);
                 }
             }
+            Expr::Regex(pattern, flags) => {
+                // Compile to `new RegExp(pattern, flags)`.
+                let name_idx = self.chunk.add_constant(Value::String(Rc::from("RegExp")));
+                let pat_idx = self.chunk.add_constant(Value::String(pattern.clone()));
+                let flg_idx = self.chunk.add_constant(Value::String(flags.clone()));
+                self.chunk.emit(Op::Const(name_idx), 0);
+                self.chunk.emit(Op::LoadGlobal, 0);
+                self.chunk.emit(Op::Const(pat_idx), 0);
+                self.chunk.emit(Op::Const(flg_idx), 0);
+                self.chunk.emit(Op::New(2), 0);
+            }
             Expr::Function(f) | Expr::Arrow(f) => {
                 let func_chunk = self.compile_function(f)?;
                 let func_idx = self.funcs.len();

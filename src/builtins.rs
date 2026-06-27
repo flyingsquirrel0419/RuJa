@@ -12,6 +12,7 @@ use crate::value::{
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::IndexMap;
+use regex::Regex;
 use std::cell::{Cell, RefCell};
 
 use std::rc::Rc;
@@ -2584,14 +2585,33 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
 }
 fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let from = args
-        .get(0)
-        .map(|v| crate::value::value_to_debug_string(v))
-        .unwrap_or_default();
-    let to = args
-        .get(1)
-        .map(|v| crate::value::value_to_debug_string(v))
-        .unwrap_or_default();
+    let to = match args.get(1) {
+        Some(v) => vm.to_string(v)?.to_string(),
+        None => "undefined".to_string(),
+    };
+    // If the search value is a RegExp, use regex replacement.
+    if let Some(Value::Object(idx)) = args.get(0) {
+        let source = vm.heap.with_obj(idx.0, |o| {
+            o.props().borrow().get("source").map(|d| d.value.clone())
+        });
+        if let Some(Value::String(source)) = source {
+            let global = vm.heap.with_obj(idx.0, |o| {
+                o.props().borrow().get("global").map(|d| d.value.clone())
+            }) == Some(Value::Bool(true));
+            let re =
+                Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+            let replaced = if global {
+                re.replace_all(&s, to.as_str())
+            } else {
+                re.replace(&s, to.as_str())
+            };
+            return Ok(Value::String(Rc::from(replaced.as_ref())));
+        }
+    }
+    let from = match args.get(0) {
+        Some(v) => vm.to_string(v)?.to_string(),
+        None => return Ok(Value::String(Rc::from(s.as_str()))),
+    };
     Ok(Value::String(Rc::from(s.replacen(&from, &to, 1).as_str())))
 }
 fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3050,6 +3070,29 @@ pub fn setup_full(vm: &mut Vm) {
     );
     vm.promise_proto = Value::Object(promise_proto);
     define_global(vm, "Promise", Value::Object(promise_ctor));
+    // RegExp
+    let (regex_ctor, regex_proto) = make_builtin_constructor_with(
+        vm,
+        "RegExp",
+        regexp_constructor,
+        &[("test", regexp_test, 1), ("exec", regexp_exec, 1)],
+    );
+    vm.heap.with_obj(regex_proto.0, |o| {
+        if let HeapObj::Object(obj) = o {
+            obj.props
+                .borrow_mut()
+                .insert(Rc::from("__regex_proto__"), data_prop(Value::Bool(true)));
+        }
+    });
+    // Store regex_proto on the constructor so regexp_constructor can use it.
+    vm.heap.with_obj(regex_ctor.0, |o| {
+        if let HeapObj::Function(f) = o {
+            f.props
+                .borrow_mut()
+                .insert(Rc::from("__proto__"), data_prop(Value::Object(regex_proto)));
+        }
+    });
+    define_global(vm, "RegExp", Value::Object(regex_ctor));
     setup_collections(vm);
 }
 
@@ -3383,6 +3426,119 @@ fn promise_catch(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     // p.catch(r) === p.then(undefined, r)
     let on_rejected = args.get(0).cloned().unwrap_or(Value::Undefined);
     promise_then(vm, &[Value::Undefined, on_rejected], this)
+}
+
+// =========================================================================
+// RegExp
+// =========================================================================
+fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let pattern = match args.get(0) {
+        Some(Value::String(s)) => s.to_string(),
+        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
+        _ => String::new(),
+    };
+    let flags = match args.get(1) {
+        Some(Value::String(s)) => s.to_string(),
+        Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
+        _ => String::new(),
+    };
+    // Validate the pattern eagerly so bad regexes throw at construction time.
+    Regex::new(&pattern).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    // Look up RegExp.prototype via the global RegExp constructor.
+    let regex_proto_val = {
+        let reg = crate::environment::get(&vm.heap, vm.global, "RegExp");
+        match reg {
+            Some(Value::Object(ci)) => vm
+                .heap
+                .with_obj(ci.0, |o| {
+                    o.props().borrow().get("prototype").map(|d| d.value.clone())
+                })
+                .unwrap_or(vm.object_proto.clone()),
+            _ => vm.object_proto.clone(),
+        }
+    };
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(regex_proto_val)),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("RegExp")),
+    }));
+    let mut props = IndexMap::new();
+    props.insert(
+        Rc::from("source"),
+        data_prop(Value::String(Rc::from(pattern.as_str()))),
+    );
+    props.insert(
+        Rc::from("flags"),
+        data_prop(Value::String(Rc::from(flags.as_str()))),
+    );
+    props.insert(
+        Rc::from("global"),
+        data_prop(Value::Bool(flags.contains('g'))),
+    );
+    props.insert(
+        Rc::from("ignoreCase"),
+        data_prop(Value::Bool(flags.contains('i'))),
+    );
+    props.insert(
+        Rc::from("multiline"),
+        data_prop(Value::Bool(flags.contains('m'))),
+    );
+    vm.heap.with_obj(obj_idx, |o| {
+        if let HeapObj::Object(obj) = o {
+            *obj.props.borrow_mut() = props;
+        }
+    });
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn regexp_test(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let source = read_regexp_source(vm, &this)?;
+    let input = match args.get(0) {
+        Some(Value::String(s)) => s.to_string(),
+        Some(v) => vm.to_string(v)?.to_string(),
+        None => String::new(),
+    };
+    let re = Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    Ok(Value::Bool(re.is_match(&input)))
+}
+
+fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let source = read_regexp_source(vm, &this)?;
+    let input = match args.get(0) {
+        Some(Value::String(s)) => s.to_string(),
+        Some(v) => vm.to_string(v)?.to_string(),
+        None => String::new(),
+    };
+    let re = Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    match re.captures(&input) {
+        Some(caps) => {
+            let items: Vec<Value> = caps
+                .iter()
+                .map(|c| match c {
+                    Some(m) => Value::String(Rc::from(m.as_str())),
+                    None => Value::Undefined,
+                })
+                .collect();
+            Ok(make_value_array(vm, items))
+        }
+        None => Ok(Value::Null),
+    }
+}
+
+fn read_regexp_source(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
+    match this {
+        Some(Value::Object(idx)) => {
+            let s = vm.heap.with_obj(idx.0, |o| {
+                o.props().borrow().get("source").map(|d| d.value.clone())
+            });
+            match s {
+                Some(Value::String(s)) => Ok(s.to_string()),
+                _ => Err(Error::type_err("not a RegExp".to_string())),
+            }
+        }
+        _ => Err(Error::type_err("not a RegExp".to_string())),
+    }
 }
 
 pub fn setup_collections(vm: &mut Vm) {
