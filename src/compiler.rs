@@ -750,22 +750,28 @@ impl Compiler {
                 }
             }
             Expr::Update(op, prefix, target) => {
-                // load current value
+                // Load current value, coerce to number, keep old for postfix.
                 self.compile_expr(target)?;
-                self.chunk.emit(Op::Dup, 0); // keep a copy for storing
+                self.chunk.emit(Op::TypeCoerce, 0); // [oldNum]
+                self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
                 let delta = match op {
                     UpdateOp::Inc => 1.0,
                     UpdateOp::Dec => -1.0,
                 };
                 let c = self.chunk.add_constant(Value::Number(delta));
-                self.chunk.emit(Op::Const(c), 0);
-                self.chunk.emit(Op::Add, 0); // new value on stack
-                                             // store new value back
-                self.chunk.emit(Op::Dup, 0); // duplicate for result
-                self.compile_assign_target(target)?;
-                // stack now has the result; if postfix, we need old value
-                // simplified: return new value (prefix semantics) for now
-                let _ = prefix;
+                self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
+                self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
+                                             // Store new value back; arrange so newNum is stored and oldNum/newNum remain.
+                self.chunk.emit(Op::Swap, 0); // [newNum, oldNum]
+                self.chunk.emit(Op::Dup, 0); // [newNum, oldNum, newNum]
+                self.compile_assign_target(target)?; // pop newNum, store, push undefined
+                self.chunk.emit(Op::Pop, 0); // [newNum, oldNum]
+                if *prefix {
+                    self.chunk.emit(Op::Swap, 0); // [oldNum, newNum]
+                    self.chunk.emit(Op::Pop, 0); // [newNum]
+                } else {
+                    self.chunk.emit(Op::Pop, 0); // [oldNum]
+                }
             }
             Expr::Binary(op, l, r) => match op {
                 BinOp::In => {
