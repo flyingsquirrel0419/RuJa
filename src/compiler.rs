@@ -1025,6 +1025,21 @@ impl Compiler {
             }
             Expr::Call { callee, args } => {
                 // check if method call
+                // `super(args)`: call the parent constructor with `this`.
+                if matches!(callee.as_ref(), Expr::Super) {
+                    let this_idx = self.intern("this");
+                    self.chunk.emit(Op::LoadEnv(this_idx), 0); // [this]
+                    let superctor_idx = self.intern("#superctor");
+                    self.chunk.emit(Op::LoadEnv(superctor_idx), 0); // [this, superCtor]
+                    for a in args {
+                        if let Expr::Spread(_) = a {
+                        } else {
+                            self.compile_expr(a)?;
+                        }
+                    }
+                    self.chunk.emit(Op::CallSuperCtor(args.len()), 0);
+                    return Ok(());
+                }
                 match callee.as_ref() {
                     Expr::Member {
                         object,
@@ -1165,6 +1180,14 @@ impl Compiler {
             Expr::Class(cls) => {
                 // Build a constructor function from the class.
                 // Methods become prototype properties (or static on the constructor).
+                let has_ctor = cls.methods.iter().any(|m| m.is_constructor);
+                // For derived classes without an explicit constructor, synthesize one
+                // that forwards all arguments to `super(...)`.
+                let synthetic_params: Vec<Rc<str>> = if cls.superclass.is_some() && !has_ctor {
+                    (0..16).map(|i| Rc::from(format!("#a{}", i).as_str())).collect()
+                } else {
+                    Vec::new()
+                };
                 let ctor_fn = FunctionExpr {
                     name: cls.name.clone(),
                     params: cls
@@ -1172,6 +1195,7 @@ impl Compiler {
                         .iter()
                         .find(|m| m.is_constructor)
                         .map(|m| m.params.clone())
+                        .or_else(|| if cls.superclass.is_some() { Some(synthetic_params.clone()) } else { None })
                         .unwrap_or_default(),
                     param_defaults: cls
                         .methods
@@ -1189,6 +1213,15 @@ impl Compiler {
                         .iter()
                         .find(|m| m.is_constructor)
                         .map(|m| m.body.clone())
+                        .or_else(|| if cls.superclass.is_some() {
+                            // super(#a0, #a1, ... #a15) — extra args are harmlessly undefined.
+                            let args: Vec<Expr> = synthetic_params.iter()
+                                .map(|n| Expr::Ident(n.clone())).collect();
+                            Some(vec![Stmt::ExprStmt(Expr::Call {
+                                callee: Box::new(Expr::Super),
+                                args,
+                            })])
+                        } else { None })
                         .unwrap_or_default(),
                     is_arrow: false,
                     is_async: false,
@@ -1216,6 +1249,10 @@ impl Compiler {
                     // stack: [ctor]
                     self.compile_expr(super_expr)?;
                     // stack: [ctor, parentCtor]
+                    // Bind parentCtor as `#superctor` so `super(...)` calls can find it.
+                    self.chunk.emit(Op::Dup, 0); // [ctor, parentCtor, parentCtor]
+                    let superctor_idx = self.intern("#superctor");
+                    self.chunk.emit(Op::DeclareEnv(superctor_idx), 0); // [ctor, parentCtor]
                     let proto_key = self
                         .chunk
                         .add_constant(Value::String(Rc::from("prototype")));

@@ -228,3 +228,24 @@ fn call_spread() {
 fn call_spread_mixed() {
     assert_eq!(run("function f(a,b,c){return a+b+c;} f(1, ...[2,3]);"), Value::Number(6.0));
 }
+
+#[test]
+fn derived_class_auto_super() {
+    assert_eq!(run("class A{constructor(x){this.x=x;}} class B extends A{} new B(5).x;"), Value::Number(5.0));
+}
+
+#[test]
+fn derived_class_super_method() {
+    assert_eq!(
+        run("class A{constructor(x){this.x=x;} get(){return this.x;}} class B extends A{get(){return super.get()+10;}} new B(5).get();"),
+        Value::Number(15.0)
+    );
+}
+
+#[test]
+fn explicit_super_constructor() {
+    assert_eq!(
+        run("class A{constructor(x){this.x=x;}} class B extends A{constructor(x){super(x); this.y=x*2;}} new B(5).y;"),
+        Value::Number(10.0)
+    );
+}

@@ -677,6 +677,25 @@ impl Vm {
                     let result = self.call_function(&method, &args, Some(obj))?;
                     self.stack.push(result);
                 }
+                Op::CallSuperCtor(arg_count) => {
+                    // stack: [this, superCtor, args...]; call superCtor with this.
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    let this_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    // Call the parent constructor with `this` (not `new`, just call).
+                    let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
+                    // If the parent constructor returned an object, use it as the new `this`.
+                    let new_this = if matches!(result, Value::Object(_)) { result } else { this_val };
+                    // Rebind `this` in the current environment to the (possibly updated) value.
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::set(&self.heap, cur_env, "this", new_this.clone());
+                    self.frames.last_mut().unwrap().this_val = new_this.clone();
+                    self.stack.push(new_this);
+                }
                 Op::CallSuper(arg_count) => {
                     // stack (bottom->top): [this, superProto, key, args...]
                     let mut args = Vec::with_capacity(arg_count);
