@@ -27,6 +27,7 @@ pub enum Expr {
     Undefined,
     Ident(Rc<str>),
     This,
+    Super,
     Array(Vec<Expr>),
     Object(Vec<Property>),
     Function(FunctionExpr),

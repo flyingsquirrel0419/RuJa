@@ -426,6 +426,12 @@ impl Compiler {
                 let name_idx = self.intern("this");
                 self.chunk.emit(Op::LoadEnv(name_idx), 0);
             }
+            Expr::Super => {
+                // `super` resolves to the parent prototype bound as `#super` in the
+                // method's closure environment. Used as a callee in `super.m(...)`.
+                let name_idx = self.intern("#super");
+                self.chunk.emit(Op::LoadEnv(name_idx), 0);
+            }
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
                     let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
@@ -548,6 +554,25 @@ impl Compiler {
                 // check if method call
                 match callee.as_ref() {
                     Expr::Member { object, property, computed } => {
+                        if matches!(object.as_ref(), Expr::Super) {
+                            // super.m(args): call parent proto's m with `this`.
+                            let this_idx = self.intern("this");
+                            self.chunk.emit(Op::LoadEnv(this_idx), 0);
+                            let super_idx = self.intern("#super");
+                            self.chunk.emit(Op::LoadEnv(super_idx), 0);
+                            if *computed {
+                                self.compile_expr(property)?;
+                            } else {
+                                let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
+                                let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                                self.chunk.emit(Op::Const(key_idx), 0);
+                            }
+                            for a in args {
+                                if let Expr::Spread(_) = a {} else { self.compile_expr(a)?; }
+                            }
+                            self.chunk.emit(Op::CallSuper(args.len()), 0);
+                            return Ok(());
+                        }
                         self.compile_expr(object)?;
                         let key = if !*computed {
                             if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() }
@@ -630,6 +655,47 @@ impl Compiler {
                 };
                 self.funcs.push(Rc::new(fdef));
                 self.chunk.emit(Op::MakeClosure(func_idx), 0);
+                // If there is a superclass, evaluate it and wire up the prototype chain.
+                // The parent prototype is exposed to methods as the `#super` binding so that
+                // `super.m(...)` can look up methods on the parent prototype.
+                if let Some(super_expr) = &cls.superclass {
+                    // stack: [ctor]
+                    self.compile_expr(super_expr)?;
+                    // stack: [ctor, parentCtor]
+                    let proto_key = self.chunk.add_constant(Value::String(Rc::from("prototype")));
+                    self.chunk.emit(Op::Const(proto_key), 0);
+                    // stack: [ctor, parentCtor, "prototype"]; GetProp pops key then obj
+                    self.chunk.emit(Op::GetProp, 0); // -> [ctor, parentProto]
+                    // stack: [ctor, parentProto]
+                    // Bind parentProto as `#super` in the current env so method closures capture it.
+                    let super_name_idx = self.intern("#super");
+                    self.chunk.emit(Op::DeclareEnv(super_name_idx), 0);
+                    // stack: [ctor]
+                    // Set childCtor.prototype.__proto__ = parentProto (link prototype chain).
+                    self.chunk.emit(Op::Dup, 0); // [ctor, ctor]
+                    let cp_key = self.chunk.add_constant(Value::String(Rc::from("prototype")));
+                    self.chunk.emit(Op::Const(cp_key), 0);
+                    self.chunk.emit(Op::GetProp, 0); // [ctor, childProto]
+                    self.chunk.emit(Op::LoadEnv(super_name_idx), 0); // [ctor, childProto, parentProto]
+                    self.chunk.emit(Op::SetProto, 0); // pop parentProto,childProto; set childProto.__proto__
+                    // stack: [ctor]
+                    // Also link the constructors: childCtor.__proto__ = parentCtor (static inheritance).
+                    self.chunk.emit(Op::Dup, 0); // [ctor, ctor]
+                    self.chunk.emit(Op::LoadEnv(super_name_idx), 0); // [ctor, ctor, parentProto]
+                    // We need parentCtor, not parentProto, for static chain; re-derive by getting
+                    // constructor from parentProto. Simpler: parentCtor is the superclass expr;
+                    // but it's already consumed. Use parentProto.constructor.
+                    let ctor_key = self.chunk.add_constant(Value::String(Rc::from("constructor")));
+                    self.chunk.emit(Op::Const(ctor_key), 0); // [ctor, ctor, parentProto, "constructor"]
+                    self.chunk.emit(Op::GetProp, 0); // pop "constructor",parentProto -> [ctor, ctor, parentCtor]
+                    self.chunk.emit(Op::SetProto, 0); // set ctor.__proto__ = parentCtor
+                    // stack: [ctor]
+                } else {
+                    // No superclass: clear any stale #super binding so methods don't capture one.
+                    let super_name_idx = self.intern("#super");
+                    self.chunk.emit(Op::Undefined, 0);
+                    self.chunk.emit(Op::DeclareEnv(super_name_idx), 0);
+                }
                 // assign each non-constructor method to prototype (or constructor if static)
                 for method in &cls.methods {
                     if method.is_constructor { continue; }

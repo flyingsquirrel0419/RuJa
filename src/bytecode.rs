@@ -92,11 +92,13 @@ pub enum Op {
     GetElem,             // computed member
     SetElem,
     DeleteProp,
+    SetProto,            // pop [proto, obj]; set obj's [[Prototype]] to proto
 
     // Functions
     MakeFunction(usize), // function index in a function table
     Call(usize),         // arg count
     CallMethod(usize),   // arg count (method call: this is on stack)
+    CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
     New(usize),          // constructor call, arg count
     Return,
     ReturnUndefined,

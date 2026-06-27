@@ -401,6 +401,16 @@ impl Vm {
                     self.set_property(&obj, &key_str, value.clone())?;
                     self.stack.push(value);
                 }
+                Op::SetProto => {
+                    // stack (top->bottom): [proto, obj]; set obj's [[Prototype]] to proto.
+                    let proto = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            *o.proto().borrow_mut() = Some(proto);
+                        });
+                    }
+                }
                 Op::Throw => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     // if there's an active try, jump to the catch handler
@@ -445,6 +455,22 @@ impl Vm {
                     let key_str = self.to_property_key(&key)?;
                     let method = self.get_property(&obj, &key_str)?;
                     let result = self.call_function(&method, &args, Some(obj))?;
+                    self.stack.push(result);
+                }
+                Op::CallSuper(arg_count) => {
+                    // stack (bottom->top): [this, superProto, key, args...]
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let super_proto = self.stack.pop().unwrap_or(Value::Undefined);
+                    let this_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    // Look up the method on the parent prototype (and its chain).
+                    let method = self.get_property(&super_proto, &key_str)?;
+                    let result = self.call_function(&method, &args, Some(this_val))?;
                     self.stack.push(result);
                 }
                 Op::New(arg_count) => {

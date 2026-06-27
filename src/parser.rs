@@ -603,6 +603,7 @@ impl Parser {
             TokenKind::Null => { self.advance(); Ok(Expr::Null) }
             TokenKind::Undefined => { self.advance(); Ok(Expr::Undefined) }
             TokenKind::This => { self.advance(); Ok(Expr::This) }
+            TokenKind::Super => { self.advance(); Ok(Expr::Super) }
             TokenKind::Ident(s) => {
                 // Could be arrow: x => ...
                 if let TokenKind::Arrow = self.peek_at_tok(1).kind {

@@ -45,6 +45,7 @@ pub enum TokenKind {
     Static,
     Get,
     Set,
+    Super,
     Async,
     Await,
     Case,
