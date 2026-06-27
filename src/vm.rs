@@ -174,7 +174,13 @@ impl Vm {
         });
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
-        self.interpret_to_depth(target_depth)
+        let result = self.interpret_to_depth(target_depth);
+        // On error, the function frame is still on the stack; pop it so the
+        // caller's catch handler can be found by the enclosing interpret_catch.
+        if result.is_err() {
+            self.frames.pop();
+        }
+        result
     }
 
     fn interpret(&mut self) -> error::Result<Value> {
