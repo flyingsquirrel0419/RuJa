@@ -30,8 +30,8 @@ selected ES2015 features, with zero external runtime dependencies.
  - Functions, recursion, arrow functions, and **closures** (variable capture + mutation)
 - `throw`/`try`/`catch`/`finally` with `Error` type hierarchy
 - Built-in objects: `Object`, `Array`, `String`, `Number`, `Boolean`,
-  `Function`, `Math`, `JSON`, `console`, `Error`/`TypeError`/`RangeError`/
-  `ReferenceError`/`SyntaxError`
+  `Function`, `Math`, `JSON`, `console`, `Promise`, `RegExp`, `Map`, `Set`,
+  `Symbol`, `Error`/`TypeError`/`RangeError`/`ReferenceError`/`SyntaxError`
 - ES2015: `class`/`extends`/`super`, template literals with `${}`,
   default & rest parameters, array/object destructuring, `for...of`/`for...in`
 - Logical operators with correct short-circuit semantics: `&&`, `||`, and
@@ -40,12 +40,19 @@ selected ES2015 features, with zero external runtime dependencies.
   ...) on identifier, member, and element targets
 - Optional chaining `?.` for property access (`a?.b`), computed access
   (`a?.[b]`), and calls (`a?.b()`, `f?.()`)
-- Array methods: `push`, `pop`, `map`, `filter`, `reduce`, `forEach`, `find`,
-  `findIndex`, `findLast`, `fill`, `some`, `every`, `includes`, `indexOf`,
-  `slice`, `concat`, `join`, and more
-- String methods: `charAt`, `charCodeAt`, `slice`, `split`, `replace`,
-  `includes`, `startsWith`, `endsWith`, `repeat`, `trim`, case conversions
-- `parseInt`, `parseFloat`, `isNaN`, `isFinite`
+- Regex literals `/pattern/flags` with `RegExp` (`test`, `exec`, `source`,
+  `flags`) and `String.replace` with regex
+- `Promise` with `then`/`catch` chaining and microtask draining
+- Array methods: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`,
+  `reduce`, `forEach`, `find`, `findIndex`, `findLast`, `fill`, `some`, `every`,
+  `includes`, `indexOf`, `lastIndexOf`, `slice`, `concat`, `join`, `flat`,
+  `flatMap`, `at`, `sort`, `reverse`, `copyWithin`; `Array.from`/`of`/`isArray`
+- String methods: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
+  supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
+  `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case
+  conversions
+- `parseInt`/`parseFloat` (prefix parsing), `isNaN`, `isFinite`; `Number`
+  statics (`isInteger`, `isFinite`, `isNaN`, constants) and `toString(radix)`
 - JSON parse and stringify
 - Mark-and-sweep GC reclaiming reference cycles
 - CLI with file execution, `-e` eval, `--version`, `--help`
