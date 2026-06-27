@@ -32,8 +32,11 @@ selected ES2015 features, with zero external runtime dependencies.
 - Built-in objects: `Object`, `Array`, `String`, `Number`, `Boolean`,
   `Function`, `Math`, `JSON`, `console`, `Error`/`TypeError`/`RangeError`/
   `ReferenceError`/`SyntaxError`
+- ES2015: `class`/`extends`/`super`, template literals with `${}`,
+  default & rest parameters, array/object destructuring, `for...of`/`for...in`
 - Array methods: `push`, `pop`, `map`, `filter`, `reduce`, `forEach`, `find`,
-  `includes`, `indexOf`, `slice`, `concat`, `join`, and more
+  `findIndex`, `findLast`, `fill`, `some`, `every`, `includes`, `indexOf`,
+  `slice`, `concat`, `join`, and more
 - String methods: `charAt`, `charCodeAt`, `slice`, `split`, `replace`,
   `includes`, `startsWith`, `endsWith`, `repeat`, `trim`, case conversions
 - `parseInt`, `parseFloat`, `isNaN`, `isFinite`
@@ -82,9 +85,10 @@ fn main() {
 
 ## Known limitations
 
-- ES2015 `class` syntax (not yet implemented; prototype chain works)
- - `async`/`await`, generators (not yet implemented)
- - test262 conformance (targeted for follow-up)
+- `async`/`await`, generators (not yet implemented)
+- test262 conformance (targeted for follow-up)
+- Property insertion order is not preserved (HashMap-backed); `for...in`
+  may yield keys out of order in some cases
 
 ## License
 

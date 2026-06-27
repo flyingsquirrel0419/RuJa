@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `for...of` / `for...in` iteration with iterator protocol (HeapObj::Iterator, GetIterator/IteratorNext/GetForInKeys opcodes)
+- ES2015 `class extends` with prototype-chain linking and static inheritance
+- `super.method()` calls (CallSuper opcode, `#super` binding)
+- Template literal interpolation `${...}` (lexer template state machine + Expr::TemplateInterp)
+- Default parameters (`function f(a, b = 10)`) and rest parameters (`function f(...args)`)
+- Array/object destructuring in declarations and `for...of` (nested, rename, default, rest)
+- Array methods: `find`, `findIndex`, `findLast`, `fill`, `some`, `every`
+- `Symbol.prototype.toString` + `symbol_proto`
+
+### Fixed
+- Silent bug: `for...of` produced wrong values (0/empty) — was not compiled
+- `extends` inheritance: subclass methods now resolve through the prototype chain
+- `super.f() + 5` now returns 15 (was 2)
+- Static methods now return their value (e.g. `C.s()` returns 42)
+- `for...in` no longer leaks non-enumerable builtin prototype methods
+
 ## [0.2.0] - 2026-06-27
 
 ### Added
