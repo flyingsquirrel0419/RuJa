@@ -168,3 +168,43 @@ fn closure_over_let_works() {
         Value::Number(10.0)
     );
 }
+
+// ---- default-parameter self-reference TDZ ----
+
+#[test]
+fn default_param_self_reference_is_tdz() {
+    // `function f(a = a)` must throw ReferenceError when the default is used,
+    // because `a` is in the TDZ during default evaluation.
+    use ruja::Value;
+    let mut vm = ruja::Vm::new();
+    match vm.run("function f(a = a) { return a; } f();") {
+        Err(e) => assert!(
+            e.to_string().contains("before initialization")
+                || e.to_string().contains("ReferenceError"),
+            "expected TDZ/ReferenceError, got: {}",
+            e
+        ),
+        Ok(v) => panic!("expected error, got value: {:?}", v),
+    }
+    let _ = Value::Undefined;
+}
+
+#[test]
+fn default_param_normal_default_still_works() {
+    // Regression: a normal default must still apply when arg is omitted.
+    let src = r#"
+        function f(a = 5) { return a; }
+        f();
+    "#;
+    assert_eq!(run(src), ruja::Value::Number(5.0));
+}
+
+#[test]
+fn default_param_cross_reference_works() {
+    // A default may reference an earlier parameter that is already initialized.
+    let src = r#"
+        function h(a = 10, b = a + 1) { return b; }
+        h();
+    "#;
+    assert_eq!(run(src), ruja::Value::Number(11.0));
+}

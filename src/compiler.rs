@@ -703,12 +703,15 @@ impl Compiler {
                 // If defined (isUndefined == false), jump to `pop_param`.
                 let defined_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfFalse(0), 0);
-                // Undefined path: pop the old param, eval the default, store it, and
-                // discard the undefined that StoreEnvName pushes.
+                // Undefined path: the parameter is not yet initialized. Per spec,
+                // the default expression evaluates in a scope where this parameter
+                // is in the TDZ, so `function f(a = a)` throws ReferenceError.
+                // Re-declare the binding as uninitialized, evaluate the default,
+                // then initialize it.
                 self.chunk.emit(Op::Pop, 0);
+                self.chunk.emit(Op::DeclareLetUninit(name_idx), 0);
                 self.compile_expr(default)?;
-                self.chunk.emit(Op::StoreEnvName(name_idx), 0);
-                self.chunk.emit(Op::Pop, 0);
+                self.chunk.emit(Op::InitLet(name_idx), 0);
                 // Jump over the defined-path pop (stack is already empty here).
                 let over_pop = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), 0);
