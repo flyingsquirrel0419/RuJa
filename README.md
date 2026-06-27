@@ -67,6 +67,19 @@ selected ES2015 features, with zero external runtime dependencies.
 - JSON parse and stringify
 - Mark-and-sweep GC reclaiming reference cycles
 - CLI with file execution, `-e` eval, `--version`, `--help`
+- **Symbol-keyed properties**: `[Symbol.iterator]` and arbitrary Symbol keys are
+  stored/read on objects and skipped by `for...in`/`JSON.stringify`
+- **Per-frame generator isolation**: a generator body may call `next()` on
+  another generator without corrupting either's run-state
+- **`yield*` delegation** to generators, arrays, and strings (nestable)
+- **Custom `Symbol.iterator`**: objects with `[Symbol.iterator]()` are iterable
+  via `for...of`/spread; lazy iterators call the JS `next()` per pull
+- **Computed property keys** `[expr]` in object literals (any expression)
+- **`async function*`**: `next()` returns a Promise; `await` works in the body
+- **TDZ for default-parameter self-reference** (`function f(a = a)` throws)
+- **`with` statement** (dynamic object environment records)
+- **`eval`** (indirect runs globally; direct `eval(...)` runs in the caller's
+  scope), with runtime parse/compile
 
 ## Installation
 
@@ -109,6 +122,12 @@ fn main() {
 
 ## Known limitations
 
+- `for await...of` and async-iterable protocol are not supported
+- Async generators use a synchronous microtask-drain model (no real event loop)
+- Direct `eval` runs in the caller env directly (spec's var/lexical split not modeled)
+- `with` is not rejected in strict mode (strict mode not implemented)
+- Array destructuring of custom iterables uses index access, not the iterator protocol
+- `Function` constructor and `eval`/`with` security sandboxing are absent
 - test262 conformance (targeted for follow-up)
 
 ## License

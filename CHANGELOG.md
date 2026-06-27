@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added (v2.1 spec-completeness pass)
+- **Symbol-keyed properties**: a `PropertyKey` model (string/Symbol) backs all
+  object `props` maps, so `[Symbol.iterator]` and arbitrary Symbol keys store
+  and read correctly and are skipped by `for...in`/`JSON.stringify`.
+- **Per-frame generator run-state**: `gen_mode`/`gen_yield`/`gen_suspended`/
+  `gen_resume_value` moved from VM-global fields into `CallFrame`, so a
+  generator body that calls `next()` on another generator is fully isolated.
+- **`yield*` delegation**: `yield* expr` forwards each value of a delegated
+  iterable/generator to the outer generator (supports arrays, strings, nesting).
+- **Custom `Symbol.iterator`**: `make_iterator` honors a user-defined
+  `[Symbol.iterator]()` method, wrapping the returned iterator in a lazy
+  `IteratorData` that calls the JS `next()` per pull (infinite iterables work).
+- **Computed property keys** `[expr]` in object literals now accept any
+  expression (was restricted to identifiers/strings).
+- **`async function*`**: `next()` returns a Promise resolved with `{value, done}`;
+  `await` works inside the body (synchronous microtask-drain model).
+- **TDZ for default-parameter self-reference**: `function f(a = a)` throws
+  `ReferenceError` when the default is used (parameter is in the TDZ during
+  default evaluation).
+- **`with` statement**: dynamic object environment records; name lookups and
+  assignments check the `with` object's properties first (precedence over the
+  lexical chain), then fall back to lexical/global.
+- **`eval`**: global `eval(x)` returns non-strings unchanged and parses/compiles/
+  runs strings at runtime. Indirect eval runs globally (var leaks to global);
+  direct `eval(...)` is detected at compile time and runs in the caller's scope.
+
 ### Added
 - Temporal Dead Zone (TDZ) for `let`/`const`: lexical bindings are hoisted as
   uninitialized at scope entry; reading or assigning them before the declaration

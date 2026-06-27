@@ -17,21 +17,37 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 11. [x] Release prep (README/CHANGELOG/CI)
 12. [x] Release verification (tests + CLI + metadata)
 
+## v2.1 - Spec completeness pass (current)
+
+1. [x] PropertyKey model (Symbol-keyed properties via `[Symbol.iterator]`)
+2. [x] Per-frame generator run-state (nested generator `next()` isolation)
+3. [x] `yield*` delegation to iterables/generators
+4. [x] Custom `Symbol.iterator` + lazy iterator protocol + computed keys
+5. [x] `async function*` (next() returns Promise) + `await` in generators
+6. [x] TDZ for default-parameter self-reference (`function f(a = a)`)
+7. [x] `with` statement (dynamic object environment records)
+8. [x] `eval` (indirect + direct) with runtime compilation
+
 ## v1.0 - Tree-walking interpreter (archived)
 
 Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
-## Remaining known limitations (post v2.0 ES2015 work)
+## Remaining known limitations (post v2.1)
 
-- **Nested generator `next()` inside a generator body**: a generator that calls
-  `next()` on *another* generator while it is itself running is not fully
-  isolated (generator run-state is VM-global). Single-generator use — including
-  infinite generators pulled with `next()`, `for...of`, and spread — works.
-- **`yield*` delegation** (`yield* gen()`) is not supported (syntax error).
-- **`async function*` / `await` inside generators** is not supported.
-- **Computed property keys** in object literals are limited to identifiers/strings.
-- **Default-parameter self-reference** (`function f(a = a)`) does not hit the
-  TDZ (the parameter is initialized before defaults evaluate); minor spec gap.
-- **`Symbol.iterator` customization**: built-in iterables (Array/String/Map/Set/
-  Generator) iterate, but user-defined `Symbol.iterator` is not honored yet.
-- **`eval`/`with`** are not implemented (intentionally).
+- **`for await...of`** is not supported (async iteration over async iterables).
+- **`yield*` / async-generator `throw`/`return` delegation** is not wired
+  (values are forwarded, but `throw(v)` / `return(v)` sent into a delegated
+  generator are not propagated).
+- **Async generator scheduling** uses the synchronous microtask-drain model
+  (a pending Promise is awaited by draining microtasks until it settles);
+  there is no real event-loop preemption.
+- **Direct eval scope model**: direct `eval` runs in the caller environment
+  directly (a simplification); the spec's separate var-environment vs
+  lexical-environment split for direct eval is not modeled. A residual
+  interaction between direct eval and the operand stack in nested calls is
+  tracked as a follow-up.
+- **`with` in strict mode** is not rejected (strict mode is not implemented).
+- **Array destructuring of custom iterables** still uses index access rather
+  than the iterator protocol (only `for...of`/spread use `Symbol.iterator`).
+- **`Function` constructor** dynamic compilation is not exposed.
+- **`eval`/`with` security sandbox** is absent (local execution assumed).
