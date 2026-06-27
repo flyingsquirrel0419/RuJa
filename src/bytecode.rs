@@ -158,7 +158,8 @@ pub enum Op {
 
     // Type
     TypeOf,
-    Await, // pop promise/value, push settled value (sync)
+    Await,      // pop promise/value, push settled value (sync)
+    YieldValue, // pop value, push to generator's collected yields (eager)
 
     // Misc
     InstanceOf,

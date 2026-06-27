@@ -3219,6 +3219,22 @@ pub fn setup_full(vm: &mut Vm) {
         }
     });
     define_global(vm, "RegExp", Value::Object(regex_ctor));
+    // Generator prototype with next(). Generator instances inherit this proto.
+    let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Generator")),
+    }));
+    {
+        let next_fn = vm.new_native_function("next", generator_next, 0);
+        vm.heap.with_obj(generator_proto_idx, |o| {
+            o.props()
+                .borrow_mut()
+                .insert(Rc::from("next"), data_prop(Value::Object(next_fn)));
+        });
+    }
+    vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));
     setup_collections(vm);
 }
 
@@ -3665,6 +3681,46 @@ fn read_regexp_source(vm: &mut Vm, this: &Option<Value>) -> error::Result<String
         }
         _ => Err(Error::type_err("not a RegExp".to_string())),
     }
+}
+
+fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let g_idx = match &this {
+        Some(Value::Object(idx)) => idx.0,
+        _ => return Err(Error::type_err("not a generator".to_string())),
+    };
+    let (value, done) = vm.heap.with_obj(g_idx, |o| {
+        if let HeapObj::Generator(g) = o {
+            let state = g.state.borrow_mut();
+            let idx = g.ip.get();
+            if idx < state.len() {
+                g.ip.set(idx + 1);
+                (state[idx].clone(), false)
+            } else {
+                g.done.set(true);
+                (Value::Undefined, true)
+            }
+        } else {
+            (Value::Undefined, true)
+        }
+    });
+    // return {value, done}
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: None,
+    }));
+    vm.heap.with_obj(obj_idx, |o| {
+        if let HeapObj::Object(obj) = o {
+            obj.props
+                .borrow_mut()
+                .insert(Rc::from("value"), data_prop(value));
+            obj.props
+                .borrow_mut()
+                .insert(Rc::from("done"), data_prop(Value::Bool(done)));
+        }
+    });
+    Ok(Value::Object(GcIdx(obj_idx)))
 }
 
 pub fn setup_collections(vm: &mut Vm) {

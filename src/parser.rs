@@ -190,6 +190,7 @@ impl Parser {
 
     fn parse_function_decl(&mut self) -> error::Result<Stmt> {
         self.advance(); // function
+        let is_generator = self.eat(&TokenKind::Star);
         let name = match self.advance() {
             TokenKind::Ident(s) => Some(Rc::from(s.as_str())),
             other => {
@@ -211,7 +212,7 @@ impl Parser {
             body,
             is_arrow: false,
             is_async: false,
-            is_generator: false,
+            is_generator,
             param_decls: Vec::new(),
         }))
     }
@@ -838,6 +839,22 @@ impl Parser {
                 let inner = self.parse_unary()?;
                 Ok(Expr::Await(Box::new(inner)))
             }
+            TokenKind::Yield => {
+                self.advance();
+                let inner = if matches!(
+                    self.peek(),
+                    TokenKind::Semicolon
+                        | TokenKind::RBrace
+                        | TokenKind::RParen
+                        | TokenKind::Comma
+                        | TokenKind::Eof
+                ) {
+                    None
+                } else {
+                    Some(Box::new(self.parse_unary()?))
+                };
+                Ok(Expr::Yield(inner))
+            }
             TokenKind::Async => {
                 // `async function ...` expression; otherwise `async` is treated
                 // as a plain identifier (handled below).
@@ -1072,6 +1089,7 @@ impl Parser {
 
     fn parse_function_expr(&mut self) -> error::Result<Expr> {
         self.advance(); // function
+        let is_generator = self.eat(&TokenKind::Star);
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
                 self.advance();
@@ -1091,7 +1109,7 @@ impl Parser {
             body,
             is_arrow: false,
             is_async: false,
-            is_generator: false,
+            is_generator,
             param_decls: Vec::new(),
         }))
     }

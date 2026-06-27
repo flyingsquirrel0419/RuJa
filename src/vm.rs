@@ -27,9 +27,12 @@ pub struct Vm {
     pub symbol_proto: Value,
     pub promise_proto: Value,
     pub iterator_proto: Value,
+    pub generator_proto: Value,
     pub map_proto: Value,
     pub set_proto: Value,
     pub microtask_queue: Vec<Microtask>,
+    /// Collected yield values while running a generator function body (eager).
+    pub current_yields: Vec<Value>,
     pub next_symbol_id: u32,
     pub well_known_symbols: WellKnownSymbols,
     pub global_names: HashMap<Rc<str>, usize>,
@@ -98,9 +101,11 @@ impl Vm {
             symbol_proto: Value::Undefined,
             promise_proto: Value::Undefined,
             iterator_proto: Value::Undefined,
+            generator_proto: Value::Undefined,
             map_proto: Value::Undefined,
             set_proto: Value::Undefined,
             microtask_queue: Vec::new(),
+            current_yields: Vec::new(),
             next_symbol_id: 1,
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
@@ -909,6 +914,13 @@ impl Vm {
                         let result = self.call_function(&method, &args, Some(obj))?;
                         self.stack.push(result);
                     }
+                }
+                Op::YieldValue => {
+                    // Eager generator: collect the yielded value and leave
+                    // undefined on the stack (the yield expression's value).
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.current_yields.push(v);
+                    self.stack.push(Value::Undefined);
                 }
                 Op::CallSuperCtor(arg_count) => {
                     // stack: [this, superCtor, args...]; call superCtor with this.
@@ -1877,6 +1889,10 @@ impl Vm {
                     crate::value::BindingKind::Const,
                 );
                 let _ = is_arrow;
+                let is_gen = func.is_generator;
+                if is_gen {
+                    self.current_yields.clear();
+                }
                 // execute the compiled function chunk
                 let result = self.execute_chunk_func(func.clone(), call_env, this_val, args)?;
                 if is_async {
@@ -1891,6 +1907,31 @@ impl Vm {
                             proto: RefCell::new(Some(self.promise_proto.clone())),
                         }));
                     Ok(Value::Object(GcIdx(p_idx)))
+                } else if is_gen {
+                    // eager generator: collect yielded values into a Generator.
+                    let collected = std::mem::take(&mut self.current_yields);
+                    let g_idx =
+                        self.heap
+                            .allocate(HeapObj::Generator(crate::value::GeneratorData {
+                                function: crate::ast::FunctionExpr {
+                                    name: func.name.clone(),
+                                    params: func.params.clone(),
+                                    param_defaults: vec![],
+                                    rest_param: func.rest_param.clone(),
+                                    body: vec![],
+                                    is_arrow: false,
+                                    is_async: false,
+                                    is_generator: true,
+                                    param_decls: vec![],
+                                },
+                                closure,
+                                state: RefCell::new(collected),
+                                ip: Cell::new(0),
+                                done: Cell::new(false),
+                                props: RefCell::new(IndexMap::new()),
+                                proto: RefCell::new(Some(self.generator_proto.clone())),
+                            }));
+                    Ok(Value::Object(GcIdx(g_idx)))
                 } else {
                     Ok(result)
                 }
@@ -1948,14 +1989,23 @@ impl Vm {
                 .map(|c| Value::String(Rc::from(c.to_string().as_str())))
                 .collect(),
             Value::Object(idx) => {
-                let (is_array, is_map, is_set) = self.heap.with_obj(idx.0, |o| {
+                let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {
                     (
                         matches!(o, HeapObj::Array(_)),
                         matches!(o, HeapObj::Map(_)),
                         matches!(o, HeapObj::Set(_)),
+                        matches!(o, HeapObj::Generator(_)),
                     )
                 });
-                if is_array {
+                if is_generator {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Generator(g) = o {
+                            g.state.borrow().clone()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                } else if is_array {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
                             a.items.borrow().clone()

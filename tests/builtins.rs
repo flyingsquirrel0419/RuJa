@@ -539,3 +539,51 @@ fn await_non_promise() {
     let r = run("async function g(){ return await 9; } g();");
     assert!(matches!(r, Value::Object(_)));
 }
+
+// --- generators (function*/yield) ---
+
+#[test]
+fn generator_next_sequence() {
+    assert_eq!(
+        run("function* g(){ yield 1; yield 2; yield 3; } var it = g(); it.next().value;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run(
+            "function* g(){ yield 1; yield 2; yield 3; } var it = g(); it.next(); it.next().value;"
+        ),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run("function* g(){ yield 1; yield 2; yield 3; } var it = g(); it.next(); it.next(); it.next().value;"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("function* g(){ yield 1; yield 2; yield 3; } var it = g(); it.next(); it.next(); it.next(); it.next().done;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn generator_for_of() {
+    assert_eq!(
+        run("function* r(a,b){ for(var i=a;i<b;i++) yield i; } var s=0; for(var v of r(1,4)) s+=v; s;"),
+        Value::Number(6.0)
+    );
+}
+
+#[test]
+fn generator_spread() {
+    assert_eq!(
+        run("function* r(a,b){ for(var i=a;i<b;i++) yield i; } [...r(1,4)].join(',');"),
+        Value::String(Rc::from("1,2,3"))
+    );
+}
+
+#[test]
+fn generator_yield_undefined() {
+    assert_eq!(
+        run("function* g(){ yield; yield 1; } var it=g(); it.next().value;"),
+        Value::Undefined
+    );
+}
