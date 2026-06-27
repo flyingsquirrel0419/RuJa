@@ -12,7 +12,7 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 6. [x] Closure variable capture + this binding
 7. [x] ES2015: class/extends + super, Map/Set, Symbol, iterator protocol (for-of/for-in)
 8. [x] async/await + generators (eager generator with next/for-of/spread)
-9. [~] Built-in spec conformance + TDZ (catch routing done; TDZ pending)
+9. [~] Built-in spec conformance + TDZ (catch routing + TDZ env infra done; compiler hoisting pending)
 10. [~] regression tests (203 passing, split across 6 files)
 11. [x] Release prep (README/CHANGELOG/CI)
 12. [x] Release verification (tests + CLI + metadata)
