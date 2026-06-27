@@ -172,6 +172,12 @@ pub enum Op {
     // Environment
     PushScope,
     PopScope,
+    /// `with` statement: pop an object from the stack and push a new
+    /// environment record whose `with_object` is it, as a child of the current
+    /// frame env. Name lookups fall back to the object's properties.
+    PushWithEnv,
+    /// Pop a `with` environment record pushed by `PushWithEnv`.
+    PopWithEnv,
     DeclareVar(usize), // name index
     DeclareLet(usize),
     DeclareConst(usize),

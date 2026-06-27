@@ -250,6 +250,9 @@ pub struct EnvironmentData {
     pub vars: RefCell<IndexMap<Rc<str>, Binding>>,
     pub parent: RefCell<Option<GcIdx>>,
     pub is_function_scope: bool,
+    /// `with` statement object environment record: when `Some(obj)`, name
+    /// lookups fall back to `obj`'s properties before reaching the parent.
+    pub with_object: RefCell<Option<Value>>,
 }
 
 pub struct Binding {

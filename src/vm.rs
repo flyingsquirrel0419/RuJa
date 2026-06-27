@@ -908,13 +908,26 @@ impl Vm {
                             )));
                         }
                         crate::environment::SetOutcome::NotFound => {
-                            crate::environment::declare(
-                                &self.heap,
-                                cur_env,
-                                &name,
-                                value,
-                                crate::value::BindingKind::Var,
-                            );
+                            // `with`-statement: assign to the closest object env
+                            // record that has the property, else declare as var.
+                            let with_objs = crate::environment::with_objects(&self.heap, cur_env);
+                            let mut set_on_with = false;
+                            for obj in &with_objs {
+                                if self.has_property(obj, &name)? {
+                                    self.set_property(obj, &name, value.clone())?;
+                                    set_on_with = true;
+                                    break;
+                                }
+                            }
+                            if !set_on_with {
+                                crate::environment::declare(
+                                    &self.heap,
+                                    cur_env,
+                                    &name,
+                                    value,
+                                    crate::value::BindingKind::Var,
+                                );
+                            }
                         }
                     }
                     self.stack.push(Value::Undefined);
@@ -934,39 +947,49 @@ impl Vm {
                         }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    match crate::environment::get_checked(&self.heap, env, &name) {
-                        Ok(Some(v)) => self.stack.push(v),
-                        Ok(None) => {
-                            match crate::environment::get_checked(&self.heap, self.global, &name) {
-                                Ok(Some(v)) => self.stack.push(v),
-                                Ok(None) => {
-                                    return Err(Error::reference(format!(
-                                        "{} is not defined",
-                                        name
-                                    )))
-                                }
-                                Err(true) => {
-                                    return Err(Error::reference(format!(
-                                        "Cannot access '{}' before initialization",
-                                        name
-                                    )))
-                                }
-                                Err(false) => {
-                                    return Err(Error::reference(format!(
-                                        "{} is not defined",
-                                        name
-                                    )))
+                    // `with`-statement object environment records take precedence over
+                    // the lexical scope chain (closest first), per spec.
+                    let with_objs = crate::environment::with_objects(&self.heap, env);
+                    let mut found_in_with: Option<Value> = None;
+                    for obj in &with_objs {
+                        let v = self.get_property(obj, &name)?;
+                        if !v.is_undefined() {
+                            found_in_with = Some(v);
+                            break;
+                        }
+                    }
+                    if let Some(v) = found_in_with {
+                        self.stack.push(v);
+                    } else {
+                        match crate::environment::get_checked(&self.heap, env, &name) {
+                            Ok(Some(v)) => self.stack.push(v),
+                            Err(true) => {
+                                return Err(Error::reference(format!(
+                                    "Cannot access '{}' before initialization",
+                                    name
+                                )))
+                            }
+                            Ok(None) | Err(false) => {
+                                match crate::environment::get_checked(
+                                    &self.heap,
+                                    self.global,
+                                    &name,
+                                ) {
+                                    Ok(Some(v)) => self.stack.push(v),
+                                    Ok(None) | Err(false) => {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            name
+                                        )))
+                                    }
+                                    Err(true) => {
+                                        return Err(Error::reference(format!(
+                                            "Cannot access '{}' before initialization",
+                                            name
+                                        )))
+                                    }
                                 }
                             }
-                        }
-                        Err(true) => {
-                            return Err(Error::reference(format!(
-                                "Cannot access '{}' before initialization",
-                                name
-                            )))
-                        }
-                        Err(false) => {
-                            return Err(Error::reference(format!("{} is not defined", name)))
                         }
                     }
                 }
@@ -1001,13 +1024,27 @@ impl Vm {
                             )));
                         }
                         crate::environment::SetOutcome::NotFound => {
-                            crate::environment::declare(
-                                &self.heap,
-                                env,
-                                &name,
-                                value,
-                                crate::value::BindingKind::Var,
-                            );
+                            // `with`-statement: assign to the closest object env
+                            // record that has the property, else declare as var.
+                            let with_objs = crate::environment::with_objects(&self.heap, env);
+                            let mut set_on_with = false;
+                            for obj in &with_objs {
+                                let has = self.has_property(obj, &name)?;
+                                if has {
+                                    self.set_property(obj, &name, value.clone())?;
+                                    set_on_with = true;
+                                    break;
+                                }
+                            }
+                            if !set_on_with {
+                                crate::environment::declare(
+                                    &self.heap,
+                                    env,
+                                    &name,
+                                    value,
+                                    crate::value::BindingKind::Var,
+                                );
+                            }
                         }
                     }
                     self.stack.push(Value::Undefined);
@@ -1033,6 +1070,26 @@ impl Vm {
                     self.frames.last_mut().unwrap().env = new_env;
                 }
                 Op::PopScope => {
+                    let parent = self.frames.last().and_then(|f| {
+                        self.heap.with_obj(f.env.0, |o| {
+                            if let HeapObj::Environment(e) = o {
+                                *e.parent.borrow()
+                            } else {
+                                None
+                            }
+                        })
+                    });
+                    if let Some(p) = parent {
+                        self.frames.last_mut().unwrap().env = p;
+                    }
+                }
+                Op::PushWithEnv => {
+                    let object = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let new_env = env::new_with_env(&self.heap, cur_env, object);
+                    self.frames.last_mut().unwrap().env = new_env;
+                }
+                Op::PopWithEnv => {
                     let parent = self.frames.last().and_then(|f| {
                         self.heap.with_obj(f.env.0, |o| {
                             if let HeapObj::Environment(e) = o {
@@ -1927,6 +1984,13 @@ impl Vm {
             }
         }
         false
+    }
+
+    /// Does `obj` (or its prototype chain) have a named property? Used by the
+    /// `with` statement to decide whether to assign to a `with` object.
+    pub fn has_property(&mut self, obj: &Value, name: &str) -> error::Result<bool> {
+        let v = self.get_property(obj, name)?;
+        Ok(!v.is_undefined())
     }
 
     pub fn to_boolean(&self, v: &Value) -> bool {

@@ -460,6 +460,19 @@ impl Compiler {
                 self.pop_scope();
             }
             Stmt::ForIn { left, right, body } => self.compile_for_in(left, right, body)?,
+            Stmt::With { object, body } => {
+                // `with (object) body`: evaluate the object, push a `with`
+                // environment record, run the body, then pop it. A dedicated
+                // compiler scope forces identifier loads to use LoadEnvName
+                // (so the VM's `with`-object fallback applies) rather than the
+                // top-level LoadGlobal path.
+                self.push_scope(false);
+                self.compile_expr(object)?;
+                self.chunk.emit(Op::PushWithEnv, 0);
+                self.compile_stmt(body)?;
+                self.chunk.emit(Op::PopWithEnv, 0);
+                self.pop_scope();
+            }
             Stmt::Throw(e) => {
                 self.compile_expr(e)?;
                 self.chunk.emit(Op::Throw, 0);

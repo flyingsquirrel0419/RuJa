@@ -13,6 +13,19 @@ pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> G
         vars: RefCell::new(IndexMap::new()),
         parent: RefCell::new(parent),
         is_function_scope,
+        with_object: RefCell::new(None),
+    });
+    GcIdx(heap.allocate(env))
+}
+
+/// Create a `with`-statement environment record wrapping `object`: name lookups
+/// that miss the lexical chain fall back to `object`'s own properties.
+pub fn new_with_env(heap: &Heap, parent: GcIdx, object: crate::value::Value) -> GcIdx {
+    let env = HeapObj::Environment(crate::value::EnvironmentData {
+        vars: RefCell::new(IndexMap::new()),
+        parent: RefCell::new(Some(parent)),
+        is_function_scope: false,
+        with_object: RefCell::new(Some(object)),
     });
     GcIdx(heap.allocate(env))
 }
@@ -49,6 +62,27 @@ pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
     });
 }
 
+/// Collect `with`-statement object environment records along the scope chain
+/// (closest first), so the VM can fall back to property lookup on each object
+/// when a name is not bound lexically.
+pub fn with_objects(heap: &Heap, env: GcIdx) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (obj, parent) = heap.with_obj(e_idx.0, |o| {
+            if let HeapObj::Environment(e) = o {
+                (e.with_object.borrow().clone(), *e.parent.borrow())
+            } else {
+                (None, None)
+            }
+        });
+        if let Some(o) = obj {
+            out.push(o);
+        }
+        cur = parent;
+    }
+    out
+}
 /// Get a binding, returning an error if it exists but is in the TDZ.
 pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Option<Value>, bool> {
     let mut cur = Some(env);

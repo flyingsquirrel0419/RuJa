@@ -217,6 +217,12 @@ pub enum Stmt {
         right: Expr,
         body: Box<Stmt>,
     },
+    /// `with (object) body` - injects `object`'s properties into the scope chain
+    /// for dynamic name lookup within `body`.
+    With {
+        object: Expr,
+        body: Box<Stmt>,
+    },
     Break(Option<Rc<str>>),
     Continue(Option<Rc<str>>),
     Return(Option<Expr>),

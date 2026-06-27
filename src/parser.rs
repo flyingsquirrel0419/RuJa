@@ -150,6 +150,7 @@ impl Parser {
                 Ok(Stmt::Throw(e))
             }
             TokenKind::Try => self.parse_try(),
+            TokenKind::With => self.parse_with(),
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Semicolon => {
                 self.advance();
@@ -288,6 +289,15 @@ impl Parser {
         self.expect(&TokenKind::RParen, ")")?;
         let body = Box::new(self.parse_stmt()?);
         Ok(Stmt::While { cond, body })
+    }
+
+    fn parse_with(&mut self) -> error::Result<Stmt> {
+        self.advance();
+        self.expect(&TokenKind::LParen, "(")?;
+        let object = self.parse_expr()?;
+        self.expect(&TokenKind::RParen, ")")?;
+        let body = Box::new(self.parse_stmt()?);
+        Ok(Stmt::With { object, body })
     }
 
     fn parse_do_while(&mut self) -> error::Result<Stmt> {
@@ -1302,6 +1312,7 @@ impl Parser {
             TokenKind::Try => "try".to_string(),
             TokenKind::Finally => "finally".to_string(),
             TokenKind::Switch => "switch".to_string(),
+            TokenKind::With => "with".to_string(),
             TokenKind::Case => "case".to_string(),
             TokenKind::Default => "default".to_string(),
             TokenKind::Var => "var".to_string(),

@@ -19,6 +19,7 @@ pub enum TokenKind {
     If,
     Else,
     While,
+    With,
     For,
     Do,
     Break,
