@@ -1499,18 +1499,26 @@ impl Compiler {
                         // emit CallDirectEval so the VM can compile+run it
                         // against the current frame's environment.
                         if !*call_opt
-                            && !has_spread
                             && matches!(callee.as_ref(), Expr::Ident(name) if &**name == "eval")
                         {
-                            // Ensure `eval` is the built-in (not a local shadow):
-                            // only treat as direct eval when the name resolves to
-                            // the global (no lexical binding shadows it).
+                            // Direct eval: only the first argument is the source
+                            // string; extras (including spread) are ignored per
+                            // spec. Suppressed only if the first arg itself is a
+                            // spread (source not statically first) or `eval` is
+                            // shadowed by a lexical binding.
                             let is_global_eval = self.resolve("eval").is_none();
-                            if is_global_eval {
-                                for a in args {
+                            let first_is_spread = args
+                                .first()
+                                .map(|a| matches!(a, Expr::Spread(_)))
+                                .unwrap_or(false);
+                            if is_global_eval && !first_is_spread {
+                                // Compile only the source (first arg); arity is 1.
+                                if let Some(a) = args.first() {
                                     self.compile_expr(a)?;
+                                } else {
+                                    self.chunk.emit(Op::Undefined, 0);
                                 }
-                                self.chunk.emit(Op::CallDirectEval(args.len()), 0);
+                                self.chunk.emit(Op::CallDirectEval(1), 0);
                                 return Ok(());
                             }
                         }

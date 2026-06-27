@@ -81,3 +81,16 @@ fn eval_can_define_and_call_function() {
     "#;
     assert_eq!(run(src), Value::Number(49.0));
 }
+
+#[test]
+fn direct_eval_with_spread_args_still_direct() {
+    // eval(src, ...rest) must remain a direct eval (first arg = source).
+    let src = r#"
+        function f() {
+            let local = 99;
+            return eval("local", ...[1, 2, 3]);
+        }
+        f();
+    "#;
+    assert_eq!(run(src), Value::Number(99.0));
+}
