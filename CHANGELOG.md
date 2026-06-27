@@ -11,6 +11,11 @@
 - Array/object destructuring in declarations and `for...of` (nested, rename, default, rest)
 - Array methods: `find`, `findIndex`, `findLast`, `fill`, `some`, `every`
 - `Symbol.prototype.toString` + `symbol_proto`
+- Array spread in literals `[...iterable]` (NewArray + ArrayPush/SpreadPush)
+- `Array.sort`, `Array.reverse`, `Object.keys/values/entries/assign`
+- `String.split` limit argument; `Array.includes` with NaN (SameValueZero)
+- Error subclasses: TypeError/RangeError/ReferenceError/SyntaxError/EvalError/URIError
+- Function declaration hoisting (top-level and within blocks)
 
 ### Fixed
 - Silent bug: `for...of` produced wrong values (0/empty) — was not compiled
@@ -18,6 +23,21 @@
 - `super.f() + 5` now returns 15 (was 2)
 - Static methods now return their value (e.g. `C.s()` returns 42)
 - `for...in` no longer leaks non-enumerable builtin prototype methods
+- `break`/`continue` were no-ops (caused infinite loops) — now functional via loop jump stack
+- `++`/`--` threw or returned wrong values — correct prefix/postfix semantics + store back
+- Unary `+` was negation — now coerces to number (`+"5" === 5`)
+- `>`/`>=` on strings always returned false — now correct
+- `in` operator returned the key — now returns a boolean
+- `void` returned its operand — now returns undefined
+- `delete` returns boolean and removes the property
+- `instanceof` returns a boolean (walks the prototype chain)
+- `typeof undeclaredVar` threw — now returns "undefined"
+- `switch` fallthrough and `default` were broken — now correct
+- `finally` blocks never executed — now run on both try-normal and catch paths
+- `Math.round` rounds half toward +Infinity per ES (`round(-0.5) === 0`)
+- Default-param prologue left a stale stack value corrupting subsequent calls
+- Builtin prototype methods and `constructor` are now non-enumerable
+- Error constructor now links instances to `<Error>.prototype` (instanceof works)
 
 ## [0.2.0] - 2026-06-27
 
