@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- async/await: async functions return a Promise; await extracts a Promise result synchronously (drains microtasks)
 - try/catch now catches runtime errors (TypeError, ReferenceError, ...) not just JS throw; native errors are surfaced as Error objects with name/message
 - null/undefined property access now throws TypeError instead of returning undefined
 - Object property insertion order is now preserved (`for...in`, `Object.keys`,

@@ -111,6 +111,20 @@ impl Parser {
             TokenKind::LBrace => self.parse_block(),
             TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
             TokenKind::Function => self.parse_function_decl(),
+            TokenKind::Async => {
+                if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
+                    self.advance(); // async
+                    let mut d = self.parse_function_decl()?;
+                    if let Stmt::FunctionDecl(fe) = &mut d {
+                        fe.is_async = true;
+                    }
+                    Ok(d)
+                } else {
+                    let e = self.parse_expr()?;
+                    self.expect_semi()?;
+                    Ok(Stmt::ExprStmt(e))
+                }
+            }
             TokenKind::Class => self.parse_class_decl(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
@@ -819,6 +833,26 @@ impl Parser {
 
     fn parse_primary(&mut self) -> error::Result<Expr> {
         match self.peek().clone() {
+            TokenKind::Await => {
+                self.advance();
+                let inner = self.parse_unary()?;
+                Ok(Expr::Await(Box::new(inner)))
+            }
+            TokenKind::Async => {
+                // `async function ...` expression; otherwise `async` is treated
+                // as a plain identifier (handled below).
+                if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
+                    self.advance(); // async
+                    let mut f = self.parse_function_expr()?;
+                    if let Expr::Function(fe) = &mut f {
+                        fe.is_async = true;
+                    }
+                    return Ok(f);
+                }
+                // fall through to identifier
+                self.advance();
+                Ok(Expr::Ident(Rc::from("async")))
+            }
             TokenKind::Regex(pat, flags) => {
                 self.advance();
                 Ok(Expr::Regex(

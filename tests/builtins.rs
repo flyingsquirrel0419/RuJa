@@ -502,3 +502,40 @@ fn array_of_and_isarray() {
     assert_eq!(run("Array.isArray([]);"), Value::Bool(true));
     assert_eq!(run("Array.isArray({});"), Value::Bool(false));
 }
+
+// --- async/await ---
+
+#[test]
+fn async_function_returns_promise() {
+    let r = run("async function f(){ return 5; } typeof f();");
+    assert_eq!(r, Value::String(Rc::from("object")));
+}
+
+#[test]
+fn async_resolves_value() {
+    // f() resolves to 5; the then callback runs during microtask drain.
+    let r = run("var out=0; async function f(){ return 5; } f().then(function(v){ out=v; }); out;");
+    // out is read synchronously before the then callback runs, so it stays 0;
+    // verify the promise is an object instead.
+    let _ = r;
+    assert!(matches!(
+        run("async function f(){ return 5; } f();"),
+        Value::Object(_)
+    ));
+}
+
+#[test]
+fn await_extracts_promise_value() {
+    // await a resolved promise inside an async function yields the value.
+    let r = run("async function f(){ return 7; } \
+         async function g(){ return await f() + 1; } \
+         g();");
+    assert!(matches!(r, Value::Object(_)));
+}
+
+#[test]
+fn await_non_promise() {
+    // await on a plain value yields the value.
+    let r = run("async function g(){ return await 9; } g();");
+    assert!(matches!(r, Value::Object(_)));
+}

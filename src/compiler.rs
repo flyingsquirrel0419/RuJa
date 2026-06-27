@@ -1335,6 +1335,10 @@ impl Compiler {
                 self.chunk.emit(Op::Const(flg_idx), 0);
                 self.chunk.emit(Op::New(2), 0);
             }
+            Expr::Await(inner) => {
+                self.compile_expr(inner)?;
+                self.chunk.emit(Op::Await, 0);
+            }
             Expr::Function(f) | Expr::Arrow(f) => {
                 let func_chunk = self.compile_function(f)?;
                 let func_idx = self.funcs.len();

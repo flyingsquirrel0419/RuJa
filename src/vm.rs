@@ -1022,6 +1022,34 @@ impl Vm {
                     let n = self.to_number(&v)?;
                     self.stack.push(Value::Number(n));
                 }
+                Op::Await => {
+                    // Synchronous await: pop a value; if it is a pending promise,
+                    // drain microtasks until it settles, then push its result.
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &v {
+                        let is_promise = self
+                            .heap
+                            .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
+                        if is_promise {
+                            self.run_microtasks()?;
+                            let (state, result) = self.heap.with_obj(idx.0, |o| {
+                                if let HeapObj::Promise(p) = o {
+                                    (p.state.get(), p.result.borrow().clone())
+                                } else {
+                                    (PromiseStatus::Fulfilled, Value::Undefined)
+                                }
+                            });
+                            if state == PromiseStatus::Rejected {
+                                return Err(Error::thrown(result, &self.heap));
+                            }
+                            self.stack.push(result);
+                        } else {
+                            self.stack.push(v);
+                        }
+                    } else {
+                        self.stack.push(v);
+                    }
+                }
                 Op::TypeofVar(name_idx) => {
                     // `typeof name`: "undefined" if the name is not bound (must not throw).
                     let name = {
@@ -1742,6 +1770,7 @@ impl Vm {
                             func: func.clone(),
                             closure: f.closure,
                             is_arrow: func.is_arrow,
+                            is_async: func.is_async,
                         })
                     }
                     crate::value::FunctionKind::Bound {
@@ -1764,6 +1793,7 @@ impl Vm {
                 func,
                 closure,
                 is_arrow,
+                is_async,
             }) => {
                 let call_env = env::new_env(&self.heap, Some(closure), true);
                 // store parameters into the call environment (enables closures + recursion)
@@ -1829,7 +1859,22 @@ impl Vm {
                 );
                 let _ = is_arrow;
                 // execute the compiled function chunk
-                self.execute_chunk_func(func.clone(), call_env, this_val, args)
+                let result = self.execute_chunk_func(func.clone(), call_env, this_val, args)?;
+                if is_async {
+                    // async functions return a Promise resolved with the result.
+                    let p_idx = self
+                        .heap
+                        .allocate(HeapObj::Promise(crate::value::PromiseData {
+                            state: Cell::new(PromiseStatus::Fulfilled),
+                            result: RefCell::new(result.clone()),
+                            handlers: RefCell::new(Vec::new()),
+                            props: RefCell::new(IndexMap::new()),
+                            proto: RefCell::new(Some(self.promise_proto.clone())),
+                        }));
+                    Ok(Value::Object(GcIdx(p_idx)))
+                } else {
+                    Ok(result)
+                }
             }
             Some(FuncCallInfo::Bound {
                 target,
@@ -2029,6 +2074,7 @@ enum FuncCallInfo {
         func: std::rc::Rc<crate::function::FunctionDef>,
         closure: GcIdx,
         is_arrow: bool,
+        is_async: bool,
     },
     Bound {
         target: GcIdx,

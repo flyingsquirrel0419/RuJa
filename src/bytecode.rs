@@ -157,6 +157,7 @@ pub enum Op {
 
     // Type
     TypeOf,
+    Await, // pop promise/value, push settled value (sync)
 
     // Misc
     InstanceOf,

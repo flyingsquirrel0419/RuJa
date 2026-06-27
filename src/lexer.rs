@@ -265,6 +265,8 @@ impl<'a> Lexer<'a> {
             "switch" => TokenKind::Switch,
             "case" => TokenKind::Case,
             "default" => TokenKind::Default,
+            "async" => TokenKind::Async,
+            "await" => TokenKind::Await,
             _ => TokenKind::Ident(s.to_string()),
         }
     }
