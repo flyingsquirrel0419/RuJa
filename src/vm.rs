@@ -689,7 +689,11 @@ impl Vm {
                     // Call the parent constructor with `this` (not `new`, just call).
                     let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     // If the parent constructor returned an object, use it as the new `this`.
-                    let new_this = if matches!(result, Value::Object(_)) { result } else { this_val };
+                    let new_this = if matches!(result, Value::Object(_)) {
+                        result
+                    } else {
+                        this_val
+                    };
                     // Rebind `this` in the current environment to the (possibly updated) value.
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     crate::environment::set(&self.heap, cur_env, "this", new_this.clone());

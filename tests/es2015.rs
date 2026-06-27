@@ -221,17 +221,26 @@ fn symbol_to_string() {
 
 #[test]
 fn call_spread() {
-    assert_eq!(run("function f(a,b,c){return a+b+c;} f(...[1,2,3]);"), Value::Number(6.0));
+    assert_eq!(
+        run("function f(a,b,c){return a+b+c;} f(...[1,2,3]);"),
+        Value::Number(6.0)
+    );
 }
 
 #[test]
 fn call_spread_mixed() {
-    assert_eq!(run("function f(a,b,c){return a+b+c;} f(1, ...[2,3]);"), Value::Number(6.0));
+    assert_eq!(
+        run("function f(a,b,c){return a+b+c;} f(1, ...[2,3]);"),
+        Value::Number(6.0)
+    );
 }
 
 #[test]
 fn derived_class_auto_super() {
-    assert_eq!(run("class A{constructor(x){this.x=x;}} class B extends A{} new B(5).x;"), Value::Number(5.0));
+    assert_eq!(
+        run("class A{constructor(x){this.x=x;}} class B extends A{} new B(5).x;"),
+        Value::Number(5.0)
+    );
 }
 
 #[test]

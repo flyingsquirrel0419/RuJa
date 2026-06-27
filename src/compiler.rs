@@ -780,67 +780,86 @@ impl Compiler {
             Expr::Update(op, prefix, target) => {
                 // `x++`/`++x`/`x--`/`--x`. Stash the old value in a temp env binding
                 // so the store can use a clean [obj, key, value] without fighting it.
-                let delta = match op { UpdateOp::Inc => 1.0, UpdateOp::Dec => -1.0 };
+                let delta = match op {
+                    UpdateOp::Inc => 1.0,
+                    UpdateOp::Dec => -1.0,
+                };
                 let c = self.chunk.add_constant(Value::Number(delta));
                 match target.as_ref() {
-                    Expr::Member { object, property, computed } => {
+                    Expr::Member {
+                        object,
+                        property,
+                        computed,
+                    } => {
                         // Load the current value.
-                        self.compile_expr(object)?;          // [obj]
+                        self.compile_expr(object)?; // [obj]
                         if *computed {
-                            self.compile_expr(property)?;    // [obj, key]
+                            self.compile_expr(property)?; // [obj, key]
                             self.chunk.emit(Op::GetElem, 0); // [oldVal]
                         } else {
-                            let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
-                            let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                            let key = if let Expr::String(s) = property.as_ref() {
+                                s.to_string()
+                            } else {
+                                String::new()
+                            };
+                            let key_idx = self
+                                .chunk
+                                .add_constant(Value::String(Rc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), 0); // [obj, key]
-                            self.chunk.emit(Op::GetProp, 0);        // [oldVal]
+                            self.chunk.emit(Op::GetProp, 0); // [oldVal]
                         }
-                        self.chunk.emit(Op::TypeCoerce, 0);      // [oldNum]
-                        // Stash oldNum; then store newNum back via a clean reload.
+                        self.chunk.emit(Op::TypeCoerce, 0); // [oldNum]
+                                                            // Stash oldNum; then store newNum back via a clean reload.
                         let tmp_idx = self.intern("#upd");
                         self.chunk.emit(Op::DeclareEnv(tmp_idx), 0); // []
-                        // Build [obj, key, newNum] and store.
-                        self.compile_expr(object)?;               // [obj]
+                                                                     // Build [obj, key, newNum] and store.
+                        self.compile_expr(object)?; // [obj]
                         if *computed {
-                            self.compile_expr(property)?;         // [obj, key]
+                            self.compile_expr(property)?; // [obj, key]
                         } else {
-                            let key = if let Expr::String(s) = property.as_ref() { s.to_string() } else { String::new() };
-                            let key_idx = self.chunk.add_constant(Value::String(Rc::from(key.as_str())));
+                            let key = if let Expr::String(s) = property.as_ref() {
+                                s.to_string()
+                            } else {
+                                String::new()
+                            };
+                            let key_idx = self
+                                .chunk
+                                .add_constant(Value::String(Rc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), 0); // [obj, key]
                         }
-                        self.chunk.emit(Op::LoadEnv(tmp_idx), 0);    // [obj, key, oldNum]
-                        self.chunk.emit(Op::Const(c), 0);            // [obj, key, oldNum, delta]
-                        self.chunk.emit(Op::Add, 0);                 // [obj, key, newNum]
+                        self.chunk.emit(Op::LoadEnv(tmp_idx), 0); // [obj, key, oldNum]
+                        self.chunk.emit(Op::Const(c), 0); // [obj, key, oldNum, delta]
+                        self.chunk.emit(Op::Add, 0); // [obj, key, newNum]
                         if *computed {
                             self.chunk.emit(Op::SetElem, 0);
                         } else {
                             self.chunk.emit(Op::SetProp, 0);
                         }
                         self.chunk.emit(Op::Pop, 0); // discard the value SetProp/SetElem leaves
-                        // Result: oldNum (postfix) or newNum (prefix).
+                                                     // Result: oldNum (postfix) or newNum (prefix).
                         if *prefix {
                             self.chunk.emit(Op::LoadEnv(tmp_idx), 0); // [oldNum]
-                            self.chunk.emit(Op::Const(c), 0);          // [oldNum, delta]
-                            self.chunk.emit(Op::Add, 0);               // [newNum]
+                            self.chunk.emit(Op::Const(c), 0); // [oldNum, delta]
+                            self.chunk.emit(Op::Add, 0); // [newNum]
                         } else {
                             self.chunk.emit(Op::LoadEnv(tmp_idx), 0); // [oldNum]
                         }
                     }
                     _ => {
                         // Identifier target.
-                        self.compile_expr(target)?;          // [old]
-                        self.chunk.emit(Op::TypeCoerce, 0);  // [oldNum]
-                        self.chunk.emit(Op::Dup, 0);         // [oldNum, oldNum]
-                        self.chunk.emit(Op::Const(c), 0);    // [oldNum, oldNum, delta]
-                        self.chunk.emit(Op::Add, 0);         // [oldNum, newNum]
+                        self.compile_expr(target)?; // [old]
+                        self.chunk.emit(Op::TypeCoerce, 0); // [oldNum]
+                        self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
+                        self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
+                        self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
                         self.compile_assign_target(target)?;
-                        self.chunk.emit(Op::Pop, 0);         // [oldNum]
+                        self.chunk.emit(Op::Pop, 0); // [oldNum]
                         if *prefix {
-                            self.chunk.emit(Op::Dup, 0);      // [oldNum, oldNum]
+                            self.chunk.emit(Op::Dup, 0); // [oldNum, oldNum]
                             self.chunk.emit(Op::Const(c), 0); // [oldNum, oldNum, delta]
-                            self.chunk.emit(Op::Add, 0);      // [oldNum, newNum]
-                            self.chunk.emit(Op::Swap, 0);     // [newNum, oldNum]
-                            self.chunk.emit(Op::Pop, 0);      // [newNum]
+                            self.chunk.emit(Op::Add, 0); // [oldNum, newNum]
+                            self.chunk.emit(Op::Swap, 0); // [newNum, oldNum]
+                            self.chunk.emit(Op::Pop, 0); // [newNum]
                         }
                     }
                 }
@@ -1101,7 +1120,7 @@ impl Compiler {
                         // If any argument is a spread, build an args array and use CallSpread.
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
                         if has_spread {
-                            self.compile_expr(callee)?;        // [callee]
+                            self.compile_expr(callee)?; // [callee]
                             self.chunk.emit(Op::NewArray(0), 0); // [callee, argsArr]
                             for a in args {
                                 match a {
@@ -1110,21 +1129,21 @@ impl Compiler {
                                         self.chunk.emit(Op::SpreadPush, 0); // [callee, argsArr]
                                     }
                                     _ => {
-                                        self.compile_expr(a)?;     // [callee, argsArr, value]
+                                        self.compile_expr(a)?; // [callee, argsArr, value]
                                         self.chunk.emit(Op::ArrayPush, 0); // [callee, argsArr]
                                     }
                                 }
                             }
                             self.chunk.emit(Op::CallSpread, 0); // pops argsArr then callee
                         } else {
-                        self.compile_expr(callee)?;
-                        for a in args {
-                            if let Expr::Spread(_) = a {
-                            } else {
-                                self.compile_expr(a)?;
+                            self.compile_expr(callee)?;
+                            for a in args {
+                                if let Expr::Spread(_) = a {
+                                } else {
+                                    self.compile_expr(a)?;
+                                }
                             }
-                        }
-                        self.chunk.emit(Op::Call(args.len()), 0);
+                            self.chunk.emit(Op::Call(args.len()), 0);
                         }
                     }
                 }
@@ -1184,7 +1203,9 @@ impl Compiler {
                 // For derived classes without an explicit constructor, synthesize one
                 // that forwards all arguments to `super(...)`.
                 let synthetic_params: Vec<Rc<str>> = if cls.superclass.is_some() && !has_ctor {
-                    (0..16).map(|i| Rc::from(format!("#a{}", i).as_str())).collect()
+                    (0..16)
+                        .map(|i| Rc::from(format!("#a{}", i).as_str()))
+                        .collect()
                 } else {
                     Vec::new()
                 };
@@ -1195,7 +1216,13 @@ impl Compiler {
                         .iter()
                         .find(|m| m.is_constructor)
                         .map(|m| m.params.clone())
-                        .or_else(|| if cls.superclass.is_some() { Some(synthetic_params.clone()) } else { None })
+                        .or_else(|| {
+                            if cls.superclass.is_some() {
+                                Some(synthetic_params.clone())
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or_default(),
                     param_defaults: cls
                         .methods
@@ -1213,15 +1240,21 @@ impl Compiler {
                         .iter()
                         .find(|m| m.is_constructor)
                         .map(|m| m.body.clone())
-                        .or_else(|| if cls.superclass.is_some() {
-                            // super(#a0, #a1, ... #a15) — extra args are harmlessly undefined.
-                            let args: Vec<Expr> = synthetic_params.iter()
-                                .map(|n| Expr::Ident(n.clone())).collect();
-                            Some(vec![Stmt::ExprStmt(Expr::Call {
-                                callee: Box::new(Expr::Super),
-                                args,
-                            })])
-                        } else { None })
+                        .or_else(|| {
+                            if cls.superclass.is_some() {
+                                // super(#a0, #a1, ... #a15) — extra args are harmlessly undefined.
+                                let args: Vec<Expr> = synthetic_params
+                                    .iter()
+                                    .map(|n| Expr::Ident(n.clone()))
+                                    .collect();
+                                Some(vec![Stmt::ExprStmt(Expr::Call {
+                                    callee: Box::new(Expr::Super),
+                                    args,
+                                })])
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or_default(),
                     is_arrow: false,
                     is_async: false,

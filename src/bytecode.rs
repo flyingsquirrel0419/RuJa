@@ -119,13 +119,13 @@ pub enum Op {
     SetProto, // pop [proto, obj]; set obj's [[Prototype]] to proto
 
     // Functions
-    MakeFunction(usize), // function index in a function table
-    Call(usize),         // arg count
-    CallMethod(usize),   // arg count (method call: this is on stack)
-    CallSpread,          // callee + args-array on stack; spread array into call args
+    MakeFunction(usize),  // function index in a function table
+    Call(usize),          // arg count
+    CallMethod(usize),    // arg count (method call: this is on stack)
+    CallSpread,           // callee + args-array on stack; spread array into call args
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
-    CallSuper(usize),    // arg count: stack [this, superProto, key, args...]
-    New(usize),          // constructor call, arg count
+    CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
+    New(usize),           // constructor call, arg count
     Return,
     ReturnUndefined,
 

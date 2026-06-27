@@ -735,7 +735,8 @@ pub fn setup(vm: &mut Vm) {
     define_global(vm, "Object", Value::Object(object_ctor));
     vm.object_proto = Value::Object(object_proto);
 
-    let (error_ctor, _error_proto) = make_error_constructor(vm, "Error");
+    let (error_ctor, error_proto) = make_error_constructor(vm, "Error");
+    vm.error_proto = Value::Object(error_proto);
     define_global(vm, "Error", Value::Object(error_ctor));
     for name in [
         "TypeError",

@@ -160,7 +160,10 @@ fn json_parse_object() {
     let s = run(r#"JSON.stringify(JSON.parse("{\"a\":1,\"b\":2}"));"#);
     match s {
         Value::String(st) => {
-            assert!(st.contains("\"a\":1") && st.contains("\"b\":2"), "got {st:?}");
+            assert!(
+                st.contains("\"a\":1") && st.contains("\"b\":2"),
+                "got {st:?}"
+            );
         }
         other => panic!("expected string, got {other:?}"),
     }
