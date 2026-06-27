@@ -194,6 +194,6 @@ fn var_function_scope() {
 #[test]
 fn let_block_scope() {
     // inner let shadows outer; outer retains its value.
-    let r = run("{let x=1;{let x=2;} x;}");
+    let r = run("let r; {let x=1;{let x=2;} r = x;} r;");
     assert_eq!(r, Value::Number(1.0));
 }
