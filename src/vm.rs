@@ -505,12 +505,14 @@ impl Vm {
                             props: RefCell::new(HashMap::new()),
                         };
                         let idx = self.heap.allocate(HeapObj::Function(fd));
-                        // link prototype.constructor back to the function
-                        if let Value::Object(pidx) = &proto_val {
-                            self.heap.with_obj(pidx.0, |obj| {
-                                obj.props().borrow_mut().insert(Rc::from("constructor"), crate::value::PropertyDescriptor::data(Value::Object(GcIdx(idx))));
-                            });
-                        }
+                       // link prototype.constructor back to the function
+                       if let Value::Object(pidx) = &proto_val {
+                           self.heap.with_obj(pidx.0, |obj| {
+                                let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(idx)));
+                                desc.enumerable = false;
+                                obj.props().borrow_mut().insert(Rc::from("constructor"), desc);
+                           });
+                       }
                         self.stack.push(Value::Object(GcIdx(idx)));
                     } else {
                         self.stack.push(Value::Undefined);
@@ -762,6 +764,7 @@ impl Vm {
             }
             Value::Number(_) => self.get_proto_property(obj, key),
             Value::Bool(_) => self.get_proto_property(obj, key),
+            Value::Symbol(_) => self.get_proto_property(obj, key),
             Value::Object(idx) => {
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
@@ -832,6 +835,7 @@ impl Vm {
             Value::String(_) => self.string_proto.clone(),
             Value::Number(_) => self.number_proto.clone(),
             Value::Bool(_) => self.boolean_proto.clone(),
+            Value::Symbol(_) => self.symbol_proto.clone(),
             _ => return Ok(Value::Undefined),
         };
         if !proto.is_undefined() {

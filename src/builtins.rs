@@ -23,7 +23,7 @@ fn data_prop(value: Value) -> PropertyDescriptor {
     PropertyDescriptor {
         value,
         writable: true,
-        enumerable: true,
+        enumerable: false,
         configurable: true,
         get: None,
         set: None,
@@ -996,6 +996,83 @@ fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
 
+fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        for (i, item) in items.iter().enumerate() {
+            let found = vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+            if found.is_truthy() { return Ok(item.clone()); }
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        for (i, item) in items.iter().enumerate() {
+            let found = vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+            if found.is_truthy() { return Ok(Value::Number(i as f64)); }
+        }
+    }
+    Ok(Value::Number(-1.0))
+}
+fn array_find_last(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        for (i, item) in items.iter().enumerate().rev() {
+            let found = vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+            if found.is_truthy() { return Ok(item.clone()); }
+        }
+    }
+    Ok(Value::Undefined)
+}
+fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let value = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        let len = items.len() as i64;
+        let start = args.get(1).and_then(|v| if let Value::Number(n)=v {Some(*n as i64)} else {None}).unwrap_or(0);
+        let end = args.get(2).and_then(|v| if let Value::Number(n)=v {Some(*n as i64)} else {None}).unwrap_or(len);
+        let s = if start < 0 { (len+start).max(0) as usize } else { (start as usize).min(items.len()) };
+        let e = if end < 0 { (len+end).max(0) as usize } else { (end as usize).min(items.len()) };
+        if s < e {
+            vm.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Array(a) = obj {
+                    let mut items = a.items.borrow_mut();
+                    for i in s..e.min(items.len()) { items[i] = value.clone(); }
+                }
+            });
+        }
+        return Ok(Value::Object(idx));
+    }
+    Ok(Value::Undefined)
+}
+fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        for (i, item) in items.iter().enumerate() {
+            let found = vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+            if found.is_truthy() { return Ok(Value::Bool(true)); }
+        }
+    }
+    Ok(Value::Bool(false))
+}
+fn array_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.get(0).cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| { if let HeapObj::Array(a)=obj { a.items.borrow().clone() } else { Vec::new() } });
+        for (i, item) in items.iter().enumerate() {
+            let ok = vm.call_function(&cb, &[item.clone(), Value::Number(i as f64), this.clone().unwrap_or(Value::Undefined)], Some(Value::Undefined))?;
+            if !ok.is_truthy() { return Ok(Value::Bool(false)); }
+        }
+    }
+    Ok(Value::Bool(true))
+}
+
 // =========================================================================
 // String prototype + constructor
 // =========================================================================
@@ -1098,6 +1175,8 @@ pub fn setup_full(vm: &mut Vm) {
         ("map", array_map, 1), ("filter", array_filter, 1), ("reduce", array_reduce, 1),
         ("forEach", array_for_each, 1), ("indexOf", array_index_of, 1),
         ("includes", array_includes, 1), ("slice", array_slice, 2), ("concat", array_concat, 1),
+        ("find", array_find, 1), ("findIndex", array_find_index, 1), ("findLast", array_find_last, 1),
+        ("fill", array_fill, 1), ("some", array_some, 1), ("every", array_every, 1),
     ]);
     // override the constructor function to use array_constructor
     vm.array_proto = Value::Object(array_proto);
@@ -1284,6 +1363,11 @@ fn symbol_for(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<V
     vm.next_symbol_id += 1;
     Ok(Value::Symbol(id))
 }
+fn symbol_to_string(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    // RuJa's Symbol is `Value::Symbol(u32)` with no stored description, so
+    // we return the no-description form "Symbol()".
+    Ok(Value::String(Rc::from("Symbol()")))
+}
 
 // =========================================================================
 // Extended setup 2: Map/Set/Symbol
@@ -1312,6 +1396,21 @@ pub fn setup_collections(vm: &mut Vm) {
             obj.props().borrow_mut().insert(Rc::from("iterator"), data_prop(Value::Symbol(vm.well_known_symbols.iterator)));
         });
     }
+    // Symbol.prototype: a plain Object with a toString method. Symbol is a
+    // value type (not a constructor), so build the proto manually rather than
+    // going through make_builtin_constructor.
+    let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0);
+    let mut sym_proto_props: HashMap<Rc<str>, PropertyDescriptor> = HashMap::new();
+    sym_proto_props.insert(Rc::from("toString"), data_prop(Value::Object(sym_tostring_idx)));
+    sym_proto_props.insert(Rc::from("constructor"), data_prop(Value::Object(sym_idx)));
+    let sym_proto_obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(sym_proto_props),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Symbol")),
+    });
+    let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj));
+    vm.symbol_proto = Value::Object(sym_proto_idx);
 }
 
 fn make_builtin_constructor_with(vm: &mut Vm, name: &str, ctor: NativeFn, methods: &[(&str, NativeFn, usize)]) -> (GcIdx, GcIdx) {
