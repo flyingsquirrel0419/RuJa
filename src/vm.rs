@@ -693,6 +693,21 @@ impl Vm {
                     let result = self.call_function(&method, &args, Some(this_val))?;
                     self.stack.push(result);
                 }
+                Op::CallSpread => {
+                    // stack: [callee, argsArray]; spread the array's items as call args.
+                    let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+                    let callee = self.stack.pop().unwrap_or(Value::Undefined);
+                    let mut args = Vec::new();
+                    if let Value::Object(idx) = &args_arr {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Array(a) = o {
+                                args = a.items.borrow().clone();
+                            }
+                        });
+                    }
+                    let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
+                    self.stack.push(result);
+                }
                 Op::New(arg_count) => {
                     let mut args = Vec::with_capacity(arg_count);
                     for _ in 0..arg_count {

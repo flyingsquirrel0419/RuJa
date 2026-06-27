@@ -1083,6 +1083,25 @@ impl Compiler {
                         self.chunk.emit(Op::CallMethod(args.len()), 0);
                     }
                     _ => {
+                        // If any argument is a spread, build an args array and use CallSpread.
+                        let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
+                        if has_spread {
+                            self.compile_expr(callee)?;        // [callee]
+                            self.chunk.emit(Op::NewArray(0), 0); // [callee, argsArr]
+                            for a in args {
+                                match a {
+                                    Expr::Spread(inner) => {
+                                        self.compile_expr(inner)?; // [callee, argsArr, iterable]
+                                        self.chunk.emit(Op::SpreadPush, 0); // [callee, argsArr]
+                                    }
+                                    _ => {
+                                        self.compile_expr(a)?;     // [callee, argsArr, value]
+                                        self.chunk.emit(Op::ArrayPush, 0); // [callee, argsArr]
+                                    }
+                                }
+                            }
+                            self.chunk.emit(Op::CallSpread, 0); // pops argsArr then callee
+                        } else {
                         self.compile_expr(callee)?;
                         for a in args {
                             if let Expr::Spread(_) = a {
@@ -1091,6 +1110,7 @@ impl Compiler {
                             }
                         }
                         self.chunk.emit(Op::Call(args.len()), 0);
+                        }
                     }
                 }
             }

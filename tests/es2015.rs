@@ -218,3 +218,13 @@ fn symbol_to_string() {
         Value::String(Rc::from("Symbol()"))
     );
 }
+
+#[test]
+fn call_spread() {
+    assert_eq!(run("function f(a,b,c){return a+b+c;} f(...[1,2,3]);"), Value::Number(6.0));
+}
+
+#[test]
+fn call_spread_mixed() {
+    assert_eq!(run("function f(a,b,c){return a+b+c;} f(1, ...[2,3]);"), Value::Number(6.0));
+}
