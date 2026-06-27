@@ -164,5 +164,8 @@ fn json_parse_object() {
 
 #[test]
 fn json_parse_nested() {
-    assert_eq!(run(r#"JSON.parse("{\"nested\":{\"x\":5}}").nested.x;"#), Value::Number(5.0));
+    assert_eq!(
+        run(r#"JSON.parse("{\"nested\":{\"x\":5}}").nested.x;"#),
+        Value::Number(5.0)
+    );
 }
