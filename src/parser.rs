@@ -631,11 +631,35 @@ impl Parser {
             TokenKind::New => self.parse_new(),
             TokenKind::TemplateString(s) => {
                 self.advance();
-                // For now treat template as plain string (no interpolation support in parser yet)
-                Ok(Expr::String(Rc::from(s.as_str())))
+                self.parse_template_rest(Rc::from(s.as_str()))
             }
             other => Err(error::Error::syntax(format!("Unexpected token in expression: {:?}", other))),
         }
+    }
+
+    /// Finish parsing a template literal after consuming its first `TemplateString` quasi.
+    /// If followed by `${ ... }` interpolations, build an interpolated template; otherwise
+    /// it is a plain string literal.
+    fn parse_template_rest(&mut self, first: Rc<str>) -> error::Result<Expr> {
+        if !self.check(&TokenKind::TemplateExprStart) {
+            // No interpolation: plain string.
+            return Ok(Expr::String(first));
+        }
+        let mut quasis: Vec<Rc<str>> = vec![first];
+        let mut exprs: Vec<Expr> = Vec::new();
+        loop {
+            self.expect(&TokenKind::TemplateExprStart, "${")?;
+            let e = self.parse_expr()?;
+            self.expect(&TokenKind::TemplateExprEnd, "}")?;
+            exprs.push(e);
+            // next quasi
+            match self.advance() {
+                TokenKind::TemplateString(s) => quasis.push(Rc::from(s.as_str())),
+                other => return Err(error::Error::syntax(format!("Expected template string, got {:?}", other))),
+            }
+            if !self.check(&TokenKind::TemplateExprStart) { break; }
+        }
+        Ok(Expr::TemplateInterp { quasis, exprs })
     }
 
     fn parse_array(&mut self) -> error::Result<Expr> {

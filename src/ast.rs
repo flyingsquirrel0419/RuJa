@@ -21,7 +21,7 @@ pub enum Expr {
     Number(f64),
     String(Rc<str>),
     TemplateStr(Rc<str>),
-    TemplateTagged(Box<Expr>, Vec<Expr>),
+    TemplateInterp { quasis: Vec<Rc<str>>, exprs: Vec<Expr> },
     Bool(bool),
     Null,
     Undefined,

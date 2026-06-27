@@ -417,6 +417,19 @@ impl Compiler {
                 let idx = self.chunk.add_constant(Value::String(s.clone()));
                 self.chunk.emit(Op::Const(idx), 0);
             }
+            Expr::TemplateInterp { quasis, exprs } => {
+                // Build: quasis[0] + String(exprs[0]) + quasis[1] + ... + quasis[n]
+                // Use repeated Add which concatenates when either side is a string.
+                let first_idx = self.chunk.add_constant(Value::String(quasis[0].clone()));
+                self.chunk.emit(Op::Const(first_idx), 0);
+                for (i, e) in exprs.iter().enumerate() {
+                    self.compile_expr(e)?;
+                    self.chunk.emit(Op::Add, 0); // string + value -> string concat
+                    let q_idx = self.chunk.add_constant(Value::String(quasis[i + 1].clone()));
+                    self.chunk.emit(Op::Const(q_idx), 0);
+                    self.chunk.emit(Op::Add, 0);
+                }
+            }
             Expr::Bool(b) => {
                 self.chunk.emit(if *b { Op::True } else { Op::False }, 0);
             }

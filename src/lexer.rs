@@ -6,12 +6,15 @@ pub struct Lexer<'a> {
     line: usize,
     col: usize,
     saw_newline: bool,
-    pub pending_template: bool,
+    /// Template-literal scanner state.
+    /// 0 = normal, 1 = emit TemplateExprStart next, 2 = inside interpolation expr,
+    /// 3 = read next segment after an interpolation closed.
+    pub template_state: u8,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
-        Lexer { src: src.as_bytes(), pos: 0, line: 1, col: 1, saw_newline: true, pending_template: false }
+        Lexer { src: src.as_bytes(), pos: 0, line: 1, col: 1, saw_newline: true, template_state: 0 }
     }
 
     fn peek(&self) -> Option<u8> { self.src.get(self.pos).copied() }
@@ -337,6 +340,21 @@ impl<'a> Lexer<'a> {
         let preceded_by_newline = self.saw_newline;
         self.saw_newline = false;
 
+        // Template-literal state machine.
+        match self.template_state {
+            1 => { self.template_state = 2; return Token::new(TokenKind::TemplateExprStart, line, col); }
+            2 => {
+                // Inside an interpolation; a top-level `}` closes it.
+                if self.peek() == Some(b'}') {
+                    self.advance();
+                    self.template_state = 3;
+                    return Token::new(TokenKind::TemplateExprEnd, line, col);
+                }
+            }
+            3 => { return self.read_template_segment(line, col, preceded_by_newline); }
+            _ => {}
+        }
+
         let kind = match self.peek() {
             None => TokenKind::Eof,
             Some(c) if c.is_ascii_digit() => self.read_number(),
@@ -363,12 +381,18 @@ impl<'a> Lexer<'a> {
 
     fn read_template_start(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {
         self.advance(); // consume backtick
+        self.read_template_segment(line, col, preceded_by_newline)
+    }
+
+    /// Read the next segment of a template literal, starting at the current position
+    /// (after the opening backtick or after a `}` that closed an interpolation).
+    fn read_template_segment(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {
         let mut s = String::new();
         while let Some(c) = self.peek() {
             if c == b'`' { self.advance(); break; }
             if c == b'$' && self.peek_at(1) == Some(b'{') {
                 self.advance(); self.advance();
-                self.pending_template = true;
+                self.template_state = 1;
                 let mut tok = Token::new(TokenKind::TemplateString(s), line, col);
                 tok.preceded_by_newline = preceded_by_newline;
                 return tok;
@@ -388,9 +412,15 @@ impl<'a> Lexer<'a> {
                 s.push(c as char);
             }
         }
+        // closed the template literal with a backtick: return to normal scanning.
+        self.template_state = 0;
         let mut tok = Token::new(TokenKind::TemplateString(s), line, col);
         tok.preceded_by_newline = preceded_by_newline;
         tok
+    }
+
+    fn read_template_continue(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {
+        self.read_template_segment(line, col, preceded_by_newline)
     }
 
     pub fn tokens(&mut self) -> Vec<Token> {
