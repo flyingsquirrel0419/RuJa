@@ -376,3 +376,165 @@ fn template_multi() {
         Value::String(Rc::from("1+2=3"))
     );
 }
+
+// Regression tests for recently-fixed bugs and new builtins.
+
+#[test]
+fn for_break() {
+    assert_eq!(
+        run("let s=0; for(let i=0;i<10;i++){ if(i==3) break; s+=i; } s;"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn for_continue() {
+    assert_eq!(
+        run("let s=0; for(let i=0;i<5;i++){ if(i==2) continue; s+=i; } s;"),
+        Value::Number(8.0)
+    );
+}
+
+#[test]
+fn while_break() {
+    assert_eq!(
+        run("let i=0,s=0; while(i<10){ i++; if(i==4) break; s+=i; } s;"),
+        Value::Number(6.0)
+    );
+}
+
+#[test]
+fn switch_fallthrough() {
+    assert_eq!(
+        run("let r=''; switch(2){case 1: r+='a'; case 2: r+='b'; case 3: r+='c'; break; default: r+='d';} r;"),
+        Value::String(Rc::from("bc"))
+    );
+}
+
+#[test]
+fn switch_default() {
+    assert_eq!(
+        run("let r=''; switch(99){case 1: r+='a'; default: r+='d'; case 3: r+='c';} r;"),
+        Value::String(Rc::from("dc"))
+    );
+}
+
+#[test]
+fn switch_break() {
+    assert_eq!(
+        run("let r=''; switch(1){case 1: r+='a'; break; case 2: r+='b';} r;"),
+        Value::String(Rc::from("a"))
+    );
+}
+
+#[test]
+fn typeof_undeclared() {
+    assert_eq!(run("typeof noSuchVar;"), Value::String(Rc::from("undefined")));
+}
+
+#[test]
+fn unary_plus() {
+    assert_eq!(run("+\"5\";"), Value::Number(5.0));
+}
+
+#[test]
+fn unary_plus_str() {
+    assert_eq!(
+        run("typeof +\"5\";"),
+        Value::String(Rc::from("number"))
+    );
+}
+
+#[test]
+fn math_round_neg_half() {
+    assert_eq!(run("Math.round(-0.5);"), Value::Number(0.0));
+}
+
+#[test]
+fn math_round_half() {
+    assert_eq!(run("Math.round(0.5);"), Value::Number(1.0));
+}
+
+#[test]
+fn array_sort() {
+    assert_eq!(
+        run("[3,1,2].sort().join(',');"),
+        Value::String(Rc::from("1,2,3"))
+    );
+}
+
+#[test]
+fn array_sort_cmp() {
+    assert_eq!(
+        run("[10,5,8].sort((a,b)=>a-b).join(',');"),
+        Value::String(Rc::from("5,8,10"))
+    );
+}
+
+#[test]
+fn array_reverse() {
+    assert_eq!(
+        run("[1,2,3].reverse().join(',');"),
+        Value::String(Rc::from("3,2,1"))
+    );
+}
+
+#[test]
+fn array_includes_nan() {
+    assert_eq!(run("[NaN].includes(NaN);"), Value::Bool(true));
+}
+
+#[test]
+fn array_findindex() {
+    assert_eq!(run("[4,5,6].findIndex(x=>x>4);"), Value::Number(1.0));
+}
+
+#[test]
+fn object_keys_len() {
+    assert_eq!(
+        run("Object.keys({a:1,b:2,c:3}).length;"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn object_values_sum() {
+    assert_eq!(
+        run("Object.values({a:1,b:2}).reduce((x,y)=>x+y,0);"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn object_entries() {
+    assert_eq!(
+        run("Object.entries({a:1,b:2}).length;"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn split_limit() {
+    assert_eq!(
+        run("\"a,b,c\".split(\",\",2).length;"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn loose_eq_array_bool() {
+    assert_eq!(run("[] == false;"), Value::Bool(true));
+}
+
+#[test]
+fn error_subclass() {
+    assert_eq!(run("new TypeError(\"x\").message;"), Value::String(Rc::from("x")));
+}
+
+#[test]
+fn string_split_reverse() {
+    assert_eq!(
+        run("\"hello world\".split(\" \").reverse().join(\" \");"),
+        Value::String(Rc::from("world hello"))
+    );
+}
