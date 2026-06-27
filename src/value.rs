@@ -219,6 +219,7 @@ pub enum PromiseStatus {
 pub struct PromiseHandler {
     pub on_fulfilled: Value,
     pub on_rejected: Value,
+    pub derived: Option<GcIdx>,
 }
 
 pub struct GeneratorData {

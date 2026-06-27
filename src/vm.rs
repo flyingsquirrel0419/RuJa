@@ -4,7 +4,7 @@ use crate::bytecode::{Chunk, Op};
 use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
-use crate::value::{GcIdx, HeapObj, Value};
+use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -59,6 +59,7 @@ pub enum Microtask {
         promise: GcIdx,
         on_fulfilled: Value,
         on_rejected: Value,
+        derived: Option<GcIdx>,
     },
     Resolve {
         promise: GcIdx,
@@ -115,7 +116,12 @@ impl Vm {
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let _base = self.functions.len();
         self.functions.extend(funcs);
-        self.execute_chunk(chunk, self.global, Value::Undefined)
+        let result = self.execute_chunk(chunk, self.global, Value::Undefined);
+        // Drain microtasks (Promise callbacks) after the synchronous run.
+        if !self.microtask_queue.is_empty() {
+            self.run_microtasks()?;
+        }
+        result
     }
 
     fn execute_chunk(&mut self, chunk: Chunk, env: GcIdx, this_val: Value) -> error::Result<Value> {
@@ -1430,6 +1436,155 @@ impl Vm {
     }
 
     /// Allocate a plain object and return its handle.
+
+    /// Resolve a promise: set state to Fulfilled and schedule its handlers.
+    pub fn promise_resolve(&mut self, promise_idx: usize, value: Value) {
+        let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {
+            if let HeapObj::Promise(p) = o {
+                if p.state.get() != PromiseStatus::Pending {
+                    return Vec::new();
+                }
+                p.state.set(PromiseStatus::Fulfilled);
+                *p.result.borrow_mut() = value.clone();
+                p.handlers.borrow_mut().drain(..).collect()
+            } else {
+                Vec::new()
+            }
+        });
+        for h in handlers {
+            self.microtask_queue.push(Microtask::Then {
+                promise: GcIdx(promise_idx),
+                on_fulfilled: h.on_fulfilled,
+                on_rejected: h.on_rejected,
+                derived: h.derived,
+            });
+        }
+    }
+
+    /// Reject a promise: set state to Rejected and schedule its handlers.
+    pub fn promise_reject(&mut self, promise_idx: usize, reason: Value) {
+        let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {
+            if let HeapObj::Promise(p) = o {
+                if p.state.get() != PromiseStatus::Pending {
+                    return Vec::new();
+                }
+                p.state.set(PromiseStatus::Rejected);
+                *p.result.borrow_mut() = reason.clone();
+                p.handlers.borrow_mut().drain(..).collect()
+            } else {
+                Vec::new()
+            }
+        });
+        for h in handlers {
+            self.microtask_queue.push(Microtask::Then {
+                promise: GcIdx(promise_idx),
+                on_fulfilled: h.on_fulfilled,
+                on_rejected: h.on_rejected,
+                derived: h.derived,
+            });
+        }
+    }
+
+    /// Drain the microtask queue, running scheduled then/catch callbacks.
+    pub fn run_microtasks(&mut self) -> error::Result<()> {
+        while let Some(task) = self.microtask_queue.pop() {
+            match task {
+                Microtask::Then {
+                    promise,
+                    on_fulfilled,
+                    on_rejected,
+                    derived,
+                } => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
+                Microtask::Resolve { promise, value } => {
+                    self.promise_resolve(promise.0, value);
+                }
+                Microtask::Reject { promise, reason } => {
+                    self.promise_reject(promise.0, reason);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Run a single then handler for a settled promise, chaining into the
+    /// derived promise (if any). The derived promise is stored in the handler
+    /// via a side-table keyed by the handler function index.
+    fn run_then(
+        &mut self,
+        promise: GcIdx,
+        on_fulfilled: Value,
+        on_rejected: Value,
+        derived: Option<GcIdx>,
+    ) -> error::Result<()> {
+        let (state, result) = self.heap.with_obj(promise.0, |o| {
+            if let HeapObj::Promise(p) = o {
+                (p.state.get(), p.result.borrow().clone())
+            } else {
+                (PromiseStatus::Fulfilled, Value::Undefined)
+            }
+        });
+        let handler = if state == PromiseStatus::Rejected {
+            on_rejected
+        } else {
+            on_fulfilled
+        };
+        if matches!(handler, Value::Undefined) {
+            // pass-through: settle the derived promise with the same outcome
+            if let Some(d) = derived {
+                if state == PromiseStatus::Rejected {
+                    self.promise_reject(d.0, result);
+                } else {
+                    self.promise_resolve(d.0, result);
+                }
+            }
+            return Ok(());
+        }
+        // call the handler with the result
+        match self.call_function(&handler, &[result], None) {
+            Ok(ret) => {
+                if let Some(d) = derived {
+                    // if the return is itself a promise, adopt its state
+                    if let Value::Object(ret_idx) = ret {
+                        let is_promise = self
+                            .heap
+                            .with_obj(ret_idx.0, |o| matches!(o, HeapObj::Promise(_)));
+                        if is_promise {
+                            // chain: when ret settles, settle derived
+                            let d2 = d;
+                            self.heap.with_obj(ret_idx.0, |o| {
+                                if let HeapObj::Promise(p) = o {
+                                    p.handlers.borrow_mut().push(crate::value::PromiseHandler {
+                                        on_fulfilled: Value::Undefined,
+                                        on_rejected: Value::Undefined,
+                                        derived: Some(d),
+                                    });
+                                    let _ = d2;
+                                }
+                            });
+                            // simpler: register a microtask that adopts
+                            // (basic: just resolve derived with the promise as value)
+                            self.promise_resolve(d.0, ret);
+                        } else {
+                            self.promise_resolve(d.0, ret);
+                        }
+                    } else {
+                        self.promise_resolve(d.0, ret);
+                    }
+                }
+            }
+            Err(e) => {
+                if let Some(d) = derived {
+                    let reason: Value = e
+                        .thrown_value
+                        .clone()
+                        .unwrap_or_else(|| Value::String(Rc::from(e.message.as_str())));
+                    self.promise_reject(d.0, reason);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn new_object(&mut self) -> GcIdx {
         let obj = HeapObj::Object(crate::value::ObjectData {
             props: RefCell::new(IndexMap::new()),

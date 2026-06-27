@@ -3041,6 +3041,15 @@ pub fn setup_full(vm: &mut Vm) {
     define_global(vm, "NaN", Value::Number(f64::NAN));
     define_global(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global(vm, "undefined", Value::Undefined);
+    // Promise
+    let (promise_ctor, promise_proto) = make_builtin_constructor_with(
+        vm,
+        "Promise",
+        promise_constructor,
+        &[("then", promise_then, 2), ("catch", promise_catch, 1)],
+    );
+    vm.promise_proto = Value::Object(promise_proto);
+    define_global(vm, "Promise", Value::Object(promise_ctor));
     setup_collections(vm);
 }
 
@@ -3232,6 +3241,150 @@ fn symbol_to_string(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> erro
 // =========================================================================
 // Extended setup 2: Map/Set/Symbol
 // =========================================================================
+
+// =========================================================================
+// Promise
+// =========================================================================
+fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let executor = args.get(0).cloned().unwrap_or(Value::Undefined);
+    // create the promise object
+    let p_idx = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: std::cell::Cell::new(crate::value::PromiseStatus::Pending),
+            result: RefCell::new(Value::Undefined),
+            handlers: RefCell::new(Vec::new()),
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(Some(vm.promise_proto.clone())),
+        }));
+    let p_val = Value::Object(GcIdx(p_idx));
+    // create resolve/reject native functions bound via `this` = promise
+    let resolve_target = vm.new_native_function("resolve", promise_resolve, 1);
+    let reject_target = vm.new_native_function("reject", promise_reject, 1);
+    // Wrap as bound functions with  = the promise, so resolve/reject know
+    // which promise to settle.
+    let resolve_fn = vm
+        .heap
+        .allocate(HeapObj::Function(crate::value::FunctionData {
+            name: Some(Rc::from("resolve")),
+            kind: crate::value::FunctionKind::Bound {
+                target: resolve_target,
+                this_val: p_val.clone(),
+                bound_args: Vec::new(),
+            },
+            closure: vm.global,
+            prototype: RefCell::new(None),
+            props: RefCell::new(IndexMap::new()),
+        }));
+    let reject_fn = vm
+        .heap
+        .allocate(HeapObj::Function(crate::value::FunctionData {
+            name: Some(Rc::from("reject")),
+            kind: crate::value::FunctionKind::Bound {
+                target: reject_target,
+                this_val: p_val.clone(),
+                bound_args: Vec::new(),
+            },
+            closure: vm.global,
+            prototype: RefCell::new(None),
+            props: RefCell::new(IndexMap::new()),
+        }));
+    match vm.call_function(
+        &executor,
+        &[
+            Value::Object(GcIdx(resolve_fn)),
+            Value::Object(GcIdx(reject_fn)),
+        ],
+        Some(p_val.clone()),
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            // executor threw: reject the promise with the thrown value
+            let reason: Value = e
+                .thrown_value
+                .clone()
+                .unwrap_or_else(|| Value::String(Rc::from(e.message.as_str())));
+            vm.promise_reject(p_idx, reason);
+        }
+    }
+    Ok(p_val)
+}
+
+fn promise_resolve(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let p_idx = match &this {
+        Some(Value::Object(idx)) => idx.0,
+        _ => return Ok(Value::Undefined),
+    };
+    let value = args.get(0).cloned().unwrap_or(Value::Undefined);
+    vm.promise_resolve(p_idx, value);
+    Ok(Value::Undefined)
+}
+fn promise_reject(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let p_idx = match &this {
+        Some(Value::Object(idx)) => idx.0,
+        _ => return Ok(Value::Undefined),
+    };
+    let reason = args.get(0).cloned().unwrap_or(Value::Undefined);
+    vm.promise_reject(p_idx, reason);
+    Ok(Value::Undefined)
+}
+
+fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let on_fulfilled = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let p_idx = match &this {
+        Some(Value::Object(idx)) => idx.0,
+        _ => return Err(Error::type_err("then called on non-promise".to_string())),
+    };
+    // Create a derived promise that settles with the handler's result.
+    let derived = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: std::cell::Cell::new(crate::value::PromiseStatus::Pending),
+            result: RefCell::new(Value::Undefined),
+            handlers: RefCell::new(Vec::new()),
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(Some(vm.promise_proto.clone())),
+        }));
+    let (state, _result) = vm.heap.with_obj(p_idx, |o| {
+        if let HeapObj::Promise(p) = o {
+            (p.state.get(), p.result.borrow().clone())
+        } else {
+            (crate::value::PromiseStatus::Fulfilled, Value::Undefined)
+        }
+    });
+    let handler = crate::value::PromiseHandler {
+        on_fulfilled: on_fulfilled.clone(),
+        on_rejected: on_rejected.clone(),
+        derived: Some(GcIdx(derived)),
+    };
+    match state {
+        crate::value::PromiseStatus::Pending => {
+            vm.heap.with_obj(p_idx, |o| {
+                if let HeapObj::Promise(p) = o {
+                    p.handlers.borrow_mut().push(handler);
+                }
+            });
+        }
+        _ => {
+            // already settled: schedule immediately, passing derived for chaining
+            vm.microtask_queue.push(crate::vm::Microtask::Then {
+                promise: GcIdx(p_idx),
+                on_fulfilled,
+                on_rejected,
+                derived: Some(GcIdx(derived)),
+            });
+        }
+    }
+    Ok(Value::Object(GcIdx(derived)))
+}
+
+fn promise_catch(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    // p.catch(r) === p.then(undefined, r)
+    let on_rejected = args.get(0).cloned().unwrap_or(Value::Undefined);
+    promise_then(vm, &[Value::Undefined, on_rejected], this)
+}
+
 pub fn setup_collections(vm: &mut Vm) {
     // Map
     let (map_ctor, map_proto) = make_builtin_constructor_with(
