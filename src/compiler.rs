@@ -390,38 +390,62 @@ impl Compiler {
                 }
             }
             Stmt::Switch { disc, cases } => {
-                self.compile_expr(disc)?;
-                let mut end_jumps = Vec::new();
-                let mut default_jump = None;
+                // Switch with fall-through and break. Tests use Dup so the disc survives
+                // for the next test; a matched case jumps to its body which Pops the dup.
+                self.begin_loop(usize::MAX);
+                let mut match_jumps: Vec<(usize, usize)> = Vec::new();
+                let mut default_idx: Option<usize> = None;
                 for (i, case) in cases.iter().enumerate() {
                     if let Some(test) = &case.test {
                         self.chunk.emit(Op::Dup, 0);
                         self.compile_expr(test)?;
                         self.chunk.emit(Op::StrictEq, 0);
-                        let jf = self.chunk.code.len();
-                        self.chunk.emit(Op::JumpIfFalse(0), 0);
-                        // matched: pop disc
-                        self.chunk.emit(Op::Pop, 0);
-                        for s in &case.body {
-                            self.compile_stmt(s)?;
-                        }
-                        let jend = self.chunk.code.len();
-                        self.chunk.emit(Op::Jump(0), 0);
-                        end_jumps.push(jend);
-                        self.chunk.patch_jump(jf, self.chunk.code.len());
+                        let j = self.chunk.code.len();
+                        self.chunk.emit(Op::JumpIfTrue(0), 0);
+                        match_jumps.push((i, j));
                     } else {
-                        default_jump = Some((i, self.chunk.code.len()));
+                        default_idx = Some(i);
                     }
                 }
-                // if no case matched, jump to default
-                self.chunk.emit(Op::Pop, 0); // discard disc
-                if let Some((_, pos)) = default_jump {
-                    self.chunk.patch_jump(pos, self.chunk.code.len());
+                // No test matched: pop disc and jump to default body or end.
+                let no_match_pop = self.chunk.code.len();
+                self.chunk.emit(Op::Pop, 0);
+                let no_match_jump = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), 0);
+                // Bodies: each matched case jumps to pop_i (Pop then body). Fall-through
+                // from the previous body jumps directly to the next body (past its Pop),
+                // so we record both the Pop-entry and the body-entry positions.
+                let mut pop_entries: Vec<Option<usize>> = vec![None; cases.len()];
+                let mut body_entries: Vec<Option<usize>> = vec![None; cases.len()];
+                let mut fallthrough_jumps: Vec<usize> = Vec::new();
+                for (i, case) in cases.iter().enumerate() {
+                    if i > 0 {
+                        // patch previous body's fall-through jump to this body entry
+                        let prev_jump = fallthrough_jumps[i - 1];
+                        self.chunk.patch_jump(prev_jump, self.chunk.code.len());
+                    }
+                    pop_entries[i] = Some(self.chunk.code.len());
+                    self.chunk.emit(Op::Pop, 0); // pop the dup'd disc on entry from a match
+                    body_entries[i] = Some(self.chunk.code.len());
+                    for s in &case.body { self.compile_stmt(s)?; }
+                    // emit a fall-through jump to the next body (skips its Pop)
+                    let j = self.chunk.code.len();
+                    self.chunk.emit(Op::Jump(0), 0);
+                    fallthrough_jumps.push(j);
                 }
+                // patch the last fall-through jump to end
+                if let Some(j) = fallthrough_jumps.last() { self.chunk.patch_jump(*j, self.chunk.code.len()); }
+                let _ = pop_entries;
                 let end = self.chunk.code.len();
-                for j in end_jumps {
-                    self.chunk.patch_jump(j, end);
+                for (i, j) in &match_jumps {
+                    if let Some(pos) = pop_entries[*i] { self.chunk.patch_jump(*j, pos); }
                 }
+                if let Some(di) = default_idx {
+                    if let Some(pos) = pop_entries[di] { self.chunk.patch_jump(no_match_jump, pos); }
+                } else {
+                    self.chunk.patch_jump(no_match_jump, end);
+                }
+                self.end_loop(end);
             }
             _ => {}
        }
@@ -708,9 +732,23 @@ impl Compiler {
                 let _ = prefix;
             }
             Expr::Binary(op, l, r) => {
-                self.compile_expr(l)?;
-                self.compile_expr(r)?;
-                self.chunk.emit(self.bin_op(op), 0);
+                match op {
+                    BinOp::In => {
+                        self.compile_expr(l)?;
+                        self.compile_expr(r)?;
+                        self.chunk.emit(Op::In, 0);
+                    }
+                    BinOp::Instanceof => {
+                        self.compile_expr(l)?;
+                        self.compile_expr(r)?;
+                        self.chunk.emit(Op::InstanceOf, 0);
+                    }
+                    _ => {
+                        self.compile_expr(l)?;
+                        self.compile_expr(r)?;
+                        self.chunk.emit(self.bin_op(op), 0);
+                    }
+                }
             }
             Expr::Unary(op, e) => {
                 match op {
@@ -719,7 +757,6 @@ impl Compiler {
                     UnOp::Not => { self.compile_expr(e)?; self.chunk.emit(Op::Not, 0); }
                     UnOp::BitNot => { self.compile_expr(e)?; self.chunk.emit(Op::BitNot, 0); }
                     // unary `+` coerces its operand to a number
-                    UnOp::Plus => { self.compile_expr(e)?; self.chunk.emit(Op::TypeCoerce, 0); }
                     UnOp::Typeof => {
                         // `typeof undeclaredVar` must yield "undefined" instead of throwing.
                         if let Expr::Ident(name) = e.as_ref() {

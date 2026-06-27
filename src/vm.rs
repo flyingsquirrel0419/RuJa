@@ -302,10 +302,37 @@ impl Vm {
                 Op::NotEq => { let (a, b) = self.pop2(); let r = self.loose_eq(&a, &b)?; self.stack.push(Value::Bool(!r)); }
                 Op::StrictEq => { let (a, b) = self.pop2(); let r = self.strict_eq(&a, &b); self.stack.push(Value::Bool(r)); }
                 Op::StrictNotEq => { let (a, b) = self.pop2(); let r = self.strict_eq(&a, &b); self.stack.push(Value::Bool(!r)); }
-                Op::Lt => self.compare(|a, b| a < b, true)?,
-                Op::Gt => self.compare(|a, b| a > b, false)?,
-                Op::Lte => self.compare(|a, b| a <= b, true)?,
-                Op::Gte => self.compare(|a, b| a >= b, false)?,
+                Op::Lt => self.compare(|a, b| a < b, |a: &str, b: &str| a < b)?,
+                Op::Gt => self.compare(|a, b| a > b, |a: &str, b: &str| a > b)?,
+                Op::Lte => self.compare(|a, b| a <= b, |a: &str, b: &str| a <= b)?,
+                Op::Gte => self.compare(|a, b| a >= b, |a: &str, b: &str| a >= b)?,
+                Op::In => {
+                    // stack: [key, obj]; true if obj has the property (own or inherited).
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    let v = self.get_property(&obj, &key_str)?;
+                    self.stack.push(Value::Bool(!v.is_undefined()));
+                }
+                Op::InstanceOf => {
+                    // stack: [obj, ctor]; walk obj's proto chain for ctor.prototype.
+                    let ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let ctor_proto = if let Value::Object(ci) = &ctor {
+                        self.heap.with_obj(ci.0, |o| {
+                            if let HeapObj::Function(f) = o { f.prototype.borrow().clone().unwrap_or(Value::Undefined) } else { Value::Undefined }
+                        })
+                    } else { Value::Undefined };
+                    let mut cur = obj;
+                    let mut result = false;
+                    while let Value::Object(oi) = &cur {
+                        if Value::Object(*oi) == ctor_proto { result = true; break; }
+                        cur = self.heap.with_obj(oi.0, |o| o.proto().borrow().clone().unwrap_or(Value::Undefined));
+                        if cur.is_undefined() { break; }
+                    }
+                    let _ = ctor;
+                    self.stack.push(Value::Bool(result));
+                }
                 Op::BitAnd => self.int_bin(|a, b| a & b)?,
                 Op::BitOr => self.int_bin(|a, b| a | b)?,
                 Op::BitXor => self.int_bin(|a, b| a ^ b)?,
@@ -639,12 +666,12 @@ impl Vm {
         Ok(())
     }
 
-    fn compare<F: Fn(f64, f64) -> bool>(&mut self, f: F, _eq: bool) -> error::Result<()> {
+    fn compare<F: Fn(f64, f64) -> bool, S: Fn(&str, &str) -> bool>(&mut self, f: F, sf: S) -> error::Result<()> {
         let (a, b) = self.pop2();
         let pa = self.to_primitive(&a)?;
         let pb = self.to_primitive(&b)?;
         if let (Value::String(sa), Value::String(sb)) = (&pa, &pb) {
-            self.stack.push(Value::Bool(f(0.0, 0.0) && sa == sb || sa < sb)); // simplified
+            self.stack.push(Value::Bool(sf(sa, sb)));
         } else {
             let av = self.to_number(&pa)?;
             let bv = self.to_number(&pb)?;
