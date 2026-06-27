@@ -1270,6 +1270,7 @@ impl Parser {
             TokenKind::Const => "const".to_string(),
             TokenKind::Async => "async".to_string(),
             TokenKind::Await => "await".to_string(),
+            TokenKind::Yield => "yield".to_string(),
             TokenKind::Super => "super".to_string(),
             other => {
                 return Err(error::Error::syntax(format!(

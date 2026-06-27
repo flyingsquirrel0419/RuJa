@@ -267,6 +267,7 @@ impl<'a> Lexer<'a> {
             "default" => TokenKind::Default,
             "async" => TokenKind::Async,
             "await" => TokenKind::Await,
+            "yield" => TokenKind::Yield,
             _ => TokenKind::Ident(s.to_string()),
         }
     }

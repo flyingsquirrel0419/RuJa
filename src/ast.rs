@@ -63,6 +63,7 @@ pub enum Expr {
     Sequence(Vec<Expr>),
     Regex(Rc<str>, Rc<str>),
     Await(Box<Expr>),
+    Yield(Option<Box<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

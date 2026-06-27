@@ -40,9 +40,12 @@ selected ES2015 features, with zero external runtime dependencies.
   ...) on identifier, member, and element targets
 - Optional chaining `?.` for property access (`a?.b`), computed access
   (`a?.[b]`), and calls (`a?.b()`, `f?.()`)
-- Regex literals `/pattern/flags` with `RegExp` (`test`, `exec`, `source`,
+- Regex literals `/pattern/flags` with `RegExp` (`test`, `exec`, `match`, `source`,
   `flags`) and `String.replace` with regex
 - `Promise` with `then`/`catch` chaining and microtask draining
+- `async`/`await` (async functions return a Promise; await resolves it synchronously)
+- `try`/`catch` catches runtime errors (TypeError/ReferenceError) and native
+  errors surface as `Error` objects
 - Array methods: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`,
   `reduce`, `forEach`, `find`, `findIndex`, `findLast`, `fill`, `some`, `every`,
   `includes`, `indexOf`, `lastIndexOf`, `slice`, `concat`, `join`, `flat`,

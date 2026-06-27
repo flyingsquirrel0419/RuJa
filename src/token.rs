@@ -48,6 +48,7 @@ pub enum TokenKind {
     Super,
     Async,
     Await,
+    Yield,
     Case,
     Default,
     BreakLabel(String),
