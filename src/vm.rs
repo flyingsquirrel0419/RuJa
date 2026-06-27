@@ -244,10 +244,10 @@ impl Vm {
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         self.functions.extend(funcs);
-        // Run directly in the caller's environment so `var`/function
-        // declarations and name lookups behave as sloppy-mode direct eval
-        // (declarations leak into the caller's scope). This is a simplification
-        // of the spec's separate var-environment vs lexical-environment model.
+        // Run in the caller's environment so `var`/function declarations and
+        // name lookups behave as sloppy-mode direct eval. (let/const also leak
+        // to the caller here; the spec's separate lexical environment for
+        // direct eval is a known limitation — see ROADMAP.)
         let result = self.execute_chunk_scoped(chunk, caller_env, this_val);
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
