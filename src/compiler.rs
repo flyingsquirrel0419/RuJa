@@ -15,6 +15,8 @@ pub struct Compiler {
     /// String constant pool for names.
     names: Vec<String>,
     name_map: HashMap<String, usize>,
+    /// Active loops: (continue jump target ip, pending break jump indices).
+    loop_stack: Vec<(usize, Vec<usize>)>,
 }
 
 struct Scope {
@@ -43,6 +45,7 @@ impl Compiler {
             funcs: Vec::new(),
             names: Vec::new(),
             name_map: HashMap::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -178,6 +181,7 @@ impl Compiler {
             }
             Stmt::While { cond, body } => {
                 let loop_start = self.chunk.code.len();
+                self.begin_loop(loop_start);
                 self.compile_expr(cond)?;
                 let jump_false = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfFalse(0), 0);
@@ -185,12 +189,20 @@ impl Compiler {
                 self.chunk.emit(Op::Jump(loop_start), 0);
                 let end = self.chunk.code.len();
                 self.chunk.patch_jump(jump_false, end);
+                self.end_loop(end);
             }
             Stmt::DoWhile { body, cond } => {
                 let loop_start = self.chunk.code.len();
+                // continue jumps to the condition test.
+                let cond_ip_placeholder = loop_start;
+                self.begin_loop(cond_ip_placeholder);
                 self.compile_stmt(body)?;
+                let cond_ip = self.chunk.code.len();
+                self.set_continue_target(cond_ip);
                 self.compile_expr(cond)?;
                 self.chunk.emit(Op::JumpIfTrue(loop_start), 0);
+                let end = self.chunk.code.len();
+                self.end_loop(end);
             }
             Stmt::For { init, cond, update, body } => {
                 self.push_scope(false);
@@ -198,22 +210,28 @@ impl Compiler {
                     self.compile_stmt(init_stmt)?;
                 }
                 let loop_start = self.chunk.code.len();
+                // continue should re-run the update, then the condition: insert the
+                // update block as the continue target after loop_start.
                 let jump_false = if let Some(c) = cond {
                     self.compile_expr(c)?;
                     let jf = self.chunk.code.len();
                     self.chunk.emit(Op::JumpIfFalse(0), 0);
                     Some(jf)
                 } else { None };
+                self.begin_loop(loop_start);
                 self.compile_stmt(body)?;
+                let continue_target = self.chunk.code.len();
                 if let Some(u) = update {
                     self.compile_expr(u)?;
                     self.chunk.emit(Op::Pop, 0);
                 }
+                self.set_continue_target(continue_target);
                 self.chunk.emit(Op::Jump(loop_start), 0);
                 if let Some(jf) = jump_false {
                     let end = self.chunk.code.len();
                     self.chunk.patch_jump(jf, end);
                 }
+                self.end_loop(self.chunk.code.len());
                 self.pop_scope();
             }
             Stmt::ForOf { left, right, body } => {
@@ -317,11 +335,18 @@ impl Compiler {
                 let _ = kind;
             }
             Stmt::Break(_) => {
-                // simplified: jump to end (proper impl needs a jump stack)
-                self.chunk.emit(Op::Pop, 0); // placeholder
+                // Jump past the loop body; target patched when the loop ends.
+                if let Some((_, breaks)) = self.loop_stack.last_mut() {
+                    let j = self.chunk.code.len();
+                    self.chunk.emit(Op::Jump(0), 0);
+                    breaks.push(j);
+                }
             }
             Stmt::Continue(_) => {
-                self.chunk.emit(Op::Pop, 0); // placeholder
+                // Jump back to the loop condition/next-iteration target.
+                if let Some((cont, _)) = self.loop_stack.last() {
+                    self.chunk.emit(Op::Jump(*cont), 0);
+                }
             }
             Stmt::Switch { disc, cases } => {
                 self.compile_expr(disc)?;

@@ -337,6 +337,99 @@ fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::
     Ok(Value::Undefined)
 }
 
+/// Collect an object's own enumerable string keys in array-index-first then property order.
+fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
+    let mut keys = Vec::new();
+    if let Value::Object(idx) = obj {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Array(a) = o {
+                for i in 0..a.items.borrow().len() {
+                    keys.push(Rc::from(i.to_string().as_str()));
+                }
+            }
+            if let HeapObj::Map(m) = o {
+                for (k, _) in m.entries.borrow().iter() {
+                    if let Value::String(s) = k { keys.push(s.clone()); }
+                }
+            }
+            for (k, desc) in o.props().borrow().iter() {
+                if desc.enumerable { keys.push(k.clone()); }
+            }
+        });
+    }
+    keys
+}
+
+fn make_str_array(vm: &mut Vm, strs: Vec<Rc<str>>) -> Value {
+    let items: Vec<Value> = strs.into_iter().map(Value::String).collect();
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(items), props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Value::Object(GcIdx(vm.heap.allocate(arr)))
+}
+
+fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let keys = own_string_keys(vm, &obj);
+    Ok(make_str_array(vm, keys))
+}
+
+fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let mut vals = Vec::new();
+    if let Value::Object(idx) = &obj {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Array(a) = o {
+                vals.extend(a.items.borrow().clone());
+            }
+            if let HeapObj::Map(m) = o {
+                for (_, v) in m.entries.borrow().iter() { vals.push(v.clone()); }
+            }
+            for (k, desc) in o.props().borrow().iter() {
+                if desc.enumerable { vals.push(desc.value.clone()); }
+            }
+        });
+    }
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(vals), props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+
+fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let obj = args.get(0).cloned().unwrap_or(Value::Undefined);
+    let keys = own_string_keys(vm, &obj);
+    let mut pairs = Vec::new();
+    for k in keys {
+        let v = vm.get_property(&obj, &k)?;
+        let pair = HeapObj::Array(ArrayData {
+            items: RefCell::new(vec![Value::String(k.clone()), v]),
+            props: RefCell::new(HashMap::new()),
+            proto: RefCell::new(Some(vm.array_proto.clone())),
+        });
+        pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair))));
+    }
+    let arr = HeapObj::Array(ArrayData {
+        items: RefCell::new(pairs), props: RefCell::new(HashMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+}
+
+fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
+    for src in &args[1..] {
+        let keys = own_string_keys(vm, src);
+        for k in keys {
+            let v = vm.get_property(src, &k)?;
+            vm.set_property(&target, &k, v)?;
+        }
+    }
+    Ok(target)
+}
+
 fn object_is_prototype_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let proto_val = this.unwrap_or(Value::Undefined);
     let candidate = args.get(0).cloned().unwrap_or(Value::Undefined);
@@ -357,121 +450,6 @@ fn object_is_prototype_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(Value::Bool(false))
 }
 
-fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let mut keys = Vec::new();
-    if let Value::Object(idx) = target {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                for i in 0..a.items.borrow().len() {
-                    keys.push(Value::String(Rc::from(i.to_string().as_str())));
-                }
-            } else {
-                for k in obj.props().borrow().keys() {
-                    keys.push(Value::String(k.clone()));
-                }
-            }
-        });
-    }
-    let arr = HeapObj::Array(ArrayData {
-        items: RefCell::new(keys),
-        props: RefCell::new(HashMap::new()),
-        proto: RefCell::new(Some(vm.array_proto.clone())),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
-}
-
-fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let mut values = Vec::new();
-    if let Value::Object(idx) = target {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                values.extend(a.items.borrow().iter().cloned());
-            } else {
-                for d in obj.props().borrow().values() {
-                    values.push(d.value.clone());
-                }
-            }
-        });
-    }
-    let arr = HeapObj::Array(ArrayData {
-        items: RefCell::new(values),
-        props: RefCell::new(HashMap::new()),
-        proto: RefCell::new(Some(vm.array_proto.clone())),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
-}
-
-fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    let mut entries = Vec::new();
-    let array_proto = vm.array_proto.clone();
-    let object_proto = vm.object_proto.clone();
-    if let Value::Object(idx) = target {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                for (i, v) in a.items.borrow().iter().enumerate() {
-                    let pair = new_object_with_props(&vm.heap, Some(object_proto.clone()), vec![
-                        ("0", Value::String(Rc::from(i.to_string().as_str()))),
-                        ("1", v.clone()),
-                    ]);
-                    entries.push(Value::Object(pair));
-                }
-            } else {
-                for (k, d) in obj.props().borrow().iter() {
-                    let pair = new_object_with_props(&vm.heap, Some(object_proto.clone()), vec![
-                        ("0", Value::String(k.clone())),
-                        ("1", d.value.clone()),
-                    ]);
-                    entries.push(Value::Object(pair));
-                }
-            }
-        });
-    }
-    let arr = HeapObj::Array(ArrayData {
-        items: RefCell::new(entries),
-        props: RefCell::new(HashMap::new()),
-        proto: RefCell::new(Some(array_proto)),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
-}
-
-fn object_create(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let proto = args.get(0).cloned().unwrap_or(Value::Null);
-    let proto_opt = if proto.is_nullish() { None } else { Some(proto) };
-    let idx = new_plain_object(&vm.heap, proto_opt);
-    if let Some(props) = args.get(1) {
-        object_define_properties(vm, &[Value::Object(idx), props.clone()], None)?;
-    }
-    Ok(Value::Object(idx))
-}
-
-fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let target = args.get(0).cloned().unwrap_or(Value::Undefined);
-    if !target.is_object() { return Err(Error::type_err("Object.assign target must be an object".to_string())); }
-    let Value::Object(tidx) = target else { unreachable!() };
-    for src in args.iter().skip(1) {
-        if let Value::Object(sidx) = src {
-            let (keys, is_array) = vm.heap.with_obj(sidx.0, |obj| {
-                let mut keys = Vec::new();
-                if let HeapObj::Array(a) = obj {
-                    for i in 0..a.items.borrow().len() { keys.push(i.to_string()); }
-                    (keys, true)
-                } else {
-                    for k in obj.props().borrow().keys() { keys.push(k.to_string()); }
-                    (keys, false)
-                }
-            });
-            for k in keys {
-                let val = vm.get_property(src, &k)?;
-                vm.set_property(&Value::Object(tidx), &k, val)?;
-                if is_array && !matches!(k.parse::<usize>(), Ok(_)) { continue; }
-            }
-        }
-    }
-    Ok(Value::Object(tidx))
-}
 
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.get(0).cloned().unwrap_or(Value::Undefined);
@@ -588,6 +566,13 @@ pub fn setup(vm: &mut Vm) {
         ("hasOwnProperty", object_has_own_property, 1),
         ("valueOf", object_value_of, 0),
     ]);
+    // Object static methods
+    for (n, f, len) in [("keys", object_keys as NativeFn, 1), ("values", object_values as NativeFn, 1), ("entries", object_entries as NativeFn, 1), ("assign", object_assign as NativeFn, 2)] {
+        let m = vm.new_native_function(n, f, len);
+        vm.heap.with_obj(object_ctor.0, |obj| {
+            obj.props().borrow_mut().insert(Rc::from(n), data_prop(Value::Object(m)));
+        });
+    }
     define_global(vm, "Object", Value::Object(object_ctor));
     vm.object_proto = Value::Object(object_proto);
 
@@ -1005,6 +990,63 @@ fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     let arr = HeapObj::Array(ArrayData { items: RefCell::new(items), props: RefCell::new(HashMap::new()), proto: RefCell::new(Some(vm.array_proto.clone())) });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
+
+fn array_reverse(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj { a.items.borrow_mut().reverse(); }
+        });
+        return Ok(Value::Object(idx));
+    }
+    Ok(Value::Undefined)
+}
+
+fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cmp = args.get(0).cloned();
+    if let Some(Value::Object(idx)) = this {
+        // Collect items, sort via comparator (default: cast to string, UTF-16 code unit compare).
+        let mut items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj { a.items.borrow().clone() } else { Vec::new() }
+        });
+        match cmp {
+            None | Some(Value::Undefined) | Some(Value::Null) => {
+                // default: compare by string representation; undefined sorts to end.
+                items.sort_by(|a, b| {
+                    if a.is_undefined() && b.is_undefined() { return std::cmp::Ordering::Equal; }
+                    if a.is_undefined() { return std::cmp::Ordering::Greater; }
+                    if b.is_undefined() { return std::cmp::Ordering::Less; }
+                    let sa = vm.to_string(a).map(|s| s.to_string()).unwrap_or_default();
+                    let sb = vm.to_string(b).map(|s| s.to_string()).unwrap_or_default();
+                    sa.cmp(&sb)
+                });
+            }
+            Some(cmp_fn) => {
+                let n = items.len();
+                // Simple O(n^2) insertion sort to call back into JS comparator.
+                for i in 1..n {
+                    let mut j = i;
+                    while j > 0 {
+                        let a = items[j - 1].clone();
+                        let b = items[j].clone();
+                        let r = vm.call_function(&cmp_fn, &[a.clone(), b.clone()], None)?;
+                        let ord = vm.to_number(&r)? as i64;
+                        if ord > 0 {
+                            items.swap(j - 1, j);
+                            j -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj { *a.items.borrow_mut() = items; }
+        });
+        return Ok(Value::Object(idx));
+    }
+    Ok(Value::Undefined)
+}
 fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let items = if args.len() == 1 {
         if let Some(Value::Number(n)) = args.get(0) { vec![Value::Undefined; *n as usize] } else { args.to_vec() }
@@ -1195,6 +1237,7 @@ pub fn setup_full(vm: &mut Vm) {
         ("includes", array_includes, 1), ("slice", array_slice, 2), ("concat", array_concat, 1),
         ("find", array_find, 1), ("findIndex", array_find_index, 1), ("findLast", array_find_last, 1),
         ("fill", array_fill, 1), ("some", array_some, 1), ("every", array_every, 1),
+        ("reverse", array_reverse, 0), ("sort", array_sort, 1),
     ]);
     // override the constructor function to use array_constructor
     vm.array_proto = Value::Object(array_proto);
