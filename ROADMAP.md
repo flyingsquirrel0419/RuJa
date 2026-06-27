@@ -25,4 +25,3 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 - Object property insertion order not preserved (HashMap); affects `for...in`/`Object.keys` order
 - Regex literals not supported
-- `var` hoisting only covers direct declarations (not nested inside if/for blocks)

@@ -34,6 +34,12 @@ selected ES2015 features, with zero external runtime dependencies.
   `ReferenceError`/`SyntaxError`
 - ES2015: `class`/`extends`/`super`, template literals with `${}`,
   default & rest parameters, array/object destructuring, `for...of`/`for...in`
+- Logical operators with correct short-circuit semantics: `&&`, `||`, and
+  nullish coalescing `??` (keeps falsy-but-non-null left operands such as `0`)
+- Logical assignment `&&=`, `||=`, `??=` and compound assignment (`+=`, `-=`,
+  ...) on identifier, member, and element targets
+- Optional chaining `?.` for property access (`a?.b`), computed access
+  (`a?.[b]`), and calls (`a?.b()`, `f?.()`)
 - Array methods: `push`, `pop`, `map`, `filter`, `reduce`, `forEach`, `find`,
   `findIndex`, `findLast`, `fill`, `some`, `every`, `includes`, `indexOf`,
   `slice`, `concat`, `join`, and more
