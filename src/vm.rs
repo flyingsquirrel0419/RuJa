@@ -31,18 +31,9 @@ pub struct Vm {
     pub map_proto: Value,
     pub set_proto: Value,
     pub microtask_queue: Vec<Microtask>,
-    /// Collected yield values while running a generator function body (eager).
+    /// Collected yield values while running a generator function body (eager,
+    /// legacy fallback path). Lazy generators use per-frame gen-state instead.
     pub current_yields: Vec<Value>,
-    /// When true, `Op::YieldValue` suspends the running generator frame
-    /// instead of collecting eagerly. Set while resuming a lazy generator.
-    pub gen_mode: Cell<bool>,
-    /// Signal value emitted by a `yield` during lazy generator execution.
-    pub gen_yield: Cell<Option<Value>>,
-    /// True when the last lazy-generator run suspended at a `yield` (vs. returned).
-    pub gen_suspended: Cell<bool>,
-    /// Value sent into the currently-resuming generator via `next(v)`; pushed
-    /// onto the stack as the result of the `yield` expression.
-    pub gen_resume_value: RefCell<Value>,
     pub next_symbol_id: u32,
     pub well_known_symbols: WellKnownSymbols,
     pub global_names: HashMap<Rc<str>, usize>,
@@ -65,6 +56,30 @@ pub struct CallFrame {
     pub env: GcIdx,
     pub catch_stack: Vec<usize>,
     pub this_val: Value,
+    /// Per-frame generator run-state. Non-zero only on a generator's own frame,
+    /// so a generator body that calls `next()` on *another* generator is fully
+    /// isolated (each has its own frame with its own gen-state).
+    pub gen_mode: Cell<bool>,
+    pub gen_yield: Cell<Option<Value>>,
+    pub gen_suspended: Cell<bool>,
+    pub gen_resume_value: RefCell<Value>,
+}
+
+impl CallFrame {
+    fn new(chunk: Rc<Chunk>, ip: usize, locals: Vec<Value>, env: GcIdx, this_val: Value) -> Self {
+        CallFrame {
+            chunk,
+            ip,
+            locals,
+            env,
+            catch_stack: Vec::new(),
+            this_val,
+            gen_mode: Cell::new(false),
+            gen_yield: Cell::new(None),
+            gen_suspended: Cell::new(false),
+            gen_resume_value: RefCell::new(Value::Undefined),
+        }
+    }
 }
 
 /// Outcome of executing a single bytecode instruction.
@@ -122,10 +137,6 @@ impl Vm {
             set_proto: Value::Undefined,
             microtask_queue: Vec::new(),
             current_yields: Vec::new(),
-            gen_mode: Cell::new(false),
-            gen_yield: Cell::new(None),
-            gen_suspended: Cell::new(false),
-            gen_resume_value: RefCell::new(Value::Undefined),
             next_symbol_id: 1,
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
@@ -159,14 +170,13 @@ impl Vm {
 
     fn execute_chunk(&mut self, chunk: Chunk, env: GcIdx, this_val: Value) -> error::Result<Value> {
         let chunk = Rc::new(chunk);
-        self.frames.push(CallFrame {
-            chunk: chunk.clone(),
-            ip: 0,
-            locals: vec![Value::Undefined; 256],
+        self.frames.push(CallFrame::new(
+            chunk.clone(),
+            0,
+            vec![Value::Undefined; 256],
             env,
-            catch_stack: Vec::new(),
             this_val,
-        });
+        ));
         self.interpret()
     }
 
@@ -184,14 +194,8 @@ impl Vm {
                 locals[i] = a.clone();
             }
         }
-        self.frames.push(CallFrame {
-            chunk: fdef.chunk.clone(),
-            ip: 0,
-            locals,
-            env,
-            catch_stack: Vec::new(),
-            this_val,
-        });
+        self.frames
+            .push(CallFrame::new(fdef.chunk.clone(), 0, locals, env, this_val));
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
         let result = self.interpret_to_depth(target_depth);
@@ -265,39 +269,53 @@ impl Vm {
         }
 
         // Push the generator's frame.
-        self.frames.push(CallFrame {
-            chunk: fdef.chunk.clone(),
+        self.frames.push(CallFrame::new(
+            fdef.chunk.clone(),
             ip,
             locals,
             env,
-            catch_stack,
-            this_val: this_val.clone(),
-        });
+            this_val.clone(),
+        ));
+        // Restore the saved catch_stack onto the new frame.
+        self.frames.last_mut().unwrap().catch_stack = catch_stack;
         // Swap in a dedicated operand stack for the generator run, preserving
         // the caller's stack untouched. This keeps generator execution fully
         // isolated from the caller's operand values.
         let caller_stack = std::mem::replace(&mut self.stack, stack);
 
-        // Set up the yield-resume value (the result of the `yield` expression).
-        *self.gen_resume_value.borrow_mut() = resume_val;
-        self.gen_mode.set(true);
-        self.gen_suspended.set(false);
-        self.gen_yield.set(None);
-
+        // Set up the generator's own frame run-state. The gen-state lives on
+        // the frame so a generator body that resumes *another* generator is
+        // fully isolated (each frame carries its own state).
         let target_depth = self.frames.len() - 1;
-        let result = self.interpret_to_depth(target_depth);
+        {
+            let frame = &self.frames[target_depth];
+            *frame.gen_resume_value.borrow_mut() = resume_val.clone();
+            frame.gen_mode.set(true);
+            frame.gen_suspended.set(false);
+            frame.gen_yield.set(None);
+        }
 
-        self.gen_mode.set(false);
+        let result = self.interpret_to_depth(target_depth);
 
         // Reclaim the generator's (possibly modified) operand stack and restore
         // the caller's stack.
         let gen_stack = std::mem::replace(&mut self.stack, caller_stack);
 
-        // The generator frame is now either suspended (still on the stack) or
-        // completed (popped by Return/Halt).
-        let suspended = self.gen_suspended.get();
+        // The generator frame is now either suspended (still on the stack at
+        // target_depth) or completed (popped by Return/Halt).
+        let suspended = if self.frames.len() > target_depth {
+            self.frames[target_depth].gen_suspended.get()
+        } else {
+            false
+        };
 
         if suspended {
+            // Capture the yielded value from the frame *before* popping it
+            // (gen-state now lives on the frame, not the VM).
+            let yielded = self.frames[target_depth]
+                .gen_yield
+                .take()
+                .unwrap_or(Value::Undefined);
             // Pop the generator frame and save its state for the next resume.
             let frame = self.frames.pop().expect("generator frame present");
             // The generator's leftover operands are its private stack.
@@ -314,7 +332,6 @@ impl Vm {
                 }
             });
 
-            let yielded = self.gen_yield.take().unwrap_or(Value::Undefined);
             Ok((yielded, false))
         } else {
             // Completed: the body returned or ran off the end. `result` holds
@@ -1373,9 +1390,18 @@ impl Vm {
                     // The `yield` expression's *result* (the value sent in by the
                     // next `next(v)`) is pushed onto the stack on resume, not here.
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    if self.gen_mode.get() {
-                        self.gen_yield.set(Some(v));
-                        self.gen_suspended.set(true);
+                    // Read the *current* frame's gen-state (per-frame isolation):
+                    // a generator body that calls `next()` on another generator
+                    // only suspends its own frame, not the nested one.
+                    let in_gen = self
+                        .frames
+                        .last()
+                        .map(|f| f.gen_mode.get())
+                        .unwrap_or(false);
+                    if in_gen {
+                        let frame = self.frames.last().unwrap();
+                        frame.gen_yield.set(Some(v));
+                        frame.gen_suspended.set(true);
                         return Ok(Value::Undefined);
                     } else {
                         // Not in a generator context (shouldn't happen): behave eagerly.

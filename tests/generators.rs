@@ -5,6 +5,7 @@
 mod common;
 use common::run;
 use ruja::Value;
+use std::rc::Rc;
 
 #[test]
 fn gen_next_returns_value_done() {
@@ -115,4 +116,59 @@ fn gen_state_persists_across_next_calls() {
         ),
        Value::Number(15.0) // 0 + 5 + 10
     );
+}
+
+// ---- nested generator isolation (per-frame gen-state) ----
+
+#[test]
+fn nested_generator_next_is_isolated() {
+    // A generator body that calls next() on *another* generator while it is
+    // itself running must not corrupt either generator's run-state.
+    let src = r#"
+        function* inner() { yield 1; yield 2; yield 3; }
+        function* outer() {
+            let g = inner();
+            yield g.next().value;
+            yield g.next().value;
+            yield 99;
+            yield g.next().value;
+        }
+        let o = outer();
+        let r = [];
+        for (let v of o) r.push(v);
+        r.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,2,99,3")));
+}
+
+#[test]
+fn nested_generator_interleaved() {
+    let src = r#"
+        function* a() { yield "a1"; yield "a2"; yield "a3"; }
+        function* b() {
+            yield "b1";
+            let ga = a();
+            yield ga.next().value;
+            yield "b2";
+            yield ga.next().value;
+            yield "b3";
+            yield ga.next().value;
+        }
+        let out = [];
+        for (let v of b()) out.push(v);
+        out.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("b1,a1,b2,a2,b3,a3")));
+}
+
+#[test]
+fn two_generators_pulled_independently() {
+    let src = r#"
+        function* gen() { let i = 0; while (i < 3) { yield i; i++; } }
+        let g1 = gen();
+        let g2 = gen();
+        // Pull g1 twice, then g2 once, then g1 again: states stay independent.
+        [g1.next().value, g1.next().value, g2.next().value, g1.next().value, g2.next().value].join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("0,1,0,2,1")));
 }
