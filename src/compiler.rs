@@ -326,7 +326,9 @@ impl Compiler {
                 self.chunk.emit(Op::PushTry(0), 0); // placeholder
                 self.compile_stmt(try_body)?;
                 self.chunk.emit(Op::PopTry, 0);
-                let jump_end = self.chunk.code.len();
+                // On normal completion of the try body, jump to the finally block (if any)
+                // or to the end.
+                let jump_past_catch = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), 0);
                 let catch_start = self.chunk.code.len();
                 self.chunk.patch_jump(try_start + 0, catch_start); // patch PushTry handler
@@ -345,11 +347,16 @@ impl Compiler {
                 }
                 self.compile_stmt(catch_body)?;
                 self.pop_scope();
+                // Patch the normal-try jump to land at the finally block (or end).
+                let finally_start = self.chunk.code.len();
+                self.chunk.patch_jump(jump_past_catch, finally_start);
+                // Compile the finally block once; both the try-normal and catch paths
+                // fall through into it here.
                 if let Some(fin) = finally_body {
                     self.compile_stmt(fin)?;
                 }
                 let end = self.chunk.code.len();
-                self.chunk.patch_jump(jump_end, end);
+                let _ = end;
             }
             Stmt::FunctionDecl(f) => {
                 // compile function body into a separate chunk
