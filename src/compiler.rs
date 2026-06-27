@@ -212,8 +212,12 @@ impl Compiler {
                         // top-level: global
                         self.declare(name, *kind);
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
-                        self.chunk.emit(Op::Const(name_idx), 0);
-                        self.chunk.emit(Op::StoreGlobal, 0);
+                        // Use DeclareLet/DeclareConst so the binding kind is tracked
+                        // (enables const reassignment errors).
+                        match kind {
+                            VarKind::Const => self.chunk.emit(Op::DeclareConst(name_idx), 0),
+                            _ => self.chunk.emit(Op::DeclareLet(name_idx), 0),
+                        }
                     } else {
                         // function/block scope: store in environment (enables closure capture)
                         self.declare(name, *kind);

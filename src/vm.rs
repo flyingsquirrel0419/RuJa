@@ -211,6 +211,9 @@ impl Vm {
                     // try to set in current scope chain first, else declare in global
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
+                        if crate::environment::has(&self.heap, cur_env, &name) {
+                            return Err(Error::type_err(format!("Assignment to constant variable '{}'", name)));
+                        }
                         crate::environment::declare(
                             &self.heap,
                             self.global,
@@ -263,6 +266,26 @@ impl Vm {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     crate::environment::declare_var(&self.heap, cur_env, &name, value);
                 }
+                Op::DeclareLet(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Let);
+                }
+                Op::DeclareConst(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        let v = frame.chunk.constants.get(name_idx).cloned().unwrap_or(Value::Undefined);
+                        match v { Value::String(s) => s.to_string(), _ => String::new() }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    crate::environment::declare(&self.heap, cur_env, &name, value, crate::value::BindingKind::Const);
+                }
                 Op::LoadEnv(name_idx) => {
                     let name = {
                         let frame = self.frames.last().unwrap();
@@ -305,6 +328,9 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, cur_env, &name, value.clone()) {
+                        if crate::environment::has(&self.heap, cur_env, &name) {
+                            return Err(Error::type_err(format!("Assignment to constant variable '{}'", name)));
+                        }
                         crate::environment::declare(
                             &self.heap,
                             cur_env,
@@ -357,6 +383,9 @@ impl Vm {
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     if !crate::environment::set(&self.heap, env, &name, value.clone()) {
+                        if crate::environment::has(&self.heap, env, &name) {
+                            return Err(Error::type_err(format!("Assignment to constant variable '{}'", name)));
+                        }
                         crate::environment::declare(
                             &self.heap,
                             env,

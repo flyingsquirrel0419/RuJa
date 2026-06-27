@@ -197,3 +197,15 @@ fn let_block_scope() {
     let r = run("let r; {let x=1;{let x=2;} r = x;} r;");
     assert_eq!(r, Value::Number(1.0));
 }
+
+#[test]
+fn const_reassign_throws() {
+    // const reassignment should throw; run returns Undefined on error.
+    let r = run("const x=1; x=2; x;");
+    assert_eq!(r, Value::Undefined);
+}
+
+#[test]
+fn const_read_ok() {
+    assert_eq!(run("const x=42; x;"), Value::Number(42.0));
+}

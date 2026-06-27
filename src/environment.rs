@@ -80,6 +80,27 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
     false
 }
 
+/// Returns true if `name` is bound as a `const` in the scope chain.
+pub fn is_const(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (is_c, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.borrow().get(name) {
+                    return (b.kind == BindingKind::Const, None);
+                }
+                return (false, *e.parent.borrow());
+            }
+            (false, None)
+        });
+        if is_c {
+            return true;
+        }
+        cur = parent;
+    }
+    false
+}
+
 pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {
