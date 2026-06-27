@@ -83,3 +83,19 @@ fn with_reads_function_value() {
     "#;
     assert_eq!(run(src), Value::Number(42.0));
 }
+
+#[test]
+fn with_sees_undefined_valued_property() {
+    // A property whose value is `undefined` must still be found by `with`
+    // (regression for the old undefined-sentinel has_property check).
+    let src = r#"
+        let o = { x: undefined, real: 5 };
+        let r;
+        with (o) {
+            // x exists (own property) even though its value is undefined.
+            r = (typeof x === "undefined") + "|" + real;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("true|5")));
+}

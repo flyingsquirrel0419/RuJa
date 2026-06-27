@@ -2059,26 +2059,28 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<Value> {
-        match obj {
-            Value::Object(idx) => {
-                let (found, proto) = self.heap.with_obj(idx.0, |o| {
-                    let props = o.props();
-                    let v = props.borrow().get(key).map(|d| d.value.clone());
-                    let proto = o.proto().borrow().clone();
-                    (v, proto)
-                });
-                if let Some(v) = found {
-                    return Ok(v);
-                }
-                if let Some(proto) = proto {
-                    if !proto.is_undefined() {
-                        return self.get_property_by_key(&proto, key);
-                    }
-                }
-                Ok(Value::Undefined)
+        let mut cur = obj.clone();
+        let mut depth = 0;
+        while let Value::Object(idx) = &cur {
+            if depth > 1024 {
+                break;
             }
-            _ => Ok(Value::Undefined),
+            depth += 1;
+            let (found, proto) = self.heap.with_obj(idx.0, |o| {
+                let props = o.props();
+                let v = props.borrow().get(key).map(|d| d.value.clone());
+                let proto = o.proto().borrow().clone();
+                (v, proto)
+            });
+            if let Some(v) = found {
+                return Ok(v);
+            }
+            cur = proto.unwrap_or(Value::Undefined);
+            if cur.is_undefined() {
+                break;
+            }
         }
+        Ok(Value::Undefined)
     }
 
     /// Does `obj` (or its prototype chain) have an own/inherited property for
@@ -2086,7 +2088,12 @@ impl Vm {
     /// user-defined `Symbol.iterator`.
     pub fn has_property_key(&self, obj: &Value, key: &crate::value::PropertyKey) -> bool {
         let mut cur = obj.clone();
+        let mut depth = 0;
         while let Value::Object(idx) = &cur {
+            if depth > 1024 {
+                break;
+            }
+            depth += 1;
             let (has, proto) = self.heap.with_obj(idx.0, |o| {
                 (
                     o.props().borrow().contains_key(key),
@@ -2106,9 +2113,39 @@ impl Vm {
 
     /// Does `obj` (or its prototype chain) have a named property? Used by the
     /// `with` statement to decide whether to assign to a `with` object.
+    /// Does `obj` (or its prototype chain) have a named property? Unlike the
+    /// previous undefined-sentinel check, this walks the own-property maps so
+    /// a property whose value is `undefined` is still "present" (per spec
+    /// `[[HasProperty]]`). Used by the `with` statement.
     pub fn has_property(&mut self, obj: &Value, name: &str) -> error::Result<bool> {
-        let v = self.get_property(obj, name)?;
-        Ok(!v.is_undefined())
+        // Fast path: objects with a props map walk own + proto for the key.
+        let pkey = crate::value::PropertyKey::from(name);
+        if self.has_property_key(obj, &pkey) {
+            return Ok(true);
+        }
+        // Arrays expose indexed "properties" and `length`; strings expose
+        // indexed chars and `length`. Treat those as present.
+        match obj {
+            Value::Object(idx) => {
+                let (is_arr, len) = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Array(a) = o {
+                        (true, a.items.borrow().len())
+                    } else {
+                        (false, 0)
+                    }
+                });
+                if is_arr && (name == "length" || name.parse::<usize>().is_ok_and(|i| i < len))
+                {
+                    return Ok(true);
+                }
+                Ok(false)
+            }
+            Value::String(st) => {
+                let len = st.chars().count();
+                Ok(name == "length" || name.parse::<usize>().is_ok_and(|i| i < len))
+            }
+            _ => Ok(false),
+        }
     }
 
     pub fn to_boolean(&self, v: &Value) -> bool {
