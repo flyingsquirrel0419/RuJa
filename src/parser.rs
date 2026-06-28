@@ -14,6 +14,9 @@ pub struct Parser {
     /// Arrow-specific defaults/rest (carried alongside `last_arrow_params`).
     arrow_defaults: Vec<Option<Expr>>,
     arrow_rest: Option<Rc<str>>,
+    /// Whether the current parse context is strict (inherited from an
+    /// enclosing strict function/program). Drives directive inheritance.
+    is_strict_context: bool,
 }
 
 impl Parser {
@@ -26,6 +29,7 @@ impl Parser {
             cur_rest_param: None,
             arrow_defaults: Vec::new(),
             arrow_rest: None,
+            is_strict_context: false,
         }
     }
 
@@ -99,11 +103,61 @@ impl Parser {
     }
 
     fn parse_program(&mut self) -> error::Result<Program> {
+        // Detect a leading "use strict" directive from the raw token stream
+        // *before* parsing the body, so that nested function declarations
+        // parsed within the body inherit strictness. A directive prologue is
+        // a run of string-literal expression statements; only the leading
+        // "use strict" matters here.
+        let is_strict = self.peek_use_strict_directive();
+        self.is_strict_context = is_strict;
         let mut body = Vec::new();
         while !self.check(&TokenKind::Eof) {
             body.push(self.parse_stmt()?);
         }
-        Ok(Program { body })
+        Ok(Program { body, is_strict })
+    }
+
+    /// Peek the token stream for a leading `"use strict"` string-literal
+    /// directive (optionally followed by a semicolon and more directives).
+    /// Does not consume tokens.
+    fn peek_use_strict_directive(&self) -> bool {
+        let mut i = self.pos;
+        loop {
+            match self.tokens.get(i).map(|t| &t.kind) {
+                Some(TokenKind::String(s)) if &**s == "use strict" => {
+                    return true;
+                }
+                Some(TokenKind::String(_)) => {
+                    // Another directive; skip it and its optional semicolon.
+                    i += 1;
+                    if matches!(
+                        self.tokens.get(i).map(|t| &t.kind),
+                        Some(TokenKind::Semicolon)
+                    ) {
+                        i += 1;
+                    }
+                    continue;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Scan a statement list's directive prologue (leading string-literal
+    /// expression statements) and return true if a `"use strict"` directive
+    /// is present. Per spec, only the leading run of string-literal
+    /// expression statements counts; the first non-directive statement ends it.
+    fn scan_directive_prologue(body: &[Stmt]) -> bool {
+        for stmt in body {
+            match stmt {
+                Stmt::ExprStmt(Expr::String(s)) if s.as_ref() == "use strict" => {
+                    return true;
+                }
+                Stmt::ExprStmt(Expr::String(_)) => continue,
+                _ => break,
+            }
+        }
+        false
     }
 
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
@@ -205,6 +259,12 @@ impl Parser {
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
         let body = self.parse_fn_body()?;
+        let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+        let saved = self.is_strict_context;
+        self.is_strict_context = is_strict;
+        // Re-scan not needed; params already parsed before body. Strictness from
+        // the directive applies to the body; we set it for any nested parse.
+        self.is_strict_context = saved;
         Ok(Stmt::FunctionDecl(FunctionExpr {
             name,
             params,
@@ -215,6 +275,7 @@ impl Parser {
             is_async: false,
             is_generator,
             param_decls: Vec::new(),
+            is_strict,
         }))
     }
 
@@ -1073,6 +1134,7 @@ impl Parser {
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 let body = self.parse_fn_body()?;
+                let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
@@ -1085,6 +1147,7 @@ impl Parser {
                         is_async: false,
                         is_generator: false,
                         param_decls: Vec::new(),
+                        is_strict,
                     }),
                     computed,
                     method: true,
@@ -1139,6 +1202,7 @@ impl Parser {
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
         let body = self.parse_fn_body()?;
+        let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
         Ok(Expr::Function(FunctionExpr {
             name,
             params,
@@ -1149,6 +1213,7 @@ impl Parser {
             is_async: false,
             is_generator,
             param_decls: Vec::new(),
+            is_strict,
         }))
     }
 
@@ -1260,6 +1325,7 @@ impl Parser {
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
             let body = self.parse_fn_body()?;
+            let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
             Ok(Expr::Arrow(FunctionExpr {
                 name: None,
                 params,
@@ -1270,6 +1336,7 @@ impl Parser {
                 is_async: false,
                 is_generator: false,
                 param_decls: Vec::new(),
+                is_strict,
             }))
         } else {
             let e = self.parse_assign()?;
@@ -1283,6 +1350,8 @@ impl Parser {
                 is_async: false,
                 is_generator: false,
                 param_decls: Vec::new(),
+                // Arrow with expression body has no directive prologue; inherit.
+                is_strict: self.is_strict_context,
             }))
         }
     }

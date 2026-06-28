@@ -31,6 +31,9 @@ struct Scope {
     /// to emit `PopWithEnv` (rather than `PopScope`) when unwinding on
     /// break/continue.
     is_with: bool,
+    /// Whether strict-mode rules apply in this scope (inherited from the
+    /// enclosing strict context or set by a `"use strict"` directive).
+    is_strict: bool,
 }
 
 /// A step in the access path used while compiling destructuring patterns.
@@ -56,6 +59,7 @@ impl Compiler {
                 is_function: true,
                 base: 0,
                 is_with: false,
+                is_strict: false,
             }],
             funcs: Vec::new(),
             names: Vec::new(),
@@ -73,10 +77,21 @@ impl Compiler {
         idx
     }
 
+    /// Whether the current scope is strict (inherited from the enclosing
+    /// strict context or set by a `"use strict"` directive).
+    fn is_strict(&self) -> bool {
+        self.scopes.last().map(|s| s.is_strict).unwrap_or(false)
+    }
+
     pub fn compile_program(
         &mut self,
         program: &Program,
     ) -> error::Result<(Chunk, Vec<Rc<crate::function::FunctionDef>>)> {
+        // The top-level scope inherits the program's strictness (from a leading
+        // "use strict" directive prologue).
+        if let Some(top) = self.scopes.last_mut() {
+            top.is_strict = program.is_strict;
+        }
         let n = program.body.len();
         // Hoist function declarations: compile them first so they're available
         // before any statement in the body runs.
@@ -135,11 +150,13 @@ impl Compiler {
             .last()
             .map(|s| s.base + s.bindings.len())
             .unwrap_or(0);
+        let is_strict = self.scopes.last().map(|s| s.is_strict).unwrap_or(false);
         self.scopes.push(Scope {
             bindings: HashMap::new(),
             is_function,
             base,
             is_with: false,
+            is_strict,
         });
     }
 
@@ -150,11 +167,13 @@ impl Compiler {
             .last()
             .map(|s| s.base + s.bindings.len())
             .unwrap_or(0);
+        let is_strict = self.scopes.last().map(|s| s.is_strict).unwrap_or(false);
         self.scopes.push(Scope {
             bindings: HashMap::new(),
             is_function: false,
             base,
             is_with: true,
+            is_strict,
         });
     }
 
@@ -220,6 +239,30 @@ impl Compiler {
             }
             let slot = scope.base + scope.bindings.len();
             scope.bindings.insert(name.to_string(), (slot, kind));
+        }
+        Ok(())
+    }
+
+    /// Declare a function parameter. In non-strict mode duplicate parameter
+    /// names are permitted (the last binding wins); in strict mode they are a
+    /// SyntaxError (checked separately in `compile_function`).
+    fn declare_param(&mut self, name: &str, is_strict: bool) -> error::Result<()> {
+        if let Some(scope) = self.scopes.last_mut() {
+            if scope.bindings.contains_key(name) {
+                if is_strict {
+                    return Err(error::Error::syntax(format!(
+                        "Duplicate parameter '{}' is not allowed in strict mode",
+                        name
+                    )));
+                }
+                // Non-strict: keep the existing slot; the later parameter's
+                // value overwrites it at runtime.
+                return Ok(());
+            }
+            let slot = scope.base + scope.bindings.len();
+            scope
+                .bindings
+                .insert(name.to_string(), (slot, VarKind::Let));
         }
         Ok(())
     }
@@ -506,6 +549,11 @@ impl Compiler {
             }
             Stmt::ForIn { left, right, body } => self.compile_for_in(left, right, body)?,
             Stmt::With { object, body } => {
+                if self.is_strict() {
+                    return Err(error::Error::syntax(
+                        "'with' statement is not allowed in strict mode".to_string(),
+                    ));
+                }
                 self.push_with_scope();
                 self.compile_expr(object)?;
                 self.chunk.emit(Op::PushWithEnv, 0);
@@ -561,11 +609,12 @@ impl Compiler {
             }
             Stmt::FunctionDecl(f) => {
                 // compile function body into a separate chunk
-                let func_chunk = self.compile_function(f)?;
+                let (func_chunk, param_slots) = self.compile_function(f)?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
                     name: f.name.clone(),
                     params: f.params.clone(),
+                    param_slots,
                     rest_param: f.rest_param.clone(),
                     chunk: Rc::new(func_chunk),
                     num_locals: f.params.len() + 16,
@@ -730,7 +779,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<Chunk> {
+    fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
         let saved_chunk = std::mem::take(&mut self.chunk);
         let saved_names = std::mem::take(&mut self.name_map);
         self.scopes.push(Scope {
@@ -738,7 +787,9 @@ impl Compiler {
             is_function: true,
             base: 0,
             is_with: false,
+            is_strict: f.is_strict,
         });
+
         // Declare each parameter as a lexical binding and remember its local
         // slot. The VM stores argument values into `locals[slot]` before the
         // frame runs, so defaults can read the raw argument via `LoadLocal`
@@ -747,7 +798,7 @@ impl Compiler {
         // ReferenceError while `function f(a, b = a)` still works.
         let mut param_slots: Vec<usize> = Vec::with_capacity(f.params.len());
         for param in f.params.iter() {
-            self.declare(param, VarKind::Let)?;
+            self.declare_param(param, f.is_strict)?;
             let slot = self
                 .scopes
                 .last()
@@ -830,7 +881,7 @@ impl Compiler {
         let func_chunk = std::mem::take(&mut self.chunk);
         self.name_map = saved_names;
         self.chunk = saved_chunk;
-        Ok(func_chunk)
+        Ok((func_chunk, param_slots))
     }
 
     /// A path step to reach a destructured value from the source temp.
@@ -1780,11 +1831,12 @@ impl Compiler {
                 // iterator's return value on the stack as the yield* result.
             }
             Expr::Function(f) | Expr::Arrow(f) => {
-                let func_chunk = self.compile_function(f)?;
+                let (func_chunk, param_slots) = self.compile_function(f)?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
                     name: f.name.clone(),
                     params: f.params.clone(),
+                    param_slots,
                     rest_param: f.rest_param.clone(),
                     chunk: Rc::new(func_chunk),
                     num_locals: f.params.len() + 16,
@@ -1860,12 +1912,14 @@ impl Compiler {
                     is_async: false,
                     is_generator: false,
                     param_decls: Vec::new(),
+                    is_strict: true, // classes are always strict
                 };
-                let func_chunk = self.compile_function(&ctor_fn)?;
+                let (func_chunk, param_slots) = self.compile_function(&ctor_fn)?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
                     name: cls.name.clone(),
                     params: ctor_fn.params.clone(),
+                    param_slots,
                     rest_param: ctor_fn.rest_param.clone(),
                     chunk: Rc::new(func_chunk),
                     num_locals: ctor_fn.params.len() + 16,
@@ -1941,12 +1995,14 @@ impl Compiler {
                         is_async: false,
                         is_generator: false,
                         param_decls: Vec::new(),
+                        is_strict: true, // class methods are always strict
                     };
-                    let m_chunk = self.compile_function(&m_fn)?;
+                    let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
                     let m_idx = self.funcs.len();
                     let mdef = crate::function::FunctionDef {
                         name: Some(method.name.clone()),
                         params: method.params.clone(),
+                        param_slots: m_slots,
                         rest_param: method.rest_param.clone(),
                         chunk: Rc::new(m_chunk),
                         num_locals: method.params.len() + 16,

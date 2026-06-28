@@ -271,8 +271,11 @@ impl Vm {
     ) -> error::Result<Value> {
         let mut locals = vec![Value::Undefined; fdef.num_locals.max(256)];
         for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
-            if i < locals.len() {
-                locals[i] = a.clone();
+            // Use the compiled slot map so duplicate parameter names (allowed
+            // in non-strict functions) share a slot, with the last value winning.
+            let slot = fdef.param_slots.get(i).copied().unwrap_or(i);
+            if slot < locals.len() {
+                locals[slot] = a.clone();
             }
         }
         self.frames
@@ -336,8 +339,9 @@ impl Vm {
         if !started {
             locals = vec![Value::Undefined; fdef.num_locals.max(256)];
             for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
-                if i < locals.len() {
-                    locals[i] = a.clone();
+                let slot = fdef.param_slots.get(i).copied().unwrap_or(i);
+                if slot < locals.len() {
+                    locals[slot] = a.clone();
                 }
             }
             ip = 0;

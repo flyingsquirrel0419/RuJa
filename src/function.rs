@@ -7,6 +7,10 @@ use std::rc::Rc;
 pub struct FunctionDef {
     pub name: Option<Rc<str>>,
     pub params: Vec<Rc<str>>,
+    /// Local slot for each parameter (params may share a slot when a
+    /// non-strict function has duplicate parameter names; the last value
+    /// wins). Falls back to `i` when empty (legacy callers).
+    pub param_slots: Vec<usize>,
     pub rest_param: Option<Rc<str>>,
     pub chunk: Rc<Chunk>,
     pub num_locals: usize,

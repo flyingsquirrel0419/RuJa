@@ -99,6 +99,10 @@ pub struct FunctionExpr {
     pub is_async: bool,
     pub is_generator: bool,
     pub param_decls: Vec<Pattern>,
+    /// Whether this function was parsed with a `"use strict"` directive (or
+    /// inherited strictness from an enclosing strict context). Drives
+    /// strict-mode enforcement: `with` rejection, duplicate params, etc.
+    pub is_strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,4 +268,6 @@ pub enum VarKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub body: Vec<Stmt>,
+    /// True when the program begins with a `"use strict"` directive prologue.
+    pub is_strict: bool,
 }
