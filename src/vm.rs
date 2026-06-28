@@ -374,6 +374,7 @@ impl Vm {
         // Use `%` rather than `is_multiple_of`, which was only stabilized in
         // Rust 1.87 — older toolchains (and some CI images) lack it.
         let live = self.heap.live_count();
+        #[allow(clippy::manual_is_multiple_of)]
         if live > 0 && live % 2048 == 0 {
             let roots = self.collect_roots();
             self.heap.maybe_collect(&roots);
