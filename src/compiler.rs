@@ -314,6 +314,28 @@ impl Compiler {
         out
     }
 
+    /// Collect top-level `var` and function-declaration names from a statement
+    /// list (for direct-eval leak into the caller's function scope).
+    pub fn collect_var_names(body: &[Stmt]) -> Vec<Rc<str>> {
+        let mut out = Vec::new();
+        for stmt in body {
+            match stmt {
+                Stmt::VarDecl { kind, decls } if *kind == VarKind::Var => {
+                    for (name, _) in decls {
+                        out.push(name.clone());
+                    }
+                }
+                Stmt::FunctionDecl(f) => {
+                    if let Some(name) = &f.name {
+                        out.push(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// Emit TDZ (uninitialized) declarations for lexical bindings at scope entry.
     /// Also registers them in the compiler's scope table so `resolve` works and
     /// later `declare` calls for the same name are no-ops (preventing slot reuse).

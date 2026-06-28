@@ -30,6 +30,21 @@ pub fn new_with_env(heap: &Heap, parent: GcIdx, object: crate::value::Value) -> 
     GcIdx(heap.allocate(env))
 }
 
+/// True if `env` has a binding for `name` that is NOT a `var` (i.e. a
+/// lexical `let`/`const`). Used by direct-eval leak-back to avoid clobbering
+/// an existing lexical binding when a `var` of the same name is declared in
+/// eval.
+pub fn has_lexical_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            if let Some(b) = e.vars.borrow().get(name) {
+                return b.kind != BindingKind::Var;
+            }
+        }
+        false
+    })
+}
+
 pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingKind) {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {

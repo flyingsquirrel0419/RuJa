@@ -264,11 +264,48 @@ impl Vm {
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         self.functions.extend(funcs);
-        // Run in the caller's environment so `var`/function declarations and
-        // name lookups behave as sloppy-mode direct eval. (let/const also leak
-        // to the caller here; the spec's separate lexical environment for
-        // direct eval is a known limitation — see ROADMAP.)
-        let result = self.execute_chunk_scoped(chunk, caller_env, this_val);
+        // Per spec, direct eval runs in a dedicated lexical environment whose
+        // parent is the caller's environment. `let`/`const`/`class` declared in
+        // eval stay local to that environment (they do NOT leak to the caller),
+        // while `var` and function declarations leak to the caller's function
+        // scope. Pre-declare the var/function names in the caller env so the
+        // eval body's `DeclareVar` writes land in the right place; then run the
+        // eval body in the child environment.
+        let var_names = crate::compiler::Compiler::collect_var_names(&program.body);
+        for name in &var_names {
+            crate::environment::declare_var(&self.heap, caller_env, name, Value::Undefined);
+        }
+        let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true);
+        let result = self.execute_chunk_scoped(chunk, eval_env, this_val);
+        // After running, copy the var/function bindings that the eval body
+        // established back into the caller's environment (they leak per spec).
+        // `let`/`const`/`class` stay in eval_env and are discarded with it.
+        let leaked: Vec<(Rc<str>, Value)> = self.heap.with_obj(eval_env.0, |o| {
+            if let HeapObj::Environment(e) = o {
+                e.vars
+                    .borrow()
+                    .iter()
+                    .filter(|(name, _)| var_names.contains(&**name))
+                    .map(|(name, b)| (name.clone(), b.value.borrow().clone()))
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        });
+        for (name, value) in leaked {
+            // Do not clobber an existing lexical (let/const) binding in the
+            // caller: a same-named eval `var` is a no-op there per spec.
+            if crate::environment::has_lexical_binding(&self.heap, caller_env, &name) {
+                continue;
+            }
+            crate::environment::declare(
+                &self.heap,
+                caller_env,
+                &name,
+                value,
+                crate::value::BindingKind::Var,
+            );
+        }
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }

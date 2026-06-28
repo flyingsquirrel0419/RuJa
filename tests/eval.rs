@@ -94,3 +94,60 @@ fn direct_eval_with_spread_args_still_direct() {
     "#;
     assert_eq!(run(src), Value::Number(99.0));
 }
+
+// ---- direct eval lexical-environment isolation (#4) ----
+
+#[test]
+fn eval_let_does_not_leak_to_caller() {
+    // `let` declared in direct eval must not be visible in the caller.
+    let src = r#"
+        (function() {
+            eval("let x = 5;");
+            try { return x; } catch(e) { return "ref-err"; }
+        })();
+    "#;
+    assert_eq!(run(src), ruja::Value::String(std::rc::Rc::from("ref-err")));
+}
+
+#[test]
+fn eval_const_does_not_leak_to_caller() {
+    let src = r#"
+        (function() {
+            eval("const c = 9;");
+            try { return c; } catch(e) { return "ref-err"; }
+        })();
+    "#;
+    assert_eq!(run(src), ruja::Value::String(std::rc::Rc::from("ref-err")));
+}
+
+#[test]
+fn eval_var_leaks_to_caller() {
+    // `var` declared in direct eval leaks to the caller's function scope.
+    let src = r#"
+        (function() {
+            eval("var y = 7;");
+            return y;
+        })();
+    "#;
+    assert_eq!(run(src), ruja::Value::Number(7.0));
+}
+
+#[test]
+fn eval_let_visible_inside_eval() {
+    let src = r#"
+        eval("let z = 9; z + 1;");
+    "#;
+    assert_eq!(run(src), ruja::Value::Number(10.0));
+}
+
+#[test]
+fn eval_let_does_not_leak_at_top_level() {
+    // Top-level eval `let` must not create a global binding.
+    let mut vm = ruja::Vm::new();
+    let _ = vm.run(r#"eval("let w = 3");"#);
+    let r = match vm.run("typeof w;") {
+        Ok(v) => v,
+        Err(_) => ruja::Value::String(std::rc::Rc::from("undefined")),
+    };
+    assert_eq!(r, ruja::Value::String(std::rc::Rc::from("undefined")));
+}
