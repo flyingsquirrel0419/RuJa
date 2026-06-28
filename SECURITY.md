@@ -8,11 +8,9 @@ RuJa is pre-1.0 alpha software. Security fixes are applied to the latest
 ## Reporting a vulnerability
 
 If you discover a security vulnerability, **please do not open a public
-issue**. Instead, report it privately:
-
-1. Open a **private security advisory** on GitHub:
-   [Report a vulnerability](https://github.com/flyingsquirrel0419/RuJa/security/advisories/new)
-2. Or email the maintainer directly.
+issue**. Instead, report it privately by opening a **private security
+advisory** on GitHub:
+[Report a vulnerability](https://github.com/flyingsquirrel0419/RuJa/security/advisories/new).
 
 Please include:
 
