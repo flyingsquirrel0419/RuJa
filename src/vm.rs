@@ -1672,59 +1672,9 @@ impl Vm {
                     // pop the thrown value and bind it; the compiler already
                     // emitted a StoreLocal for the catch param.
                 }
-                Op::Call(arg_count) => {
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let callee = self.stack.pop().unwrap_or(Value::Undefined);
-                    // If the callee was resolved through a `with`-statement object
-                    // environment record, bind `this` to that object (ES spec).
-                    // Otherwise use `undefined` (strict-mode-style). Take and clear
-                    // the pending value so it never leaks past this call.
-                    let with_this = self
-                        .frames
-                        .last()
-                        .map(|f| f.pending_with_this.take())
-                        .unwrap_or(None);
-                    let this = with_this.or(Some(Value::Undefined));
-                    let result = self.call_function(&callee, &args, this)?;
-                    self.stack.push(result);
-                }
-                Op::CallMethod(arg_count) => {
-                    // stack: [obj, key, arg1, arg2, ...]
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    let method = self.get_property(&obj, &key_str)?;
-                    let result = self.call_function(&method, &args, Some(obj))?;
-                    self.stack.push(result);
-                }
-                Op::CallMethodOpt(arg_count) => {
-                    // Optional method call: like CallMethod but if the resolved
-                    // method is null/undefined, short-circuit to undefined.
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    let method = self.get_property(&obj, &key_str)?;
-                    if method.is_nullish() {
-                        self.stack.push(Value::Undefined);
-                    } else {
-                        let result = self.call_function(&method, &args, Some(obj))?;
-                        self.stack.push(result);
-                    }
-                }
+                Op::Call(arg_count) => self.op_call(arg_count)?,
+                Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
+                Op::CallMethodOpt(arg_count) => self.op_call_method_opt(arg_count)?,
                 Op::YieldValue => {
                     // Lazy generator: pop the yielded value and suspend execution.
                     // The `yield` expression's *result* (the value sent in by the
@@ -1788,21 +1738,7 @@ impl Vm {
                     let result = self.call_function(&method, &args, Some(this_val))?;
                     self.stack.push(result);
                 }
-                Op::CallSpread => {
-                    // stack: [callee, argsArray]; spread the array's items as call args.
-                    let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
-                    let callee = self.stack.pop().unwrap_or(Value::Undefined);
-                    let mut args = Vec::new();
-                    if let Value::Object(idx) = &args_arr {
-                        self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::Array(a) = o {
-                                args = a.items.borrow().clone();
-                            }
-                        });
-                    }
-                    let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
-                    self.stack.push(result);
-                }
+                Op::CallSpread => self.op_call_spread()?,
                 Op::CallDirectEval(arg_count) => {
                     // Direct `eval(src, ...)`: per spec only the first argument
                     // is the source string; extras are ignored. Compile and run
@@ -1832,61 +1768,8 @@ impl Vm {
                     let result = self.eval_direct(&src, caller_env, this_val, caller_strict)?;
                     self.stack.push(result);
                 }
-                Op::New(arg_count) => {
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let constructor = self.stack.pop().unwrap_or(Value::Undefined);
-                    let result = self.construct(&constructor, &args)?;
-                    self.stack.push(result);
-                }
-                Op::MakeClosure(func_idx) => {
-                    if let Some(fdef) = self.functions.get(func_idx).cloned() {
-                        let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                        let is_arrow = fdef.is_arrow;
-                        // create a .prototype object for non-arrow functions
-                        let proto_val = if !fdef.is_arrow {
-                            let proto = HeapObj::Object(crate::value::ObjectData {
-                                props: RefCell::new(IndexMap::new()),
-                                proto: RefCell::new(Some(self.object_proto.clone())),
-                                extensible: std::cell::Cell::new(true),
-                                class_name: None,
-                            });
-                            Value::Object(GcIdx(self.heap.allocate(proto)))
-                        } else {
-                            Value::Undefined
-                        };
-                        let fd = crate::value::FunctionData {
-                            name: fdef.name.clone(),
-                            kind: crate::value::FunctionKind::Interpreted { func: fdef },
-                            closure: env_idx,
-                            prototype: RefCell::new(if !is_arrow {
-                                Some(proto_val.clone())
-                            } else {
-                                None
-                            }),
-                            props: RefCell::new(IndexMap::new()),
-                        };
-                        let idx = self.heap.allocate(HeapObj::Function(fd));
-                        // link prototype.constructor back to the function
-                        if let Value::Object(pidx) = &proto_val {
-                            self.heap.with_obj(pidx.0, |obj| {
-                                let mut desc = crate::value::PropertyDescriptor::data(
-                                    Value::Object(GcIdx(idx)),
-                                );
-                                desc.enumerable = false;
-                                obj.props()
-                                    .borrow_mut()
-                                    .insert(crate::value::PropertyKey::from("constructor"), desc);
-                            });
-                        }
-                        self.stack.push(Value::Object(GcIdx(idx)));
-                    } else {
-                        self.stack.push(Value::Undefined);
-                    }
-                }
+                Op::New(arg_count) => self.op_new(arg_count)?,
+                Op::MakeClosure(func_idx) => self.op_make_closure(func_idx),
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     let t = if let Value::Object(idx) = &v {
@@ -1909,34 +1792,7 @@ impl Vm {
                     let n = self.to_number(&v)?;
                     self.stack.push(Value::Number(n));
                 }
-                Op::Await => {
-                    // Synchronous await: pop a value; if it is a pending promise,
-                    // drain microtasks until it settles, then push its result.
-                    let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let Value::Object(idx) = &v {
-                        let is_promise = self
-                            .heap
-                            .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
-                        if is_promise {
-                            self.run_microtasks()?;
-                            let (state, result) = self.heap.with_obj(idx.0, |o| {
-                                if let HeapObj::Promise(p) = o {
-                                    (p.state.get(), p.result.borrow().clone())
-                                } else {
-                                    (PromiseStatus::Fulfilled, Value::Undefined)
-                                }
-                            });
-                            if state == PromiseStatus::Rejected {
-                                return Err(Error::thrown(result, &self.heap));
-                            }
-                            self.stack.push(result);
-                        } else {
-                            self.stack.push(v);
-                        }
-                    } else {
-                        self.stack.push(v);
-                    }
-                }
+                Op::Await => self.op_await()?,
                 Op::TypeofVar(name_idx) => {
                     // `typeof name`: "undefined" if the name is not bound (must not throw).
                     let name = {
@@ -2045,6 +1901,171 @@ impl Vm {
         let b = self.stack.pop().unwrap_or(Value::Undefined);
         let a = self.stack.pop().unwrap_or(Value::Undefined);
         (a, b)
+    }
+
+    /// `Op::Call(arg_count)`: pop callee + args, apply `with`-this binding if
+    /// the callee was resolved through a `with` object, and push the result.
+    fn op_call(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        // If the callee was resolved through a `with`-statement object
+        // environment record, bind `this` to that object (ES spec). Otherwise
+        // use `undefined` (strict-mode-style). Take and clear the pending value
+        // so it never leaks past this call.
+        let with_this = self
+            .frames
+            .last()
+            .map(|f| f.pending_with_this.take())
+            .unwrap_or(None);
+        let this = with_this.or(Some(Value::Undefined));
+        let result = self.call_function(&callee, &args, this)?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::CallMethod(arg_count)`: `obj.key(...args)` (computed member call).
+    fn op_call_method(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let key = self.stack.pop().unwrap_or(Value::Undefined);
+        let obj = self.stack.pop().unwrap_or(Value::Undefined);
+        let key_str = self.to_property_key(&key)?;
+        let method = self.get_property(&obj, &key_str)?;
+        let result = self.call_function(&method, &args, Some(obj))?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::CallMethodOpt(arg_count)`: optional chaining member call.
+    fn op_call_method_opt(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let key = self.stack.pop().unwrap_or(Value::Undefined);
+        let obj = self.stack.pop().unwrap_or(Value::Undefined);
+        let key_str = self.to_property_key(&key)?;
+        let method = self.get_property(&obj, &key_str)?;
+        if method.is_nullish() {
+            self.stack.push(Value::Undefined);
+        } else {
+            let result = self.call_function(&method, &args, Some(obj))?;
+            self.stack.push(result);
+        }
+        Ok(())
+    }
+
+    /// `Op::CallSpread`: spread an array's items as call arguments.
+    fn op_call_spread(&mut self) -> error::Result<()> {
+        let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let mut args = Vec::new();
+        if let Value::Object(idx) = &args_arr {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    args = a.items.borrow().clone();
+                }
+            });
+        }
+        let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::New(arg_count)`: constructor call.
+    fn op_new(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let constructor = self.stack.pop().unwrap_or(Value::Undefined);
+        let result = self.construct(&constructor, &args)?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::Await`: synchronous await. If the value is a pending Promise, drain
+    /// microtasks until it settles, then push its result (or rethrow rejection).
+    fn op_await(&mut self) -> error::Result<()> {
+        let v = self.stack.pop().unwrap_or(Value::Undefined);
+        if let Value::Object(idx) = &v {
+            let is_promise = self
+                .heap
+                .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
+            if is_promise {
+                self.run_microtasks()?;
+                let (state, result) = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Promise(p) = o {
+                        (p.state.get(), p.result.borrow().clone())
+                    } else {
+                        (PromiseStatus::Fulfilled, Value::Undefined)
+                    }
+                });
+                if state == PromiseStatus::Rejected {
+                    return Err(Error::thrown(result, &self.heap));
+                }
+                self.stack.push(result);
+                return Ok(());
+            }
+        }
+        self.stack.push(v);
+        Ok(())
+    }
+
+    /// `Op::MakeClosure(func_idx)`: build a function object capturing the
+    /// current environment, with a `.prototype` for non-arrow functions.
+    fn op_make_closure(&mut self, func_idx: usize) {
+        if let Some(fdef) = self.functions.get(func_idx).cloned() {
+            let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+            let is_arrow = fdef.is_arrow;
+            // create a .prototype object for non-arrow functions
+            let proto_val = if !fdef.is_arrow {
+                let proto = HeapObj::Object(crate::value::ObjectData {
+                    props: RefCell::new(IndexMap::new()),
+                    proto: RefCell::new(Some(self.object_proto.clone())),
+                    extensible: std::cell::Cell::new(true),
+                    class_name: None,
+                });
+                Value::Object(GcIdx(self.heap.allocate(proto)))
+            } else {
+                Value::Undefined
+            };
+            let fd = crate::value::FunctionData {
+                name: fdef.name.clone(),
+                kind: crate::value::FunctionKind::Interpreted { func: fdef },
+                closure: env_idx,
+                prototype: RefCell::new(if !is_arrow {
+                    Some(proto_val.clone())
+                } else {
+                    None
+                }),
+                props: RefCell::new(IndexMap::new()),
+            };
+            let idx = self.heap.allocate(HeapObj::Function(fd));
+            // link prototype.constructor back to the function
+            if let Value::Object(pidx) = &proto_val {
+                self.heap.with_obj(pidx.0, |obj| {
+                    let mut desc =
+                        crate::value::PropertyDescriptor::data(Value::Object(GcIdx(idx)));
+                    desc.enumerable = false;
+                    obj.props()
+                        .borrow_mut()
+                        .insert(crate::value::PropertyKey::from("constructor"), desc);
+                });
+            }
+            self.stack.push(Value::Object(GcIdx(idx)));
+        } else {
+            self.stack.push(Value::Undefined);
+        }
     }
 
     fn num_bin<F: Fn(f64, f64) -> f64>(&mut self, f: F) -> error::Result<()> {
