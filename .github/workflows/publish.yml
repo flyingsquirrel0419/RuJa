@@ -1,9 +1,19 @@
+# Disabled: RuJa is not yet ready for crates.io release. The trigger below
+# matches no real branch, so this workflow will never run. To re-enable,
+# replace the `on.push` block with:
+#
+#   on:
+#     push:
+#       tags:
+#         - "v*"
+#
+# and ensure the CARGO_REGISTRY_TOKEN secret is set.
 name: publish
 
 on:
   push:
-    tags:
-      - "v*"
+    # Disabled until the engine stabilizes.
+    branches: ["__publish_disabled__"]
 
 env:
   CARGO_TERM_COLOR: always

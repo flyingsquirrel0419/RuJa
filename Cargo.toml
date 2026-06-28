@@ -1,6 +1,6 @@
 [package]
 name = "ruja"
-version = "1.0.0"
+version = "0.2.1-alpha"
 edition = "2021"
 authors = ["flyingsquirrel0419"]
 description = "RuJa - A JavaScript engine written in Rust"

@@ -5,7 +5,7 @@ use std::io::{self, BufRead, Write};
 use std::process::exit;
 use std::thread;
 
-const VERSION: &str = "0.2.0-alpha";
+const VERSION: &str = "0.2.1-alpha";
 const HELP: &str = r#"Usage: ruja [OPTIONS] [FILE]
 
 A JavaScript engine written in Rust (bytecode VM + GC).
