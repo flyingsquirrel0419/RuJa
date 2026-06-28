@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-### Added (v2.1 spec-completeness pass)
+### Added (spec-completeness pass)
 - **Symbol-keyed properties**: a `PropertyKey` model (string/Symbol) backs all
   object `props` maps, so `[Symbol.iterator]` and arbitrary Symbol keys store
   and read correctly and are skipped by `for...in`/`JSON.stringify`.
@@ -27,6 +27,32 @@
 - **`eval`**: global `eval(x)` returns non-strings unchanged and parses/compiles/
   runs strings at runtime. Indirect eval runs globally (var leaks to global);
   direct `eval(...)` is detected at compile time and runs in the caller's scope.
+
+### Added (spec-completeness pass, cont.)
+- **Strict mode**: `"use strict"` directive prologues are parsed and propagated
+  through the AST/compiler scope chain. `with` is a SyntaxError in strict mode;
+  duplicate formal parameters are rejected (non-strict still allows them, last
+  wins via a per-parameter slot map). Classes are always strict.
+- **Generator `throw`/`return` injection**: `g.throw(e)` injects the exception
+  at the suspended `yield` point (the body's try/catch can handle it; otherwise
+  it propagates out). `g.return(v)` force-completes the generator with `v`.
+  Driven by a new `ResumeKind` (Next/Throw/Return) and a frame-level
+  `force_throw`.
+- **`for await...of`**: async iteration via `Symbol.asyncIterator` (falling
+  back to the sync `Symbol.iterator` protocol), awaiting each `next()` result.
+  `Symbol.asyncIterator` is now exposed on the global `Symbol` object.
+- **Direct eval lexical isolation**: `let`/`const`/`class` declared in direct
+  `eval` no longer leak to the caller; `var`/function declarations still leak to
+  the caller's function scope (and not over existing lexical bindings).
+- **Iterator protocol for array destructuring**: `let [a, b] = iterable` now
+  uses the iterator protocol, so generators, custom iterables, and strings
+  destructure correctly (not just arrays). Rest uses a new `IteratorCollectRest`.
+- **`Function` constructor**: `new Function(p0, ..., body)` dynamically compiles
+  a function from parameter and body strings; a body `"use strict"` directive
+  is honored (strict body rejects duplicate parameters).
+- **Strict eval sandbox (minimal)**: under strict mode, direct eval no longer
+  leaks `var` to the caller (in-function). `Chunk.is_strict` threads caller
+  strictness to the eval.
 
 ### Added
 - Temporal Dead Zone (TDZ) for `let`/`const`: lexical bindings are hoisted as

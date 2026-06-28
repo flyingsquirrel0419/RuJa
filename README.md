@@ -2,7 +2,7 @@
 
 A JavaScript engine written in Rust.
 
-RuJa v2.0 is a **bytecode VM** with a **mark-and-sweep garbage collector**,
+RuJa is a **bytecode VM** with a **mark-and-sweep garbage collector**,
 replacing the v1.0 tree-walker. It runs a pragmatic ES5.1 subset plus
 selected ES2015 features, with zero external runtime dependencies.
 

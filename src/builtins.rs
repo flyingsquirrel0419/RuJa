@@ -1,4 +1,4 @@
-//! Built-in objects and globals for the RuJa VM (v2.0).
+//! Built-in objects and globals for the RuJa VM.
 //!
 //! All built-in constructors, prototypes, and global functions are registered
 //! here. Native functions follow the `NativeFn` signature used by the VM.
