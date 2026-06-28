@@ -185,7 +185,14 @@ pub enum AssignOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
+pub struct Stmt {
+    /// 1-based source line where the statement begins (0 if unknown).
+    pub line: u32,
+    pub node: StmtNode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StmtNode {
     VarDecl {
         kind: VarKind,
         decls: Vec<(Rc<str>, Option<Expr>)>,

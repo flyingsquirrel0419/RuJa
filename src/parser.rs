@@ -17,6 +17,10 @@ pub struct Parser {
     /// Whether the current parse context is strict (inherited from an
     /// enclosing strict function/program). Drives directive inheritance.
     is_strict_context: bool,
+    /// Source line of the first token of the statement currently being parsed
+    /// (captured at `parse_stmt` entry). Used by `stmt()` so a statement's line
+    /// reflects where it begins, not where its construction helper finishes.
+    stmt_start_line: u32,
 }
 
 impl Parser {
@@ -30,6 +34,7 @@ impl Parser {
             arrow_defaults: Vec::new(),
             arrow_rest: None,
             is_strict_context: false,
+            stmt_start_line: 0,
         }
     }
 
@@ -42,6 +47,17 @@ impl Parser {
 
     fn peek(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
+    }
+    /// Source line (1-based) of the current token.
+    fn current_line(&self) -> u32 {
+        self.tokens[self.pos].line as u32
+    }
+    /// Wrap a `StmtNode` with the current token's source line.
+    fn stmt(&self, node: crate::ast::StmtNode) -> crate::ast::Stmt {
+        crate::ast::Stmt {
+            line: self.stmt_start_line,
+            node,
+        }
     }
     fn peek_at_tok(&self, off: usize) -> &Token {
         &self.tokens[(self.pos + off).min(self.tokens.len() - 1)]
@@ -149,11 +165,11 @@ impl Parser {
     /// expression statements counts; the first non-directive statement ends it.
     pub fn scan_directive_prologue(body: &[Stmt]) -> bool {
         for stmt in body {
-            match stmt {
-                Stmt::ExprStmt(Expr::String(s)) if s.as_ref() == "use strict" => {
+            match &stmt.node {
+                StmtNode::ExprStmt(Expr::String(s)) if s.as_ref() == "use strict" => {
                     return true;
                 }
-                Stmt::ExprStmt(Expr::String(_)) => continue,
+                StmtNode::ExprStmt(Expr::String(_)) => continue,
                 _ => break,
             }
         }
@@ -161,6 +177,7 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
+        self.stmt_start_line = self.current_line();
         match self.peek().clone() {
             TokenKind::LBrace => self.parse_block(),
             TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
@@ -169,14 +186,14 @@ impl Parser {
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
                     self.advance(); // async
                     let mut d = self.parse_function_decl()?;
-                    if let Stmt::FunctionDecl(fe) = &mut d {
+                    if let StmtNode::FunctionDecl(fe) = &mut d.node {
                         fe.is_async = true;
                     }
                     Ok(d)
                 } else {
                     let e = self.parse_expr()?;
                     self.expect_semi()?;
-                    Ok(Stmt::ExprStmt(e))
+                    Ok(self.stmt(StmtNode::ExprStmt(e)))
                 }
             }
             TokenKind::Class => self.parse_class_decl(),
@@ -189,31 +206,31 @@ impl Parser {
                 self.advance();
                 let l = self.parse_opt_label();
                 self.expect_semi()?;
-                Ok(Stmt::Break(l))
+                Ok(self.stmt(StmtNode::Break(l)))
             }
             TokenKind::Continue => {
                 self.advance();
                 let l = self.parse_opt_label();
                 self.expect_semi()?;
-                Ok(Stmt::Continue(l))
+                Ok(self.stmt(StmtNode::Continue(l)))
             }
             TokenKind::Throw => {
                 self.advance();
                 let e = self.parse_expr()?;
                 self.expect_semi()?;
-                Ok(Stmt::Throw(e))
+                Ok(self.stmt(StmtNode::Throw(e)))
             }
             TokenKind::Try => self.parse_try(),
             TokenKind::With => self.parse_with(),
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Semicolon => {
                 self.advance();
-                Ok(Stmt::Empty)
+                Ok(self.stmt(StmtNode::Empty))
             }
             _ => {
                 let e = self.parse_expr()?;
                 self.expect_semi()?;
-                Ok(Stmt::ExprStmt(e))
+                Ok(self.stmt(StmtNode::ExprStmt(e)))
             }
         }
     }
@@ -234,7 +251,7 @@ impl Parser {
             body.push(self.parse_stmt()?);
         }
         self.expect(&TokenKind::RBrace, "}")?;
-        Ok(Stmt::Block(body))
+        Ok(self.stmt(StmtNode::Block(body)))
     }
 
     fn parse_var_decl(&mut self) -> error::Result<Stmt> {
@@ -265,7 +282,7 @@ impl Parser {
         // Re-scan not needed; params already parsed before body. Strictness from
         // the directive applies to the body; we set it for any nested parse.
         self.is_strict_context = saved;
-        Ok(Stmt::FunctionDecl(FunctionExpr {
+        Ok(self.stmt(StmtNode::FunctionDecl(FunctionExpr {
             name,
             params,
             param_defaults,
@@ -276,7 +293,7 @@ impl Parser {
             is_generator,
             param_decls: Vec::new(),
             is_strict,
-        }))
+        })))
     }
 
     fn parse_params(&mut self) -> error::Result<Vec<Rc<str>>> {
@@ -340,7 +357,7 @@ impl Parser {
         } else {
             None
         };
-        Ok(Stmt::If { cond, then, else_ })
+        Ok(self.stmt(StmtNode::If { cond, then, else_ }))
     }
 
     fn parse_while(&mut self) -> error::Result<Stmt> {
@@ -349,7 +366,7 @@ impl Parser {
         let cond = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
         let body = Box::new(self.parse_stmt()?);
-        Ok(Stmt::While { cond, body })
+        Ok(self.stmt(StmtNode::While { cond, body }))
     }
 
     fn parse_with(&mut self) -> error::Result<Stmt> {
@@ -358,7 +375,7 @@ impl Parser {
         let object = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
         let body = Box::new(self.parse_stmt()?);
-        Ok(Stmt::With { object, body })
+        Ok(self.stmt(StmtNode::With { object, body }))
     }
 
     fn parse_do_while(&mut self) -> error::Result<Stmt> {
@@ -369,7 +386,7 @@ impl Parser {
         let cond = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
         self.eat(&TokenKind::Semicolon);
-        Ok(Stmt::DoWhile { body, cond })
+        Ok(self.stmt(StmtNode::DoWhile { body, cond }))
     }
 
     fn parse_for(&mut self) -> error::Result<Stmt> {
@@ -393,23 +410,23 @@ impl Parser {
                 let right = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
                 let body = Box::new(self.parse_stmt()?);
-                return Ok(Stmt::ForIn {
+                return Ok(self.stmt(StmtNode::ForIn {
                     left: Box::new(stmt),
                     right,
                     body,
-                });
+                }));
             }
             if self.check(&TokenKind::Of) {
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
                 let body = Box::new(self.parse_stmt()?);
-                return Ok(Stmt::ForOf {
+                return Ok(self.stmt(StmtNode::ForOf {
                     left: Box::new(stmt),
                     right,
                     body,
                     is_await,
-                });
+                }));
             } else if is_await {
                 return Err(error::Error::syntax(
                     "'for await' is only valid with for...of".to_string(),
@@ -418,7 +435,7 @@ impl Parser {
             Some(Box::new(stmt))
         } else {
             let e = self.parse_expr()?;
-            Some(Box::new(Stmt::ExprStmt(e)))
+            Some(Box::new(self.stmt(StmtNode::ExprStmt(e))))
         };
         self.expect(&TokenKind::Semicolon, ";")?;
         let cond = if self.check(&TokenKind::Semicolon) {
@@ -434,12 +451,12 @@ impl Parser {
         };
         self.expect(&TokenKind::RParen, ")")?;
         let body = Box::new(self.parse_stmt()?);
-        Ok(Stmt::For {
+        Ok(self.stmt(StmtNode::For {
             init,
             cond,
             update,
             body,
-        })
+        }))
     }
 
     fn parse_var_decl_no_semi(&mut self) -> error::Result<Stmt> {
@@ -460,11 +477,11 @@ impl Parser {
                 } else {
                     None
                 };
-                return Ok(Stmt::Destructure {
+                return Ok(self.stmt(StmtNode::Destructure {
                     kind,
                     pattern,
                     init,
-                });
+                }));
             }
             let name = match self.advance() {
                 TokenKind::Ident(s) => Rc::from(s.as_str()),
@@ -485,7 +502,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(Stmt::VarDecl { kind, decls })
+        Ok(self.stmt(StmtNode::VarDecl { kind, decls }))
     }
 
     fn parse_return(&mut self) -> error::Result<Stmt> {
@@ -496,11 +513,11 @@ impl Parser {
             || self.at_newline_before()
         {
             self.eat(&TokenKind::Semicolon);
-            return Ok(Stmt::Return(None));
+            return Ok(self.stmt(StmtNode::Return(None)));
         }
         let e = self.parse_expr()?;
         self.expect_semi()?;
-        Ok(Stmt::Return(Some(e)))
+        Ok(self.stmt(StmtNode::Return(Some(e))))
     }
 
     fn parse_try(&mut self) -> error::Result<Stmt> {
@@ -523,14 +540,14 @@ impl Parser {
         }
         let catch_body = match catch_body {
             Some(cb) => cb,
-            None => Box::new(Stmt::Block(vec![])),
+            None => Box::new(self.stmt(StmtNode::Block(vec![]))),
         };
-        Ok(Stmt::TryCatch {
+        Ok(self.stmt(StmtNode::TryCatch {
             try_body,
             catch_param,
             catch_body,
             finally_body,
-        })
+        }))
     }
 
     fn parse_switch(&mut self) -> error::Result<Stmt> {
@@ -560,7 +577,7 @@ impl Parser {
             cases.push(SwitchCase { test, body });
         }
         self.expect(&TokenKind::RBrace, "}")?;
-        Ok(Stmt::Switch { disc, cases })
+        Ok(self.stmt(StmtNode::Switch { disc, cases }))
     }
 
     // ---- Expressions (Pratt) ----
@@ -1346,7 +1363,7 @@ impl Parser {
                 params,
                 param_defaults,
                 rest_param,
-                body: vec![Stmt::Return(Some(e))],
+                body: vec![self.stmt(StmtNode::Return(Some(e)))],
                 is_arrow: true,
                 is_async: false,
                 is_generator: false,
@@ -1413,7 +1430,7 @@ impl Parser {
     fn parse_class_decl(&mut self) -> error::Result<Stmt> {
         // Parse a class declaration as a statement that evaluates the class expr.
         let cls = self.parse_class_body()?;
-        Ok(Stmt::ExprStmt(Expr::Class(cls)))
+        Ok(self.stmt(StmtNode::ExprStmt(Expr::Class(cls))))
     }
 
     fn parse_class_body(&mut self) -> error::Result<ClassExpr> {
@@ -1466,7 +1483,7 @@ impl Parser {
     fn parse_async_or_expr_stmt(&mut self) -> error::Result<Stmt> {
         let e = self.parse_expr()?;
         self.expect_semi()?;
-        Ok(Stmt::ExprStmt(e))
+        Ok(self.stmt(StmtNode::ExprStmt(e)))
     }
     fn parse_pattern(&mut self) -> error::Result<Pattern> {
         if let TokenKind::Ident(s) = self.peek().clone() {
@@ -1595,8 +1612,8 @@ mod tests {
     fn parse_number_expr() {
         let p = parse("42;");
         assert_eq!(p.body.len(), 1);
-        match &p.body[0] {
-            Stmt::ExprStmt(Expr::Number(n)) => assert_eq!(*n, 42.0),
+        match &p.body[0].node {
+            StmtNode::ExprStmt(Expr::Number(n)) => assert_eq!(*n, 42.0),
             other => panic!("expected number expr, got {:?}", other),
         }
     }
@@ -1605,8 +1622,8 @@ mod tests {
     fn parse_var_decl() {
         let p = parse("let x = 1 + 2;");
         assert_eq!(p.body.len(), 1);
-        match &p.body[0] {
-            Stmt::VarDecl { kind, decls } => {
+        match &p.body[0].node {
+            StmtNode::VarDecl { kind, decls } => {
                 assert_eq!(*kind, VarKind::Let);
                 assert_eq!(decls.len(), 1);
                 assert_eq!(decls[0].0.as_ref(), "x");
@@ -1618,8 +1635,8 @@ mod tests {
     #[test]
     fn parse_function() {
         let p = parse("function add(a, b) { return a + b; }");
-        match &p.body[0] {
-            Stmt::FunctionDecl(f) => {
+        match &p.body[0].node {
+            StmtNode::FunctionDecl(f) => {
                 assert_eq!(f.name.as_ref().map(|s| s.as_ref()), Some("add"));
                 assert_eq!(f.params.len(), 2);
             }
@@ -1630,8 +1647,8 @@ mod tests {
     #[test]
     fn parse_arrow_in_obj() {
         let p = parse("let o = { x: 1, y: 2 };");
-        match &p.body[0] {
-            Stmt::VarDecl { decls, .. } => match &decls[0].1 {
+        match &p.body[0].node {
+            StmtNode::VarDecl { decls, .. } => match &decls[0].1 {
                 Some(Expr::Object(props)) => assert_eq!(props.len(), 2),
                 other => panic!("{:?}", other),
             },
@@ -1643,8 +1660,8 @@ mod tests {
     fn parse_precedence() {
         // 1 + 2 * 3 should be Add(1, Mul(2,3))
         let p = parse("1 + 2 * 3;");
-        match &p.body[0] {
-            Stmt::ExprStmt(Expr::Binary(BinOp::Add, _, right)) => match right.as_ref() {
+        match &p.body[0].node {
+            StmtNode::ExprStmt(Expr::Binary(BinOp::Add, _, right)) => match right.as_ref() {
                 Expr::Binary(BinOp::Mul, _, _) => {}
                 other => panic!("expected mul on right, got {:?}", other),
             },
@@ -1655,12 +1672,12 @@ mod tests {
     #[test]
     fn parse_inc_dec() {
         let p = parse("++x; y--;");
-        match &p.body[0] {
-            Stmt::ExprStmt(Expr::Update(UpdateOp::Inc, true, _)) => {}
+        match &p.body[0].node {
+            StmtNode::ExprStmt(Expr::Update(UpdateOp::Inc, true, _)) => {}
             other => panic!("{:?}", other),
         }
-        match &p.body[1] {
-            Stmt::ExprStmt(Expr::Update(UpdateOp::Dec, false, _)) => {}
+        match &p.body[1].node {
+            StmtNode::ExprStmt(Expr::Update(UpdateOp::Dec, false, _)) => {}
             other => panic!("{:?}", other),
         }
     }
@@ -1668,12 +1685,12 @@ mod tests {
     #[test]
     fn parse_for_loop() {
         let p = parse("for (let i = 0; i < 10; i++) { sum += i; }");
-        assert!(matches!(&p.body[0], Stmt::For { .. }));
+        assert!(matches!(&p.body[0].node, StmtNode::For { .. }));
     }
 
     #[test]
     fn parse_try_catch() {
         let p = parse("try { f(); } catch (e) { g(); } finally { h(); }");
-        assert!(matches!(&p.body[0], Stmt::TryCatch { .. }));
+        assert!(matches!(&p.body[0].node, StmtNode::TryCatch { .. }));
     }
 }

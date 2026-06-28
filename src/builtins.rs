@@ -1593,15 +1593,15 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
     let params_fn = prog
         .body
         .into_iter()
-        .find_map(|st| match st {
-            crate::ast::Stmt::FunctionDecl(f) => Some(f),
+        .find_map(|st| match st.node {
+            crate::ast::StmtNode::FunctionDecl(f) => Some(f),
             _ => None,
         })
         .ok_or_else(|| error::Error::syntax("invalid Function body".to_string()))?;
-    let params = params_fn.params;
-    let param_defaults = params_fn.param_defaults;
-    let rest_param = params_fn.rest_param;
-    let body = params_fn.body;
+    let params = params_fn.params.clone();
+    let param_defaults = params_fn.param_defaults.clone();
+    let rest_param = params_fn.rest_param.clone();
+    let body = params_fn.body.clone();
     // The parser already applied directive-inherited strictness; a body-level
     // "use strict" is reflected in the parsed function (is_strict).
     let is_strict = params_fn.is_strict;

@@ -122,13 +122,11 @@ fn main() {
 
 ## Known limitations
 
-- `for await...of` and async-iterable protocol are not supported
-- Async generators use a synchronous microtask-drain model (no real event loop)
-- Direct `eval` runs in the caller env directly (spec's var/lexical split not modeled)
-- `with` is not rejected in strict mode (strict mode not implemented)
-- Array destructuring of custom iterables uses index access, not the iterator protocol
-- `Function` constructor and `eval`/`with` security sandboxing are absent
-- test262 conformance (targeted for follow-up)
+- No `eval`/`with` process-level security sandbox (local-trust execution model)
+- Async generator scheduling uses a synchronous microtask-drain model (no real event-loop preemption)
+- test262 conformance is a future target, not achieved
+- `yield*` throw/return propagation into a delegated generator is not yet forwarded (direct `g.throw`/`g.return` work)
+- Some strict-mode edge cases are not fully enforced (e.g. strict `this` defaulting to the global object is not done - RuJa's `this` defaults to `undefined` in all modes by design)
 
 ## License
 

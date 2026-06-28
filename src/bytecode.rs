@@ -32,6 +32,35 @@ impl Chunk {
         self.lines.push((self.code.len() - 1, line));
     }
 
+    /// Resolve the source line for a given instruction pointer. Returns the
+    /// line of the last recorded span at or before `ip`.
+    pub fn line_for_ip(&self, ip: usize) -> Option<usize> {
+        if self.lines.is_empty() {
+            return None;
+        }
+        let mut lo = 0usize;
+        let mut hi = self.lines.len();
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2;
+            if self.lines[mid].0 <= ip {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        // lines may have gaps (some ips share a span entry); find the closest
+        // entry whose ip <= the target.
+        let mut best = self.lines[lo].1;
+        for (entry_ip, line) in &self.lines {
+            if *entry_ip <= ip {
+                best = *line;
+            } else {
+                break;
+            }
+        }
+        Some(best)
+    }
+
     pub fn add_constant(&mut self, v: Value) -> usize {
         self.constants.push(v);
         self.constants.len() - 1

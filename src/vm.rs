@@ -666,6 +666,22 @@ impl Vm {
     }
 
     fn interpret_inner(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
+        match self.interpret_inner_raw(return_depth) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // Stamp the source line of the faulting instruction (the
+                // current frame's ip, stepped back one to point at the op that
+                // raised). Only the first occurrence is kept.
+                let line = self.frames.last().and_then(|f| {
+                    let ip = f.ip.saturating_sub(1);
+                    f.chunk.line_for_ip(ip)
+                });
+                Err(e.with_line(line))
+            }
+        }
+    }
+
+    fn interpret_inner_raw(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
         loop {
             // Generator `throw(e)` resume: if the current frame has a pending
             // forced throw (set by resume_generator on a Throw resume), raise
@@ -2019,7 +2035,7 @@ impl Vm {
                         .push(Value::Object(GcIdx(self.heap.allocate(arr))));
                 }
                 _ => {
-                    // Unimplemented op: skip for now
+                    panic!("unimplemented bytecode op: {:?}", op);
                 }
             }
         }

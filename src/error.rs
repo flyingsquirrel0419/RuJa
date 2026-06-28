@@ -25,6 +25,22 @@ pub enum ErrorKind {
 }
 
 impl Error {
+    /// Return a copy of this error with the source line attached, unless a
+    /// line is already set (the first occurrence wins).
+    pub fn with_line(&self, line: Option<usize>) -> Rc<Error> {
+        let new_line = match (&self.line, line) {
+            (Some(_), _) => self.line,
+            (None, Some(l)) => Some(l),
+            _ => self.line,
+        };
+        Rc::new(Error {
+            kind: self.kind.clone(),
+            message: self.message.clone(),
+            stack: self.stack.clone(),
+            thrown_value: self.thrown_value.clone(),
+            line: new_line,
+        })
+    }
     pub fn syntax(msg: impl Into<String>) -> Rc<Error> {
         Rc::new(Error {
             kind: ErrorKind::Syntax,
