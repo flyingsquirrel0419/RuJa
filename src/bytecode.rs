@@ -12,6 +12,9 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     /// Source spans for error reporting (ip -> line).
     pub lines: Vec<(usize, usize)>,
+    /// Whether this chunk was compiled under strict-mode rules. The VM uses
+    /// this to apply strict-direct-eval semantics (no var leak).
+    pub is_strict: bool,
 }
 
 impl Chunk {
@@ -20,6 +23,7 @@ impl Chunk {
             code: Vec::new(),
             constants: Vec::new(),
             lines: Vec::new(),
+            is_strict: false,
         }
     }
 

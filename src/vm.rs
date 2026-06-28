@@ -259,6 +259,7 @@ impl Vm {
         src: &str,
         caller_env: GcIdx,
         this_val: Value,
+        caller_strict: bool,
     ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
         let mut compiler = crate::compiler::Compiler::new();
@@ -268,18 +269,34 @@ impl Vm {
         // parent is the caller's environment. `let`/`const`/`class` declared in
         // eval stay local to that environment (they do NOT leak to the caller),
         // while `var` and function declarations leak to the caller's function
-        // scope. Pre-declare the var/function names in the caller env so the
-        // eval body's `DeclareVar` writes land in the right place; then run the
-        // eval body in the child environment.
-        let var_names = crate::compiler::Compiler::collect_var_names(&program.body);
-        for name in &var_names {
-            crate::environment::declare_var(&self.heap, caller_env, name, Value::Undefined);
+        // scope — UNLESS the eval code is strict, in which case nothing leaks
+        // (the eval has its own scope and all bindings stay local). Pre-declare
+        // the var/function names in the caller env (sloppy only) so the eval
+        // body's `DeclareVar` writes land in the right place; then run the eval
+        // body in the child environment.
+        let is_strict = caller_strict || program.is_strict;
+        let var_names = if is_strict {
+            Vec::new()
+        } else {
+            crate::compiler::Compiler::collect_var_names(&program.body)
+        };
+        if !is_strict {
+            for name in &var_names {
+                crate::environment::declare_var(&self.heap, caller_env, name, Value::Undefined);
+            }
         }
         let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true);
         let result = self.execute_chunk_scoped(chunk, eval_env, this_val);
         // After running, copy the var/function bindings that the eval body
         // established back into the caller's environment (they leak per spec).
         // `let`/`const`/`class` stay in eval_env and are discarded with it.
+        // Strict eval does not leak anything.
+        if is_strict {
+            if !self.microtask_queue.is_empty() {
+                self.run_microtasks()?;
+            }
+            return result;
+        }
         let leaked: Vec<(Rc<str>, Value)> = self.heap.with_obj(eval_env.0, |o| {
             if let HeapObj::Environment(e) = o {
                 e.vars
@@ -1772,12 +1789,12 @@ impl Vm {
                             continue;
                         }
                     };
-                    let (caller_env, this_val) = self
+                    let (caller_env, this_val, caller_strict) = self
                         .frames
                         .last()
-                        .map(|f| (f.env, f.this_val.clone()))
-                        .unwrap_or((self.global, Value::Undefined));
-                    let result = self.eval_direct(&src, caller_env, this_val)?;
+                        .map(|f| (f.env, f.this_val.clone(), f.chunk.is_strict))
+                        .unwrap_or((self.global, Value::Undefined, false));
+                    let result = self.eval_direct(&src, caller_env, this_val, caller_strict)?;
                     self.stack.push(result);
                 }
                 Op::New(arg_count) => {

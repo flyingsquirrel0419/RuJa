@@ -151,3 +151,17 @@ fn eval_let_does_not_leak_at_top_level() {
     };
     assert_eq!(r, ruja::Value::String(std::rc::Rc::from("undefined")));
 }
+
+// ---- strict eval: no var leak (#7) ----
+
+#[test]
+fn sloppy_eval_still_leaks_var() {
+    // Non-strict eval still leaks var (regression for the strict split).
+    let src = r#"
+        (function() {
+            eval("var leaked = 7;");
+            return leaked;
+        })();
+    "#;
+    assert_eq!(run(src), ruja::Value::Number(7.0));
+}

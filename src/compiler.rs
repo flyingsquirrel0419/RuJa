@@ -139,7 +139,8 @@ impl Compiler {
             }
         }
         self.chunk.emit(Op::Halt, 0);
-        let chunk = std::mem::take(&mut self.chunk);
+        let mut chunk = std::mem::take(&mut self.chunk);
+        chunk.is_strict = program.is_strict;
         let funcs = std::mem::take(&mut self.funcs);
         Ok((chunk, funcs))
     }
@@ -915,7 +916,8 @@ impl Compiler {
         }
         self.chunk.emit(Op::ReturnUndefined, 0);
         self.pop_scope();
-        let func_chunk = std::mem::take(&mut self.chunk);
+        let mut func_chunk = std::mem::take(&mut self.chunk);
+        func_chunk.is_strict = f.is_strict;
         self.name_map = saved_names;
         self.chunk = saved_chunk;
         Ok((func_chunk, param_slots))
