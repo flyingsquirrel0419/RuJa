@@ -84,3 +84,7 @@
 - `ruja -e "code"` — evaluate an expression
 - `ruja` — start the REPL
 - `--version`, `--help`
+
+---
+
+**Next:** [Known limitations](limitations.md) · [Architecture](architecture.md) · [Back to README](../README.md)

@@ -35,3 +35,7 @@ reference cycles. Collection runs at safe points only (after a run settles,
 and throttled at frame boundaries), so very long-running tight loops can
 accumulate memory before a collection. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
+
+---
+
+**Next:** [Features](features.md) · [Known limitations](limitations.md) · [Back to README](../README.md)

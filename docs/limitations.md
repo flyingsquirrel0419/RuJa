@@ -22,3 +22,7 @@
 - Wrapper objects (`new String(5)`) do not store the inner primitive; the
   prototype is correct and `typeof` is `"object"`, but `.valueOf()` is not
   implemented on wrapper objects
+
+---
+
+**Next:** [Architecture](architecture.md) · [Features](features.md) · [Back to README](../README.md)

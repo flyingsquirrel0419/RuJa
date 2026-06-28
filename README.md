@@ -1,5 +1,7 @@
 # RuJa
 
+[English](README.md) · [한국어](readme/README.ko.md) · [Español](readme/README.es.md) · [日本語](readme/README.ja.md) · [中文](readme/README.zh.md)
+
 A JavaScript engine written in Rust — **bytecode VM** + **mark-and-sweep GC**,
 with **zero external dependencies**.
 
@@ -56,7 +58,6 @@ fn main() {
 - [Features](docs/features.md) — full language and stdlib reference
 - [Limitations](docs/limitations.md) — known gaps and edge cases
 - [Changelog](CHANGELOG.md) — release history
-- [Roadmap](ROADMAP.md) — future work
 
 ## License
 
