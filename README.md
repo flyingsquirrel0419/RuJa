@@ -1,5 +1,7 @@
 # RuJa
 
+<p align="center"><img src="assets/logo.jpg" alt="RuJa" width="400"></p>
+
 [![CI](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml/badge.svg)](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/ruja.svg)](https://crates.io/crates/ruja)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
