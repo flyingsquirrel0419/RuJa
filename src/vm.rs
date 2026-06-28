@@ -31,6 +31,10 @@ pub struct Vm {
     pub map_proto: Value,
     pub set_proto: Value,
     pub microtask_queue: Vec<Microtask>,
+    /// Temporary GC roots pinned across operations that hold heap values in
+    /// Rust locals (e.g. a Promise handler while `call_function` runs, which
+    /// may itself trigger a GC). Push indices on entry, pop on exit.
+    pub gc_pins: Vec<usize>,
     /// Collected yield values while running a generator function body (eager,
     /// legacy fallback path). Lazy generators use per-frame gen-state instead.
     pub current_yields: Vec<Value>,
@@ -156,6 +160,7 @@ impl Vm {
             map_proto: Value::Undefined,
             set_proto: Value::Undefined,
             microtask_queue: Vec::new(),
+            gc_pins: Vec::new(),
             current_yields: Vec::new(),
             next_symbol_id: 1,
             well_known_symbols: WellKnownSymbols {
@@ -184,6 +189,14 @@ impl Vm {
         // Drain microtasks (Promise callbacks) after the synchronous run.
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
+        }
+        // Collect at a safe point: all frames are settled and no Rust local
+        // holds a heap value across this boundary. (Per-instruction GC was
+        // unsafe because call_function/run_then hold handler values in Rust
+        // locals that collect_roots could not see.)
+        if self.heap.live_count() > 0 {
+            let roots = self.collect_roots();
+            self.heap.maybe_collect(&roots);
         }
         result
     }
@@ -355,6 +368,12 @@ impl Vm {
         // caller's catch handler can be found by the enclosing interpret_catch.
         if result.is_err() {
             self.frames.pop();
+        }
+        // Periodic GC at a frame-boundary safe point (no Rust local holds a
+        // heap value here). Throttled to keep collection cost low.
+        if self.heap.live_count() > 0 && self.heap.live_count().is_multiple_of(2048) {
+            let roots = self.collect_roots();
+            self.heap.maybe_collect(&roots);
         }
         result
     }
@@ -2003,11 +2022,6 @@ impl Vm {
                     // Unimplemented op: skip for now
                 }
             }
-            // GC check
-            if self.heap.live_count() > 0 && self.heap.live_count().is_multiple_of(4096) {
-                let roots = self.collect_roots();
-                self.heap.maybe_collect(&roots);
-            }
         }
     }
 
@@ -2598,17 +2612,105 @@ impl Vm {
             &self.iterator_proto,
             &self.map_proto,
             &self.set_proto,
+            &self.generator_proto,
         ] {
             if let Value::Object(idx) = proto {
                 roots.push(idx.0);
             }
         }
+        // Pending microtasks hold live heap values (Promise handlers, resolve/
+        // reject reasons). Root them so a GC between scheduling and running a
+        // microtask does not collect them.
+        for mt in &self.microtask_queue {
+            match mt {
+                Microtask::Then {
+                    on_fulfilled,
+                    on_rejected,
+                    derived,
+                    ..
+                } => {
+                    if let Value::Object(idx) = on_fulfilled {
+                        roots.push(idx.0);
+                    }
+                    if let Value::Object(idx) = on_rejected {
+                        roots.push(idx.0);
+                    }
+                    if let Some(idx) = derived {
+                        roots.push(idx.0);
+                    }
+                }
+                Microtask::Resolve { value, .. } => {
+                    if let Value::Object(idx) = value {
+                        roots.push(idx.0);
+                    }
+                }
+                Microtask::Reject { reason, .. } => {
+                    if let Value::Object(idx) = reason {
+                        roots.push(idx.0);
+                    }
+                }
+            }
+        }
+        // Global constants are reachable for the program lifetime.
+        for v in &self.global_constants {
+            if let Value::Object(idx) = v {
+                roots.push(idx.0);
+            }
+        }
+        // Pinned temporary roots (e.g. Promise handlers held across call_function).
+        roots.extend_from_slice(&self.gc_pins);
         roots
     }
 
     pub fn gc(&self) {
         let roots = self.collect_roots();
         self.heap.collect(&roots);
+    }
+
+    /// Pin a heap object as a temporary GC root. Returns a guard token to pass
+    /// to `unpin` when the value is no longer held in a Rust local.
+    pub fn pin(&mut self, v: &Value) -> usize {
+        if let Value::Object(idx) = v {
+            self.gc_pins.push(idx.0);
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Release the temporary root pinned at `token`.
+    pub fn unpin(&mut self, token: usize) {
+        if token != 0 {
+            // Swap-remove is unsafe here (would move another live pin's index),
+            // so just clear by setting to an invalid/no-op slot. We truncate
+            // trailing sentinels lazily; pins are short-lived (single call).
+            // Simplest correct approach: only the most-recent pin is popped.
+            if token + 1 == self.gc_pins.len() {
+                self.gc_pins.pop();
+            } else {
+                // Overwritten with a stale slot; collect_roots tolerates dupes.
+                self.gc_pins[token] = usize::MAX;
+            }
+        }
+    }
+
+    /// Pin multiple values at once; returns the count to unpin later.
+    pub fn pin_many(&mut self, vals: &[Value]) -> usize {
+        let mut n = 0;
+        for v in vals {
+            if let Value::Object(idx) = v {
+                self.gc_pins.push(idx.0);
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Release `n` most-recently pinned temporary roots.
+    pub fn unpin_many(&mut self, n: usize) {
+        for _ in 0..n {
+            self.gc_pins.pop();
+        }
     }
 
     /// Allocate a plain object and return its handle.
@@ -2714,8 +2816,22 @@ impl Vm {
             }
             return Ok(());
         }
+        // Pin the handler, result, and derived promise as GC roots while the
+        // handler call runs: call_function may allocate enough to trigger a GC,
+        // which would otherwise collect these values held only in Rust locals.
+        let pinned = self.pin_many(&[handler.clone(), result.clone()]);
+        if let Some(d) = derived {
+            self.gc_pins.push(d.0);
+        }
         // call the handler with the result
-        match self.call_function(&handler, &[result], None) {
+        let call_ret = self.call_function(&handler, std::slice::from_ref(&result), None);
+        // Unpin everything (handler + result + derived) regardless of outcome.
+        let mut to_unpin = pinned;
+        if derived.is_some() {
+            to_unpin += 1;
+        }
+        self.unpin_many(to_unpin);
+        match call_ret {
             Ok(ret) => {
                 if let Some(d) = derived {
                     // if the return is itself a promise, adopt its state
@@ -2725,7 +2841,6 @@ impl Vm {
                             .with_obj(ret_idx.0, |o| matches!(o, HeapObj::Promise(_)));
                         if is_promise {
                             // chain: when ret settles, settle derived
-                            let d2 = d;
                             self.heap.with_obj(ret_idx.0, |o| {
                                 if let HeapObj::Promise(p) = o {
                                     p.handlers.borrow_mut().push(crate::value::PromiseHandler {
@@ -2733,7 +2848,6 @@ impl Vm {
                                         on_rejected: Value::Undefined,
                                         derived: Some(d),
                                     });
-                                    let _ = d2;
                                 }
                             });
                             // simpler: register a microtask that adopts
@@ -2794,6 +2908,28 @@ impl Vm {
 impl Vm {
     /// Call a function value with the given arguments and `this` binding.
     pub fn call_function(
+        &mut self,
+        func: &Value,
+        args: &[Value],
+        this: Option<Value>,
+    ) -> error::Result<Value> {
+        // Pin the callee and args as GC roots for the duration of this call:
+        // reading the function kind and building the call frame involve heap
+        // allocations that can trigger a GC, which would otherwise collect
+        // values held only in the caller's Rust locals / args slice.
+        let pin_count = {
+            let mut n = self.pin(func);
+            for a in args {
+                n += self.pin(a);
+            }
+            n
+        };
+        let result = self.call_function_inner(func, args, this);
+        self.unpin_many(pin_count);
+        result
+    }
+
+    fn call_function_inner(
         &mut self,
         func: &Value,
         args: &[Value],
