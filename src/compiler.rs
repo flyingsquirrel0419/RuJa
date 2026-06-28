@@ -962,15 +962,35 @@ impl Compiler {
                 }
             }
             Pattern::Array(elems) => {
-                for (i, el) in elems.iter().enumerate() {
+                // Array destructuring uses the iterator protocol: obtain an
+                // iterator from the value at `path`, then pull one value per
+                // element. This matches `[Symbol.iterator]`-based iterables
+                // (generators, custom iterables, sets) as well as arrays.
+                self.load_path(temp_idx, path);
+                self.chunk.emit(Op::GetIterator, 0);
+                let iter_idx = self.intern("#arr-iter");
+                self.chunk.emit(Op::DeclareEnv(iter_idx), 0);
+                for el in elems.iter() {
                     match el {
                         Pattern::Rest(inner) => {
-                            self.bind_rest(inner, temp_idx, path, i, kind)?;
+                            // Collect the remaining iterator values into an array.
+                            self.chunk.emit(Op::LoadEnv(iter_idx), 0);
+                            self.chunk.emit(Op::IteratorCollectRest, 0);
+                            let rest_idx = self.intern("#arr-rest");
+                            self.chunk.emit(Op::DeclareEnv(rest_idx), 0);
+                            self.compile_pattern(inner, rest_idx, &[], kind)?;
                         }
                         _ => {
-                            let mut new_path = path.to_vec();
-                            new_path.push(PathStep::Index(i));
-                            self.compile_pattern(el, temp_idx, &new_path, kind)?;
+                            // Pull the next value (or undefined if exhausted).
+                            self.chunk.emit(Op::LoadEnv(iter_idx), 0);
+                            self.chunk.emit(Op::IteratorNext, 0);
+                            // IteratorNext pushes [value, done]; we ignore done
+                            // here (a missing element binds undefined, matching
+                            // the spec where exhausted iterators yield undefined).
+                            self.chunk.emit(Op::Pop, 0); // discard `done`
+                            let elem_idx = self.intern("#arr-elem");
+                            self.chunk.emit(Op::DeclareEnv(elem_idx), 0);
+                            self.compile_pattern(el, elem_idx, &[], kind)?;
                         }
                     }
                 }

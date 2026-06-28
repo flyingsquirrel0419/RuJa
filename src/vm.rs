@@ -1962,6 +1962,26 @@ impl Vm {
                     self.stack.push(value);
                     self.stack.push(Value::Bool(done));
                 }
+                Op::IteratorCollectRest => {
+                    // Pop the iterator, drain its remaining values into a new
+                    // array, and push the array. Used by rest in array patterns.
+                    let it = self.stack.pop().unwrap_or(Value::Undefined);
+                    let mut items = Vec::new();
+                    loop {
+                        let (value, done) = self.iterator_next(&it)?;
+                        if done {
+                            break;
+                        }
+                        items.push(value);
+                    }
+                    let arr = HeapObj::Array(crate::value::ArrayData {
+                        items: RefCell::new(items),
+                        props: RefCell::new(IndexMap::new()),
+                        proto: RefCell::new(Some(self.array_proto.clone())),
+                    });
+                    self.stack
+                        .push(Value::Object(GcIdx(self.heap.allocate(arr))));
+                }
                 _ => {
                     // Unimplemented op: skip for now
                 }

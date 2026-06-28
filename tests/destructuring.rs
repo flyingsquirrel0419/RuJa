@@ -88,3 +88,62 @@ fn object_shorthand_literal() {
         Value::Number(3.0)
     );
 }
+
+// ---- array destructuring via iterator protocol (#5) ----
+
+#[test]
+fn destructure_custom_iterable() {
+    let src = r#"
+        let custom = { [Symbol.iterator]: function*(){ yield 1; yield 2; yield 3; } };
+        let [a, b, c] = custom;
+        a + b + c;
+    "#;
+    assert_eq!(run(src), Value::Number(6.0));
+}
+
+#[test]
+fn destructure_generator() {
+    let src = r#"
+        function* gen() { yield 10; yield 20; yield 30; }
+        let [a, b, c] = gen();
+        a + b + c;
+    "#;
+    assert_eq!(run(src), Value::Number(60.0));
+}
+
+#[test]
+fn destructure_generator_rest() {
+    let src = r#"
+        function* gen() { yield 10; yield 20; yield 30; }
+        let [first, ...rest] = gen();
+        first + "," + rest.length + "," + rest[0] + "," + rest[1];
+    "#;
+    assert_eq!(run(src), Value::String(std::rc::Rc::from("10,2,20,30")));
+}
+
+#[test]
+fn destructure_string_iterable() {
+    // Strings are iterable (code points).
+    let src = r#"
+        let [a, b] = "hi";
+        a + b;
+    "#;
+    assert_eq!(run(src), Value::String(std::rc::Rc::from("hi")));
+}
+
+#[test]
+fn destructure_short_iterable_pads_undefined() {
+    // Fewer values than targets: missing elements bind undefined.
+    let src = r#"
+        let custom = { [Symbol.iterator]: function*(){ yield 1; } };
+        let [a, b, c] = custom;
+        a + "|" + (b === undefined) + "|" + (c === undefined);
+    "#;
+    assert_eq!(run(src), Value::String(std::rc::Rc::from("1|true|true")));
+}
+
+#[test]
+fn plain_array_destructure_still_works() {
+    // Regression: arrays must still destructure by index-equivalent iteration.
+    assert_eq!(run("let [a, b] = [5, 6]; a + b;"), Value::Number(11.0));
+}

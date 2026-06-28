@@ -165,6 +165,10 @@ pub enum Op {
     /// `for await`: call the async iterator's `next()` and await the result,
     /// pushing `{value, done}` (already awaited). Pops the iterator.
     IteratorNextAwait,
+    /// Collect the remaining values from an iterator (already on the stack)
+    /// into a fresh array. Used by rest elements in array destructuring
+    /// patterns: `[a, ...rest] = iterable`. Pops the iterator, pushes the array.
+    IteratorCollectRest,
 
     // Spread
     Spread,
