@@ -60,4 +60,4 @@ fn main() {
 
 ## ライセンス
 
-MIT
+Apache-2.0
