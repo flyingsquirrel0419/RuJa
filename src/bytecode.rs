@@ -152,12 +152,19 @@ pub enum Op {
 
     // Iteration
     GetIterator,
+    /// `for await`: obtain an async iterator. Pops the iterable; prefers
+    /// `Symbol.asyncIterator`, falling back to `Symbol.iterator`
+    /// (async-from-sync). Pushes the iterator object.
+    GetAsyncIterator,
     GetForInKeys, // pop object, push iterator over enumerable string keys
     IteratorNext,
     /// Like IteratorNext but pops a resume value and forwards it to a lazy
     /// iterator's `next()` (used by `yield*` delegation).
     IteratorNextResume,
     IteratorDone,
+    /// `for await`: call the async iterator's `next()` and await the result,
+    /// pushing `{value, done}` (already awaited). Pops the iterator.
+    IteratorNextAwait,
 
     // Spread
     Spread,

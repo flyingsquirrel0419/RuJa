@@ -220,6 +220,9 @@ pub enum Stmt {
         left: Box<Stmt>,
         right: Expr,
         body: Box<Stmt>,
+        /// True for `for await (x of asyncIterable)`. Requires the enclosing
+        /// function to be async.
+        is_await: bool,
     },
     /// `with (object) body` - injects `object`'s properties into the scope chain
     /// for dynamic name lookup within `body`.

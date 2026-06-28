@@ -412,13 +412,3 @@ fn array_prototype_iterator_override_honored() {
     "#;
     assert_eq!(run(src), Value::String(Rc::from("10,20,30|1,2,3")));
 }
-
-#[test]
-fn for_await_is_clear_error() {
-    let mut vm = ruja::Vm::new();
-    match vm.run("async function main() { for await (let x of []) {} }") {
-        Err(e) => assert!(e.to_string().contains("for await")),
-        Ok(v) => panic!("expected error, got {:?}", v),
-    }
-    let _ = Value::Undefined;
-}

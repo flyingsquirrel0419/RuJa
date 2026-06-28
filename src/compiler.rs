@@ -519,19 +519,34 @@ impl Compiler {
                 self.end_loop(self.chunk.code.len());
                 self.pop_scope();
             }
-            Stmt::ForOf { left, right, body } => {
-                // for (let x of iterable): iterate values.
+            Stmt::ForOf {
+                left,
+                right,
+                body,
+                is_await,
+            } => {
+                // for (let x of iterable): iterate values. `for await` uses the
+                // async iterator protocol (Symbol.asyncIterator) and awaits each
+                // next() result.
                 self.push_scope(false);
                 self.compile_expr(right)?;
-                // GetIterator pops the iterable, pushes an iterator object.
-                self.chunk.emit(Op::GetIterator, 0);
+                if *is_await {
+                    self.chunk.emit(Op::GetAsyncIterator, 0);
+                } else {
+                    // GetIterator pops the iterable, pushes an iterator object.
+                    self.chunk.emit(Op::GetIterator, 0);
+                }
                 let it_name_idx = self.intern("#iter");
                 self.chunk.emit(Op::DeclareEnv(it_name_idx), 0);
                 let loop_start = self.chunk.code.len();
                 self.begin_loop(loop_start);
-                // IteratorNext pops the iterator, pushes [value, done(bool)].
                 self.chunk.emit(Op::LoadEnv(it_name_idx), 0);
-                self.chunk.emit(Op::IteratorNext, 0);
+                if *is_await {
+                    self.chunk.emit(Op::IteratorNextAwait, 0);
+                } else {
+                    // IteratorNext pops the iterator, pushes [value, done(bool)].
+                    self.chunk.emit(Op::IteratorNext, 0);
+                }
                 // JumpIfTrue pops `done`; when true (done==true), jump past the body.
                 let done_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfTrue(0), 0);

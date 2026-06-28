@@ -374,13 +374,9 @@ impl Parser {
 
     fn parse_for(&mut self) -> error::Result<Stmt> {
         self.advance();
-        // `for await (x of y)` — async iteration is not yet supported; emit a
-        // clear compile-time error instead of a confusing generic parse error.
-        if matches!(self.peek(), TokenKind::Await) {
-            return Err(error::Error::syntax(
-                "for await...of is not supported".to_string(),
-            ));
-        }
+        // `for await (x of asyncIterable)` — async iteration. Only the for-of
+        // form is valid; `for await` requires an enclosing async function.
+        let is_await = self.eat(&TokenKind::Await);
         self.expect(&TokenKind::LParen, "(")?;
         // init
         let init: Option<Box<Stmt>> = if self.check(&TokenKind::Semicolon) {
@@ -412,7 +408,12 @@ impl Parser {
                     left: Box::new(stmt),
                     right,
                     body,
+                    is_await,
                 });
+            } else if is_await {
+                return Err(error::Error::syntax(
+                    "'for await' is only valid with for...of".to_string(),
+                ));
             }
             Some(Box::new(stmt))
         } else {

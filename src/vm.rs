@@ -1912,6 +1912,19 @@ impl Vm {
                     let done = self.iterator_done(&it);
                     self.stack.push(Value::Bool(done));
                 }
+                Op::GetAsyncIterator => {
+                    let iterable = self.stack.pop().unwrap_or(Value::Undefined);
+                    let it = self.make_async_iterator(&iterable)?;
+                    self.stack.push(it);
+                }
+                Op::IteratorNextAwait => {
+                    // Pop the iterator, call its `next()`, await the result,
+                    // and push [value, done] (already awaited).
+                    let it = self.stack.pop().unwrap_or(Value::Undefined);
+                    let (value, done) = self.iterator_next_await(&it)?;
+                    self.stack.push(value);
+                    self.stack.push(Value::Bool(done));
+                }
                 _ => {
                     // Unimplemented op: skip for now
                 }
@@ -3003,6 +3016,28 @@ impl Vm {
         Ok(self.new_iterator(items))
     }
 
+    /// Obtain an async iterator for `for await...of`. Prefers a user-defined
+    /// `Symbol.asyncIterator` method; falls back to the sync iterator protocol
+    /// (`Symbol.iterator`) as an async-from-sync iterator. Async generators are
+    /// wrapped directly (their `next()` already returns a Promise).
+    pub fn make_async_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
+        if let Value::Object(_) = iterable {
+            let akey = crate::value::PropertyKey::Symbol(self.well_known_symbols.async_iterator);
+            if self.has_property_key(iterable, &akey) {
+                let m = self.get_property_by_key(iterable, &akey)?;
+                let iter_obj = self.call_function(&m, &[], Some(iterable.clone()))?;
+                return Ok(self.new_lazy_iterator(iter_obj));
+            }
+            // No async iterator: fall back to the sync iterator protocol. Each
+            // `next()` is awaited (a non-Promise value awaits to itself).
+            let it = self.make_iterator(iterable)?;
+            return Ok(it);
+        }
+        // Primitives (strings etc.): use the sync iterator, awaited per step.
+        let it = self.make_iterator(iterable)?;
+        Ok(it)
+    }
+
     /// Build an iterator over an object's enumerable string keys (for `for...in`).
     pub fn make_for_in_keys(&mut self, obj: &Value) -> error::Result<Value> {
         let mut keys: Vec<Value> = Vec::new();
@@ -3200,6 +3235,93 @@ impl Vm {
                 }
             })
         }
+    }
+
+    /// `for await` step: call the async iterator's `next()` (or the sync
+    /// iterator's `next()`), await the returned Promise, and return
+    /// `(value, done)`. Eager (Vec-backed) iterators are stepped directly.
+    pub fn iterator_next_await(&mut self, it: &Value) -> error::Result<(Value, bool)> {
+        // Generator-backed lazy iterators and custom async iterators both go
+        // through the JS `next()` method; awaiting its result (a Promise for
+        // async iterators, a plain object for sync ones) yields {value, done}.
+        let lazy_or_gen = if let Value::Object(idx) = it {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Iterator(i) = o {
+                    i.lazy_iter.borrow().is_some() || i.generator.borrow().is_some()
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        };
+        if lazy_or_gen {
+            // Resolve the iterator object whose `next()` we call: either the
+            // wrapped JS async iterator or the generator itself.
+            let iter_obj = if let Value::Object(idx) = it {
+                self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Iterator(i) = o {
+                        i.lazy_iter
+                            .borrow()
+                            .clone()
+                            .or_else(|| i.generator.borrow().clone())
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            let iter_obj =
+                iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
+            let next_fn = self.get_property(&iter_obj, "next")?;
+            let result = self.call_function(&next_fn, &[], Some(iter_obj))?;
+            // Await: if it's a Promise, drain microtasks and read the settled value.
+            let result = self.await_value(result)?;
+            let value = self.get_property(&result, "value")?;
+            let done = match self.get_property(&result, "done")? {
+                Value::Bool(b) => b,
+                _ => false,
+            };
+            if done {
+                if let Value::Object(idx) = it {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Iterator(i) = o {
+                            i.done.set(true);
+                        }
+                    });
+                }
+            }
+            return Ok((value, done));
+        }
+        // Eager (Vec-backed) iterator: step directly, no awaiting needed.
+        self.iterator_next(it)
+    }
+
+    /// Await a value: if it is a pending Promise, drain microtasks until it
+    /// settles and return the settled value (rejecting on rejection); otherwise
+    /// return the value as-is.
+    fn await_value(&mut self, v: Value) -> error::Result<Value> {
+        if let Value::Object(idx) = &v {
+            let is_promise = self
+                .heap
+                .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
+            if is_promise {
+                self.run_microtasks()?;
+                let (state, result) = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Promise(p) = o {
+                        (p.state.get(), p.result.borrow().clone())
+                    } else {
+                        (PromiseStatus::Fulfilled, Value::Undefined)
+                    }
+                });
+                if state == PromiseStatus::Rejected {
+                    return Err(Error::thrown(result, &self.heap));
+                }
+                return Ok(result);
+            }
+        }
+        Ok(v)
     }
 
     pub fn iterator_done(&self, it: &Value) -> bool {

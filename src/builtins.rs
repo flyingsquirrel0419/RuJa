@@ -4020,6 +4020,10 @@ pub fn setup_collections(vm: &mut Vm) {
                 PropertyKey::from("iterator"),
                 data_prop(Value::Symbol(vm.well_known_symbols.iterator)),
             );
+            obj.props().borrow_mut().insert(
+                PropertyKey::from("asyncIterator"),
+                data_prop(Value::Symbol(vm.well_known_symbols.async_iterator)),
+            );
         });
     }
     // Symbol.prototype: a plain Object with a toString method. Symbol is a
