@@ -27,6 +27,10 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 6. [x] TDZ for default-parameter self-reference (`function f(a = a)`)
 7. [x] `with` statement (dynamic object environment records)
 8. [x] `eval` (indirect + direct) with runtime compilation
+9. [x] Lexical duplicate-declaration checking at compile time (`let a; let a;`)
+10. [x] Computed/numeric keys in declaration destructuring (`let {[k]: a} = o`)
+11. [x] Default-parameter reverse-order TDZ (`function f(a = b, b = 2)` throws)
+12. [x] `with` statement `this` rebinding for unqualified calls
 
 ## v1.0 - Tree-walking interpreter (archived)
 
@@ -47,24 +51,7 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
   to the caller (the spec's separate eval lexical environment, with an
   isolated operand stack, is a follow-up). `var`/function declarations
   leak to the caller's function scope as expected.
-- **`with` statement `this` rebinding**: in sloppy mode, an unqualified
-  function call inside `with` should bind `this` to the `with` object when
-  the callee resolves through the object environment record; this is not
-  implemented (requires name-resolution source tracking).
 - **`with` in strict mode** is not rejected (strict mode is not implemented).
-- **Computed/numeric keys in *declaration* destructuring** (`let {[expr]: x}
-  = o`, `let {1: x} = o`): the `Pattern::Object` AST uses `Rc<str>` keys, so
-  only string/identifier keys work in declaration destructuring. Assignment
-  destructuring (`{[expr]: x} = o`) and object literals (`{[expr]: v}`)
-  support computed keys.
-- **Default-parameter reverse-order TDZ**: `function f(a = b, b = 2)` does
-  not throw for `b` (the parameter binding is initialized from args before
-  defaults evaluate); `function f(a = a)` does throw. Fixing the reverse
-  case requires the `call_function` arg-binding to use uninitialized
-  bindings.
-- **Lexical duplicate-declaration checking** (`let a; let a;`, or a parameter
-  shadowed by a same-name `let` in the body) is not enforced at compile time;
-  later declarations silently overwrite.
 - **Array destructuring of custom iterables** still uses index access rather
   than the iterator protocol (only `for...of`/spread use `Symbol.iterator`).
 - **`Function` constructor** dynamic compilation is not exposed.
