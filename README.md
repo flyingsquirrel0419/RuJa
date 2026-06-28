@@ -65,6 +65,7 @@ fn main() {
 - [Features](docs/features.md) — full language and stdlib reference
 - [Limitations](docs/limitations.md) — known gaps and edge cases
 - [Changelog](CHANGELOG.md) — release history
+- [Contributing](CONTRIBUTING.md) — how to propose changes
 
 ## License
 
