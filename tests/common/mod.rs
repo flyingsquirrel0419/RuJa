@@ -2,11 +2,12 @@
 
 use ruja::{Value, Vm};
 
-/// Run a source string and return the value of the last top-level expression,
-/// substituting `undefined` if evaluation errors out.
+/// Run a source string and return the value of the last top-level expression.
+/// Panics if evaluation errors out (use `run_err` when an error is expected),
+/// so a test does not silently pass on a runtime error.
 pub fn run(src: &str) -> Value {
     let mut vm = Vm::new();
-    vm.run(src).unwrap_or(Value::Undefined)
+    vm.run(src).expect("evaluation errored")
 }
 
 /// Run a source string that is expected to error at runtime. Returns the

@@ -1,7 +1,7 @@
 //! Built-in objects and methods: Array, String, Object, Math, JSON, Symbol.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::rc::Rc;
 
@@ -181,15 +181,23 @@ fn json_parse_nested() {
 
 #[test]
 fn json_stringify_circular_object() {
-    // {name:"a", self: <cycle>}: stringify should fail (undefined on error).
-    let r = run("var a = {name:'a'}; a.self = a; JSON.stringify(a);");
-    assert_eq!(r, Value::Undefined);
+    // {name:"a", self: <cycle>}: stringify should throw a TypeError.
+    let msg = run_err("var a = {name:'a'}; a.self = a; JSON.stringify(a);");
+    assert!(
+        msg.contains("TypeError") || msg.contains("circular"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]
 fn json_stringify_circular_array() {
-    let r = run("var a = [1,2,3]; a.push(a); JSON.stringify(a);");
-    assert_eq!(r, Value::Undefined);
+    let msg = run_err("var a = [1,2,3]; a.push(a); JSON.stringify(a);");
+    assert!(
+        msg.contains("TypeError") || msg.contains("circular"),
+        "got: {}",
+        msg
+    );
 }
 
 #[test]

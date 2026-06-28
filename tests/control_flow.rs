@@ -3,7 +3,7 @@
 //! unary +, in/instanceof/delete, comparisons, loose equality.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::rc::Rc;
 
@@ -206,9 +206,9 @@ fn let_block_scope() {
 
 #[test]
 fn const_reassign_throws() {
-    // const reassignment should throw; run returns Undefined on error.
-    let r = run("const x=1; x=2; x;");
-    assert_eq!(r, Value::Undefined);
+    // const reassignment should throw a TypeError.
+    let msg = run_err("const x=1; x=2; x;");
+    assert!(msg.contains("constant"), "got: {}", msg);
 }
 
 #[test]
