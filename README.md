@@ -1,10 +1,17 @@
 # RuJa
 
-A JavaScript engine written in Rust.
+A JavaScript engine written in Rust, featuring a **bytecode VM** and a
+**mark-and-sweep garbage collector** — with **zero external dependencies**.
 
-RuJa is a **bytecode VM** with a **mark-and-sweep garbage collector**,
-replacing the v1.0 tree-walker. It runs a pragmatic ES5.1 subset plus
-selected ES2015 features, with zero external runtime dependencies.
+RuJa runs a pragmatic ES5.1 subset plus selected ES2015+ features: classes,
+async/await, generators, Promises, destructuring, Symbols, Map/Set, regex,
+and more. It compiles JavaScript to a stack-based bytecode and executes it
+on a custom VM with automatic memory management.
+
+```sh
+$ cargo run --release -- examples/fib.js
+0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55
+```
 
 ## Architecture
 
@@ -101,7 +108,7 @@ ruja -e "1 + 2 * 3"   # evaluate an expression
 ruja                  # start the REPL
 ```
 
-## Example
+## Examples
 
 ```javascript
 function fib(n) {
@@ -111,6 +118,14 @@ function fib(n) {
 let nums = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 console.log(nums.map(fib).join(", "));
 ```
+
+More examples in the [`examples/`](examples/) directory:
+
+- [`fib.js`](examples/fib.js) — recursion + array `map`
+- [`generator.js`](examples/generator.js) — infinite lazy generators
+- [`async.js`](examples/async.js) — `async`/`await` with Promises
+- [`class.js`](examples/class.js) — class hierarchy with `super`
+- [`promise.js`](examples/promise.js) — `then`/`catch` chaining
 
 ## Library API
 
