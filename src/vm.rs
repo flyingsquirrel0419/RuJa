@@ -371,7 +371,10 @@ impl Vm {
         }
         // Periodic GC at a frame-boundary safe point (no Rust local holds a
         // heap value here). Throttled to keep collection cost low.
-        if self.heap.live_count() > 0 && self.heap.live_count().is_multiple_of(2048) {
+        // Use `%` rather than `is_multiple_of`, which was only stabilized in
+        // Rust 1.87 — older toolchains (and some CI images) lack it.
+        let live = self.heap.live_count();
+        if live > 0 && live % 2048 == 0 {
             let roots = self.collect_roots();
             self.heap.maybe_collect(&roots);
         }
