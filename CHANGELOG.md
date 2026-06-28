@@ -44,7 +44,10 @@
   in exponential notation (e.g. `5e-17`, `9e-17`, `9.99e-7`) is now exact,
   using Rust's `{:e}` formatting. Previously `n / 10f64.powi(exp)` introduced
   floating-point error (`5e-17` -> `4.999999999999999e-17`) and the exponent
-  could be padded (`e-07` instead of `e-7`).
+  could be padded (`e-07` instead of `e-7`). The mantissa is now
+  normalized (trailing zeros and a dangling `.` stripped) and the exponent
+  digits are stripped of leading zeros, so output stays correct regardless
+  of how the formatter rounds a given value.
 
 ### Changed
 - **README `Known limitations`** rewritten to reflect the implemented state

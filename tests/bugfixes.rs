@@ -54,6 +54,47 @@ fn run_err_big_stack(src: &str) -> String {
         .expect("failed to spawn worker");
     worker.join().expect("worker panicked")
 }
+
+// ---------------------------------------------------------------------------
+// #1 num_to_string exponential formatting (must match ECMAScript String(n))
+// ---------------------------------------------------------------------------
+
+fn num_str(src: &str) -> String {
+    // Force a string coercion via `"" + value`, which routes through
+    // to_string -> num_to_string (the path console.log also uses).
+    match run(&format!("'' + ({})", src)) {
+        Value::String(s) => s.to_string(),
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+#[test]
+fn num_to_string_small_exponential_is_exact() {
+    // Previously produced "4.999999999999999e-17" due to n / 10f64.powi(exp).
+    assert_eq!(num_str("5e-17"), "5e-17");
+    assert_eq!(num_str("9e-17"), "9e-17");
+}
+
+#[test]
+fn num_to_string_no_zero_padding_in_exponent() {
+    // ECMAScript uses "e-7", never "e-07".
+    assert_eq!(num_str("5e-7"), "5e-7");
+    assert_eq!(num_str("9.99e-7"), "9.99e-7");
+}
+
+#[test]
+fn num_to_string_large_exponential_has_explicit_sign() {
+    assert_eq!(num_str("1e21"), "1e+21");
+    assert_eq!(num_str("6.022e23"), "6.022e+23");
+}
+
+#[test]
+fn num_to_string_fixed_notation_boundary() {
+    // 1e-6 is rendered in fixed notation; 5e-7 in exponential.
+    assert_eq!(num_str("1e-6"), "0.000001");
+    assert_eq!(num_str("0.0000025"), "0.0000025");
+}
+
 // ---------------------------------------------------------------------------
 // #2 writable:false honored by ordinary assignment [[Set]]
 // ---------------------------------------------------------------------------

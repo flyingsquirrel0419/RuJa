@@ -503,8 +503,8 @@ pub fn num_to_string(n: f64) -> String {
 /// shortest mantissa (avoiding the floating-point division error that the
 /// previous `n / 10f64.powi(exp)` approach introduced, e.g. `5e-17` ->
 /// `4.999999999999999e-17`). The only adjustment needed for ECMAScript is to
-/// always emit an explicit exponent sign (`e+21` not `e21`) and to strip a
-/// trailing `.0` from the mantissa.
+/// always emit an explicit exponent sign (`e+21` not `e21`), strip trailing
+/// zeros from the mantissa, and strip leading zeros from the exponent digits.
 fn format_exponential(n: f64, _abs: f64) -> String {
     let s = format!("{:e}", n);
     let epos = match s.find('e') {
@@ -513,6 +513,13 @@ fn format_exponential(n: f64, _abs: f64) -> String {
     };
     let (mant, rest) = s.split_at(epos);
     let exp_str = &rest[1..]; // skip the 'e'
+                              // Normalize the mantissa: drop any trailing zeros and a dangling `.` so
+                              // that "5.000000" -> "5" and "1.500000" -> "1.5" (Rust's `{:e}` already
+                              // emits the shortest form, but this keeps us correct regardless of how
+                              // the formatter rounds a given value).
+    let mant = mant.trim_end_matches('0').trim_end_matches('.');
+    // Normalize the exponent: strip any leading zeros from the digits part
+    // (e.g. "e-07" -> "e-7") and keep the sign explicit.
     let (sign, digits) = if let Some(d) = exp_str.strip_prefix('-') {
         ("-", d)
     } else if let Some(d) = exp_str.strip_prefix('+') {
@@ -520,10 +527,10 @@ fn format_exponential(n: f64, _abs: f64) -> String {
     } else {
         ("+", exp_str)
     };
-    let mant = if let Some(m) = mant.strip_suffix(".0") {
-        m
-    } else {
-        mant
-    };
+    let digits = digits.trim_start_matches('0');
+    // A mantissa of "" (e.g. input rendered "0...e..") or digits of "" must
+    // not produce an empty token.
+    let mant = if mant.is_empty() { "0" } else { mant };
+    let digits = if digits.is_empty() { "0" } else { digits };
     format!("{}e{}{}", mant, sign, digits)
 }
