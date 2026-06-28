@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-28
+
 ### Fixed
 - **GC root safety**: `collect_roots` now roots the microtask queue (Promise
   handlers, resolve/reject values), `generator_proto`, and `global_constants`,
