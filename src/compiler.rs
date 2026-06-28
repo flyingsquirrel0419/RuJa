@@ -18,7 +18,11 @@ pub struct Compiler {
     /// Active loops: (continue target ip, pending break jumps, pending continue jumps).
     /// `continue_target == usize::MAX` means "patch me later" (C-style for, where the
     /// continue target is the update block, known only after the body is compiled).
-    loop_stack: Vec<(usize, Vec<usize>, Vec<usize>)>,
+    /// (continue_target, pending break jumps, pending continue jumps, label)
+    /// (continue_target, pending break jumps, pending continue jumps, label)
+    loop_stack: Vec<LoopFrame>,
+    /// A label waiting to be attached to the next begin_loop call.
+    pending_label: Option<Rc<str>>,
     /// Current source line being compiled; emitted onto each `Op` so runtime
     /// errors can report `(at line N)`. Updated as `compile_stmt` enters a stmt.
     current_line: usize,
@@ -53,6 +57,10 @@ impl Default for Compiler {
     }
 }
 
+/// A loop-stack frame: (continue_target, pending break jumps,
+/// pending continue jumps, optional label).
+type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Rc<str>>);
+
 impl Compiler {
     pub fn new() -> Self {
         Compiler {
@@ -68,6 +76,7 @@ impl Compiler {
             names: Vec::new(),
             name_map: HashMap::new(),
             loop_stack: Vec::new(),
+            pending_label: None,
             current_line: 0,
         }
     }
@@ -201,14 +210,24 @@ impl Compiler {
 
     /// Begin a loop: `continue_target` is where `continue` jumps (loop start/cond).
     fn begin_loop(&mut self, continue_target: usize) {
+        // Attach a pending label (set by a wrapping Labeled statement) so
+        // `break label` / `continue label` can target this loop.
+        let label = self.pending_label.take();
         self.loop_stack
-            .push((continue_target, Vec::new(), Vec::new()));
+            .push((continue_target, Vec::new(), Vec::new(), label));
+    }
+
+    /// Like `begin_loop` but tags the loop with a label so `break label` /
+    /// `continue label` can target it.
+    fn begin_labeled_loop(&mut self, continue_target: usize, label: Rc<str>) {
+        self.loop_stack
+            .push((continue_target, Vec::new(), Vec::new(), Some(label)));
     }
 
     /// Patch the current loop's continue target (used when the continue target is
     /// only known after the body, e.g. the update block of a C-style for).
     fn set_continue_target(&mut self, target: usize) {
-        if let Some((cont, _, cont_jumps)) = self.loop_stack.last_mut() {
+        if let Some((cont, _, cont_jumps, _)) = self.loop_stack.last_mut() {
             *cont = target;
             // patch already-emitted continue jumps to the real target
             for j in cont_jumps.drain(..) {
@@ -219,7 +238,7 @@ impl Compiler {
 
     /// End a loop: patch all pending `break` jumps to `end`.
     fn end_loop(&mut self, end: usize) {
-        if let Some((cont, breaks, _)) = self.loop_stack.pop() {
+        if let Some((cont, breaks, _, _)) = self.loop_stack.pop() {
             // any un-patched continue jumps fall back to the loop start/cond.
             let _ = cont;
             for j in breaks {
@@ -705,17 +724,43 @@ impl Compiler {
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
-            StmtNode::Break(_) => {
+            StmtNode::Break(label) => {
                 // Jump past the loop body; target patched when the loop ends.
-                if let Some((_, breaks, _)) = self.loop_stack.last_mut() {
+                // With a label, target the matching labeled loop (searching
+                // outward); otherwise the innermost loop.
+                let target = if let Some(l) = label {
+                    self.loop_stack
+                        .iter()
+                        .rposition(|(_, _, _, lbl)| lbl.as_ref().is_some_and(|x| x == l))
+                } else {
+                    if self.loop_stack.is_empty() {
+                        None
+                    } else {
+                        Some(self.loop_stack.len() - 1)
+                    }
+                };
+                if let Some(i) = target {
+                    let (_, breaks, _, _) = &mut self.loop_stack[i];
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
                     breaks.push(j);
                 }
             }
-            StmtNode::Continue(_) => {
+            StmtNode::Continue(label) => {
                 // Jump back to the loop condition/next-iteration target.
-                if let Some((cont, _, cont_jumps)) = self.loop_stack.last_mut() {
+                let target = if let Some(l) = label {
+                    self.loop_stack
+                        .iter()
+                        .rposition(|(_, _, _, lbl)| lbl.as_ref().is_some_and(|x| x == l))
+                } else {
+                    if self.loop_stack.is_empty() {
+                        None
+                    } else {
+                        Some(self.loop_stack.len() - 1)
+                    }
+                };
+                if let Some(i) = target {
+                    let (cont, _, cont_jumps, _) = &mut self.loop_stack[i];
                     if *cont != usize::MAX {
                         self.chunk.emit(Op::Jump(*cont), self.current_line);
                     } else {
@@ -724,6 +769,38 @@ impl Compiler {
                         self.chunk.emit(Op::Jump(0), self.current_line);
                         cont_jumps.push(j);
                     }
+                }
+            }
+            StmtNode::Labeled(label, body) => {
+                // A labeled statement: compile the body with this label on the
+                // loop stack so `break label` / `continue label` can target it.
+                // For non-loop bodies, only `break label` is meaningful; we push
+                // a synthetic loop frame whose continue target is unreachable.
+                if matches!(
+                    &body.node,
+                    StmtNode::While { .. }
+                        | StmtNode::DoWhile { .. }
+                        | StmtNode::For { .. }
+                        | StmtNode::Block(_)
+                ) {
+                    // Hand the label to the inner loop's begin_loop by stashing
+                    // it on a pending-label field that begin_loop consumes.
+                    self.pending_label = Some(label.clone());
+                    self.compile_stmt(body)?;
+                } else {
+                    // Non-loop labeled statement: push a frame that only honors
+                    // `break label`. continue is invalid here; mark as MAX.
+                    self.loop_stack
+                        .push((usize::MAX, Vec::new(), Vec::new(), Some(label.clone())));
+                    let result = self.compile_stmt(body);
+                    // break jumps patch to here (after the body).
+                    if let Some((_, breaks, _, _)) = self.loop_stack.pop() {
+                        let end = self.chunk.code.len();
+                        for j in breaks {
+                            self.chunk.patch_jump(j, end);
+                        }
+                    }
+                    result?;
                 }
             }
             StmtNode::Switch { disc, cases } => {

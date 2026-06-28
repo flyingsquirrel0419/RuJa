@@ -2489,19 +2489,35 @@ fn array_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Re
     Ok(make_value_array(vm, pairs))
 }
 
-fn array_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+fn array_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    // `Array(n)` / `new Array(n)` with a single number argument creates a
+    // sparse array of length n (filled with holes). Other argument forms
+    // create an array of the given elements. `this` (from `new`) is ignored:
+    // ES ArrayConstructor always returns a fresh Array exotic object, not the
+    // `[[Construct]]`-provided ordinary object.
     let items = if args.len() == 1 {
         if let Some(Value::Number(n)) = args.first() {
-            vec![Value::Undefined; *n as usize]
+            // Validate the length per ArrayCreate: must be a non-negative
+            // integer that fits in u32. Negative / fractional / huge values
+            // throw RangeError, not an OOM abort.
+            if n.is_nan() || *n < 0.0 || n.is_infinite() || n.fract() != 0.0 {
+                return Err(Error::range("Invalid array length"));
+            }
+            if *n >= (1u64 << 32) as f64 {
+                return Err(Error::range("Invalid array length"));
+            }
+            // Avoid attempting an enormous allocation: cap at a sane limit.
+            let len = *n as usize;
+            if len > 1 << 24 {
+                return Err(Error::range("Invalid array length"));
+            }
+            vec![Value::Undefined; len]
         } else {
             args.to_vec()
         }
     } else {
         args.to_vec()
     };
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Object(idx));
-    }
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
         props: RefCell::new(IndexMap::new()),
@@ -3267,9 +3283,10 @@ pub fn setup_full(vm: &mut Vm) {
     let json = build_json(vm);
     define_global(vm, "JSON", json);
     // Array
-    let (array_ctor, array_proto) = make_builtin_constructor(
+    let (array_ctor, array_proto) = make_builtin_constructor_with(
         vm,
         "Array",
+        array_constructor,
         &[
             ("push", array_push, 1),
             ("pop", array_pop, 0),

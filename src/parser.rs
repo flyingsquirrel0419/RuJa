@@ -21,6 +21,10 @@ pub struct Parser {
     /// (captured at `parse_stmt` entry). Used by `stmt()` so a statement's line
     /// reflects where it begins, not where its construction helper finishes.
     stmt_start_line: u32,
+    /// Current nesting depth of expressions (parens, arrays, objects,
+    /// ternaries, etc.). Capped to keep untrusted deeply-nested input from
+    /// overflowing the Rust parser stack and aborting the process.
+    expr_depth: usize,
 }
 
 impl Parser {
@@ -35,6 +39,7 @@ impl Parser {
             arrow_rest: None,
             is_strict_context: false,
             stmt_start_line: 0,
+            expr_depth: 0,
         }
     }
 
@@ -178,6 +183,18 @@ impl Parser {
 
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
         self.stmt_start_line = self.current_line();
+        // Labeled statement: `ident:` followed by any statement. Detect by
+        // peeking two tokens so a leading identifier isn't misread as an
+        // expression statement.
+        if let TokenKind::Ident(s) = self.peek().clone() {
+            if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
+                let label = Rc::from(s.as_str());
+                self.advance(); // ident
+                self.advance(); // ':'
+                let body = self.parse_stmt()?;
+                return Ok(self.stmt(StmtNode::Labeled(label, Box::new(body))));
+            }
+        }
         match self.peek().clone() {
             TokenKind::LBrace => self.parse_block(),
             TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
@@ -594,7 +611,26 @@ impl Parser {
         Ok(e)
     }
 
+    /// Maximum expression nesting depth. Generous for legitimate code (V8
+    /// allows ~100 per `[]`/`{}` nesting), but bounded so untrusted deeply-
+    /// nested input fails with a SyntaxError instead of overflowing the Rust
+    /// parser stack and aborting the process.
+    const MAX_EXPR_DEPTH: usize = 300;
+
     fn parse_assign(&mut self) -> error::Result<Expr> {
+        if self.expr_depth >= Self::MAX_EXPR_DEPTH {
+            return Err(error::Error::syntax(format!(
+                "Maximum expression nesting depth ({}) exceeded",
+                Self::MAX_EXPR_DEPTH
+            )));
+        }
+        self.expr_depth += 1;
+        let result = self.parse_assign_inner();
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn parse_assign_inner(&mut self) -> error::Result<Expr> {
         let left = self.parse_ternary()?;
         let op = match self.peek() {
             TokenKind::Assign => AssignOp::Assign,

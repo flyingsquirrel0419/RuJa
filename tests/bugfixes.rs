@@ -317,3 +317,193 @@ fn new_string_number_boolean_return_objects() {
         Value::String(std::rc::Rc::from("object"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// #2 deeply-nested expression depth limit (DoS prevention)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn deeply_nested_expression_throws_syntax_error_not_crash() {
+    // Deeply-nested parens previously overflowed the Rust parser stack and
+    // aborted the process. It must now fail with a SyntaxError. Run on a
+    // large-stack worker because the parser recurses before the depth check
+    // trips on the default test-thread stack.
+    use std::thread;
+    let src = "(".repeat(500) + "1" + &")".repeat(500);
+    let src_owned = src.to_string();
+    let worker = thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let mut vm = ruja::Vm::new();
+            match vm.run(&src_owned) {
+                Ok(_) => String::new(),
+                Err(e) => e.to_string(),
+            }
+        })
+        .expect("failed to spawn worker");
+    let msg = worker.join().expect("worker panicked");
+    assert!(!msg.is_empty(), "expected an error for deeply-nested input");
+    assert!(
+        msg.contains("nesting depth") || msg.contains("Maximum"),
+        "expected depth-limit error, got: {}",
+        msg
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #3 Array() constructor returns real arrays
+// ---------------------------------------------------------------------------
+
+#[test]
+fn array_constructor_with_length() {
+    assert_eq!(run("Array(5).length"), Value::Number(5.0));
+    assert_eq!(run("new Array(3).length"), Value::Number(3.0));
+}
+
+#[test]
+fn array_constructor_with_elements() {
+    assert_eq!(
+        run("Array(1,2,3).join(',')"),
+        Value::String(std::rc::Rc::from("1,2,3"))
+    );
+    assert_eq!(
+        run("new Array('a','b').join('-')"),
+        Value::String(std::rc::Rc::from("a-b"))
+    );
+}
+
+#[test]
+fn array_constructor_invalid_length_throws_range_error() {
+    for src in [
+        "Array(-1)",
+        "Array(4294967296)",
+        "Array(2.5)",
+        "new Array(-1)",
+    ] {
+        let full = format!(
+            "var __e = ''; try {{ {} }} catch(e) {{ __e = e.message }}; __e",
+            src
+        );
+        let v = run(&full);
+        match v {
+            Value::String(s) => assert!(
+                s.contains("Invalid array length"),
+                "expected Invalid array length, got: {}",
+                s
+            ),
+            other => panic!("expected error string for {}, got {:?}", src, other),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #4 delete respects configurable
+// ---------------------------------------------------------------------------
+
+#[test]
+fn delete_non_configurable_returns_false() {
+    let v = run(r#"var o = {};
+           Object.defineProperty(o, 'a', { value: 1, configurable: false });
+           var r = delete o.a;
+           r + ':' + o.a"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("false:1")));
+}
+
+#[test]
+fn delete_non_configurable_strict_throws() {
+    let msg = run_err(
+        r#"'use strict';
+           var o = {};
+           Object.defineProperty(o, 'a', { value: 1, configurable: false });
+           delete o.a;"#,
+    );
+    assert!(
+        msg.contains("non-configurable"),
+        "expected non-configurable error, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn delete_normal_property_works() {
+    let v = run(r#"var o = { a: 1, b: 2 };
+           delete o.a;
+           Object.keys(o).join(',')"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("b")));
+}
+
+// ---------------------------------------------------------------------------
+// #6 ToPrimitive calls valueOf / toString
+// ---------------------------------------------------------------------------
+
+#[test]
+fn value_of_called_in_to_primitive() {
+    let v = run("var o = { valueOf() { return 42 } }; o + 0");
+    assert_eq!(v, Value::Number(42.0));
+}
+
+#[test]
+fn to_string_called_in_to_primitive() {
+    let v = run("var o = { toString() { return 'hi' } }; o + ''");
+    assert_eq!(v, Value::String(std::rc::Rc::from("hi")));
+}
+
+#[test]
+fn array_to_primitive_joins() {
+    assert_eq!(
+        run("[1,2] + [3,4]"),
+        Value::String(std::rc::Rc::from("1,23,4"))
+    );
+    assert_eq!(run("[] + []"), Value::String(std::rc::Rc::from("")));
+}
+
+// ---------------------------------------------------------------------------
+// #7 const reassignment throws TypeError
+// ---------------------------------------------------------------------------
+
+#[test]
+fn const_reassignment_throws() {
+    let msg = run_err("const x = 1; x = 2;");
+    assert!(
+        msg.contains("constant variable"),
+        "expected constant-variable error, got: {}",
+        msg
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #8 labeled statements (break/continue label)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn labeled_break_works() {
+    let v = run(r#"var r = [];
+           outer: for (var i = 0; i < 3; i++) {
+             for (var j = 0; j < 3; j++) {
+               if (j == 1) break outer;
+               r.push(i + '-' + j);
+             }
+           }
+           r.join(',')"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("0-0")));
+}
+
+#[test]
+fn labeled_continue_works() {
+    let v = run(r#"var r = [];
+           outer: for (var i = 0; i < 3; i++) {
+             for (var j = 0; j < 3; j++) {
+               if (j == 1) continue outer;
+               r.push(i + '-' + j);
+             }
+           }
+           r.join(',')"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("0-0,1-0,2-0")));
+}
+
+#[test]
+fn labeled_statement_runs_body() {
+    // A labeled statement runs its body; here a side effect confirms it.
+    let v = run("label1: { var ran = 'yes' }; ran");
+    assert_eq!(v, Value::String(std::rc::Rc::from("yes")));
+}

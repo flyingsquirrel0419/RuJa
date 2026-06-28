@@ -132,6 +132,8 @@ fn main() {
 - `yield*` throw/return propagation into a delegated generator is not yet forwarded (direct `g.throw`/`g.return` work)
 - Some strict-mode edge cases are not fully enforced: `this` defaults to `undefined` in all modes by design (strict mode does not rebind it to the global object), and a top-level strict `eval` `var` still routes through the global slot path (the in-function strict-eval case is handled)
 - GC runs at safe points only (after a run settles, and throttled at frame boundaries), so very long-running tight loops can accumulate memory before a collection; there is no incremental/generational collector
+- `try/finally` control flow is incomplete: a `return`/`break`/`continue` in a `try` (or `catch`) is not suspended across the `finally` block, so a `return` inside `finally` does not override an earlier completion as it does in standard engines
+- `for(;;)` with an empty condition (infinite C-for) is not parsed; use `while(true)` instead
 
 ## License
 

@@ -1635,14 +1635,38 @@ impl Vm {
                         Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
                         _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
                     };
-                    let removed = if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            o.props().borrow_mut().shift_remove(&pkey).is_some()
-                        })
+                    let result = if let Value::Object(idx) = &obj {
+                        // Check configurability first: deleting a
+                        // non-configurable own property must fail (`false`,
+                        // or a TypeError in strict mode), not actually remove
+                        // the property.
+                        let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
+                            o.props()
+                                .borrow()
+                                .get(&pkey)
+                                .map_or((false, true), |d| (true, d.configurable))
+                        });
+                        if exists && !configurable {
+                            if self.current_strict() {
+                                return Err(Error::type_err(
+                                    "Cannot delete non-configurable property",
+                                ));
+                            }
+                            Value::Bool(false)
+                        } else if exists {
+                            self.heap.with_obj(idx.0, |o| {
+                                o.props().borrow_mut().shift_remove(&pkey);
+                            });
+                            Value::Bool(true)
+                        } else {
+                            // Non-existent own property: delete returns true.
+                            Value::Bool(true)
+                        }
                     } else {
-                        false
+                        // Primitive receiver: delete is a no-op that returns true.
+                        Value::Bool(true)
                     };
-                    self.stack.push(Value::Bool(removed || obj.is_object()));
+                    self.stack.push(result);
                 }
                 Op::SetProto => {
                     // stack (top->bottom): [proto, obj]; set obj's [[Prototype]] to proto.
@@ -2213,6 +2237,17 @@ impl Vm {
                         .collect();
                     Rc::from(parts.join(",").as_str())
                 } else {
+                    // Honor a user-defined `toString` method (it returns a
+                    // primitive that we then stringify). This is evaluated
+                    // outside the heap borrow so it can call back into the VM.
+                    let ts = self.get_property(v, "toString")?;
+                    if matches!(ts, Value::Object(_)) {
+                        let r = self.call_function(&ts, &[], Some(v.clone()))?;
+                        if !matches!(r, Value::Object(_)) {
+                            return self.to_string(&r);
+                        }
+                    }
+                    // No usable toString: use the default class tag.
                     self.heap.with_obj(idx.0, |obj| match obj {
                         HeapObj::Object(o) => {
                             if let Some(cn) = &o.class_name {
@@ -2233,12 +2268,50 @@ impl Vm {
         })
     }
 
+    /// Default-hint ToPrimitive (number preference): valueOf then toString.
+    /// Callers that already want a string should use `to_string` directly.
     pub fn to_primitive(&mut self, v: &Value) -> error::Result<Value> {
+        self.to_primitive_hint(v, false)
+    }
+    /// Convert a value to a primitive per the ES OrdinaryToPrimitive
+    /// abstract operation. For objects, invoke `valueOf` then `toString`
+    /// (default/number hint) or `toString` then `valueOf` (string hint),
+    /// returning the first non-object result. Arrays/objects without custom
+    /// methods fall back to their default string form.
+    pub fn to_primitive_hint(&mut self, v: &Value, string_hint: bool) -> error::Result<Value> {
         match v {
-            Value::Object(_idx) => {
-                // simplified: arrays/objects -> toString-ish
-                let s = self.to_string(v)?;
-                Ok(Value::String(s))
+            Value::Object(_) => {
+                // Arrays have a well-defined default toString (join with ",");
+                // honor it directly rather than looking up a method that may
+                // not be installed on Array.prototype yet.
+                let is_array = match v {
+                    Value::Object(idx) => self
+                        .heap
+                        .with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_))),
+                    _ => false,
+                };
+                let methods: [&str; 2] = if string_hint {
+                    ["toString", "valueOf"]
+                } else {
+                    ["valueOf", "toString"]
+                };
+                if is_array && !string_hint {
+                    // valueOf on an array returns the array (object), so skip
+                    // straight to toString to avoid a pointless call.
+                    return Ok(Value::String(self.to_string(v)?));
+                }
+                for name in methods {
+                    let method = self.get_property(v, name)?;
+                    if matches!(method, Value::Object(_)) {
+                        let result = self.call_function(&method, &[], Some(v.clone()))?;
+                        if !matches!(result, Value::Object(_)) {
+                            return Ok(result);
+                        }
+                    }
+                }
+                // Both returned objects (or were missing): fall back to a
+                // best-effort string form.
+                Ok(Value::String(self.to_string(v)?))
             }
             _ => Ok(v.clone()),
         }

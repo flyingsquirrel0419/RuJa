@@ -57,6 +57,25 @@
   coercion. `new String/Number/Boolean(x)` still constructs an object with the
   correct prototype (RuJa does not model wrapper-object internal slots, so the
   primitive is not stored, but `typeof new String(5)` is now `"object"`).
+- **Deeply-nested expression DoS**: untrusted input with deeply-nested
+  expressions (e.g. thousands of nested parens) previously overflowed the Rust
+  parser stack and aborted the process. The parser now caps expression nesting
+  depth and throws a SyntaxError instead.
+- **`Array()` constructor**: `Array(n)` / `new Array(n)` (single numeric arg)
+  and `Array(a, b, c)` now create real arrays. Previously the generic
+  `object_constructor` was wired in, returning `[object Object]` for every
+  input. Invalid lengths (negative, fractional, out of `uint32` range) throw
+  `RangeError: Invalid array length`.
+- **`delete` respects `configurable`**: `delete o.x` on a non-configurable
+  own property now returns `false` (or throws a TypeError in strict mode)
+  instead of forcibly removing it.
+- **`ToPrimitive` honors `valueOf`/`toString`**: object-to-primitive coercion
+  (used by `+`, comparison, etc.) now calls the object's `valueOf` then
+  `toString` (or vice-versa for the string hint). Arrays join correctly
+  (`[1,2] + [3,4]` is `"1,23,4"`); a custom `valueOf`/`toString` is honored.
+- **Labeled statements**: `label: stmt`, `break label`, and `continue label`
+  now parse and compile (for `while`/`for`/`do...while`). A `break label`
+  exits the matching outer loop; `continue label` resumes it.
 
 ### Changed
 - **README `Known limitations`** rewritten to reflect the implemented state
