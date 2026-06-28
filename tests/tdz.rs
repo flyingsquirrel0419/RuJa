@@ -209,6 +209,110 @@ fn default_param_cross_reference_works() {
     assert_eq!(run(src), ruja::Value::Number(11.0));
 }
 
+// ---- default-parameter reverse-order TDZ (#15) ----
+
+#[test]
+fn default_param_reverse_order_is_reference_error() {
+    // `function f(a = b, b = 2)` must throw: when `a`'s default evaluates, `b`
+    // is still in the TDZ because defaults bind left-to-right and `b` has not
+    // been initialized yet. Per ES spec, parameter default initializers run in
+    // a scope where every parameter is visible but only those already
+    // initialized are readable.
+    let mut vm = ruja::Vm::new();
+    match vm.run("function f(a = b, b = 2) { return a + b; } f();") {
+        Err(e) => assert!(
+            e.to_string().contains("before initialization")
+                || e.to_string().contains("ReferenceError"),
+            "expected TDZ/ReferenceError, got: {}",
+            e
+        ),
+        Ok(v) => panic!("expected error, got value: {:?}", v),
+    }
+}
+
+#[test]
+fn default_param_reverse_order_with_args_is_fine() {
+    // When both args are supplied, no default runs, so the reverse-order TDZ
+    // never triggers.
+    assert_eq!(
+        run("function f(a = b, b = 2) { return a + b; } f(5, 7);"),
+        ruja::Value::Number(12.0)
+    );
+}
+
+#[test]
+fn default_param_forward_reference_still_works() {
+    // Regression for the core fix: a default may reference an *earlier*
+    // parameter that is already initialized.
+    assert_eq!(
+        run("function g(a, b = a + 1) { return a + b; } g(10);"),
+        ruja::Value::Number(21.0)
+    );
+}
+
+#[test]
+fn default_param_forward_reference_with_second_arg() {
+    // Supplying the defaulted parameter must skip the default entirely.
+    assert_eq!(
+        run("function g(a, b = a + 1) { return a + b; } g(10, 20);"),
+        ruja::Value::Number(30.0)
+    );
+}
+
+#[test]
+fn default_param_single_default_undefined_arg() {
+    // `h()` -> default applies; `h(99)` -> raw arg used.
+    assert_eq!(
+        run("function h(a = 5) { return a; } h();"),
+        ruja::Value::Number(5.0)
+    );
+    assert_eq!(
+        run("function h(a = 5) { return a; } h(99);"),
+        ruja::Value::Number(99.0)
+    );
+}
+
+#[test]
+fn default_param_self_reference_still_tdz() {
+    // `function f(a = a)` still throws (existing behavior, must not regress).
+    let mut vm = ruja::Vm::new();
+    match vm.run("function f(a = a) { return a; } f();") {
+        Err(e) => assert!(
+            e.to_string().contains("before initialization")
+                || e.to_string().contains("ReferenceError"),
+            "expected TDZ/ReferenceError, got: {}",
+            e
+        ),
+        Ok(v) => panic!("expected error, got value: {:?}", v),
+    }
+}
+
+#[test]
+fn default_param_only_later_default_is_tdz() {
+    // `function f(a = b, b)` -- `b` has no default but `a`'s default still
+    // reads it before it is initialized, so it must throw when called with no
+    // args.
+    let mut vm = ruja::Vm::new();
+    match vm.run("function f(a = b, b) { return a; } f();") {
+        Err(e) => assert!(
+            e.to_string().contains("before initialization")
+                || e.to_string().contains("ReferenceError"),
+            "expected TDZ/ReferenceError, got: {}",
+            e
+        ),
+        Ok(v) => panic!("expected error, got value: {:?}", v),
+    }
+}
+
+#[test]
+fn default_param_chain_forward_reference() {
+    // Each default may reference all previously-initialized parameters.
+    assert_eq!(
+        run("function f(a = 1, b = a + 1, c = b + 1) { return a + b + c; } f();"),
+        ruja::Value::Number(6.0) // 1 + 2 + 3
+    );
+}
+
 // ---- lexical duplicate declaration checking (#9) ----
 
 #[test]

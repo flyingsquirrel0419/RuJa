@@ -739,42 +739,66 @@ impl Compiler {
             base: 0,
             is_with: false,
         });
+        // Declare each parameter as a lexical binding and remember its local
+        // slot. The VM stores argument values into `locals[slot]` before the
+        // frame runs, so defaults can read the raw argument via `LoadLocal`
+        // (bypassing the environment TDZ) while the *binding* stays in the TDZ
+        // until `InitLet` -- this is what makes `function f(a = b, b = 2)` a
+        // ReferenceError while `function f(a, b = a)` still works.
+        let mut param_slots: Vec<usize> = Vec::with_capacity(f.params.len());
         for param in f.params.iter() {
             self.declare(param, VarKind::Let)?;
-            // param is in slot i (VM stores args to locals[0..n])
+            let slot = self
+                .scopes
+                .last()
+                .and_then(|sc| sc.bindings.get(&param.to_string()))
+                .map(|(slot, _)| *slot)
+                .unwrap_or(param_slots.len());
+            param_slots.push(slot);
         }
-        // Parameter defaults: for each param with a default, if it is undefined,
-        // evaluate and assign the default expression.
+        // Initialize every parameter binding left-to-right. In the VM all
+        // parameter bindings are declared *uninitialized* (TDZ), so a default
+        // expression that references a parameter to its right throws
+        // ReferenceError -- matching the ES spec rule that parameter default
+        // initializers run in a scope where only earlier parameters are
+        // initialized. The raw argument lives in `locals[slot]`, read via
+        // `LoadLocal` to bypass the environment TDZ during the undefined check.
         for (i, param) in f.params.iter().enumerate() {
+            let name_idx = self.chunk.add_constant(Value::String(param.clone()));
+            let slot = param_slots[i];
             if let Some(default) = f.param_defaults.get(i).and_then(|d| d.as_ref()) {
-                // load param, check if undefined
-                let name_idx = self.chunk.add_constant(Value::String(param.clone()));
-                self.chunk.emit(Op::LoadEnvName(name_idx), 0);
+                self.chunk.emit(Op::LoadLocal(slot), 0);
                 self.chunk.emit(Op::Dup, 0);
                 self.chunk.emit(Op::Undefined, 0);
                 self.chunk.emit(Op::StrictEq, 0);
                 // stack: [param, isUndefined]; JumpIfFalse pops isUndefined.
-                // If defined (isUndefined == false), jump to `pop_param`.
+                // If defined (isUndefined == false), jump to the init path that
+                // initializes the binding with the raw argument.
                 let defined_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfFalse(0), 0);
-                // Undefined path: the parameter is not yet initialized. Per spec,
-                // the default expression evaluates in a scope where this parameter
-                // is in the TDZ, so `function f(a = a)` throws ReferenceError.
-                // Re-declare the binding as uninitialized, evaluate the default,
-                // then initialize it.
+                // Undefined path: the binding is still in the TDZ. Re-declare it
+                // as uninitialized (no-op if already uninit) for clarity, then
+                // evaluate the default and initialize.
                 self.chunk.emit(Op::Pop, 0);
                 self.chunk.emit(Op::DeclareLetUninit(name_idx), 0);
                 self.compile_expr(default)?;
                 self.chunk.emit(Op::InitLet(name_idx), 0);
-                // Jump over the defined-path pop (stack is already empty here).
-                let over_pop = self.chunk.code.len();
+                // Jump over the defined-path init (stack is empty here).
+                let over_init = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), 0);
-                // Defined path lands here with [param] on the stack; pop it.
-                let pop_param = self.chunk.code.len();
-                self.chunk.emit(Op::Pop, 0);
-                self.chunk.patch_jump(defined_jump, pop_param);
+                // Defined path lands here with [param] on the stack. Initialize
+                // the binding with the raw argument value (lifts the TDZ).
+                let init_param = self.chunk.code.len();
+                self.chunk.emit(Op::InitLet(name_idx), 0);
+                self.chunk.patch_jump(defined_jump, init_param);
                 let after = self.chunk.code.len();
-                self.chunk.patch_jump(over_pop, after);
+                self.chunk.patch_jump(over_init, after);
+            } else {
+                // No default: initialize the binding with the raw argument
+                // (which may be `undefined` if fewer args were supplied). This
+                // lifts the TDZ for this parameter so later defaults may read it.
+                self.chunk.emit(Op::LoadLocal(slot), 0);
+                self.chunk.emit(Op::InitLet(name_idx), 0);
             }
         }
         // Hoist `var` declarations within the function body as undefined.

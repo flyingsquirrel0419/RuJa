@@ -2649,14 +2649,18 @@ impl Vm {
                 is_async,
             }) => {
                 let call_env = env::new_env(&self.heap, Some(closure), true);
-                // store parameters into the call environment (enables closures + recursion)
-                for (i, param) in func.params.iter().enumerate() {
-                    let v = args.get(i).cloned().unwrap_or(Value::Undefined);
-                    env::declare(
+                // Declare every parameter binding as *uninitialized* (TDZ). The raw
+                // argument still lives in `locals[i]`, which the compiled
+                // parameter prologue reads via `LoadLocal`; the binding is only
+                // lifted by `InitLet` once the prologue applies the raw value or
+                // the default, left-to-right. This makes
+                // `function f(a = b, b = 2)` a ReferenceError: when `a`'s
+                // default evaluates, `b` is still in the TDZ.
+                for param in func.params.iter() {
+                    env::declare_uninit(
                         &self.heap,
                         call_env,
                         param,
-                        v,
                         crate::value::BindingKind::Let,
                     );
                 }
