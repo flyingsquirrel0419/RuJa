@@ -25,6 +25,11 @@ pub struct Parser {
     /// ternaries, etc.). Capped to keep untrusted deeply-nested input from
     /// overflowing the Rust parser stack and aborting the process.
     expr_depth: usize,
+    /// Current nesting depth of statements (blocks, if/else, while, for,
+    /// do-while, with, switch bodies). Capped for the same reason as
+    /// `expr_depth`: deeply nested `{{...}}` / `if(1) if(1) ...` would
+    /// otherwise overflow the Rust parser stack on untrusted input.
+    stmt_depth: usize,
 }
 
 impl Parser {
@@ -40,6 +45,7 @@ impl Parser {
             is_strict_context: false,
             stmt_start_line: 0,
             expr_depth: 0,
+            stmt_depth: 0,
         }
     }
 
@@ -182,6 +188,24 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
+        // Bound statement recursion so deeply nested `{{...}}` / `if(1) if(1)
+        // ...` fails with a SyntaxError instead of overflowing the Rust
+        // parser stack and aborting the process. The counter is bumped here
+        // and restored on every exit path (including `?` errors via the
+        // trailing decrement after `parse_stmt_inner`).
+        if self.stmt_depth >= Self::MAX_STMT_DEPTH {
+            return Err(error::Error::syntax(format!(
+                "Maximum statement nesting depth ({}) exceeded",
+                Self::MAX_STMT_DEPTH
+            )));
+        }
+        self.stmt_depth += 1;
+        let result = self.parse_stmt_inner();
+        self.stmt_depth -= 1;
+        result
+    }
+
+    fn parse_stmt_inner(&mut self) -> error::Result<Stmt> {
         self.stmt_start_line = self.current_line();
         // Labeled statement: `ident:` followed by any statement. Detect by
         // peeking two tokens so a leading identifier isn't misread as an
@@ -191,7 +215,7 @@ impl Parser {
                 let label = Rc::from(s.as_str());
                 self.advance(); // ident
                 self.advance(); // ':'
-                let body = self.parse_stmt()?;
+                let body = self.parse_stmt_inner()?;
                 return Ok(self.stmt(StmtNode::Labeled(label, Box::new(body))));
             }
         }
@@ -555,10 +579,10 @@ impl Parser {
         if self.eat(&TokenKind::Finally) {
             finally_body = Some(Box::new(self.parse_block()?));
         }
-        let catch_body = match catch_body {
-            Some(cb) => cb,
-            None => Box::new(self.stmt(StmtNode::Block(vec![]))),
-        };
+        // catch_body stays `None` when there is no `catch` clause; the
+        // compiler must not push a catch handler in that case (otherwise an
+        // empty catch silently swallows throws). The spec requires try/finally
+        // with no catch to propagate exceptions through the finally block.
         Ok(self.stmt(StmtNode::TryCatch {
             try_body,
             catch_param,
@@ -616,6 +640,11 @@ impl Parser {
     /// nested input fails with a SyntaxError instead of overflowing the Rust
     /// parser stack and aborting the process.
     const MAX_EXPR_DEPTH: usize = 300;
+    /// Maximum statement nesting depth. Bounds recursion through
+    /// `parse_stmt` -> `parse_block`/`parse_if`/`parse_while`/`parse_for`/
+    /// `parse_with` so deeply nested `{{...}}` or `if(1) if(1) ...` fails
+    /// with a SyntaxError instead of aborting the process via stack overflow.
+    const MAX_STMT_DEPTH: usize = 400;
 
     fn parse_assign(&mut self) -> error::Result<Expr> {
         if self.expr_depth >= Self::MAX_EXPR_DEPTH {
@@ -826,6 +855,22 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> error::Result<Expr> {
+        // Bound prefix-unary recursion (`!!!!...x`, `----x`, `typeof typeof
+        // ... x`) which self-recurses without going through `parse_assign`
+        // and so would otherwise bypass `MAX_EXPR_DEPTH`.
+        if self.expr_depth >= Self::MAX_EXPR_DEPTH {
+            return Err(error::Error::syntax(format!(
+                "Maximum expression nesting depth ({}) exceeded",
+                Self::MAX_EXPR_DEPTH
+            )));
+        }
+        self.expr_depth += 1;
+        let result = self.parse_unary_inner();
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn parse_unary_inner(&mut self) -> error::Result<Expr> {
         // prefix ++/--
         if matches!(self.peek(), TokenKind::Inc | TokenKind::Dec) {
             let op = if matches!(self.peek(), TokenKind::Inc) {
@@ -1532,6 +1577,22 @@ impl Parser {
 
     /// Parse a destructuring pattern: `[a, b, ...rest]` or `{x, y: z, k = d}`.
     fn parse_destructure_pattern(&mut self) -> error::Result<Pattern> {
+        // Bound recursion through nested array/object patterns
+        // (`[[[[...a]]]] = x`), which self-recurses without going through
+        // `parse_assign` and so would otherwise bypass `MAX_EXPR_DEPTH`.
+        if self.expr_depth >= Self::MAX_EXPR_DEPTH {
+            return Err(error::Error::syntax(format!(
+                "Maximum expression nesting depth ({}) exceeded",
+                Self::MAX_EXPR_DEPTH
+            )));
+        }
+        self.expr_depth += 1;
+        let result = self.parse_destructure_pattern_inner();
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn parse_destructure_pattern_inner(&mut self) -> error::Result<Pattern> {
         match self.peek().clone() {
             TokenKind::LBracket => {
                 self.advance(); // [

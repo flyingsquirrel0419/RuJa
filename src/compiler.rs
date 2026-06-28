@@ -560,6 +560,26 @@ impl Compiler {
                 };
                 // continue target is the update block (known after the body); mark unknown.
                 self.begin_loop(usize::MAX);
+                // Per-iteration environment for `for (let ...)`: clone the
+                // lexical bindings into a fresh child env before each body so
+                // closures created in the body capture a distinct binding per
+                // iteration. (Spec: CreatePerIterationEnvironment; an
+                // approximation: the update still mutates this iteration's
+                // env, so closures see the post-update value for their
+                // iteration -- but each iteration gets its own env.)
+                let per_iteration_let = matches!(
+                    init.as_ref().map(|s| &s.node),
+                    Some(StmtNode::VarDecl {
+                        kind: VarKind::Let,
+                        ..
+                    }) | Some(StmtNode::VarDecl {
+                        kind: VarKind::Const,
+                        ..
+                    })
+                );
+                if per_iteration_let {
+                    self.chunk.emit(Op::CloneLetEnv, self.current_line);
+                }
                 self.compile_stmt(body)?;
                 let continue_target = self.chunk.code.len();
                 if let Some(u) = update {
@@ -645,9 +665,12 @@ impl Compiler {
                 finally_body,
             } => {
                 let has_finally = finally_body.is_some();
+                let has_catch = catch_body.is_some();
                 // --- try body, guarded by the catch handler (and finally guard) ---
                 let try_start = self.chunk.code.len();
-                self.chunk.emit(Op::PushTry(0), self.current_line); // catch handler placeholder
+                if has_catch {
+                    self.chunk.emit(Op::PushTry(0), self.current_line); // catch handler placeholder
+                }
                 if has_finally {
                     // Push a finally guard whose target is patched to finally_start
                     // below; non-local transfers (return/break/continue/throw) inside
@@ -655,12 +678,19 @@ impl Compiler {
                     self.chunk.emit(Op::PushFinally(0), self.current_line);
                 }
                 let finally_guard_ip = if has_finally {
-                    try_start + 1
+                    // finally guard is at try_start when there is no PushTry before it
+                    if has_catch {
+                        try_start + 1
+                    } else {
+                        try_start
+                    }
                 } else {
                     usize::MAX
                 };
                 self.compile_stmt(try_body)?;
-                self.chunk.emit(Op::PopTry, self.current_line);
+                if has_catch {
+                    self.chunk.emit(Op::PopTry, self.current_line);
+                }
                 if has_finally {
                     self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
                 }
@@ -669,39 +699,50 @@ impl Compiler {
                 self.chunk.emit(Op::Jump(0), self.current_line);
                 // --- catch handler ---
                 let catch_start = self.chunk.code.len();
-                if let Op::PushTry(ref mut h) = self.chunk.code[try_start] {
-                    *h = catch_start;
-                }
-                self.push_scope(true);
-                if let Some(param) = catch_param {
-                    self.declare(param, VarKind::Let)?;
-                    let name_idx = self.intern(param);
-                    self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
-                }
-                self.compile_stmt(catch_body)?;
-                self.pop_scope();
-                if has_finally {
-                    self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
-                }
-                // Normal catch completion -> jump to finally (or end).
-                let jump_past_catch2 = self.chunk.code.len();
-                self.chunk.emit(Op::Jump(0), self.current_line);
-                // --- finally entry ---
-                let finally_start = self.chunk.code.len();
-                if has_finally {
-                    if let Op::PushFinally(ref mut t) = self.chunk.code[finally_guard_ip] {
-                        *t = finally_start;
+                if has_catch {
+                    if let Op::PushTry(ref mut h) = self.chunk.code[try_start] {
+                        *h = catch_start;
                     }
+                    self.push_scope(true);
+                    if let Some(param) = catch_param {
+                        self.declare(param, VarKind::Let)?;
+                        let name_idx = self.intern(param);
+                        self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
+                    }
+                    self.compile_stmt(catch_body.as_ref().unwrap())?;
+                    self.pop_scope();
+                    if has_finally {
+                        self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
+                    }
+                    // Normal catch completion -> jump to finally (or end).
+                    let jump_past_catch2 = self.chunk.code.len();
+                    self.chunk.emit(Op::Jump(0), self.current_line);
+                    // --- finally entry ---
+                    let finally_start = self.chunk.code.len();
+                    if has_finally {
+                        if let Op::PushFinally(ref mut t) = self.chunk.code[finally_guard_ip] {
+                            *t = finally_start;
+                        }
+                    }
+                    self.chunk.patch_jump(jump_past_catch, finally_start);
+                    self.chunk.patch_jump(jump_past_catch2, finally_start);
+                } else {
+                    // No catch: patch the try-completion jump and finally guard
+                    // straight to the finally entry.
+                    let finally_start = self.chunk.code.len();
+                    if has_finally {
+                        if let Op::PushFinally(ref mut t) = self.chunk.code[finally_guard_ip] {
+                            *t = finally_start;
+                        }
+                    }
+                    self.chunk.patch_jump(jump_past_catch, finally_start);
                 }
-                self.chunk.patch_jump(jump_past_catch, finally_start);
-                self.chunk.patch_jump(jump_past_catch2, finally_start);
                 if let Some(fin) = finally_body {
                     self.compile_stmt(fin)?;
                     // Re-raise the pending completion (return/break/continue/throw)
                     // that diverted here. A normal completion falls through.
                     self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
                 }
-                let _ = finally_start;
             }
             StmtNode::FunctionDecl(f) => {
                 // compile function body into a separate chunk
@@ -2389,6 +2430,12 @@ impl Compiler {
                 self.chunk.emit(bin, 0);
                 self.chunk.emit(Op::Dup, self.current_line);
                 self.compile_assign_target(target)?;
+                // `compile_assign_target` for an ident emits StoreEnvName
+                // (which pushes Undefined on top of the duplicated result) or
+                // Const+StoreGlobal (net -1). Drop the leftover Undefined so
+                // the stack ends with exactly the assignment's result value,
+                // matching the simple-assignment codegen (StoreEnv + Pop).
+                self.chunk.emit(Op::Pop, self.current_line);
             }
         }
         Ok(())
