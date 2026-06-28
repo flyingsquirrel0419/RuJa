@@ -228,6 +228,10 @@ pub struct FunctionData {
     pub kind: FunctionKind,
     pub closure: GcIdx,
     pub prototype: RefCell<Option<Value>>,
+    /// The function's [[Prototype]] (`__proto__`), normally
+    /// `Function.prototype`. Kept separate from `prototype` (which is the
+    /// object used as [[Prototype]] of instances created via `new`).
+    pub proto: RefCell<Option<Value>>,
     pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
 }
 
@@ -424,7 +428,7 @@ impl HeapObj {
         match self {
             HeapObj::Object(o) => &o.proto,
             HeapObj::Array(a) => &a.proto,
-            HeapObj::Function(f) => &f.prototype,
+            HeapObj::Function(f) => &f.proto,
             HeapObj::Map(m) => &m.proto,
             HeapObj::Set(s) => &s.proto,
             HeapObj::Promise(p) => &p.proto,

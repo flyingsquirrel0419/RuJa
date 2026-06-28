@@ -18,6 +18,44 @@ pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> G
     GcIdx(heap.allocate(env))
 }
 
+/// Create a per-iteration child environment for a `for (let ...)` loop: copy
+/// the current lexical (`let`/`const`) bindings of `env` into a fresh child
+/// environment whose parent is `env`. This gives each iteration its own
+/// binding so closures created in the body capture distinct values (the
+/// classic `for (let i...) out.push(()=>i)` case). `var` bindings are not
+/// copied (they belong to the function scope, not the loop).
+pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
+    let child = new_env(heap, Some(env), false);
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            let vars = e.vars.borrow();
+            let cloned: Vec<(Rc<str>, crate::value::Binding)> = vars
+                .iter()
+                .filter(|(_, b)| b.kind != BindingKind::Var)
+                .map(|(k, b)| {
+                    (
+                        k.clone(),
+                        crate::value::Binding {
+                            value: RefCell::new(b.value.borrow().clone()),
+                            kind: b.kind,
+                            initialized: Cell::new(b.initialized.get()),
+                        },
+                    )
+                })
+                .collect();
+            drop(vars);
+            heap.with_obj(child.0, |cobj| {
+                if let HeapObj::Environment(ce) = cobj {
+                    for (k, b) in cloned {
+                        ce.vars.borrow_mut().insert(k, b);
+                    }
+                }
+            });
+        }
+    });
+    child
+}
+
 /// Create a `with`-statement environment record wrapping `object`: name lookups
 /// that miss the lexical chain fall back to `object`'s own properties.
 pub fn new_with_env(heap: &Heap, parent: GcIdx, object: crate::value::Value) -> GcIdx {

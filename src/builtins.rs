@@ -198,6 +198,10 @@ fn make_builtin_constructor(
         },
         closure: vm.global,
         prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        proto: RefCell::new(match vm.function_proto {
+            Value::Object(_) => Some(vm.function_proto.clone()),
+            _ => None,
+        }),
         props: RefCell::new(IndexMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
@@ -237,6 +241,10 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         },
         closure: vm.global,
         prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        proto: RefCell::new(match vm.function_proto {
+            Value::Object(_) => Some(vm.function_proto.clone()),
+            _ => None,
+        }),
         props: RefCell::new(IndexMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
@@ -1703,6 +1711,10 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
         kind: FunctionKind::Interpreted { func: fdef },
         closure: vm.global,
         prototype: RefCell::new(Some(proto_val.clone())),
+        proto: RefCell::new(match vm.function_proto {
+            Value::Object(_) => Some(vm.function_proto.clone()),
+            _ => None,
+        }),
         props: RefCell::new(IndexMap::new()),
     };
     let f_idx = vm.heap.allocate(HeapObj::Function(fd));
@@ -2142,8 +2154,14 @@ fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
                         let a = items[j - 1].clone();
                         let b = items[j].clone();
                         let r = vm.call_function(&cmp_fn, &[a.clone(), b.clone()], None)?;
-                        let ord = vm.to_number(&r)? as i64;
-                        if ord > 0 {
+                        // Use the raw f64 sign so a comparator return value in
+                        // (0, 1) (e.g. `3.1 - 2.3 == 0.8`) is still treated as
+                        // "greater than zero". Casting to i64 truncates 0.8 to
+                        // 0, which silently breaks sorts of non-integer
+                        // doubles. NaN (from a bad comparator) is treated as 0
+                        // (equal) per the spec's "comparison is inconsistent".
+                        let ord = vm.to_number(&r)?;
+                        if ord > 0.0 {
                             items.swap(j - 1, j);
                             j -= 1;
                         } else {
@@ -3272,6 +3290,10 @@ fn boolean_constructor(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
 // Extended setup
 // =========================================================================
 pub fn setup_full(vm: &mut Vm) {
+    // Allocate Function.prototype first so that every function created during
+    // the rest of bootstrap inherits call/apply/bind via its [[Prototype]].
+    let function_proto_idx = vm.new_native_function("Function.prototype", function_proto_noop, 0);
+    vm.function_proto = Value::Object(function_proto_idx);
     setup(vm);
     // Math
     let math = build_math(vm);
@@ -3515,6 +3537,34 @@ pub fn setup_full(vm: &mut Vm) {
     // Function constructor: new Function(p0, ..., body)
     let function_ctor_idx = vm.new_native_function("Function", function_constructor, 1);
     define_global(vm, "Function", Value::Object(function_ctor_idx));
+    // Install call/apply/bind on Function.prototype (allocated at the top of
+    // setup_full) so every function inherits them via its [[Prototype]].
+    let call_fn = vm.new_native_function("call", function_call, 1);
+    let apply_fn = vm.new_native_function("apply", function_apply, 2);
+    let bind_fn = vm.new_native_function("bind", function_bind, 1);
+    install_methods(
+        vm,
+        &Value::Object(function_proto_idx),
+        &[
+            (Rc::from("call"), Value::Object(call_fn)),
+            (Rc::from("apply"), Value::Object(apply_fn)),
+            (Rc::from("bind"), Value::Object(bind_fn)),
+        ],
+    );
+    // Function.prototype points to the function prototype object.
+    vm.heap.with_obj(function_ctor_idx.0, |obj| {
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("prototype"),
+            data_prop(Value::Object(function_proto_idx)),
+        );
+    });
+    // The function prototype's `constructor` is the Function constructor.
+    vm.heap.with_obj(function_proto_idx.0, |obj| {
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(function_ctor_idx)),
+        );
+    });
     setup_collections(vm);
 }
 
@@ -3739,6 +3789,10 @@ fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
             },
             closure: vm.global,
             prototype: RefCell::new(None),
+            proto: RefCell::new(match vm.function_proto {
+                Value::Object(_) => Some(vm.function_proto.clone()),
+                _ => None,
+            }),
             props: RefCell::new(IndexMap::new()),
         }));
     let reject_fn = vm
@@ -3752,6 +3806,10 @@ fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
             },
             closure: vm.global,
             prototype: RefCell::new(None),
+            proto: RefCell::new(match vm.function_proto {
+                Value::Object(_) => Some(vm.function_proto.clone()),
+                _ => None,
+            }),
             props: RefCell::new(IndexMap::new()),
         }));
     match vm.call_function(
@@ -3880,7 +3938,7 @@ fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         }
         _ => {
             // already settled: schedule immediately, passing derived for chaining
-            vm.microtask_queue.push(crate::vm::Microtask::Then {
+            vm.microtask_queue.push_back(crate::vm::Microtask::Then {
                 promise: GcIdx(p_idx),
                 on_fulfilled,
                 on_rejected,
@@ -4277,6 +4335,10 @@ fn make_builtin_constructor_with(
         },
         closure: vm.global,
         prototype: RefCell::new(Some(Value::Object(proto_idx))),
+        proto: RefCell::new(match vm.function_proto {
+            Value::Object(_) => Some(vm.function_proto.clone()),
+            _ => None,
+        }),
         props: RefCell::new(IndexMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
@@ -4293,4 +4355,126 @@ fn make_builtin_constructor_with(
         );
     });
     (ctor_idx, proto_idx)
+}
+
+// =========================================================================
+// Function.prototype: call / apply / bind
+// =========================================================================
+
+/// `Function.prototype.call(thisArg, ...args)`: invoke `this` (a function)
+/// with an explicit `this` binding and a list of arguments.
+fn function_call(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let target = match this {
+        Some(t) => t,
+        None => return Err(error::Error::type_err("undefined is not a function")),
+    };
+    if !is_callable(&target, &vm.heap) {
+        return Err(error::Error::type_err(format!(
+            "{} is not a function",
+            target.type_of()
+        )));
+    }
+    let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
+    let call_args: &[Value] = if args.len() > 1 { &args[1..] } else { &[][..] };
+    vm.call_function(&target, call_args, Some(this_arg))
+}
+
+/// `Function.prototype.apply(thisArg, [argsArray])`: invoke `this` (a
+/// function) with an explicit `this` binding and an array-like of arguments.
+fn function_apply(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let target = match this {
+        Some(t) => t,
+        None => return Err(error::Error::type_err("undefined is not a function")),
+    };
+    if !is_callable(&target, &vm.heap) {
+        return Err(error::Error::type_err(format!(
+            "{} is not a function",
+            target.type_of()
+        )));
+    }
+    let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
+    let arr_args: Vec<Value> = match args.get(1) {
+        Some(Value::Undefined) | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Array(a) => a.items.borrow().clone(),
+            _ => {
+                // Array-like fallback: read .length and integer-indexed props.
+                let len = obj
+                    .props()
+                    .borrow()
+                    .get(&PropertyKey::from("length"))
+                    .and_then(|d| {
+                        if let Value::Number(n) = d.value {
+                            Some(n as usize)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                (0..len)
+                    .map(|i| {
+                        obj.props()
+                            .borrow()
+                            .get(&PropertyKey::from(i.to_string().as_str()))
+                            .map(|d| d.value.clone())
+                            .unwrap_or(Value::Undefined)
+                    })
+                    .collect()
+            }
+        }),
+        _ => Vec::new(),
+    };
+    vm.call_function(&target, &arr_args, Some(this_arg))
+}
+
+/// `Function.prototype.bind(thisArg, ...args)`: create a new function with a
+/// fixed `this` binding and leading arguments.
+fn function_bind(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let target = match this {
+        Some(t) => t,
+        None => return Err(error::Error::type_err("undefined is not a function")),
+    };
+    if !is_callable(&target, &vm.heap) {
+        return Err(error::Error::type_err(format!(
+            "{} is not a function",
+            target.type_of()
+        )));
+    }
+    let this_arg = args.first().cloned().unwrap_or(Value::Undefined);
+    let bound_args: Vec<Value> = if args.len() > 1 {
+        args[1..].to_vec()
+    } else {
+        Vec::new()
+    };
+    let target_idx = match &target {
+        Value::Object(i) => *i,
+        _ => return Err(error::Error::type_err("not a function")),
+    };
+    let bound = crate::value::FunctionData {
+        name: Some(Rc::from("bound")),
+        kind: crate::value::FunctionKind::Bound {
+            target: target_idx,
+            this_val: this_arg,
+            bound_args,
+        },
+        closure: vm.global,
+        prototype: RefCell::new(None),
+        proto: RefCell::new(match vm.function_proto {
+            Value::Object(_) => Some(vm.function_proto.clone()),
+            _ => None,
+        }),
+        props: RefCell::new(IndexMap::new()),
+    };
+    let fidx = vm.heap.allocate(HeapObj::Function(bound));
+    Ok(Value::Object(GcIdx(fidx)))
+}
+
+/// `Function.prototype` itself is a callable no-op function (per spec:
+/// "an empty function"). Invoking it returns `undefined`.
+fn function_proto_noop(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::Undefined)
 }

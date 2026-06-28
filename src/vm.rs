@@ -30,7 +30,7 @@ pub struct Vm {
     pub generator_proto: Value,
     pub map_proto: Value,
     pub set_proto: Value,
-    pub microtask_queue: Vec<Microtask>,
+    pub microtask_queue: std::collections::VecDeque<Microtask>,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
@@ -170,7 +170,7 @@ impl Vm {
             generator_proto: Value::Undefined,
             map_proto: Value::Undefined,
             set_proto: Value::Undefined,
-            microtask_queue: Vec::new(),
+            microtask_queue: std::collections::VecDeque::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
             next_symbol_id: 1,
@@ -1388,6 +1388,15 @@ impl Vm {
                         self.frames.last_mut().unwrap().env = p;
                     }
                 }
+                Op::CloneLetEnv => {
+                    // Per-iteration environment for `for (let ...)`: clone the
+                    // current lexical bindings into a child env and make it
+                    // active so each iteration's closures capture distinct
+                    // bindings.
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let child = env::clone_lexical_env(&self.heap, cur_env);
+                    self.frames.last_mut().unwrap().env = child;
+                }
                 Op::Dup => {
                     let v = self.stack.last().cloned().unwrap_or(Value::Undefined);
                     self.stack.push(v);
@@ -1704,8 +1713,27 @@ impl Vm {
                 }
                 Op::Throw => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    // if there's an active try, jump to the catch handler
+                    // If a finally guards this region, divert to it with a
+                    // `throw` completion (tag 4) so the finally body runs before
+                    // the exception propagates. Otherwise route to a catch
+                    // handler, or propagate the throw out of the frame.
+                    //
+                    // Spec model: when both a catch and a finally are active,
+                    // the catch handles the throw first; the finally runs only
+                    // after the try/catch region as a whole completes. So divert
+                    // to finally only when there is no catch handler on top of
+                    // the finally guard (i.e. try/finally without catch, or a
+                    // throw escaping from a catch body that a finally guards).
                     if let Some(frame) = self.frames.last_mut() {
+                        let has_catch = !frame.catch_stack.is_empty();
+                        let divert_to_finally = !has_catch && frame.finally_stack.last().is_some();
+                        if divert_to_finally {
+                            let target = frame.finally_stack.last().copied().unwrap();
+                            frame.finally_completion_tag.set(4);
+                            *frame.finally_completion_val.borrow_mut() = v;
+                            frame.ip = target;
+                            continue;
+                        }
                         if let Some(handler) = frame.catch_stack.pop() {
                             frame.ip = handler;
                             self.stack.push(v);
@@ -2176,6 +2204,10 @@ impl Vm {
                     Some(proto_val.clone())
                 } else {
                     None
+                }),
+                proto: RefCell::new(match self.function_proto {
+                    Value::Object(_) => Some(self.function_proto.clone()),
+                    _ => None,
                 }),
                 props: RefCell::new(IndexMap::new()),
             };
@@ -3128,7 +3160,7 @@ impl Vm {
             }
         });
         for h in handlers {
-            self.microtask_queue.push(Microtask::Then {
+            self.microtask_queue.push_back(Microtask::Then {
                 promise: GcIdx(promise_idx),
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
@@ -3152,7 +3184,7 @@ impl Vm {
             }
         });
         for h in handlers {
-            self.microtask_queue.push(Microtask::Then {
+            self.microtask_queue.push_back(Microtask::Then {
                 promise: GcIdx(promise_idx),
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
@@ -3163,7 +3195,10 @@ impl Vm {
 
     /// Drain the microtask queue, running scheduled then/catch callbacks.
     pub fn run_microtasks(&mut self) -> error::Result<()> {
-        while let Some(task) = self.microtask_queue.pop() {
+        // Drain in enqueue order (FIFO): Promise microtasks must fire in the
+        // order they were scheduled, so pop from the front. (Vec::remove(0) is
+        // O(n), but microtask queues are typically small per drain cycle.)
+        while let Some(task) = self.microtask_queue.pop_front() {
             match task {
                 Microtask::Then {
                     promise,
@@ -3249,9 +3284,31 @@ impl Vm {
                                     });
                                 }
                             });
-                            // simpler: register a microtask that adopts
-                            // (basic: just resolve derived with the promise as value)
-                            self.promise_resolve(d.0, ret);
+                            // If `ret` is already settled, the handler we just
+                            // registered will never be drained (promise_resolve/
+                            // reject only drain handlers while Pending). Run it
+                            // now so the derived promise settles.
+                            let (settled, state) = self.heap.with_obj(ret_idx.0, |o| {
+                                if let HeapObj::Promise(p) = o {
+                                    (p.state.get() != PromiseStatus::Pending, p.state.get())
+                                } else {
+                                    (false, PromiseStatus::Pending)
+                                }
+                            });
+                            if settled {
+                                self.microtask_queue.push_back(Microtask::Then {
+                                    promise: ret_idx,
+                                    on_fulfilled: Value::Undefined,
+                                    on_rejected: Value::Undefined,
+                                    derived: Some(d),
+                                });
+                                let _ = state;
+                            }
+                            // Do NOT also resolve `derived` now: the adoption
+                            // handler registered above settles `derived` when
+                            // `ret` settles. Resolving here immediately would
+                            // wrap the Promise as `[object Promise]` instead of
+                            // adopting its eventual value.
                         } else {
                             self.promise_resolve(d.0, ret);
                         }
@@ -3289,7 +3346,14 @@ impl Vm {
             name: Some(Rc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
             closure: self.global,
+            // Native functions have no `prototype` property (they are not
+            // constructors). Their [[Prototype]] (`__proto__`) is
+            // `Function.prototype` once it has been allocated.
             prototype: RefCell::new(None),
+            proto: RefCell::new(match self.function_proto {
+                Value::Object(_) => Some(self.function_proto.clone()),
+                _ => None,
+            }),
             props: RefCell::new(IndexMap::new()),
         };
         GcIdx(self.heap.allocate(HeapObj::Function(fdef)))
@@ -3450,14 +3514,21 @@ impl Vm {
                     crate::value::BindingKind::Const,
                 );
                 let this_val = this.unwrap_or(Value::Undefined);
-                env::declare(
-                    &self.heap,
-                    call_env,
-                    "this",
-                    this_val.clone(),
-                    crate::value::BindingKind::Const,
-                );
-                let _ = is_arrow;
+                // Arrow functions capture `this` lexically from their
+                // enclosing scope, so they must NOT redeclare `this` in
+                // their own call environment (which would shadow the
+                // captured binding). Non-arrow functions bind `this` to the
+                // caller-supplied value (or `undefined`).
+                if !is_arrow {
+                    env::declare(
+                        &self.heap,
+                        call_env,
+                        "this",
+                        this_val.clone(),
+                        crate::value::BindingKind::Const,
+                    );
+                }
+                let _ = &this_val;
                 let is_gen = func.is_generator;
                 if is_gen {
                     // Lazy generator: don't run the body yet. Create a suspended
@@ -3484,21 +3555,46 @@ impl Vm {
                     Ok(Value::Object(GcIdx(g_idx)))
                 } else {
                     // execute the compiled function chunk
-                    let result = self.execute_chunk_func(func.clone(), call_env, this_val, args)?;
+                    let result = self.execute_chunk_func(func.clone(), call_env, this_val, args);
                     if is_async {
-                        // async functions return a Promise resolved with the result.
-                        let p_idx =
-                            self.heap
-                                .allocate(HeapObj::Promise(crate::value::PromiseData {
-                                    state: Cell::new(PromiseStatus::Fulfilled),
-                                    result: RefCell::new(result.clone()),
-                                    handlers: RefCell::new(Vec::new()),
-                                    props: RefCell::new(IndexMap::new()),
-                                    proto: RefCell::new(Some(self.promise_proto.clone())),
-                                }));
-                        Ok(Value::Object(GcIdx(p_idx)))
+                        // async functions return a Promise. An uncaught throw
+                        // inside the async body must settle the returned
+                        // Promise to Rejected (with the thrown value as the
+                        // reason) rather than propagating as a hard error.
+                        match result {
+                            Ok(value) => {
+                                let p_idx = self.heap.allocate(HeapObj::Promise(
+                                    crate::value::PromiseData {
+                                        state: Cell::new(PromiseStatus::Fulfilled),
+                                        result: RefCell::new(value),
+                                        handlers: RefCell::new(Vec::new()),
+                                        props: RefCell::new(IndexMap::new()),
+                                        proto: RefCell::new(Some(self.promise_proto.clone())),
+                                    },
+                                ));
+                                Ok(Value::Object(GcIdx(p_idx)))
+                            }
+                            Err(err) => {
+                                // Extract the thrown JS value if present;
+                                // otherwise stringify the engine error.
+                                let reason = match &err.thrown_value {
+                                    Some(v) => v.clone(),
+                                    None => Value::String(Rc::from(err.to_string().as_str())),
+                                };
+                                let p_idx = self.heap.allocate(HeapObj::Promise(
+                                    crate::value::PromiseData {
+                                        state: Cell::new(PromiseStatus::Rejected),
+                                        result: RefCell::new(reason),
+                                        handlers: RefCell::new(Vec::new()),
+                                        props: RefCell::new(IndexMap::new()),
+                                        proto: RefCell::new(Some(self.promise_proto.clone())),
+                                    },
+                                ));
+                                Ok(Value::Object(GcIdx(p_idx)))
+                            }
+                        }
                     } else {
-                        Ok(result)
+                        result
                     }
                 }
             }

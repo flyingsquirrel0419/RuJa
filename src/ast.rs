@@ -244,7 +244,7 @@ pub enum StmtNode {
     TryCatch {
         try_body: Box<Stmt>,
         catch_param: Option<Rc<str>>,
-        catch_body: Box<Stmt>,
+        catch_body: Option<Box<Stmt>>,
         finally_body: Option<Box<Stmt>>,
     },
     FunctionDecl(FunctionExpr),

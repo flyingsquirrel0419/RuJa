@@ -232,6 +232,11 @@ pub enum Op {
     PushWithEnv,
     /// Pop a `with` environment record pushed by `PushWithEnv`.
     PopWithEnv,
+    /// Per-iteration environment for `for (let ...)`: copy the current
+    /// frame env's lexical bindings into a fresh child env and make that
+    /// child the active frame env. Each iteration's closures capture a
+    /// distinct binding (the classic `for (let i) out.push(()=>i)` case).
+    CloneLetEnv,
     DeclareVar(usize), // name index
     DeclareLet(usize),
     DeclareConst(usize),
