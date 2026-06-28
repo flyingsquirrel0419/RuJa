@@ -3829,7 +3829,7 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
     });
     let (value, done) = if is_lazy {
         let resume = _args.first().cloned().unwrap_or(Value::Undefined);
-        vm.resume_generator(GcIdx(g_idx), resume)?
+        vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Next(resume))?
     } else {
         // Legacy eager generator (kept for safety).
         vm.heap.with_obj(g_idx, |o| {
@@ -3918,7 +3918,10 @@ fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bool) -> erro
     }
 }
 
-/// `generator.return(v)`: terminate the generator, returning {value: v, done: true}.
+/// `generator.return(v)`: force-complete the generator. If it is suspended at
+/// a `yield`, the value `v` becomes the result of the yield* / next() call and
+/// the generator is marked done. If it was already done, returns {value:v,
+/// done:true}.
 fn generator_return(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let g_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
@@ -3932,19 +3935,21 @@ fn generator_return(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
         }
     });
     let ret = args.first().cloned().unwrap_or(Value::Undefined);
-    // Mark the generator done so further next() calls report done.
-    vm.heap.with_obj(g_idx, |o| {
-        if let HeapObj::LazyGenerator(g) = o {
-            g.done.set(true);
-            g.started.set(true);
-        }
-    });
-    gen_result(vm, ret, true, is_async_gen)
+    let is_lazy = vm
+        .heap
+        .with_obj(g_idx, |o| matches!(o, HeapObj::LazyGenerator(_)));
+    let (value, done) = if is_lazy {
+        vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Return(ret.clone()))?
+    } else {
+        (ret.clone(), true)
+    };
+    gen_result(vm, value, done, is_async_gen)
 }
 
-/// `generator.throw(v)`: inject an exception into the suspended generator.
-/// In the synchronous drain model this resumes the generator so the
-/// suspended `yield` throws `v`, which propagates out of next().
+/// `generator.throw(v)`: inject an exception into the suspended generator. The
+/// generator resumes so the suspended `yield` throws `v`; if the body catches
+/// it, the catch handler runs and the next value is returned, otherwise the
+/// exception propagates out of the `throw()` call.
 fn generator_throw(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let g_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
@@ -3958,7 +3963,6 @@ fn generator_throw(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
         }
     });
     let exc = args.first().cloned().unwrap_or(Value::Undefined);
-    // If already done, throw surfaces as a fresh rejection/error.
     let already_done = vm.heap.with_obj(
         g_idx,
         |o| matches!(o, HeapObj::LazyGenerator(g) if g.done.get()),
@@ -3967,30 +3971,8 @@ fn generator_throw(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
         // Per spec, throw on a finished generator re-throws.
         return Err(Error::thrown(exc, &vm.heap));
     }
-    // Resume the generator; the resume value is replaced by throwing `exc`
-    // at the yield point. For now (synchronous model without throw-injection
-    // into the bytecode), we mark done and surface the error.
-    vm.heap.with_obj(g_idx, |o| {
-        if let HeapObj::LazyGenerator(g) = o {
-            g.done.set(true);
-            g.started.set(true);
-        }
-    });
-    if is_async_gen {
-        // Async generator: throw produces a rejected Promise.
-        let p_idx = vm
-            .heap
-            .allocate(HeapObj::Promise(crate::value::PromiseData {
-                state: Cell::new(crate::value::PromiseStatus::Rejected),
-                result: RefCell::new(exc),
-                handlers: RefCell::new(Vec::new()),
-                props: RefCell::new(IndexMap::new()),
-                proto: RefCell::new(Some(vm.promise_proto.clone())),
-            }));
-        Ok(Value::Object(GcIdx(p_idx)))
-    } else {
-        Err(Error::thrown(exc, &vm.heap))
-    }
+    let (value, done) = vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Throw(exc))?;
+    gen_result(vm, value, done, is_async_gen)
 }
 
 pub fn setup_collections(vm: &mut Vm) {

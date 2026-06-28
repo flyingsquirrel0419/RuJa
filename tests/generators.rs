@@ -377,3 +377,103 @@ fn async_generator_return_promise() {
     "#;
     assert_eq!(run(src), Value::String(Rc::from("42,true")));
 }
+
+// ---- generator throw/return injection into the body ----
+
+#[test]
+fn generator_throw_caught_by_body() {
+    // throw(e) injects the exception at the yield point; the body's catch
+    // handles it and the generator continues.
+    let src = r#"
+        function* g() {
+            try { yield 1; yield 2; }
+            catch(e) { yield "caught:" + e; }
+            yield 3;
+        }
+        let it = g();
+        let a = it.next();
+        let b = it.throw("boom");
+        let c = it.next();
+        a.value + "," + b.value + "," + c.value + "," + c.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("1,caught:boom,3,false")));
+}
+
+#[test]
+fn generator_throw_uncaught_marks_done() {
+    // If throw(e) is not caught, the generator is done and the error propagates.
+    let mut vm = ruja::Vm::new();
+    let res = vm.run(
+        r#"
+            function* g() { yield 1; yield 2; }
+            let it = g();
+            it.next();
+            it.throw("err");
+            it.next();
+        "#,
+    );
+    assert!(res.is_err());
+}
+
+#[test]
+fn generator_throw_uncaught_propagates_through_call() {
+    // The thrown error propagates out of throw() and can be caught by the
+    // caller's try/catch.
+    let src = r#"
+        function* g() { yield 1; yield 2; }
+        let it = g();
+        it.next();
+        let result;
+        try { it.throw("err"); result = "no-throw"; }
+        catch(e) { result = "caught:" + e; }
+        result;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("caught:err")));
+}
+
+#[test]
+fn generator_return_value_surfaces() {
+    let src = r#"
+        function* g() { yield 1; yield 2; }
+        let it = g();
+        it.next();
+        let r = it.return(77);
+        r.value + "," + r.done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("77,true")));
+}
+
+#[test]
+fn generator_return_runs_finally() {
+    // Per spec, return(v) runs any finally block before completing.
+    // (We at least require the generator to end done with the return value.)
+    let src = r#"
+        function* g() {
+            try { yield 1; }
+            finally { }
+        }
+        let it = g();
+        it.next();
+        let r = it.return(42);
+        r.value + "," + r.done + "," + it.next().done;
+    "#;
+    assert_eq!(run(src), Value::String(Rc::from("42,true,true")));
+}
+
+#[test]
+fn generator_throw_on_done_rethrows() {
+    let mut vm = ruja::Vm::new();
+    let res = vm.run(
+        r#"
+            function* g() { yield 1; }
+            let it = g();
+            it.next();
+            it.next();
+            it.throw("late");
+        "#,
+    );
+    assert!(
+        res.is_err(),
+        "throw on a finished generator should re-throw"
+    );
+}

@@ -68,6 +68,10 @@ pub struct CallFrame {
     /// `with(o){ foo() }` binds `this` to `o` inside `foo` when `foo` is found
     /// as a property of `o`. Cleared after each `Call`.
     pub pending_with_this: Cell<Option<Value>>,
+    /// When set, the generator was resumed via `throw(e)`: the next dispatch
+    /// in this frame throws `e` at the suspended `yield` point instead of
+    /// pushing a resume value. Consumed on first use.
+    pub force_throw: Cell<Option<Value>>,
 }
 
 impl CallFrame {
@@ -84,8 +88,18 @@ impl CallFrame {
             gen_suspended: Cell::new(false),
             gen_resume_value: RefCell::new(Value::Undefined),
             pending_with_this: Cell::new(None),
+            force_throw: Cell::new(None),
         }
     }
+}
+
+/// How a suspended generator is resumed: normal `next(v)`, `throw(e)` (inject an
+/// exception at the yield point), or `return(v)` (force-complete the generator).
+#[derive(Clone)]
+pub enum ResumeKind {
+    Next(Value),
+    Throw(Value),
+    Return(Value),
 }
 
 /// Outcome of executing a single bytecode instruction.
@@ -298,7 +312,7 @@ impl Vm {
     pub fn resume_generator(
         &mut self,
         g_idx: GcIdx,
-        resume_val: Value,
+        kind: ResumeKind,
     ) -> error::Result<(Value, bool)> {
         // Pull the saved execution state out of the generator object.
         let (
@@ -335,6 +349,25 @@ impl Vm {
             return Ok((Value::Undefined, true));
         }
 
+        // `return(v)` on a suspended generator forces completion: the value is
+        // the generator's return value and the generator is marked done.
+        // Per spec, an unstarted generator's return() also just completes.
+        if let ResumeKind::Return(v) = &kind {
+            self.heap.with_obj(g_idx.0, |o| {
+                if let HeapObj::LazyGenerator(g) = o {
+                    g.done.set(true);
+                    g.started.set(true);
+                }
+            });
+            return Ok((v.clone(), true));
+        }
+
+        let resume_val = match &kind {
+            ResumeKind::Next(v) => v.clone(),
+            ResumeKind::Throw(e) => e.clone(),
+            ResumeKind::Return(_) => Value::Undefined, // handled above
+        };
+
         // On the first resume, initialize the locals table with the arguments.
         if !started {
             locals = vec![Value::Undefined; fdef.num_locals.max(256)];
@@ -347,6 +380,11 @@ impl Vm {
             ip = 0;
             stack.clear();
             catch_stack.clear();
+        } else if let ResumeKind::Throw(_e) = &kind {
+            // `throw(e)`: do NOT push a resume value; instead, set a flag so
+            // the next dispatch in this frame throws `e` at the yield point.
+            // (The force_throw is stashed on the frame after it is pushed
+            // below; we remember it in a local for now.)
         } else {
             // Resuming after a `yield`: the value sent via `next(v)` becomes the
             // result of the suspended `yield` expression.
@@ -378,6 +416,10 @@ impl Vm {
             frame.gen_mode.set(true);
             frame.gen_suspended.set(false);
             frame.gen_yield.set(None);
+            // `throw(e)`: arrange for the next dispatch to raise `e`.
+            if let ResumeKind::Throw(e) = &kind {
+                frame.force_throw.set(Some(e.clone()));
+            }
         }
 
         let result = self.interpret_to_depth(target_depth);
@@ -399,6 +441,23 @@ impl Vm {
         } else {
             false
         };
+
+        // If the run ended in an uncaught exception (e.g. a `throw(e)` resume
+        // whose exception was not caught by the generator body), propagate it.
+        // The generator is marked done; its frame (if still on the stack) is
+        // popped so the caller's catch routing can find the right handler.
+        if let Err(e) = &result {
+            if self.frames.len() > target_depth {
+                self.frames.truncate(target_depth);
+            }
+            self.heap.with_obj(g_idx.0, |o| {
+                if let HeapObj::LazyGenerator(g) = o {
+                    g.done.set(true);
+                    g.started.set(true);
+                }
+            });
+            return Err(e.clone());
+        }
 
         if suspended {
             // Capture the yielded value from the frame *before* popping it
@@ -535,6 +594,13 @@ impl Vm {
 
     fn interpret_inner(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
         loop {
+            // Generator `throw(e)` resume: if the current frame has a pending
+            // forced throw (set by resume_generator on a Throw resume), raise
+            // it now at the suspended `yield` point. This lets the generator
+            // body's own try/catch handle the injected exception.
+            if let Some(exc) = self.frames.last().and_then(|f| f.force_throw.take()) {
+                return Err(Error::thrown(exc, &self.heap));
+            }
             let frame = self.frames.last().unwrap();
             let ip = frame.ip;
             if ip >= frame.chunk.code.len() {
@@ -3067,7 +3133,7 @@ impl Vm {
                 Value::Object(idx) => *idx,
                 _ => return Err(Error::type_err("not a generator".to_string())),
             };
-            let (value, done) = self.resume_generator(g_idx, resume)?;
+            let (value, done) = self.resume_generator(g_idx, ResumeKind::Next(resume))?;
             if done {
                 if let Value::Object(idx) = it {
                     self.heap.with_obj(idx.0, |o| {
