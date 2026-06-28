@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Fixed
+- **GC root safety**: `collect_roots` now roots the microtask queue (Promise
+  handlers, resolve/reject values), `generator_proto`, and `global_constants`,
+  all of which were previously missing. A new `gc_pins` stack lets call paths
+  pin heap values held in Rust locals (Promise handler, call args, derived
+  promise) across allocations. Per-instruction GC was unsafe (it could free
+  values held in Rust locals); it now runs at safe points only (after `run()`
+  settles all frames, and throttled at frame boundaries). Fixes use-after-free
+  panics under heavy allocation + Promise chains.
+- **Runtime error source lines**: errors now report their source line, e.g.
+  `ReferenceError: undefinedVar is not defined (at line 3)`. Previously every
+  error reported `(at line 0)` because the compiler emitted all ops with line
+  0 and the AST carried no line info. `Stmt` now carries a `line` (set by the
+  parser at statement start), the compiler tracks `current_line` and flows it
+  into every `Op`, and `Chunk::line_for_ip` resolves it.
+- **Unimplemented Op panic**: the dispatch fallthrough arm now panics with
+  the offending op (Op derives Debug) instead of silently skipping, so
+  compiler bugs surface immediately.
+- **`run()` test helper**: the shared test helper now panics on runtime error
+  instead of returning `Value::Undefined`, so a test can no longer silently
+  pass on a thrown error. Tests that genuinely expect an error use `run_err`.
+
+### Changed
+- **README `Known limitations`** rewritten to reflect the implemented state
+  (for-await, strict mode, eval isolation, array-destructuring iterator
+  protocol, Function constructor are done) and list only the genuine remaining
+  limits.
+- **`interpret_inner` refactor**: the largest call/closure-related Op
+  handlers (`op_call`, `op_call_method`, `op_call_method_opt`,
+  `op_call_spread`, `op_new`, `op_await`, `op_make_closure`) extracted into
+  dedicated methods, shrinking the dispatch loop from 1366 to ~1216 lines.
+
 ## [0.2.0] - 2026-06-28
 
 ### Added
