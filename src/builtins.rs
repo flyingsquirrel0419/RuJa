@@ -728,24 +728,81 @@ fn object_define_property(
         let mut writable = false;
         let mut enumerable = false;
         let mut configurable = false;
-        let mut is_data = false;
-        if let Value::Object(_didx) = desc {
-            if let Ok(v) = vm.get_property(&desc, "value") {
-                value = v;
-                is_data = true;
+        let mut get = None;
+        let mut set = None;
+        let mut has_value = false;
+        let mut has_writable = false;
+        let mut has_get = false;
+        let mut has_set = false;
+        if let Value::Object(_) = desc {
+            // Presence of each field is determined by an OWN property on the
+            // descriptor object, mirroring ToPropertyDescriptor: a missing
+            // field must NOT flip the has_* flags, otherwise a plain
+            // `{value: 1, writable: false}` descriptor would be misread as
+            // an accessor (get/set absent but `get_property` returns
+            // `Ok(undefined)`).
+            if vm.has_own(&desc, "value") {
+                if let Ok(v) = vm.get_property(&desc, "value") {
+                    value = v;
+                    has_value = true;
+                }
             }
-            if let Ok(v) = vm.get_property(&desc, "writable") {
-                writable = v.is_truthy();
-                is_data = true;
+            if vm.has_own(&desc, "writable") {
+                if let Ok(v) = vm.get_property(&desc, "writable") {
+                    writable = v.is_truthy();
+                    has_writable = true;
+                }
             }
-            if let Ok(v) = vm.get_property(&desc, "enumerable") {
-                enumerable = v.is_truthy();
+            if vm.has_own(&desc, "get") {
+                if let Ok(v) = vm.get_property(&desc, "get") {
+                    if !v.is_undefined() && !is_callable(&v, &vm.heap) {
+                        return Err(Error::type_err("Getter must be a function"));
+                    }
+                    get = if v.is_undefined() { None } else { Some(v) };
+                    has_get = true;
+                }
             }
-            if let Ok(v) = vm.get_property(&desc, "configurable") {
-                configurable = v.is_truthy();
+            if vm.has_own(&desc, "set") {
+                if let Ok(v) = vm.get_property(&desc, "set") {
+                    if !v.is_undefined() && !is_callable(&v, &vm.heap) {
+                        return Err(Error::type_err("Setter must be a function"));
+                    }
+                    set = if v.is_undefined() { None } else { Some(v) };
+                    has_set = true;
+                }
+            }
+            if vm.has_own(&desc, "enumerable") {
+                if let Ok(v) = vm.get_property(&desc, "enumerable") {
+                    enumerable = v.is_truthy();
+                }
+            }
+            if vm.has_own(&desc, "configurable") {
+                if let Ok(v) = vm.get_property(&desc, "configurable") {
+                    configurable = v.is_truthy();
+                }
             }
         }
-        let descriptor = if is_data {
+        // A descriptor is an accessor descriptor if it has get/set, and a
+        // data descriptor if it has value/writable. Mixing the two is a
+        // TypeError per [[DefineOwnProperty]].
+        let is_accessor = has_get || has_set;
+        let is_data = has_value || has_writable;
+        if is_accessor && is_data {
+            return Err(Error::type_err(
+                "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+            ));
+        }
+        let descriptor = if is_accessor {
+            PropertyDescriptor {
+                value: Value::Undefined,
+                writable: false,
+                enumerable,
+                configurable,
+                get,
+                set,
+                is_accessor: true,
+            }
+        } else if is_data {
             PropertyDescriptor {
                 value,
                 writable,
@@ -756,6 +813,7 @@ fn object_define_property(
                 is_accessor: false,
             }
         } else {
+            // Generic descriptor (only enumerable/configurable).
             PropertyDescriptor {
                 value: Value::Undefined,
                 writable: false,

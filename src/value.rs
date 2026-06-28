@@ -497,17 +497,33 @@ pub fn num_to_string(n: f64) -> String {
 }
 
 /// Format a number in ECMAScript exponential notation (e.g. `1e+21`, `1e-7`).
-fn format_exponential(n: f64, abs: f64) -> String {
-    let exp = abs.log10().floor() as i32;
-    let mantissa = n / 10f64.powi(exp);
-    let m = {
-        let s = format!("{}", mantissa);
-        if s.ends_with(".0") {
-            s[..s.len() - 2].to_string()
-        } else {
-            s
-        }
+/// Format a number in ECMAScript exponential notation (e.g. `1e+21`, `5e-17`).
+///
+/// Uses Rust's `{:e}` formatting, which already emits a correctly-rounded
+/// shortest mantissa (avoiding the floating-point division error that the
+/// previous `n / 10f64.powi(exp)` approach introduced, e.g. `5e-17` ->
+/// `4.999999999999999e-17`). The only adjustment needed for ECMAScript is to
+/// always emit an explicit exponent sign (`e+21` not `e21`) and to strip a
+/// trailing `.0` from the mantissa.
+fn format_exponential(n: f64, _abs: f64) -> String {
+    let s = format!("{:e}", n);
+    let epos = match s.find('e') {
+        Some(p) => p,
+        None => return s, // should not happen for finite non-zero inputs
     };
-    let exp_sign = if exp >= 0 { '+' } else { '-' };
-    format!("{}e{}{}", m, exp_sign, exp.abs())
+    let (mant, rest) = s.split_at(epos);
+    let exp_str = &rest[1..]; // skip the 'e'
+    let (sign, digits) = if let Some(d) = exp_str.strip_prefix('-') {
+        ("-", d)
+    } else if let Some(d) = exp_str.strip_prefix('+') {
+        ("+", d)
+    } else {
+        ("+", exp_str)
+    };
+    let mant = if let Some(m) = mant.strip_suffix(".0") {
+        m
+    } else {
+        mant
+    };
+    format!("{}e{}{}", mant, sign, digits)
 }

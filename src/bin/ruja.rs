@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::process::exit;
+use std::thread;
 
 const VERSION: &str = "0.2.0-alpha";
 const HELP: &str = r#"Usage: ruja [OPTIONS] [FILE]
@@ -127,41 +128,55 @@ fn repl() -> i32 {
 }
 
 fn main() {
+    // Run the engine on a worker thread with a generous stack so that deep
+    // (but legal) JS recursion, bounded by the engine's own
+    // `MAX_CALL_STACK_DEPTH`, can not overflow the Rust thread stack and
+    // abort the process. The default main-thread stack is 8 MiB; give the
+    // worker 64 MiB to comfortably support a deep call limit.
+    let worker = thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(main_impl)
+        .expect("failed to spawn engine worker thread");
+    let code = worker.join().unwrap_or(1);
+    exit(code);
+}
+
+fn main_impl() -> i32 {
     let args: Vec<String> = env::args().collect();
     if args.len() == 1 {
-        exit(repl());
+        return repl();
     }
     let i = 1;
     if i < args.len() {
         match args[i].as_str() {
             "-h" | "--help" => {
                 print!("{}", HELP);
-                exit(0);
+                return 0;
             }
             "-V" | "--version" => {
                 println!("ruja {}", VERSION);
-                exit(0);
+                return 0;
             }
             "-e" | "--eval" => {
                 if i + 1 >= args.len() {
                     eprintln!("ruja: -e requires an argument");
-                    exit(2);
+                    return 2;
                 }
-                exit(run_eval(&args[i + 1]));
+                return run_eval(&args[i + 1]);
             }
             "--" => {
                 if i + 1 < args.len() {
-                    exit(run_file(&args[i + 1]));
+                    return run_file(&args[i + 1]);
                 }
-                exit(0);
+                return 0;
             }
             arg if arg.starts_with('-') => {
                 eprintln!("ruja: unknown option '{}'", arg);
                 eprintln!("Try 'ruja --help' for more information.");
-                exit(2);
+                return 2;
             }
-            file => exit(run_file(file)),
+            file => return run_file(file),
         }
     }
-    exit(repl());
+    repl()
 }

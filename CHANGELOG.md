@@ -22,7 +22,29 @@
   compiler bugs surface immediately.
 - **`run()` test helper**: the shared test helper now panics on runtime error
   instead of returning `Value::Undefined`, so a test can no longer silently
-  pass on a thrown error. Tests that genuinely expect an error use `run_err`.
+ pass on a thrown error. Tests that genuinely expect an error use `run_err`.
+- **Call-stack depth limit**: unbounded JS recursion now throws a catchable
+  `RangeError: Maximum call stack size exceeded` instead of overflowing the
+  Rust thread stack and aborting the process with `SIGSEGV`. The engine caps
+  the interpreted call depth, and the `ruja` binary runs execution on a
+  64 MiB worker thread so the limit can be generous.
+- **`writable: false` honored by ordinary assignment**: writing to a
+  non-writable own data property now fails per ES `[[Set]]` — throwing a
+  `TypeError` in strict mode and failing silently in non-strict mode —
+  instead of always overwriting the value.
+- **Accessor (getter/setter) descriptors**: `Object.defineProperty` now
+  reads `get`/`set` from the descriptor (rejecting a get+value or set+value
+  mix with a TypeError), and `get_property`/`set_property` invoke the
+  accessor. Inherited setters up the prototype chain are honored on write.
+- **`Array.length` validation**: assigning a fractional, negative,
+  non-numeric, or out-of-`uint32`-range value to an array's `length` now
+  throws `RangeError: Invalid array length` (matching V8) instead of silently
+  truncating via `as usize` or attempting an enormous allocation.
+- **`num_to_string` exponential precision**: `String(n)` for values rendered
+  in exponential notation (e.g. `5e-17`, `9e-17`, `9.99e-7`) is now exact,
+  using Rust's `{:e}` formatting. Previously `n / 10f64.powi(exp)` introduced
+  floating-point error (`5e-17` -> `4.999999999999999e-17`) and the exponent
+  could be padded (`e-07` instead of `e-7`).
 
 ### Changed
 - **README `Known limitations`** rewritten to reflect the implemented state

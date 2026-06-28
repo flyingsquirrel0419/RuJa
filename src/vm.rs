@@ -2402,6 +2402,33 @@ impl Vm {
         }
     }
 
+    /// Does `obj` have an OWN property named `name` (not inherited)?
+    /// Used by ToPropertyDescriptor (Object.defineProperty) to tell a field
+    /// that was explicitly set to `undefined` from a field that is simply
+    /// absent on the descriptor object.
+    pub fn has_own(&self, obj: &Value, name: &str) -> bool {
+        let pkey = crate::value::PropertyKey::from(name);
+        match obj {
+            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    if name == "length" {
+                        return true;
+                    }
+                    if let Ok(i) = name.parse::<usize>() {
+                        return i < a.items.borrow().len();
+                    }
+                    // array extra props live in props()
+                }
+                o.props().borrow().contains_key(&pkey)
+            }),
+            Value::String(st) => {
+                let len = st.chars().count();
+                name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+            }
+            _ => false,
+        }
+    }
+
     pub fn to_boolean(&self, v: &Value) -> bool {
         v.is_truthy()
     }
@@ -2485,6 +2512,26 @@ impl Vm {
                 key
             ))),
             Value::Object(idx) => {
+                // Honor an accessor getter on this object (own property).
+                // Inherited accessors are handled by the recursive proto-chain
+                // walk below, since `get_property` is called again on the
+                // prototype. The getter must be invoked outside the
+                // `with_obj` borrow, so we look it up first.
+                let pkey = crate::value::PropertyKey::from(key);
+                if let Some(getter) = self.heap.with_obj(idx.0, |o| {
+                    o.props().borrow().get(&pkey).and_then(|d| {
+                        if d.is_accessor {
+                            d.get.clone()
+                        } else {
+                            None
+                        }
+                    })
+                }) {
+                    if !getter.is_undefined() {
+                        return self.call_function(&getter, &[], Some(obj.clone()));
+                    }
+                    return Ok(Value::Undefined);
+                }
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
@@ -2509,7 +2556,7 @@ impl Vm {
                         }
                     }
                     let props = o.props();
-                    if let Some(desc) = props.borrow().get(&crate::value::PropertyKey::from(key)) {
+                    if let Some(desc) = props.borrow().get(&pkey) {
                         return Ok(desc.value.clone());
                     }
                     // function-specific: .prototype lives in a dedicated field
@@ -2568,37 +2615,72 @@ impl Vm {
     }
 
     pub fn set_property(&mut self, obj: &Value, key: &str, value: Value) -> error::Result<()> {
+        // ES [[Set]] semantics, simplified:
+        //  1. Walk the prototype chain for an accessor descriptor with a
+        //     `set` function; if found, call it and return.
+        //  2. Otherwise, if `obj` has its OWN data descriptor that is
+        //     non-writable, the assignment fails: in strict mode throw a
+        //     TypeError; otherwise silently ignore.
+        //  3. Otherwise define/overwrite an own writable data property.
+        // Arrays route `length` and integer-index writes through dedicated
+        // logic below before falling back to ordinary object semantics.
         match obj {
             Value::Object(idx) => {
-                self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        if key == "length" {
-                            let n = value.clone();
-                            // simplified: truncate/extend
-                            if let Value::Number(len) = n {
-                                let mut items = a.items.borrow_mut();
-                                let new_len = len as usize;
-                                items.truncate(new_len);
-                                while items.len() < new_len {
-                                    items.push(Value::Undefined);
-                                }
-                            }
-                            return;
-                        }
-                        if let Ok(i) = key.parse::<usize>() {
-                            let mut items = a.items.borrow_mut();
-                            while items.len() <= i {
-                                items.push(Value::Undefined);
-                            }
-                            items[i] = value;
-                            return;
-                        }
+                // --- Array fast paths ---
+                let is_array_length = self
+                    .heap
+                    .with_obj(idx.0, |o| matches!(o, HeapObj::Array(_) if key == "length"));
+                if is_array_length {
+                    return self.set_array_length(idx.0, value);
+                }
+                let array_index = self.heap.with_obj(idx.0, |o| {
+                    if matches!(o, HeapObj::Array(_)) {
+                        key.parse::<usize>().ok()
+                    } else {
+                        None
                     }
+                });
+                if let Some(i) = array_index {
+                    self.set_array_index(idx.0, i, value)?;
+                    return Ok(());
+                }
+
+                // --- Ordinary object [[Set]] ---
+                let pkey = crate::value::PropertyKey::from(key);
+
+                // 1. Look for an accessor `set` up the prototype chain.
+                if let Some(setter) = self.find_setter(*idx, &pkey) {
+                    self.call_function(&setter, std::slice::from_ref(&value), Some(obj.clone()))?;
+                    return Ok(());
+                }
+
+                // 2. Reject writes to a non-writable own data property.
+                let non_writable_own = self.heap.with_obj(idx.0, |o| {
+                    o.props()
+                        .borrow()
+                        .get(&pkey)
+                        .is_some_and(|d| !d.is_accessor && !d.writable)
+                });
+                if non_writable_own {
+                    if self.current_strict() {
+                        return Err(Error::type_err(format!(
+                            "Cannot assign to read only property '{}' of object",
+                            key
+                        )));
+                    }
+                    // non-strict: silently ignore
+                    return Ok(());
+                }
+
+                // 3. Define/overwrite an own writable data property.
+                self.heap.with_obj(idx.0, |o| {
                     let props = o.props();
-                    props.borrow_mut().insert(
-                        crate::value::PropertyKey::from(key),
-                        crate::value::PropertyDescriptor::data(value),
-                    );
+                    let mut props = props.borrow_mut();
+                    if let Some(existing) = props.get_mut(&pkey) {
+                        existing.value = value;
+                    } else {
+                        props.insert(pkey, crate::value::PropertyDescriptor::data(value));
+                    }
                 });
                 Ok(())
             }
@@ -2606,6 +2688,108 @@ impl Vm {
                 "Cannot set property of primitive".to_string(),
             )),
         }
+    }
+
+    /// Strictness of the currently-executing frame, used by ordinary
+    /// [[Set]]/[[DefineOwnProperty]] to decide whether a failed assignment
+    /// throws a TypeError or is silently ignored. The top-level program has
+    /// no frame; its strictness comes from the compiled top-level chunk.
+    fn current_strict(&self) -> bool {
+        self.frames
+            .last()
+            .map(|f| f.chunk.is_strict)
+            .unwrap_or(false)
+    }
+
+    /// Walk the prototype chain starting at `idx` looking for an accessor
+    /// descriptor for `key` with a non-empty `set` function. Returns the
+    /// setter to invoke, if any. Used by ordinary [[Set]] to honor inherited
+    /// setters.
+    fn find_setter(&mut self, mut idx: GcIdx, key: &crate::value::PropertyKey) -> Option<Value> {
+        let mut depth = 0;
+        while depth < 1024 {
+            depth += 1;
+            let (found, proto) = self.heap.with_obj(idx.0, |o| {
+                let props = o.props();
+                let setter = props.borrow().get(key).and_then(|d| {
+                    if d.is_accessor {
+                        d.set.clone()
+                    } else {
+                        None
+                    }
+                });
+                let proto = o.proto().borrow().clone();
+                (setter, proto)
+            });
+            if let Some(s) = found {
+                return Some(s);
+            }
+            match proto {
+                Some(Value::Object(pidx)) => idx = pidx,
+                _ => break,
+            }
+        }
+        None
+    }
+
+    /// Set an integer-indexed element of an array, extending with
+    /// `undefined` holes as needed.
+    fn set_array_index(&mut self, idx: usize, i: usize, value: Value) -> error::Result<()> {
+        self.heap.with_obj(idx, |o| {
+            if let HeapObj::Array(a) = o {
+                let mut items = a.items.borrow_mut();
+                while items.len() <= i {
+                    items.push(Value::Undefined);
+                }
+                items[i] = value;
+            }
+        });
+        Ok(())
+    }
+
+    /// ES [[Set]] for `Array.prototype.length`. Validates the value per
+    /// `ArraySetLength`: must be a non-negative integer in the 32-bit range,
+    /// else a RangeError ("Invalid array length"); then truncate or extend.
+    fn set_array_length(&mut self, idx: usize, value: Value) -> error::Result<()> {
+        let new_len = match value {
+            Value::Number(n) => {
+                // Must be a non-negative integer that fits in u32, and equal
+                // to its uint32 truncation (i.e. no fractional part).
+                if n.is_nan() || n < 0.0 || n.is_infinite() {
+                    return Err(Error::range("Invalid array length"));
+                }
+                if n.fract() != 0.0 {
+                    return Err(Error::range("Invalid array length"));
+                }
+                let as_u32 = n as u32;
+                if (as_u32 as f64) != n {
+                    return Err(Error::range("Invalid array length"));
+                }
+                if n >= (1u64 << 32) as f64 {
+                    return Err(Error::range("Invalid array length"));
+                }
+                as_u32 as usize
+            }
+            _ => {
+                // Non-numeric assignment to length: ToUint32 semantics would
+                // require conversion; for explicit non-numbers we throw as
+                // V8 does for clearly-invalid values like "abc".
+                return Err(Error::range("Invalid array length"));
+            }
+        };
+        self.heap.with_obj(idx, |o| {
+            if let HeapObj::Array(a) = o {
+                let mut items = a.items.borrow_mut();
+                if new_len < items.len() {
+                    items.truncate(new_len);
+                } else {
+                    while items.len() < new_len {
+                        items.push(Value::Undefined);
+                    }
+                }
+            }
+        });
+        Ok(())
     }
 
     // ---- GC roots ----
@@ -2976,6 +3160,17 @@ impl Vm {
         args: &[Value],
         this: Option<Value>,
     ) -> error::Result<Value> {
+        // Cap the call-stack depth before pushing another frame. Without this
+        // an unbounded JS recursion would overflow the Rust stack (each JS
+        // call recurses through `call_function` -> `execute_chunk_func` ->
+        // `interpret_to_depth`), killing the process with a hard stack
+        // overflow instead of a catchable RangeError. The limit is generous
+        // (well below the Rust default 8 MiB stack) and matches the spirit of
+        // V8's "Maximum call stack size exceeded".
+        const MAX_CALL_STACK_DEPTH: usize = 1000;
+        if self.frames.len() >= MAX_CALL_STACK_DEPTH {
+            return Err(Error::range("Maximum call stack size exceeded"));
+        }
         let idx = match func {
             Value::Object(idx) => *idx,
             _ => {

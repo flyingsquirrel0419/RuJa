@@ -54,6 +54,10 @@ selected ES2015 features, with zero external runtime dependencies.
   with a value; `return` ends the generator
 - `try`/`catch` catches runtime errors (TypeError/ReferenceError) and native
   errors surface as `Error` objects
+- `Object.defineProperty` with data and accessor descriptors (`value`/
+  `writable`, `get`/`set`); ordinary `[[Set]]` enforces `writable: false`
+  (TypeError in strict mode, silent in sloppy) and invokes inherited setters
+  through the prototype chain
 - Array methods: `push`, `pop`, `shift`, `unshift`, `splice`, `map`, `filter`,
   `reduce`, `forEach`, `find`, `findIndex`, `findLast`, `fill`, `some`, `every`,
   `includes`, `indexOf`, `lastIndexOf`, `slice`, `concat`, `join`, `flat`,
