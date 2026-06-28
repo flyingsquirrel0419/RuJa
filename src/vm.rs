@@ -63,6 +63,11 @@ pub struct CallFrame {
     pub gen_yield: Cell<Option<Value>>,
     pub gen_suspended: Cell<bool>,
     pub gen_resume_value: RefCell<Value>,
+    /// `this` binding to use for the next `Call` when the callee was resolved
+    /// through a `with`-statement object environment record. Per ES spec,
+    /// `with(o){ foo() }` binds `this` to `o` inside `foo` when `foo` is found
+    /// as a property of `o`. Cleared after each `Call`.
+    pub pending_with_this: Cell<Option<Value>>,
 }
 
 impl CallFrame {
@@ -78,6 +83,7 @@ impl CallFrame {
             gen_yield: Cell::new(None),
             gen_suspended: Cell::new(false),
             gen_resume_value: RefCell::new(Value::Undefined),
+            pending_with_this: Cell::new(None),
         }
     }
 }
@@ -1014,6 +1020,14 @@ impl Vm {
                     self.stack.push(Value::Undefined);
                 }
                 Op::LoadEnvName(name_idx) => {
+                    // Reset any stale `with`-this from a previous name load that
+                    // was not immediately followed by a `Call`. Only a name found
+                    // on a `with` object *and* used as a call callee should rebind
+                    // `this`; clearing here prevents leftover values from leaking
+                    // into a later, unrelated call.
+                    if let Some(f) = self.frames.last() {
+                        f.pending_with_this.set(None);
+                    }
                     let name = {
                         let frame = self.frames.last().unwrap();
                         let v = frame
@@ -1031,15 +1045,31 @@ impl Vm {
                     // `with`-statement object environment records take precedence over
                     // the lexical scope chain (closest first), per spec.
                     let with_objs = crate::environment::with_objects(&self.heap, env);
-                    let mut found_in_with: Option<Value> = None;
+                    let mut found_in_with: Option<(Value, Value)> = None;
                     for obj in &with_objs {
                         let v = self.get_property(obj, &name)?;
                         if !v.is_undefined() {
-                            found_in_with = Some(v);
+                            // Remember which `with` object supplied the value so
+                            // that, if the callee is called as `foo()` (not
+                            // `obj.foo()`), the next `Call` binds `this` to it.
+                            found_in_with = Some((v, obj.clone()));
                             break;
                         }
                     }
-                    if let Some(v) = found_in_with {
+                    if let Some((v, with_obj)) = found_in_with {
+                        // Only function-valued lookups rebind `this`; a plain
+                        // value read does not affect the next call. We defer the
+                        // is-function check to `Call` by stashing the candidate
+                        // `this` here unconditionally, and `Call` clears it on
+                        // any use (function or not) so it never leaks past one
+                        // opcode.
+                        if matches!(v, Value::Object(_)) {
+                            self.frames
+                                .last()
+                                .unwrap()
+                                .pending_with_this
+                                .set(Some(with_obj));
+                        }
                         self.stack.push(v);
                     } else {
                         match crate::environment::get_checked(&self.heap, env, &name) {
@@ -1490,7 +1520,17 @@ impl Vm {
                     }
                     args.reverse();
                     let callee = self.stack.pop().unwrap_or(Value::Undefined);
-                    let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
+                    // If the callee was resolved through a `with`-statement object
+                    // environment record, bind `this` to that object (ES spec).
+                    // Otherwise use `undefined` (strict-mode-style). Take and clear
+                    // the pending value so it never leaks past this call.
+                    let with_this = self
+                        .frames
+                        .last()
+                        .map(|f| f.pending_with_this.take())
+                        .unwrap_or(None);
+                    let this = with_this.or(Some(Value::Undefined));
+                    let result = self.call_function(&callee, &args, this)?;
                     self.stack.push(result);
                 }
                 Op::CallMethod(arg_count) => {
