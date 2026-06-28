@@ -865,26 +865,30 @@ impl Compiler {
             }
             Pattern::Object(props) => {
                 for (key, target) in props {
-                    let mut new_path = path.to_vec();
-                    new_path.push(PathStep::Prop(key.clone()));
-                    match target {
-                        Pattern::Assign(inner, default) => {
-                            self.load_path(temp_idx, &new_path);
-                            self.chunk.emit(Op::Dup, 0);
-                            self.chunk.emit(Op::Undefined, 0);
-                            self.chunk.emit(Op::StrictEq, 0);
-                            let skip = self.chunk.code.len();
-                            self.chunk.emit(Op::JumpIfFalse(0), 0);
-                            self.chunk.emit(Op::Pop, 0);
-                            self.compile_expr(default)?;
-                            let after = self.chunk.code.len();
-                            self.chunk.patch_jump(skip, after);
+                    // Static keys extend the access path; computed/numeric keys
+                    // load the source via GetElem into a temp env binding.
+                    match key {
+                        PropertyKey::Ident(s) | PropertyKey::String(s) => {
+                            let mut new_path = path.to_vec();
+                            new_path.push(PathStep::Prop(s.clone()));
+                            self.bind_destructure_target(target, temp_idx, &new_path, kind)?;
+                        }
+                        PropertyKey::Number(n) => {
+                            self.load_path(temp_idx, path);
+                            let key_idx = self.chunk.add_constant(Value::Number(*n));
+                            self.chunk.emit(Op::Const(key_idx), 0);
+                            self.chunk.emit(Op::GetElem, 0);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), 0);
-                            self.compile_pattern(inner, t2, &[], kind)?;
+                            self.bind_destructure_target_value(target, t2, kind)?;
                         }
-                        other => {
-                            self.compile_pattern(other, temp_idx, &new_path, kind)?;
+                        PropertyKey::Computed(e) => {
+                            self.load_path(temp_idx, path);
+                            self.compile_expr(e)?;
+                            self.chunk.emit(Op::GetElem, 0);
+                            let t2 = self.intern("#d2");
+                            self.chunk.emit(Op::DeclareEnv(t2), 0);
+                            self.bind_destructure_target_value(target, t2, kind)?;
                         }
                     }
                 }
@@ -909,6 +913,70 @@ impl Compiler {
                 let t2 = self.intern("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), 0);
                 self.compile_pattern(inner, t2, &[], kind)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind a destructuring target whose source value is reached via `path`
+    /// (applies default if undefined, then recurses for nested patterns).
+    fn bind_destructure_target(
+        &mut self,
+        target: &Pattern,
+        temp_idx: usize,
+        path: &[PathStep],
+        kind: VarKind,
+    ) -> error::Result<()> {
+        match target {
+            Pattern::Assign(inner, default) => {
+                self.load_path(temp_idx, path);
+                self.chunk.emit(Op::Dup, 0);
+                self.chunk.emit(Op::Undefined, 0);
+                self.chunk.emit(Op::StrictEq, 0);
+                let skip = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfFalse(0), 0);
+                self.chunk.emit(Op::Pop, 0);
+                self.compile_expr(default)?;
+                let after = self.chunk.code.len();
+                self.chunk.patch_jump(skip, after);
+                let t2 = self.intern("#d2");
+                self.chunk.emit(Op::DeclareEnv(t2), 0);
+                self.compile_pattern(inner, t2, &[], kind)?;
+            }
+            other => {
+                self.compile_pattern(other, temp_idx, path, kind)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind a destructuring target whose source value is already loaded into
+    /// env binding `temp_idx` (used for computed/numeric keys where the value
+    /// was fetched via GetElem).
+    fn bind_destructure_target_value(
+        &mut self,
+        target: &Pattern,
+        temp_idx: usize,
+        kind: VarKind,
+    ) -> error::Result<()> {
+        match target {
+            Pattern::Assign(inner, default) => {
+                self.load_path(temp_idx, &[]);
+                self.chunk.emit(Op::Dup, 0);
+                self.chunk.emit(Op::Undefined, 0);
+                self.chunk.emit(Op::StrictEq, 0);
+                let skip = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfFalse(0), 0);
+                self.chunk.emit(Op::Pop, 0);
+                self.compile_expr(default)?;
+                let after = self.chunk.code.len();
+                self.chunk.patch_jump(skip, after);
+                let t2 = self.intern("#d2");
+                self.chunk.emit(Op::DeclareEnv(t2), 0);
+                self.compile_pattern(inner, t2, &[], kind)?;
+            }
+            other => {
+                self.compile_pattern(other, temp_idx, &[], kind)?;
             }
         }
         Ok(())

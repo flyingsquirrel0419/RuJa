@@ -1443,10 +1443,27 @@ impl Parser {
             }
             TokenKind::LBrace => {
                 self.advance(); // {
-                let mut props: Vec<(Rc<str>, Pattern)> = Vec::new();
+                let mut props: Vec<(PropertyKey, Pattern)> = Vec::new();
                 while !self.check(&TokenKind::RBrace) {
-                    let key: Rc<str> = match self.advance() {
-                        TokenKind::Ident(s) => Rc::from(s.as_str()),
+                    let key: PropertyKey = match self.peek().clone() {
+                        TokenKind::Ident(s) => {
+                            self.advance();
+                            PropertyKey::Ident(Rc::from(s.as_str()))
+                        }
+                        TokenKind::String(s) => {
+                            self.advance();
+                            PropertyKey::String(Rc::from(s.as_str()))
+                        }
+                        TokenKind::Number(n) => {
+                            self.advance();
+                            PropertyKey::Number(n)
+                        }
+                        TokenKind::LBracket => {
+                            self.advance();
+                            let e = self.parse_assign()?;
+                            self.expect(&TokenKind::RBracket, "]")?;
+                            PropertyKey::Computed(Box::new(e))
+                        }
                         other => {
                             return Err(error::Error::syntax(format!(
                                 "Expected property name in object pattern, got {:?}",
@@ -1454,11 +1471,20 @@ impl Parser {
                             )))
                         }
                     };
-                    // `key: target` renames; otherwise bind to same name.
+                    // `key: target` renames; otherwise bind to same name (ident/string only).
                     let target = if self.eat(&TokenKind::Colon) {
                         self.parse_destructure_pattern()?
                     } else {
-                        Pattern::Ident(key.clone())
+                        match &key {
+                            PropertyKey::Ident(s) => Pattern::Ident(s.clone()),
+                            PropertyKey::String(s) => Pattern::Ident(s.clone()),
+                            _ => {
+                                return Err(error::Error::syntax(
+                                    "Numeric/computed destructuring key requires a binding"
+                                        .to_string(),
+                                ))
+                            }
+                        }
                     };
                     // default value: `key = default`
                     let target = if self.eat(&TokenKind::Assign) {

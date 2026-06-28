@@ -105,7 +105,7 @@ pub struct FunctionExpr {
 pub enum Pattern {
     Ident(Rc<str>),
     Array(Vec<Pattern>),
-    Object(Vec<(Rc<str>, Pattern)>),
+    Object(Vec<(PropertyKey, Pattern)>),
     Assign(Box<Pattern>, Expr),
     Rest(Box<Pattern>),
 }
