@@ -1388,14 +1388,37 @@ impl Vm {
                         self.frames.last_mut().unwrap().env = p;
                     }
                 }
-                Op::CloneLetEnv => {
-                    // Per-iteration environment for `for (let ...)`: clone the
-                    // current lexical bindings into a child env and make it
-                    // active so each iteration's closures capture distinct
-                    // bindings.
+                Op::CloneLetNames(idx) => {
+                    // Per-iteration environment for `for (let ...)`: clone
+                    // ONLY the loop's declared variables into a child env so
+                    // each iteration's closures capture a distinct binding for
+                    // the loop variable while sharing the rest of the scope.
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let child = env::clone_lexical_env(&self.heap, cur_env);
+                    let names = self
+                        .frames
+                        .last()
+                        .map(|f| f.chunk.let_names.get(idx).cloned().unwrap_or_default())
+                        .unwrap_or_default();
+                    let child = env::clone_loop_vars(&self.heap, cur_env, &names);
                     self.frames.last_mut().unwrap().env = child;
+                }
+                Op::RestoreParentEnv => {
+                    // After the loop body (which ran in a CloneLetEnv child),
+                    // restore the frame env to the child's parent (the loop
+                    // scope env) so the update/cond/next iteration run in the
+                    // original env and the chain does not grow per iteration.
+                    let parent = self.frames.last().and_then(|f| {
+                        self.heap.with_obj(f.env.0, |o| {
+                            if let HeapObj::Environment(e) = o {
+                                *e.parent.borrow()
+                            } else {
+                                None
+                            }
+                        })
+                    });
+                    if let Some(p) = parent {
+                        self.frames.last_mut().unwrap().env = p;
+                    }
                 }
                 Op::Dup => {
                     let v = self.stack.last().cloned().unwrap_or(Value::Undefined);
