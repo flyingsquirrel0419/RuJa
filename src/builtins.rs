@@ -1562,6 +1562,108 @@ fn global_eval(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
     vm.eval_indirect(&src)
 }
 
+/// `new Function(p0, p1, ..., body)`: dynamically build a function from a
+/// parameter list and a body source string. The last argument is the body;
+/// earlier arguments are parameter names (comma-separated within each).
+fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    use crate::ast::FunctionExpr;
+    use crate::value::{FunctionData, FunctionKind};
+    use std::rc::Rc;
+
+    // Build the parameter source: all args except the last, joined by commas.
+    let (params_src, body_src) = if args.is_empty() {
+        (String::new(), String::new())
+    } else if args.len() == 1 {
+        (String::new(), vm.to_string(&args[0])?.to_string())
+    } else {
+        let body = vm.to_string(&args[args.len() - 1])?.to_string();
+        let params = args[..args.len() - 1]
+            .iter()
+            .map(|a| vm.to_string(a).map(|s| s.to_string()))
+            .collect::<error::Result<Vec<String>>>()?
+            .join(",");
+        (params, body)
+    };
+
+    // Parse params + body together by wrapping in `function _f(PARAMS){ BODY }`,
+    // so directives (e.g. "use strict") in the body are honored and the body
+    // is parsed as a function statement list (not a top-level block).
+    let wrapped = format!("function _f({}) {{ {} }}", params_src, body_src);
+    let prog = crate::parser::Parser::parse(&wrapped)?;
+    let params_fn = prog
+        .body
+        .into_iter()
+        .find_map(|st| match st {
+            crate::ast::Stmt::FunctionDecl(f) => Some(f),
+            _ => None,
+        })
+        .ok_or_else(|| error::Error::syntax("invalid Function body".to_string()))?;
+    let params = params_fn.params;
+    let param_defaults = params_fn.param_defaults;
+    let rest_param = params_fn.rest_param;
+    let body = params_fn.body;
+    // The parser already applied directive-inherited strictness; a body-level
+    // "use strict" is reflected in the parsed function (is_strict).
+    let is_strict = params_fn.is_strict;
+    let f = FunctionExpr {
+        name: Some(Rc::from("anonymous")),
+        params,
+        param_defaults,
+        rest_param,
+        body,
+        is_arrow: false,
+        is_async: false,
+        is_generator: false,
+        param_decls: Vec::new(),
+        is_strict,
+    };
+    let mut compiler = crate::compiler::Compiler::new();
+    let (chunk, param_slots) = compiler.compile_function(&f)?;
+    let fdef = std::rc::Rc::new(crate::function::FunctionDef {
+        name: Some(Rc::from("anonymous")),
+        params: f.params.clone(),
+        param_slots,
+        rest_param: f.rest_param.clone(),
+        chunk: std::rc::Rc::new(chunk),
+        num_locals: f.params.len() + 16,
+        is_arrow: false,
+        is_async: false,
+        is_generator: false,
+    });
+    vm.functions.push(fdef.clone());
+    let func_idx = vm.functions.len() - 1;
+    // Create the function object with a fresh prototype.
+    let proto = HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: None,
+    });
+    let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)));
+    let fd = FunctionData {
+        name: Some(Rc::from("anonymous")),
+        kind: FunctionKind::Interpreted { func: fdef },
+        closure: vm.global,
+        prototype: RefCell::new(Some(proto_val.clone())),
+        props: RefCell::new(IndexMap::new()),
+    };
+    let f_idx = vm.heap.allocate(HeapObj::Function(fd));
+    // link prototype.constructor back to the function
+    if let Value::Object(pidx) = &proto_val {
+        vm.heap.with_obj(pidx.0, |obj| {
+            let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(f_idx)));
+            desc.enumerable = false;
+            obj.props()
+                .borrow_mut()
+                .insert(crate::value::PropertyKey::from("constructor"), desc);
+        });
+    }
+    // Emit MakeClosure at top level is not needed; the function object is
+    // already fully formed. We do NOT push a frame; the caller invokes it.
+    let _ = func_idx;
+    Ok(Value::Object(GcIdx(f_idx)))
+}
+
 // =========================================================================
 // Array prototype + constructor
 // =========================================================================
@@ -3313,6 +3415,9 @@ pub fn setup_full(vm: &mut Vm) {
         });
     }
     vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));
+    // Function constructor: new Function(p0, ..., body)
+    let function_ctor_idx = vm.new_native_function("Function", function_constructor, 1);
+    define_global(vm, "Function", Value::Object(function_ctor_idx));
     setup_collections(vm);
 }
 

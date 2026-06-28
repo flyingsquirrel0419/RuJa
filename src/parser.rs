@@ -147,7 +147,7 @@ impl Parser {
     /// expression statements) and return true if a `"use strict"` directive
     /// is present. Per spec, only the leading run of string-literal
     /// expression statements counts; the first non-directive statement ends it.
-    fn scan_directive_prologue(body: &[Stmt]) -> bool {
+    pub fn scan_directive_prologue(body: &[Stmt]) -> bool {
         for stmt in body {
             match stmt {
                 Stmt::ExprStmt(Expr::String(s)) if s.as_ref() == "use strict" => {

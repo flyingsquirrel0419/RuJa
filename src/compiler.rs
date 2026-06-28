@@ -816,7 +816,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
+    pub fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
         let saved_chunk = std::mem::take(&mut self.chunk);
         let saved_names = std::mem::take(&mut self.name_map);
         self.scopes.push(Scope {
