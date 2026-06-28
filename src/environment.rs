@@ -25,26 +25,54 @@ pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> G
 /// classic `for (let i...) out.push(()=>i)` case). `var` bindings are not
 /// copied (they belong to the function scope, not the loop).
 pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
-    // The child's parent is `env`'s parent (not `env` itself), so that
-    // repeated per-iteration cloning does not grow the environment chain
-    // one link per iteration (which would overflow the GC mark stack on
-    // long loops). `env`'s own let/const bindings are copied into `child`,
-    // so the loop variable is rebound each iteration while outer scopes
-    // remain reachable through the (unchanged) parent chain.
-    let parent = heap.with_obj(env.0, |obj| {
-        if let HeapObj::Environment(e) = obj {
-            *e.parent.borrow()
-        } else {
-            None
-        }
-    });
-    let child = new_env(heap, parent, false);
+    // The child's parent is `env` itself. The body runs in `child` (so
+    // closures capture a per-iteration binding), then the frame env is
+    // restored to `env` (child's parent) before the update runs, so the
+    // chain does not grow across iterations and outer scopes stay reachable.
+    let child = new_env(heap, Some(env), false);
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             let vars = e.vars.borrow();
             let cloned: Vec<(Rc<str>, crate::value::Binding)> = vars
                 .iter()
                 .filter(|(_, b)| b.kind != BindingKind::Var)
+                .map(|(k, b)| {
+                    (
+                        k.clone(),
+                        crate::value::Binding {
+                            value: RefCell::new(b.value.borrow().clone()),
+                            kind: b.kind,
+                            initialized: Cell::new(b.initialized.get()),
+                        },
+                    )
+                })
+                .collect();
+            drop(vars);
+            heap.with_obj(child.0, |cobj| {
+                if let HeapObj::Environment(ce) = cobj {
+                    for (k, b) in cloned {
+                        ce.vars.borrow_mut().insert(k, b);
+                    }
+                }
+            });
+        }
+    });
+    child
+}
+
+/// Per-iteration environment for `for (let ...)`: copy ONLY the named loop
+/// variables into a fresh child env whose parent is `env`. Outer `let`s are
+/// NOT copied, so mutations to them in the body persist in `env` (via the
+/// chain). Each iteration's closures capture a distinct binding for the loop
+/// variable while sharing the rest of the scope.
+pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Rc<str>]) -> GcIdx {
+    let child = new_env(heap, Some(env), false);
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            let vars = e.vars.borrow();
+            let cloned: Vec<(Rc<str>, crate::value::Binding)> = vars
+                .iter()
+                .filter(|(k, _)| names.iter().any(|n| n.as_ref() == k.as_ref()))
                 .map(|(k, b)| {
                     (
                         k.clone(),

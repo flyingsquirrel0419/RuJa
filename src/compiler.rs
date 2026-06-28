@@ -577,10 +577,34 @@ impl Compiler {
                         ..
                     })
                 );
+                // Collect the loop's declared lexical names so only those are
+                // rebound per iteration (outer lets are shared via the chain).
+                let loop_names: Vec<Rc<str>> = match init.as_ref().map(|s| &s.node) {
+                    Some(StmtNode::VarDecl {
+                        kind: VarKind::Let | VarKind::Const,
+                        decls,
+                        ..
+                    }) => decls.iter().map(|(n, _)| n.clone()).collect(),
+                    _ => Vec::new(),
+                };
+                let loop_names_idx = if loop_names.is_empty() {
+                    usize::MAX
+                } else {
+                    let idx = self.chunk.let_names.len();
+                    self.chunk.let_names.push(loop_names);
+                    idx
+                };
                 if per_iteration_let {
-                    self.chunk.emit(Op::CloneLetEnv, self.current_line);
+                    self.chunk
+                        .emit(Op::CloneLetNames(loop_names_idx), self.current_line);
                 }
                 self.compile_stmt(body)?;
+                // Restore the frame env to the loop-scope env (the CloneLetEnv
+                // child's parent) so the update and next iteration run in the
+                // original env and the chain does not grow per iteration.
+                if per_iteration_let {
+                    self.chunk.emit(Op::RestoreParentEnv, self.current_line);
+                }
                 let continue_target = self.chunk.code.len();
                 if let Some(u) = update {
                     self.compile_expr(u)?;

@@ -4,12 +4,17 @@
 //! stack, and operations consume from the top.
 
 use crate::value::Value;
+use std::rc::Rc;
 
 /// A compiled function's bytecode.
 #[derive(Clone)]
 pub struct Chunk {
     pub code: Vec<Op>,
     pub constants: Vec<Value>,
+    /// Per-iteration `for (let ...)` loop variable name lists, referenced by
+    /// `Op::CloneLetNames(idx)`. Each entry is the set of names declared in the
+    /// loop's `let`/`const` init that must be rebound per iteration.
+    pub let_names: Vec<Vec<Rc<str>>>,
     /// Source spans for error reporting (ip -> line).
     pub lines: Vec<(usize, usize)>,
     /// Whether this chunk was compiled under strict-mode rules. The VM uses
@@ -22,6 +27,7 @@ impl Chunk {
         Chunk {
             code: Vec::new(),
             constants: Vec::new(),
+            let_names: Vec::new(),
             lines: Vec::new(),
             is_strict: false,
         }
@@ -236,7 +242,15 @@ pub enum Op {
     /// frame env's lexical bindings into a fresh child env and make that
     /// child the active frame env. Each iteration's closures capture a
     /// distinct binding (the classic `for (let i) out.push(()=>i)` case).
-    CloneLetEnv,
+    /// Per-iteration environment for `for (let ...)`: clone ONLY the loop's
+    /// declared `let`/`const` variables (referenced by `let_names[idx]`) into a
+    /// fresh child env whose parent is the current env. Other bindings stay
+    /// reachable through the chain so mutations to outer `let`s persist.
+    CloneLetNames(usize),
+    /// Restore the frame env to the current env's parent (undo a CloneLetEnv
+    /// after the loop body so the update and next iteration's cond run in the
+    /// original loop-scope env, and the env chain does not grow per iteration).
+    RestoreParentEnv,
     DeclareVar(usize), // name index
     DeclareLet(usize),
     DeclareConst(usize),
