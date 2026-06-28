@@ -1,5 +1,10 @@
 # RuJa
 
+[![CI](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml/badge.svg)](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/ruja.svg)](https://crates.io/crates/ruja)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+
 [English](../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
 用 Rust 编写的 JavaScript 引擎 — **字节码 VM** + **标记清除 GC**，**零外部依赖**。
@@ -59,3 +64,7 @@ fn main() {
 ## 许可证
 
 Apache-2.0
+
+---
+
+⭐ 如果你觉得 RuJa 有用，请在 GitHub 上点个 Star — 帮助更多人发现这个项目。

@@ -1,5 +1,10 @@
 # RuJa
 
+[![CI](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml/badge.svg)](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/ruja.svg)](https://crates.io/crates/ruja)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+
 [English](../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
 Un motor de JavaScript escrito en Rust — **VM de bytecode** + **recolector de basura mark-and-sweep**,
@@ -62,3 +67,7 @@ fn main() {
 ## Licencia
 
 Apache-2.0
+
+---
+
+⭐ Si RuJa te resulta útil, por favor considera darle una estrella en GitHub — ayuda a otros a descubrir el proyecto.

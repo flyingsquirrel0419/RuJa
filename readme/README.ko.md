@@ -1,5 +1,10 @@
 # RuJa
 
+[![CI](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml/badge.svg)](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/ruja.svg)](https://crates.io/crates/ruja)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+
 [English](../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [日本語](README.ja.md) · [中文](README.zh.md)
 
 Rust로 작성된 JavaScript 엔진 — **바이트코드 VM** + **마크 앤 스윕 GC**,
@@ -61,3 +66,7 @@ fn main() {
 ## 라이선스
 
 Apache-2.0
+
+---
+
+⭐ RuJa가 도움이 되셨다면 GitHub에서 별을 눌러주세요 — 다른 사람들이 이 프로젝트를 발견하는 데 도움이 됩니다.

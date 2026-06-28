@@ -1,5 +1,10 @@
 # RuJa
 
+[![CI](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml/badge.svg)](https://github.com/flyingsquirrel0419/RuJa/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/ruja.svg)](https://crates.io/crates/ruja)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+
 [English](README.md) · [한국어](readme/README.ko.md) · [Español](readme/README.es.md) · [日本語](readme/README.ja.md) · [中文](readme/README.zh.md)
 
 A JavaScript engine written in Rust — **bytecode VM** + **mark-and-sweep GC**,
@@ -62,3 +67,7 @@ fn main() {
 ## License
 
 Apache-2.0
+
+---
+
+⭐ If you find RuJa useful, please consider giving it a star on GitHub — it helps others discover the project.
