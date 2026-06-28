@@ -25,7 +25,20 @@ pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> G
 /// classic `for (let i...) out.push(()=>i)` case). `var` bindings are not
 /// copied (they belong to the function scope, not the loop).
 pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
-    let child = new_env(heap, Some(env), false);
+    // The child's parent is `env`'s parent (not `env` itself), so that
+    // repeated per-iteration cloning does not grow the environment chain
+    // one link per iteration (which would overflow the GC mark stack on
+    // long loops). `env`'s own let/const bindings are copied into `child`,
+    // so the loop variable is rebound each iteration while outer scopes
+    // remain reachable through the (unchanged) parent chain.
+    let parent = heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            *e.parent.borrow()
+        } else {
+            None
+        }
+    });
+    let child = new_env(heap, parent, false);
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             let vars = e.vars.borrow();
