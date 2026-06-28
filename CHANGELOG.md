@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-06-28
+## [0.2.1-alpha] - 2026-06-28
 
 ### Fixed
 - **GC root safety**: `collect_roots` now roots the microtask queue (Promise
