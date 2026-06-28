@@ -31,6 +31,13 @@ Legend: `[ ]` pending, `[~]` in progress, `[x]` done.
 10. [x] Computed/numeric keys in declaration destructuring (`let {[k]: a} = o`)
 11. [x] Default-parameter reverse-order TDZ (`function f(a = b, b = 2)` throws)
 12. [x] `with` statement `this` rebinding for unqualified calls
+13. [x] Strict mode directive prologue (`"use strict"`) + `with` rejection + duplicate-param rejection
+14. [x] Generator `throw`/`return` injection at yield points
+15. [x] `for await...of` async iteration (`Symbol.asyncIterator`)
+16. [x] Direct eval lexical-environment isolation (`let`/`const` don't leak)
+17. [x] Iterator protocol for array destructuring patterns
+18. [x] `Function` constructor (`new Function(p..., body)`)
+19. [x] Strict eval minimal sandbox (no `var` leak under strict mode)
 
 ## v1.0 - Tree-walking interpreter (archived)
 
@@ -38,21 +45,22 @@ Completed and tagged as v0.1.0-alpha. See v1-archive branch.
 
 ## Remaining known limitations (post v2.1)
 
-- **`for await...of`** is not supported; it now emits a clear `SyntaxError`
-  ("for await...of is not supported") instead of a confusing parse error.
-- **`yield*` delegation** forwards resume values and the delegated return
-  value correctly, but `throw(v)` / `return(v)` sent *into* a delegated
-  generator (via `yield*`) are not yet propagated to the inner generator.
+- **`yield*` throw/return propagation**: a `throw(v)`/`return(v)` sent into a
+  delegated generator (via `yield*`) is not yet forwarded to the inner
+  generator's `throw`/`return` (the direct `g.throw`/`g.return` work).
 - **Async generator scheduling** uses the synchronous microtask-drain model
   (a pending Promise is awaited by draining microtasks until it settles);
   there is no real event-loop preemption.
-- **Direct eval lexical-environment isolation**: direct `eval` runs in the
-  caller environment directly, so `let`/`const` declared inside `eval` leak
-  to the caller (the spec's separate eval lexical environment, with an
-  isolated operand stack, is a follow-up). `var`/function declarations
-  leak to the caller's function scope as expected.
-- **`with` in strict mode** is not rejected (strict mode is not implemented).
-- **Array destructuring of custom iterables** still uses index access rather
-  than the iterator protocol (only `for...of`/spread use `Symbol.iterator`).
-- **`Function` constructor** dynamic compilation is not exposed.
-- **`eval`/`with` security sandbox** is absent (local execution assumed).
+- **Strict-mode edge cases**: `with` is rejected in strict mode and duplicate
+  params are rejected, but some strict-mode behaviors (e.g. strict `this`
+  defaulting, `arguments`/parameter mapping restrictions, `eval`/`arguments`
+  as binding names) are not fully enforced. RuJa's `this` defaults to
+  `undefined` in all modes by design.
+- **Top-level eval `var` under strict mode**: in-function strict eval does not
+  leak `var`, but a top-level strict eval still routes `var` through the global
+  slot path (the eval source compiles as a top-level program).
+- **Nested array-of-generator destructuring**: `[a, [b, c]] = gen()` where the
+  generator yields arrays has a residual edge case; the common destructuring
+  cases (arrays, generators, custom iterables, strings, rest) work.
+- **`eval`/`with` security sandbox**: there is no process-level isolation;
+  execution is local-trust by design.
