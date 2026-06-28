@@ -48,6 +48,15 @@
   normalized (trailing zeros and a dangling `.` stripped) and the exponent
   digits are stripped of leading zeros, so output stays correct regardless
   of how the formatter rounds a given value.
+- **`String()`/`Number()`/`Boolean()` as functions return primitives**:
+  previously these routed through the generic `Object` constructor and
+  returned `[object Object]` for every input. They now use dedicated
+  constructors: `String(x)` returns the ToString coercion (`String()` is `""`),
+  `Number(x)` returns the ToNumber coercion (`Number()` is `0`,
+  `Number(undefined)` is `NaN`), and `Boolean(x)` returns the ToBoolean
+  coercion. `new String/Number/Boolean(x)` still constructs an object with the
+  correct prototype (RuJa does not model wrapper-object internal slots, so the
+  primitive is not stored, but `typeof new String(5)` is now `"object"`).
 
 ### Changed
 - **README `Known limitations`** rewritten to reflect the implemented state

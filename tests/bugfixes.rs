@@ -239,3 +239,81 @@ fn array_length_valid_truncates_and_extends() {
            a.length + ':' + (a[2] === undefined ? 'hole' : 'val');"#);
     assert_eq!(v, Value::String(std::rc::Rc::from("3:hole")));
 }
+
+// ---------------------------------------------------------------------------
+// #6 String()/Number()/Boolean() as functions return primitives
+// (previously returned [object Object] via the generic object_constructor)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn string_as_function_returns_primitive() {
+    // String(x) is ToString(x); must be a primitive string, not an object.
+    assert_eq!(
+        run("typeof String(5) + ':' + String(5)"),
+        Value::String(std::rc::Rc::from("string:5"))
+    );
+    // exponential value routes through num_to_string.
+    assert_eq!(
+        run("String(5e-17)"),
+        Value::String(std::rc::Rc::from("5e-17"))
+    );
+    assert_eq!(
+        run("String(true)"),
+        Value::String(std::rc::Rc::from("true"))
+    );
+    assert_eq!(
+        run("String(null)"),
+        Value::String(std::rc::Rc::from("null"))
+    );
+    assert_eq!(
+        run("String(undefined)"),
+        Value::String(std::rc::Rc::from("undefined"))
+    );
+}
+
+#[test]
+fn string_with_no_argument_is_empty_string() {
+    // `String()` is "", distinct from `String(undefined)` which is "undefined".
+    assert_eq!(run("String()"), Value::String(std::rc::Rc::from("")));
+}
+
+#[test]
+fn number_as_function_returns_primitive() {
+    assert_eq!(run("Number('42')"), Value::Number(42.0));
+    // Number(undefined) -> NaN
+    match run("Number(undefined)") {
+        Value::Number(n) => assert!(n.is_nan(), "expected NaN"),
+        v => panic!("expected number, got {:?}", v),
+    }
+}
+
+#[test]
+fn number_with_no_argument_is_zero() {
+    // `Number()` is 0, distinct from `Number(undefined)` which is NaN.
+    assert_eq!(run("Number()"), Value::Number(0.0));
+}
+
+#[test]
+fn boolean_as_function_returns_primitive() {
+    assert_eq!(run("Boolean(0)"), Value::Bool(false));
+    assert_eq!(run("Boolean('x')"), Value::Bool(true));
+    assert_eq!(run("Boolean()"), Value::Bool(false));
+    assert_eq!(run("Boolean(null)"), Value::Bool(false));
+}
+
+#[test]
+fn new_string_number_boolean_return_objects() {
+    // `new` must produce objects (typeof "object"), not primitives.
+    assert_eq!(
+        run("typeof new String(5)"),
+        Value::String(std::rc::Rc::from("object"))
+    );
+    assert_eq!(
+        run("typeof new Number(5)"),
+        Value::String(std::rc::Rc::from("object"))
+    );
+    assert_eq!(
+        run("typeof new Boolean(5)"),
+        Value::String(std::rc::Rc::from("object"))
+    );
+}

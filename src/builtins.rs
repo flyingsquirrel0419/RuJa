@@ -3115,15 +3115,31 @@ fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         .collect();
     Ok(Value::String(Rc::from(s.as_str())))
 }
-fn string_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(
-        vm.to_string(args.first().unwrap_or(&Value::Undefined))?,
-    ))
+fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    // `new String(x)` returns the constructed wrapper object (the primitive
+    // is not stored because RuJa does not model wrapper objects, but the
+    // prototype is correct). A normal call passes `this` as
+    // `Some(Undefined)`, so detect `new` by checking for an object `this`.
+    if let Some(Value::Object(_)) = this {
+        return Ok(this.unwrap());
+    }
+    // `String()` with no argument yields "" (per spec), distinct from
+    // `String(undefined)` which yields "undefined".
+    match args.first() {
+        None => Ok(Value::String(Rc::from(""))),
+        Some(v) => Ok(Value::String(vm.to_string(v)?)),
+    }
 }
-fn number_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Number(
-        vm.to_number(args.first().unwrap_or(&Value::Undefined))?,
-    ))
+fn number_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(_)) = this {
+        return Ok(this.unwrap());
+    }
+    // `Number()` with no argument yields 0 (per spec), distinct from
+    // `Number(undefined)` which yields NaN.
+    match args.first() {
+        None => Ok(Value::Number(0.0)),
+        Some(v) => Ok(Value::Number(vm.to_number(v)?)),
+    }
 }
 
 fn number_is_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -3227,7 +3243,10 @@ fn format_i64_radix(n: i64, radix: u32) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn boolean_constructor(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+fn boolean_constructor(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(_)) = this {
+        return Ok(this.unwrap());
+    }
     Ok(Value::Bool(
         args.first().unwrap_or(&Value::Undefined).is_truthy(),
     ))
@@ -3302,9 +3321,10 @@ pub fn setup_full(vm: &mut Vm) {
         });
     }
     // String
-    let (str_ctor, str_proto) = make_builtin_constructor(
+    let (str_ctor, str_proto) = make_builtin_constructor_with(
         vm,
         "String",
+        string_constructor,
         &[
             ("charAt", str_char_at, 1),
             ("charCodeAt", str_char_code_at, 1),
@@ -3332,9 +3352,10 @@ pub fn setup_full(vm: &mut Vm) {
     vm.string_proto = Value::Object(str_proto);
     define_global(vm, "String", Value::Object(str_ctor));
     // Number
-    let (num_ctor, num_proto) = make_builtin_constructor(
+    let (num_ctor, num_proto) = make_builtin_constructor_with(
         vm,
         "Number",
+        number_constructor,
         &[
             ("toFixed", num_to_fixed, 1),
             ("toString", num_proto_to_string, 1),
@@ -3383,7 +3404,8 @@ pub fn setup_full(vm: &mut Vm) {
     });
     define_global(vm, "Number", Value::Object(num_ctor));
     // Boolean
-    let (bool_ctor, bool_proto) = make_builtin_constructor(vm, "Boolean", &[]);
+    let (bool_ctor, bool_proto) =
+        make_builtin_constructor_with(vm, "Boolean", boolean_constructor, &[]);
     vm.boolean_proto = Value::Object(bool_proto);
     define_global(vm, "Boolean", Value::Object(bool_ctor));
     // globals
