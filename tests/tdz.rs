@@ -208,3 +208,62 @@ fn default_param_cross_reference_works() {
     "#;
     assert_eq!(run(src), ruja::Value::Number(11.0));
 }
+
+// ---- lexical duplicate declaration checking (#9) ----
+
+#[test]
+fn let_let_redecl_is_syntax_error() {
+    let mut vm = ruja::Vm::new();
+    match vm.run("{ let a = 1; let a = 2; }") {
+        Err(e) => assert!(
+            e.to_string().contains("already been declared"),
+            "got: {}",
+            e
+        ),
+        Ok(v) => panic!("expected error, got {:?}", v),
+    }
+}
+
+#[test]
+fn const_redecl_is_syntax_error() {
+    let mut vm = ruja::Vm::new();
+    match vm.run("{ const a = 1; const a = 2; }") {
+        Err(e) => assert!(e.to_string().contains("already been declared")),
+        Ok(v) => panic!("expected error, got {:?}", v),
+    }
+}
+
+#[test]
+fn var_var_redecl_allowed() {
+    assert_eq!(run("var x = 1; var x = 2; x;"), ruja::Value::Number(2.0));
+}
+
+#[test]
+fn let_then_var_redecl_is_error() {
+    let mut vm = ruja::Vm::new();
+    match vm.run("{ let a = 1; var a = 2; }") {
+        Err(e) => assert!(e.to_string().contains("already been declared")),
+        Ok(v) => panic!("expected error, got {:?}", v),
+    }
+}
+
+#[test]
+fn param_let_shadow_is_error() {
+    let mut vm = ruja::Vm::new();
+    match vm.run("function f(a = 1) { let a = 2; return a; } f();") {
+        Err(e) => assert!(e.to_string().contains("already been declared")),
+        Ok(v) => panic!("expected error, got {:?}", v),
+    }
+}
+
+#[test]
+fn nested_scope_same_name_ok() {
+    // Same name in different (nested) scopes is allowed (no redeclaration error).
+    let mut vm = ruja::Vm::new();
+    let r = vm.run("{ let a = 1; { let a = 2; } a; }");
+    assert!(
+        r.is_ok(),
+        "nested same-name should be allowed, got: {:?}",
+        r
+    );
+}

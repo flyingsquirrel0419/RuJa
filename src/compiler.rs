@@ -94,7 +94,7 @@ impl Compiler {
             } = stmt
             {
                 for (name, _) in decls {
-                    self.declare(name, VarKind::Var);
+                    self.declare(name, VarKind::Var)?;
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.emit(Op::Const(name_idx), 0);
                     self.chunk.emit(Op::StoreGlobal, 0);
@@ -105,7 +105,7 @@ impl Compiler {
         // level, so accessing them before the declaration throws ReferenceError.
         {
             let lex = Self::collect_lexical_names(&program.body);
-            self.emit_lexical_hoist(&lex);
+            self.emit_lexical_hoist(&lex)?;
         }
         for (i, stmt) in program.body.iter().enumerate() {
             // Function declarations were hoisted above; skip them in the body pass.
@@ -203,14 +203,25 @@ impl Compiler {
         }
     }
 
-    fn declare(&mut self, name: &str, kind: VarKind) {
+    fn declare(&mut self, name: &str, kind: VarKind) -> error::Result<()> {
         if let Some(scope) = self.scopes.last_mut() {
-            if scope.bindings.contains_key(name) {
-                return;
+            if let Some((_, existing_kind)) = scope.bindings.get(name) {
+                // `var` may redeclare `var` (spec allows it). Any other
+                // redeclaration in the same lexical scope is a SyntaxError.
+                let ok = *existing_kind == VarKind::Var && kind == VarKind::Var;
+                if !ok {
+                    return Err(error::Error::syntax(format!(
+                        "Identifier '{}' has already been declared",
+                        name
+                    )));
+                }
+                // var-on-var: keep the existing slot/kind.
+                return Ok(());
             }
             let slot = scope.base + scope.bindings.len();
             scope.bindings.insert(name.to_string(), (slot, kind));
         }
+        Ok(())
     }
 
     /// Collect all binding names introduced by a destructuring pattern.
@@ -263,15 +274,16 @@ impl Compiler {
     /// Emit TDZ (uninitialized) declarations for lexical bindings at scope entry.
     /// Also registers them in the compiler's scope table so `resolve` works and
     /// later `declare` calls for the same name are no-ops (preventing slot reuse).
-    fn emit_lexical_hoist(&mut self, names: &[(Rc<str>, VarKind)]) {
+    fn emit_lexical_hoist(&mut self, names: &[(Rc<str>, VarKind)]) -> error::Result<()> {
         for (name, kind) in names {
-            self.declare(name, *kind);
+            self.declare(name, *kind)?;
             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
             match kind {
                 VarKind::Const => self.chunk.emit(Op::DeclareConstUninit(name_idx), 0),
                 _ => self.chunk.emit(Op::DeclareLetUninit(name_idx), 0),
             }
         }
+        Ok(())
     }
 
     fn resolve(&self, name: &str) -> Option<(usize, VarKind)> {
@@ -308,7 +320,7 @@ impl Compiler {
                     if *kind == VarKind::Var {
                         // `var` is function-scoped: declare at the function-scope root
                         // (or global at top level), regardless of block nesting.
-                        self.declare(name, *kind);
+                        self.declare(name, *kind)?;
                         let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                         if self.scopes.len() == 1 {
                             // top-level var: store as global
@@ -355,7 +367,7 @@ impl Compiler {
                     } = s
                     {
                         for (name, _) in decls {
-                            self.declare(name, VarKind::Var);
+                            self.declare(name, VarKind::Var)?;
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                             if self.scopes.len() == 1 {
                                 self.chunk.emit(Op::Const(name_idx), 0);
@@ -371,7 +383,7 @@ impl Compiler {
                 // entry, so accessing them before the declaration throws ReferenceError.
                 {
                     let lex = Self::collect_lexical_names(body);
-                    self.emit_lexical_hoist(&lex);
+                    self.emit_lexical_hoist(&lex)?;
                 }
                 for s in body {
                     if matches!(s, Stmt::FunctionDecl(_)) {
@@ -530,7 +542,7 @@ impl Compiler {
                 }
                 self.push_scope(true);
                 if let Some(param) = catch_param {
-                    self.declare(param, VarKind::Let);
+                    self.declare(param, VarKind::Let)?;
                     let name_idx = self.intern(param);
                     self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                 }
@@ -671,7 +683,7 @@ impl Compiler {
             Stmt::VarDecl { kind, decls } => {
                 // Single declarator: bind the on-stack value as a let/const in the loop scope.
                 if let Some((name, _)) = decls.first() {
-                    self.declare(name, *kind);
+                    self.declare(name, *kind)?;
                     let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
                     self.chunk.emit(Op::DeclareEnv(name_idx), 0);
                 } else {
@@ -728,7 +740,7 @@ impl Compiler {
             is_with: false,
         });
         for param in f.params.iter() {
-            self.declare(param, VarKind::Let);
+            self.declare(param, VarKind::Let)?;
             // param is in slot i (VM stores args to locals[0..n])
         }
         // Parameter defaults: for each param with a default, if it is undefined,
@@ -773,7 +785,7 @@ impl Compiler {
             } = stmt
             {
                 for (name, _) in decls {
-                    self.declare(name, VarKind::Var);
+                    self.declare(name, VarKind::Var)?;
                     let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.emit(Op::Undefined, 0);
                     self.chunk.emit(Op::DeclareVar(name_idx), 0);
@@ -784,7 +796,7 @@ impl Compiler {
         // entry, so accessing them before the declaration throws ReferenceError.
         {
             let lex = Self::collect_lexical_names(&f.body);
-            self.emit_lexical_hoist(&lex);
+            self.emit_lexical_hoist(&lex)?;
         }
         for stmt in &f.body {
             self.compile_stmt(stmt)?;
