@@ -76,6 +76,14 @@ pub struct CallFrame {
     /// in this frame throws `e` at the suspended `yield` point instead of
     /// pushing a resume value. Consumed on first use.
     pub force_throw: Cell<Option<Value>>,
+    /// Pending completion to re-raise after a `finally` block runs.
+    /// Tag: 0 normal, 1 return, 2 break, 3 continue, 4 throw.
+    pub finally_completion_tag: Cell<u8>,
+    pub finally_completion_val: RefCell<Value>,
+    /// Stack of finally-target-ips for nested active `try/finally`. A
+    /// non-local transfer (return/break/continue/throw) that hits an active
+    /// finally diverts to the finally target after recording its completion.
+    pub finally_stack: Vec<usize>,
 }
 
 impl CallFrame {
@@ -93,6 +101,9 @@ impl CallFrame {
             gen_resume_value: RefCell::new(Value::Undefined),
             pending_with_this: Cell::new(None),
             force_throw: Cell::new(None),
+            finally_completion_tag: Cell::new(0),
+            finally_completion_val: RefCell::new(Value::Undefined),
+            finally_stack: Vec::new(),
         }
     }
 }
@@ -1517,6 +1528,19 @@ impl Vm {
                 }
                 Op::Return => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    // If a `finally` is active, suspend the return across it:
+                    // record the completion (tag 1) and divert to the finally
+                    // target, popping the finally entry so the finally body's
+                    // own transfers aren't re-intercepted by this finally.
+                    if let Some(frame) = self.frames.last_mut() {
+                        if let Some(&target) = frame.finally_stack.last() {
+                            frame.finally_completion_tag.set(1);
+                            *frame.finally_completion_val.borrow_mut() = v;
+                            frame.finally_stack.pop();
+                            frame.ip = target;
+                            continue;
+                        }
+                    }
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(v);
@@ -1695,6 +1719,83 @@ impl Vm {
                 }
                 Op::PopTry => {
                     self.frames.last_mut().unwrap().catch_stack.pop();
+                }
+                Op::PushFinally(target) => {
+                    // Begin guarding try/catch with a finally: record the
+                    // finally entry so non-local transfers divert to it.
+                    self.frames.last_mut().unwrap().finally_stack.push(target);
+                }
+                Op::PopFinally => {
+                    // The guarded region completed normally; drop the finally
+                    // guard. A pending completion from inside the region was
+                    // already popped when the transfer diverted to finally.
+                    self.frames.last_mut().unwrap().finally_stack.pop();
+                }
+                Op::PopFinallyRethrow => {
+                    // The finally body has run. Re-raise the pending
+                    // completion (return/break/continue/throw) that diverted
+                    // here, if any. A normal completion (tag 0) falls through.
+                    let (tag, val) = {
+                        let f = self.frames.last().unwrap();
+                        (
+                            f.finally_completion_tag.get(),
+                            f.finally_completion_val.borrow().clone(),
+                        )
+                    };
+                    {
+                        let f = self.frames.last_mut().unwrap();
+                        f.finally_completion_tag.set(0);
+                        *f.finally_completion_val.borrow_mut() = Value::Undefined;
+                    }
+                    match tag {
+                        0 => {} // normal: continue
+                        1 => {
+                            // return
+                            {
+                                let frame = self.frames.last_mut().unwrap();
+                                frame.finally_stack.pop();
+                            }
+                            // Re-run the return semantics now that no finally
+                            // guards it.
+                            self.frames.pop();
+                            if self.frames.is_empty() {
+                                return Ok(val);
+                            }
+                            if let Some(d) = return_depth {
+                                if self.frames.len() <= d {
+                                    return Ok(val);
+                                }
+                            }
+                            self.stack.push(val);
+                        }
+                        4 => {
+                            // throw
+                            let frame = self.frames.last_mut().unwrap();
+                            frame.finally_stack.pop();
+                            // If an outer try catches, route there; else propagate.
+                            if let Some(handler) = frame.catch_stack.last().copied() {
+                                frame.catch_stack.pop();
+                                frame.ip = handler;
+                                self.stack.push(val);
+                                continue;
+                            }
+                            return Err(Error::thrown(val, &self.heap));
+                        }
+                        // 2 (break) / 3 (continue): re-issue the recorded
+                        // transfer by jumping to its saved target. These are
+                        // recorded as the loop's break/continue ip.
+                        2 | 3 => {
+                            let frame = self.frames.last_mut().unwrap();
+                            frame.finally_stack.pop();
+                            let target = match val {
+                                Value::Number(n) => n as usize,
+                                _ => usize::MAX,
+                            };
+                            frame.ip = target;
+                            continue;
+                        }
+                        _ => {}
+                    }
                 }
                 Op::EnterCatch => {
                     // pop the thrown value and bind it; the compiler already

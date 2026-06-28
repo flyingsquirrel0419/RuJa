@@ -507,3 +507,49 @@ fn labeled_statement_runs_body() {
     let v = run("label1: { var ran = 'yes' }; ran");
     assert_eq!(v, Value::String(std::rc::Rc::from("yes")));
 }
+
+// ---------------------------------------------------------------------------
+// #5 try/finally control flow (return/throw override)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn finally_return_overrides_try_return() {
+    // finally's return must win over try's return.
+    let v = run("function f() { try { return 1; } finally { return 2; } } f()");
+    assert_eq!(v, Value::Number(2.0));
+}
+
+#[test]
+fn finally_runs_after_try_return() {
+    // finally must run even when try returns, and the try return still takes
+    // effect if finally doesn't return.
+    let v = run(r#"var log = [];
+           function f() { try { return 1; } finally { log.push('fin'); } }
+           var r = f();
+           r + ':' + log.join(',')"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("1:fin")));
+}
+
+#[test]
+fn finally_runs_after_catch() {
+    let v = run(r#"var r = [];
+           try { throw 1; } catch (e) { r.push('catch'); }
+           finally { r.push('fin'); }
+           r.join(',')"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("catch,fin")));
+}
+
+#[test]
+fn finally_return_overrides_catch_return() {
+    let v =
+        run("function f() { try { throw 1; } catch (e) { return 3; } finally { return 4; } } f()");
+    assert_eq!(v, Value::Number(4.0));
+}
+
+#[test]
+fn finally_runs_on_normal_completion() {
+    let v = run(r#"var r = [];
+           try { r.push('try'); } finally { r.push('fin'); }
+           r.join(',')"#);
+    assert_eq!(v, Value::String(std::rc::Rc::from("try,fin")));
+}

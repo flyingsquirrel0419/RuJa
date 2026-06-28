@@ -178,6 +178,10 @@ pub enum Op {
     EnterCatch,
     PushFinally(usize),
     PopFinally,
+    /// After a `finally` body runs, re-raise the pending non-local completion
+    /// (return/break/continue/throw) that diverted into the finally, if any.
+    /// A normal completion (tag 0) falls through.
+    PopFinallyRethrow,
 
     // Closures
     MakeClosure(usize), // function index, captures current env

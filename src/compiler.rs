@@ -644,22 +644,33 @@ impl Compiler {
                 catch_body,
                 finally_body,
             } => {
+                let has_finally = finally_body.is_some();
+                // --- try body, guarded by the catch handler (and finally guard) ---
                 let try_start = self.chunk.code.len();
-                self.chunk.emit(Op::PushTry(0), self.current_line); // placeholder
+                self.chunk.emit(Op::PushTry(0), self.current_line); // catch handler placeholder
+                if has_finally {
+                    // Push a finally guard whose target is patched to finally_start
+                    // below; non-local transfers (return/break/continue/throw) inside
+                    // try/catch divert to it with their completion recorded.
+                    self.chunk.emit(Op::PushFinally(0), self.current_line);
+                }
+                let finally_guard_ip = if has_finally {
+                    try_start + 1
+                } else {
+                    usize::MAX
+                };
                 self.compile_stmt(try_body)?;
                 self.chunk.emit(Op::PopTry, self.current_line);
-                // On normal completion of the try body, jump to the finally block (if any)
-                // or to the end.
+                if has_finally {
+                    self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
+                }
+                // Normal try completion -> jump to finally (or end).
                 let jump_past_catch = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), self.current_line);
+                // --- catch handler ---
                 let catch_start = self.chunk.code.len();
-                self.chunk.patch_jump(try_start, catch_start); // patch PushTry handler
-                                                               // patch the PushTry's handler ip
-                {
-                    let try_ip = try_start;
-                    if let Op::PushTry(ref mut h) = self.chunk.code[try_ip] {
-                        *h = catch_start;
-                    }
+                if let Op::PushTry(ref mut h) = self.chunk.code[try_start] {
+                    *h = catch_start;
                 }
                 self.push_scope(true);
                 if let Some(param) = catch_param {
@@ -669,16 +680,28 @@ impl Compiler {
                 }
                 self.compile_stmt(catch_body)?;
                 self.pop_scope();
-                // Patch the normal-try jump to land at the finally block (or end).
+                if has_finally {
+                    self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
+                }
+                // Normal catch completion -> jump to finally (or end).
+                let jump_past_catch2 = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), self.current_line);
+                // --- finally entry ---
                 let finally_start = self.chunk.code.len();
+                if has_finally {
+                    if let Op::PushFinally(ref mut t) = self.chunk.code[finally_guard_ip] {
+                        *t = finally_start;
+                    }
+                }
                 self.chunk.patch_jump(jump_past_catch, finally_start);
-                // Compile the finally block once; both the try-normal and catch paths
-                // fall through into it here.
+                self.chunk.patch_jump(jump_past_catch2, finally_start);
                 if let Some(fin) = finally_body {
                     self.compile_stmt(fin)?;
+                    // Re-raise the pending completion (return/break/continue/throw)
+                    // that diverted here. A normal completion falls through.
+                    self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
                 }
-                let end = self.chunk.code.len();
-                let _ = end;
+                let _ = finally_start;
             }
             StmtNode::FunctionDecl(f) => {
                 // compile function body into a separate chunk

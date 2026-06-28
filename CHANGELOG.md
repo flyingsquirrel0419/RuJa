@@ -76,6 +76,10 @@
 - **Labeled statements**: `label: stmt`, `break label`, and `continue label`
   now parse and compile (for `while`/`for`/`do...while`). A `break label`
   exits the matching outer loop; `continue label` resumes it.
+- **`try/finally` non-local transfers**: a `return` or `throw` in a
+  `try` (or `catch`) is now suspended across the `finally` block and re-raised
+  afterward, so a `return` inside `finally` correctly overrides an earlier
+  completion. (`break`/`continue` in `try`/`catch` still bypass `finally`.)
 
 ### Changed
 - **README `Known limitations`** rewritten to reflect the implemented state
