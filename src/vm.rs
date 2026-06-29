@@ -1654,6 +1654,73 @@ impl Vm {
                     }
                     self.stack.push(arr);
                 }
+                Op::ObjSpread => {
+                    // stack: [dest, src]; copy src's enumerable own props into dest.
+                    let src = self.stack.pop().unwrap_or(Value::Undefined);
+                    let dest = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&dest, &src) {
+                        let _ = dest_idx;
+                        // Collect (key, value) pairs from src's own enumerable props.
+                        let pairs: Vec<(Rc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
+                            let mut out = Vec::new();
+                            if let HeapObj::Array(a) = o {
+                                for (i, v) in a.items.borrow().iter().enumerate() {
+                                    out.push((Rc::from(i.to_string().as_str()), v.clone()));
+                                }
+                            }
+                            for (k, desc) in o.props().borrow().iter() {
+                                if desc.enumerable {
+                                    if let crate::value::PropertyKey::Str(s) = k {
+                                        out.push((s.clone(), Value::Undefined));
+                                    }
+                                }
+                            }
+                            out
+                        });
+                        for (k, mut v) in pairs {
+                            if v.is_undefined() {
+                                v = self.get_property(&src, &k)?;
+                            }
+                            self.set_property(&dest, &k, v)?;
+                        }
+                    }
+                    self.stack.push(dest);
+                }
+                Op::ObjRest(count) => {
+                    // stack: [src, k1..kN]; new obj with src's own enum props except k1..kN
+                    let mut excluded: Vec<Rc<str>> = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        if let Some(Value::String(s)) = self.stack.pop() {
+                            excluded.push(s);
+                        }
+                    }
+                    let src = self.stack.pop().unwrap_or(Value::Undefined);
+                    let new_obj = Value::Object(self.new_object());
+                    if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&new_obj, &src) {
+                        let pairs: Vec<(Rc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
+                            let mut out = Vec::new();
+                            for (k, desc) in o.props().borrow().iter() {
+                                if desc.enumerable {
+                                    if let crate::value::PropertyKey::Str(s) = k {
+                                        out.push((s.clone(), Value::Undefined));
+                                    }
+                                }
+                            }
+                            out
+                        });
+                        for (k, mut v) in pairs {
+                            if excluded.contains(&k) {
+                                continue;
+                            }
+                            if v.is_undefined() {
+                                v = self.get_property(&src, &k)?;
+                            }
+                            self.set_property(&new_obj, &k, v)?;
+                        }
+                        let _ = dest_idx;
+                    }
+                    self.stack.push(new_obj);
+                }
                 Op::GetProp => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);

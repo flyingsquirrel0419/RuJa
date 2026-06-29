@@ -84,6 +84,7 @@ pub enum PropertyKey {
     String(Rc<str>),
     Number(f64),
     Computed(Box<Expr>),
+    Spread(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,7 +110,7 @@ pub struct FunctionExpr {
 pub enum Pattern {
     Ident(Rc<str>),
     Array(Vec<Pattern>),
-    Object(Vec<(PropertyKey, Pattern)>),
+    Object(Vec<(PropertyKey, Pattern)>, Option<Box<Pattern>>),
     Assign(Box<Pattern>, Expr),
     Rest(Box<Pattern>),
 }

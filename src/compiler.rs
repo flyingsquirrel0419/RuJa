@@ -301,9 +301,12 @@ impl Compiler {
                     Self::pattern_names(el, out);
                 }
             }
-            Pattern::Object(props) => {
+            Pattern::Object(props, rest) => {
                 for (_, target) in props {
                     Self::pattern_names(target, out);
+                }
+                if let Some(r) = rest {
+                    Self::pattern_names(r, out);
                 }
             }
             Pattern::Assign(inner, _) => Self::pattern_names(inner, out),
@@ -1181,17 +1184,21 @@ impl Compiler {
                     }
                 }
             }
-            Pattern::Object(props) => {
+            Pattern::Object(props, rest) => {
+                let mut bound_keys: Vec<Rc<str>> = Vec::new();
                 for (key, target) in props {
                     // Static keys extend the access path; computed/numeric keys
                     // load the source via GetElem into a temp env binding.
                     match key {
                         PropertyKey::Ident(s) | PropertyKey::String(s) => {
+                            bound_keys.push(s.clone());
                             let mut new_path = path.to_vec();
                             new_path.push(PathStep::Prop(s.clone()));
                             self.bind_destructure_target(target, temp_idx, &new_path, kind)?;
                         }
                         PropertyKey::Number(n) => {
+                            let ks = crate::value::num_to_string(*n);
+                            bound_keys.push(Rc::from(ks.as_str()));
                             self.load_path(temp_idx, path);
                             let key_idx = self.chunk.add_constant(Value::Number(*n));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
@@ -1201,6 +1208,7 @@ impl Compiler {
                             self.bind_destructure_target_value(target, t2, kind)?;
                         }
                         PropertyKey::Computed(e) => {
+                            // Can't statically exclude a computed key from rest.
                             self.load_path(temp_idx, path);
                             self.compile_expr(e)?;
                             self.chunk.emit(Op::GetElem, self.current_line);
@@ -1208,7 +1216,25 @@ impl Compiler {
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.bind_destructure_target_value(target, t2, kind)?;
                         }
+                        PropertyKey::Spread(_) => {
+                            return Err(error::Error::syntax(
+                                "unexpected spread in object pattern".to_string(),
+                            ));
+                        }
                     }
+                }
+                // Object rest: collect remaining own enumerable props into a new obj.
+                if let Some(r) = rest {
+                    self.load_path(temp_idx, path); // [src]
+                    for k in &bound_keys {
+                        let k_idx = self.chunk.add_constant(Value::String(k.clone()));
+                        self.chunk.emit(Op::Const(k_idx), self.current_line);
+                    }
+                    self.chunk
+                        .emit(Op::ObjRest(bound_keys.len()), self.current_line); // [restObj]
+                    let t2 = self.intern("#drest");
+                    self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
+                    self.bind_destructure_target_value(r, t2, kind)?;
                 }
             }
             Pattern::Assign(inner, default) => {
@@ -1352,6 +1378,11 @@ impl Compiler {
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.compile_assign_pattern(&p.value, t2, &[])?;
                             continue;
+                        }
+                        PropertyKey::Spread(_) => {
+                            return Err(error::Error::syntax(
+                                "spread in assignment target object".to_string(),
+                            ));
                         }
                     }
                     // shorthand `o.a` assigns to existing var named `a`;
@@ -1737,6 +1768,12 @@ impl Compiler {
             Expr::Object(props) => {
                 self.chunk.emit(Op::NewObject, self.current_line);
                 for p in props {
+                    // Spread: {...expr} copies enumerable own props.
+                    if let PropertyKey::Spread(e) = &p.key {
+                        self.compile_expr(e)?; // [obj, src]
+                        self.chunk.emit(Op::ObjSpread, self.current_line); // [obj]
+                        continue;
+                    }
                     self.chunk.emit(Op::Dup, self.current_line);
                     match &p.key {
                         PropertyKey::Computed(e) => {
@@ -1767,6 +1804,7 @@ impl Compiler {
                             self.compile_expr(&p.value)?;
                             self.chunk.emit(Op::SetProp, self.current_line);
                         }
+                        PropertyKey::Spread(_) => unreachable!("spread handled above"),
                     }
                     // SetProp/SetElem leaves the assigned value on top; pop it so obj remains
                     self.chunk.emit(Op::Pop, self.current_line);

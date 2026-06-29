@@ -155,6 +155,8 @@ pub enum Op {
     NewArray(usize), // count of elements already on stack
     ArrayPush,       // pop [value, array]; append value to the array's items
     SpreadPush,      // pop [iterable, array]; spread iterable's values into the array
+    ObjSpread,       // pop [src, dest]; copy src's enumerable own props into dest
+    ObjRest(usize),  // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
     GetProp,
     SetProp,
     GetElem, // computed member
