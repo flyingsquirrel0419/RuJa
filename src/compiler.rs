@@ -866,10 +866,7 @@ impl Compiler {
                 // a synthetic loop frame whose continue target is unreachable.
                 if matches!(
                     &body.node,
-                    StmtNode::While { .. }
-                        | StmtNode::DoWhile { .. }
-                        | StmtNode::For { .. }
-                        | StmtNode::Block(_)
+                    StmtNode::While { .. } | StmtNode::DoWhile { .. } | StmtNode::For { .. }
                 ) {
                     // Hand the label to the inner loop's begin_loop by stashing
                     // it on a pending-label field that begin_loop consumes.
