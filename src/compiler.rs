@@ -1774,6 +1774,39 @@ impl Compiler {
                         self.chunk.emit(Op::ObjSpread, self.current_line); // [obj]
                         continue;
                     }
+                    // Getter/setter: {get x(){...}} / {set x(v){...}}
+                    if matches!(
+                        p.kind,
+                        crate::ast::PropKind::Get | crate::ast::PropKind::Set
+                    ) {
+                        let kind = if matches!(p.kind, crate::ast::PropKind::Get) {
+                            0u8
+                        } else {
+                            1u8
+                        };
+                        self.chunk.emit(Op::Dup, self.current_line); // [obj, obj]
+                        match &p.key {
+                            PropertyKey::Ident(s) | PropertyKey::String(s) => {
+                                let key_idx = self.chunk.add_constant(Value::String(s.clone()));
+                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            }
+                            PropertyKey::Number(n) => {
+                                let key = crate::value::num_to_string(*n);
+                                let key_idx = self
+                                    .chunk
+                                    .add_constant(Value::String(Rc::from(key.as_str())));
+                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            }
+                            PropertyKey::Computed(e) => {
+                                self.compile_expr(e)?;
+                            }
+                            PropertyKey::Spread(_) => unreachable!(),
+                        }
+                        self.compile_expr(&p.value)?; // [obj, obj, key, fn]
+                        self.chunk.emit(Op::DefineAccessor(kind), self.current_line); // [obj, obj]
+                        self.chunk.emit(Op::Pop, self.current_line); // [obj]
+                        continue;
+                    }
                     self.chunk.emit(Op::Dup, self.current_line);
                     match &p.key {
                         PropertyKey::Computed(e) => {
@@ -2317,28 +2350,68 @@ impl Compiler {
                         is_generator: false,
                     };
                     self.funcs.push(Rc::new(mdef));
-                    if method.is_static {
+                    let is_accessor = matches!(
+                        method.kind,
+                        crate::ast::PropKind::Get | crate::ast::PropKind::Set
+                    );
+                    let akind = if matches!(method.kind, crate::ast::PropKind::Get) {
+                        0u8
+                    } else {
+                        1u8
+                    };
+                    // Each branch leaves [ctor] on the stack.
+                    if is_accessor {
+                        if method.is_static {
+                            // [ctor] -> define accessor on ctor
+                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
+                            let key_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
+                            self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
+                            self.chunk
+                                .emit(Op::DefineAccessor(akind), self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line); // [ctor, ctor]
+                            self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                        } else {
+                            // [ctor] -> get proto, define accessor on proto
+                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                            let proto_key = self
+                                .chunk
+                                .add_constant(Value::String(Rc::from("prototype")));
+                            self.chunk.emit(Op::Const(proto_key), self.current_line);
+                            self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
+                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
+                            let key_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
+                            self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
+                            self.chunk
+                                .emit(Op::DefineAccessor(akind), self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line); // [ctor, proto]
+                            self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                        }
+                    } else if method.is_static {
                         // Constructor.method = fn
-                        self.chunk.emit(Op::Dup, self.current_line); // dup constructor
+                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                         let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);
                         self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
                         self.chunk.emit(Op::SetProp, self.current_line);
-                        self.chunk.emit(Op::Pop, self.current_line);
+                        self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     } else {
                         // Constructor.prototype.method = fn
-                        self.chunk.emit(Op::Dup, self.current_line); // dup constructor
+                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                         let proto_key = self
                             .chunk
                             .add_constant(Value::String(Rc::from("prototype")));
                         self.chunk.emit(Op::Const(proto_key), self.current_line);
-                        self.chunk.emit(Op::GetProp, self.current_line);
-                        // stack: [ctor, proto_obj] — push key then value then SetProp
+                        self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
                         let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);
                         self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
                         self.chunk.emit(Op::SetProp, self.current_line);
-                        self.chunk.emit(Op::Pop, self.current_line);
+                        self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     }
                 }
                 // store the constructor under the class name

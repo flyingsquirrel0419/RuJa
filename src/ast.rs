@@ -16,6 +16,7 @@ pub struct ClassMethod {
     pub body: Vec<Stmt>,
     pub is_static: bool,
     pub is_constructor: bool,
+    pub kind: PropKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +70,14 @@ pub enum Expr {
     YieldDelegate(Box<Expr>),
 }
 
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum PropKind {
+    Normal,
+    Method,
+    Get,
+    Set,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Property {
     pub key: PropertyKey,
@@ -76,6 +85,7 @@ pub struct Property {
     pub computed: bool,
     pub method: bool,
     pub shorthand: bool,
+    pub kind: PropKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]

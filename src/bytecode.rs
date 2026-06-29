@@ -152,11 +152,12 @@ pub enum Op {
 
     // Objects/arrays
     NewObject,
-    NewArray(usize), // count of elements already on stack
-    ArrayPush,       // pop [value, array]; append value to the array's items
-    SpreadPush,      // pop [iterable, array]; spread iterable's values into the array
-    ObjSpread,       // pop [src, dest]; copy src's enumerable own props into dest
-    ObjRest(usize),  // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
+    NewArray(usize),    // count of elements already on stack
+    ArrayPush,          // pop [value, array]; append value to the array's items
+    SpreadPush,         // pop [iterable, array]; spread iterable's values into the array
+    ObjSpread,          // pop [src, dest]; copy src's enumerable own props into dest
+    ObjRest(usize),     // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
+    DefineAccessor(u8), // pop [fn, key, obj]; define getter(0)/setter(1)
     GetProp,
     SetProp,
     GetElem, // computed member

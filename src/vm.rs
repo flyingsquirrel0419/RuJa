@@ -1721,6 +1721,45 @@ impl Vm {
                     }
                     self.stack.push(new_obj);
                 }
+                Op::DefineAccessor(kind) => {
+                    // stack: [obj, key, fn]; define getter(0) or setter(1).
+                    let func = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        let pkey = match &key_val {
+                            Value::String(s) => crate::value::PropertyKey::Str(s.clone()),
+                            Value::Number(n) => crate::value::PropertyKey::Str(Rc::from(
+                                crate::value::num_to_string(*n).as_str(),
+                            )),
+                            Value::Symbol(s) => crate::value::PropertyKey::Symbol(*s),
+                            _ => crate::value::PropertyKey::Str(Rc::from("undefined")),
+                        };
+                        self.heap.with_obj(idx.0, |o| {
+                            let props = o.props();
+                            let mut props = props.borrow_mut();
+                            let entry = props.entry(pkey).or_insert_with(|| {
+                                crate::value::PropertyDescriptor {
+                                    value: Value::Undefined,
+                                    writable: false,
+                                    enumerable: true,
+                                    configurable: true,
+                                    get: None,
+                                    set: None,
+                                    is_accessor: true,
+                                }
+                            });
+                            entry.is_accessor = true;
+                            entry.writable = false;
+                            if kind == 0 {
+                                entry.get = Some(func.clone());
+                            } else {
+                                entry.set = Some(func.clone());
+                            }
+                        });
+                    }
+                    self.stack.push(obj);
+                }
                 Op::GetProp => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2885,16 +2924,68 @@ impl Vm {
                 if !val.is_undefined() {
                     return Ok(val);
                 }
-                // walk proto chain
+                // walk proto chain, preserving the original receiver so that
+                // getters inherited from a prototype bind `this` to the receiver.
                 let p = self.heap.with_obj(idx.0, |o| o.proto().borrow().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
-                        return self.get_property(&proto, key);
+                        return self.get_property_rx(&proto, key, obj.clone());
                     }
                 }
                 Ok(Value::Undefined)
             }
             _ => Ok(Value::Undefined),
+        }
+    }
+
+    /// Like `get_property` but tracks the receiver (the original object the
+    /// property access started from) so inherited accessors bind `this` to it.
+    fn get_property_rx(&mut self, obj: &Value, key: &str, receiver: Value) -> error::Result<Value> {
+        match obj {
+            Value::Object(idx) => {
+                let pkey = crate::value::PropertyKey::from(key);
+                // Own accessor on this object?
+                if let Some(getter) = self.heap.with_obj(idx.0, |o| {
+                    o.props().borrow().get(&pkey).and_then(|d| {
+                        if d.is_accessor {
+                            d.get.clone()
+                        } else {
+                            None
+                        }
+                    })
+                }) {
+                    if !getter.is_undefined() {
+                        return self.call_function(&getter, &[], Some(receiver));
+                    }
+                    return Ok(Value::Undefined);
+                }
+                // Own data property?
+                let val = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Array(a) = o {
+                        if key == "length" {
+                            return Some(Value::Number(a.items.borrow().len() as f64));
+                        }
+                        if let Ok(i) = key.parse::<usize>() {
+                            return Some(
+                                a.items.borrow().get(i).cloned().unwrap_or(Value::Undefined),
+                            );
+                        }
+                    }
+                    o.props().borrow().get(&pkey).map(|d| d.value.clone())
+                });
+                if let Some(v) = val {
+                    return Ok(v);
+                }
+                // Walk up.
+                let p = self.heap.with_obj(idx.0, |o| o.proto().borrow().clone());
+                if let Some(proto) = p {
+                    if !proto.is_undefined() {
+                        return self.get_property_rx(&proto, key, receiver);
+                    }
+                }
+                Ok(Value::Undefined)
+            }
+            _ => self.get_property(obj, key),
         }
     }
 
