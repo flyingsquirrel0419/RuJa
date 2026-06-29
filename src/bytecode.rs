@@ -177,6 +177,7 @@ pub enum Op {
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
     New(usize),           // constructor call, arg count
+    NewSpread,            // constructor call with spread args (argsArr on stack)
     Return,
     ReturnUndefined,
 
