@@ -14,7 +14,7 @@
 - Logical assignment `&&=`/`||=`/`??=` and compound assignment on identifier,
   member, and element targets
 - Optional chaining `?.` for property access, computed access, and calls
-- Template literals with `${}`; numeric separators (`1_000`, `0xff_ff`)
+- Template literals with `${}` and tagged templates (`tag`...``); numeric separators (`1_000`, `0xff_ff`)
 - `eval` (indirect runs globally; direct `eval(...)` runs in the caller's scope)
 - `with` statement (dynamic object environment records)
 - `new.target` meta-property (constructor-aware)
@@ -40,7 +40,7 @@
 
 - `Promise` with `then`/`catch` chaining and microtask draining
 - `Promise.resolve`/`Promise.reject`
-- `async`/`await` (async functions return a Promise; await resolves it)
+- `async`/`await` (async functions and async arrows return a Promise; await resolves it)
 - Lazy generators (`function*`/`yield`): pull-based `next()`/`for...of`/spread
   that suspend at each `yield`; supports infinite generators; `next(v)` resumes
   with a value; `return` ends the generator
@@ -71,7 +71,8 @@
 - **String**: `charAt`, `charCodeAt`, `slice`, `split`, `replace` (regex
   supported), `replaceAll`, `includes`, `startsWith`, `endsWith`, `repeat`,
   `padStart`/`padEnd`, `at`, `trim`/`trimStart`/`trimEnd`, `substring`, case
-  conversions, `codePointAt`, `concat`, `search`
+  conversions, `codePointAt`, `concat`, `search`; `replace` with function
+  callback, `split` with regex
 - **Object**: `defineProperty`, `defineProperties`, `keys`, `values`,
   `entries`, `assign`, `create`, `getPrototypeOf`/`setPrototypeOf`,
   `preventExtensions`/`isExtensible`, `seal`/`isSealed`, `freeze`/`isFrozen`,
@@ -81,7 +82,11 @@
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`
 - **String** statics: `String.raw`, `String.fromCodePoint`, `String.fromCharCode`
 - **Math**: full set of methods and constants (incl. `imul`, `clz32`, `fround`)
-- **JSON**: `parse` and `stringify`
+- **Reflect**: `get`/`set`/`has`/`deleteProperty`/`ownKeys`/`getPrototypeOf`/
+  `setPrototypeOf`/`isExtensible`/`preventExtensions`/`apply`/`construct`
+- **WeakMap**/`WeakSet`: object-keyed collections (get/set/has/delete)
+- **Date**: `now()`, constructor with timestamp, `getTime()`
+- **JSON**: `parse` (with reviver) and `stringify` (with replacer/space)
 - **RegExp**: literals `/pattern/flags` with `test`, `exec`, `match`, `source`,
   `flags`; `String.replace` with regex
 - **Map/Set**: full key/value collections with iteration
