@@ -699,6 +699,224 @@ fn object_get_own_property_names(
     let keys = own_string_keys(vm, &obj);
     Ok(make_str_array(vm, keys))
 }
+
+fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        return Ok(vm
+            .heap
+            .with_obj(idx.0, |o| o.proto().borrow().clone().unwrap_or(Value::Null)));
+    }
+    Ok(Value::Null)
+}
+
+fn object_set_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let proto = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        let p = if proto.is_null() {
+            None
+        } else if matches!(proto, Value::Object(_)) {
+            Some(proto.clone())
+        } else {
+            return Err(Error::type_err(
+                "Object prototype may only be an Object or null",
+            ));
+        };
+        vm.heap.with_obj(idx.0, |o| {
+            *o.proto().borrow_mut() = p;
+        });
+    }
+    Ok(obj)
+}
+
+fn object_prevent_extensions(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                od.extensible.set(false);
+            }
+        });
+    }
+    Ok(obj)
+}
+
+fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        let ext = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                od.extensible.get()
+            } else {
+                true
+            }
+        });
+        return Ok(Value::Bool(ext));
+    }
+    Ok(Value::Bool(true))
+}
+
+fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                od.extensible.set(false);
+                for d in od.props.borrow_mut().values_mut() {
+                    d.configurable = false;
+                }
+            }
+        });
+    }
+    Ok(obj)
+}
+
+fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        let sealed = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                let ext = od.extensible.get();
+                let all_noncfg = od.props.borrow().values().all(|d| !d.configurable);
+                ext && all_noncfg || (!ext && all_noncfg)
+            } else {
+                true
+            }
+        });
+        return Ok(Value::Bool(sealed));
+    }
+    Ok(Value::Bool(true))
+}
+
+fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Value::Object(idx) = &obj {
+        let frozen = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                let ext = od.extensible.get();
+                let all_frozen = od
+                    .props
+                    .borrow()
+                    .values()
+                    .all(|d| !d.configurable && !d.writable && !d.is_accessor);
+                !ext && all_frozen
+            } else {
+                true
+            }
+        });
+        return Ok(Value::Bool(frozen));
+    }
+    Ok(Value::Bool(true))
+}
+
+fn object_get_own_property_descriptors(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let result_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: None,
+    }));
+    if let Value::Object(idx) = &obj {
+        let descs: Vec<(String, crate::value::PropertyDescriptor)> = vm.heap.with_obj(idx.0, |o| {
+            o.props()
+                .borrow()
+                .iter()
+                .filter_map(|(k, d)| {
+                    if let crate::value::PropertyKey::Str(s) = k {
+                        Some((s.to_string(), d.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        });
+        let mut p = IndexMap::new();
+        for (key, d) in descs {
+            let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+                props: RefCell::new(IndexMap::new()),
+                proto: RefCell::new(Some(vm.object_proto.clone())),
+                extensible: Cell::new(true),
+                class_name: None,
+            }));
+            let mut dp = IndexMap::new();
+            if d.is_accessor {
+                dp.insert(
+                    PropertyKey::from("get"),
+                    data_prop(d.get.clone().unwrap_or(Value::Undefined)),
+                );
+                dp.insert(
+                    PropertyKey::from("set"),
+                    data_prop(d.set.clone().unwrap_or(Value::Undefined)),
+                );
+            } else {
+                dp.insert(PropertyKey::from("value"), data_prop(d.value.clone()));
+                dp.insert(
+                    PropertyKey::from("writable"),
+                    data_prop(Value::Bool(d.writable)),
+                );
+            }
+            dp.insert(
+                PropertyKey::from("enumerable"),
+                data_prop(Value::Bool(d.enumerable)),
+            );
+            dp.insert(
+                PropertyKey::from("configurable"),
+                data_prop(Value::Bool(d.configurable)),
+            );
+            vm.heap.with_obj(desc_obj, |o| {
+                if let HeapObj::Object(od) = o {
+                    *od.props.borrow_mut() = dp;
+                }
+            });
+            p.insert(
+                PropertyKey::from(key.as_str()),
+                data_prop(Value::Object(GcIdx(desc_obj))),
+            );
+        }
+        vm.heap.with_obj(result_idx, |o| {
+            if let HeapObj::Object(od) = o {
+                *od.props.borrow_mut() = p;
+            }
+        });
+    }
+    Ok(Value::Object(GcIdx(result_idx)))
+}
+
+fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let props = args.get(1).cloned().unwrap_or(Value::Undefined);
+    // Collect (key, descriptor) pairs first to avoid borrowing vm during iteration.
+    let pairs: Vec<(String, Value)> = if let Value::Object(_) = &props {
+        let keys = own_string_keys(vm, &props);
+        keys.into_iter()
+            .filter_map(|k| {
+                let desc = vm.get_property(&props, &k).ok()?;
+                if desc.is_undefined() {
+                    None
+                } else {
+                    Some((k.to_string(), desc))
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for (key, desc) in pairs {
+        let dp = vec![obj.clone(), Value::String(Rc::from(key.as_str())), desc];
+        object_define_property(vm, &dp, None)?;
+    }
+    Ok(obj)
+}
 fn object_get_own_property_descriptor(
     vm: &mut Vm,
     args: &[Value],
@@ -897,33 +1115,6 @@ fn object_define_property(
     Ok(target)
 }
 
-fn object_define_properties(
-    vm: &mut Vm,
-    args: &[Value],
-    _this: Option<Value>,
-) -> error::Result<Value> {
-    let target = args.first().cloned().unwrap_or(Value::Undefined);
-    let props = args.get(1).cloned().unwrap_or(Value::Undefined);
-    if let (Value::Object(_), Value::Object(_)) = (&target, &props) {
-        let keys = object_keys(vm, std::slice::from_ref(&props), None)?;
-        if let Value::Object(kidx) = keys {
-            let key_objs = vm.heap.with_obj(kidx.0, |obj| {
-                if let HeapObj::Array(a) = obj {
-                    a.items.borrow().clone()
-                } else {
-                    Vec::new()
-                }
-            });
-            for k_val in key_objs {
-                let key_str = vm.to_string(&k_val)?;
-                let desc = vm.get_property(&props, &key_str)?;
-                object_define_property(vm, &[target.clone(), k_val, desc], None)?;
-            }
-        }
-    }
-    Ok(target)
-}
-
 // Minimal stubs to keep the crate compiling while parser/lexer work is in progress.
 
 fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -1025,6 +1216,23 @@ pub fn setup(vm: &mut Vm) {
             2,
         ),
         ("defineProperty", object_define_property as NativeFn, 3),
+        ("defineProperties", object_define_properties as NativeFn, 2),
+        ("getPrototypeOf", object_get_prototype_of as NativeFn, 1),
+        ("setPrototypeOf", object_set_prototype_of as NativeFn, 2),
+        (
+            "preventExtensions",
+            object_prevent_extensions as NativeFn,
+            1,
+        ),
+        ("isExtensible", object_is_extensible as NativeFn, 1),
+        ("seal", object_seal as NativeFn, 1),
+        ("isSealed", object_is_sealed as NativeFn, 1),
+        ("isFrozen", object_is_frozen as NativeFn, 1),
+        (
+            "getOwnPropertyDescriptors",
+            object_get_own_property_descriptors as NativeFn,
+            1,
+        ),
     ] {
         let m = vm.new_native_function(n, f, len);
         vm.heap.with_obj(object_ctor.0, |obj| {
@@ -3718,6 +3926,16 @@ pub fn setup_full(vm: &mut Vm) {
     define_global(vm, "NaN", Value::Number(f64::NAN));
     define_global(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global(vm, "undefined", Value::Undefined);
+    // globalThis: an object whose property accesses route to the global
+    // environment record. Marked via class_name so VM get/set can detect it.
+    let globalthis_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("global")),
+    }));
+    vm.global_this = Value::Object(GcIdx(globalthis_idx));
+    define_global(vm, "globalThis", vm.global_this.clone());
     // Promise
     let (promise_ctor, promise_proto) = make_builtin_constructor_with(
         vm,
