@@ -3,7 +3,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn eval_arithmetic() {
@@ -44,7 +44,7 @@ fn indirect_eval_runs_in_global_scope() {
         }
         f();
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("undefined")));
+    assert_eq!(run(src), Value::String(Arc::from("undefined")));
 }
 
 #[test]
@@ -106,7 +106,10 @@ fn eval_let_does_not_leak_to_caller() {
             try { return x; } catch(e) { return "ref-err"; }
         })();
     "#;
-    assert_eq!(run(src), ruja::Value::String(std::rc::Rc::from("ref-err")));
+    assert_eq!(
+        run(src),
+        ruja::Value::String(std::sync::Arc::from("ref-err"))
+    );
 }
 
 #[test]
@@ -117,7 +120,10 @@ fn eval_const_does_not_leak_to_caller() {
             try { return c; } catch(e) { return "ref-err"; }
         })();
     "#;
-    assert_eq!(run(src), ruja::Value::String(std::rc::Rc::from("ref-err")));
+    assert_eq!(
+        run(src),
+        ruja::Value::String(std::sync::Arc::from("ref-err"))
+    );
 }
 
 #[test]
@@ -147,9 +153,9 @@ fn eval_let_does_not_leak_at_top_level() {
     let _ = vm.run(r#"eval("let w = 3");"#);
     let r = match vm.run("typeof w;") {
         Ok(v) => v,
-        Err(_) => ruja::Value::String(std::rc::Rc::from("undefined")),
+        Err(_) => ruja::Value::String(std::sync::Arc::from("undefined")),
     };
-    assert_eq!(r, ruja::Value::String(std::rc::Rc::from("undefined")));
+    assert_eq!(r, ruja::Value::String(std::sync::Arc::from("undefined")));
 }
 
 // ---- strict eval: no var leak (#7) ----

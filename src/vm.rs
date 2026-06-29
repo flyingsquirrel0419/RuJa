@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use num_traits::{Signed, Zero};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
@@ -47,9 +47,9 @@ pub struct Vm {
     pub(crate) current_yields: Vec<Value>,
     pub(crate) next_symbol_id: u32,
     pub(crate) well_known_symbols: WellKnownSymbols,
-    pub(crate) global_names: HashMap<Rc<str>, usize>,
+    pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
-    pub(crate) functions: Vec<Rc<crate::function::FunctionDef>>,
+    pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
 }
 
 pub struct WellKnownSymbols {
@@ -61,7 +61,7 @@ pub struct WellKnownSymbols {
 }
 
 pub struct CallFrame {
-    pub chunk: Rc<Chunk>,
+    pub chunk: Arc<Chunk>,
     pub ip: usize,
     pub locals: Vec<Value>,
     pub env: GcIdx,
@@ -99,7 +99,7 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-    fn new(chunk: Rc<Chunk>, ip: usize, locals: Vec<Value>, env: GcIdx, this_val: Value) -> Self {
+    fn new(chunk: Arc<Chunk>, ip: usize, locals: Vec<Value>, env: GcIdx, this_val: Value) -> Self {
         CallFrame {
             chunk,
             ip,
@@ -232,7 +232,7 @@ impl Vm {
     }
 
     fn execute_chunk(&mut self, chunk: Chunk, env: GcIdx, this_val: Value) -> error::Result<Value> {
-        let chunk = Rc::new(chunk);
+        let chunk = Arc::new(chunk);
         self.frames.push(CallFrame::new(
             chunk.clone(),
             0,
@@ -252,7 +252,7 @@ impl Vm {
         env: GcIdx,
         this_val: Value,
     ) -> error::Result<Value> {
-        let chunk = Rc::new(chunk);
+        let chunk = Arc::new(chunk);
         self.frames.push(CallFrame::new(
             chunk.clone(),
             0,
@@ -267,7 +267,7 @@ impl Vm {
             let top_is_ours = self
                 .frames
                 .last()
-                .map(|f| Rc::ptr_eq(&f.chunk, &chunk))
+                .map(|f| Arc::ptr_eq(&f.chunk, &chunk))
                 .unwrap_or(false);
             if top_is_ours {
                 self.frames.pop();
@@ -340,7 +340,7 @@ impl Vm {
             }
             return result;
         }
-        let leaked: Vec<(Rc<str>, Value)> = self.heap.with_obj(eval_env.0, |o| {
+        let leaked: Vec<(Arc<str>, Value)> = self.heap.with_obj(eval_env.0, |o| {
             if let HeapObj::Environment(e) = o {
                 e.vars
                     .borrow()
@@ -375,7 +375,7 @@ impl Vm {
     /// Execute a compiled function's chunk in a new frame.
     fn execute_chunk_func(
         &mut self,
-        fdef: Rc<crate::function::FunctionDef>,
+        fdef: Arc<crate::function::FunctionDef>,
         env: GcIdx,
         this_val: Value,
         args: &[Value],
@@ -646,21 +646,21 @@ impl Vm {
         let mut props = IndexMap::new();
         props.insert(
             crate::value::PropertyKey::from("name"),
-            PropertyDescriptor::data(Value::String(Rc::from(ctor_name))),
+            PropertyDescriptor::data(Value::String(Arc::from(ctor_name))),
         );
         props.insert(
             crate::value::PropertyKey::from("message"),
-            PropertyDescriptor::data(Value::String(Rc::from(e.message.as_str()))),
+            PropertyDescriptor::data(Value::String(Arc::from(e.message.as_str()))),
         );
         props.insert(
             crate::value::PropertyKey::from("stack"),
-            PropertyDescriptor::data(Value::String(Rc::from(e.stack.join("\n").as_str()))),
+            PropertyDescriptor::data(Value::String(Arc::from(e.stack.join("\n").as_str()))),
         );
         let obj = HeapObj::Object(ObjectData {
             props: RefCell::new(props),
             proto: RefCell::new(Some(proto)),
             extensible: Cell::new(true),
-            class_name: Some(Rc::from(ctor_name)),
+            class_name: Some(Arc::from(ctor_name)),
             private_fields: RefCell::new(std::collections::HashMap::new()),
         });
         Value::Object(GcIdx(self.heap.allocate(obj)))
@@ -1465,7 +1465,7 @@ impl Vm {
                 }
                 Op::Add => self.bin_op(
                     |a, b| Value::Number(a + b),
-                    |a, b| Value::String(Rc::from(format!("{}{}", a, b).as_str())),
+                    |a, b| Value::String(Arc::from(format!("{}{}", a, b).as_str())),
                 )?,
                 Op::Sub => self.num_bin_bigint(|a, b| a - b, |x, y| x - y)?,
                 Op::Mul => self.num_bin_bigint(|a, b| a * b, |x, y| x * y)?,
@@ -1720,11 +1720,11 @@ impl Vm {
                     if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&dest, &src) {
                         let _ = dest_idx;
                         // Collect (key, value) pairs from src's own enumerable props.
-                        let pairs: Vec<(Rc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
+                        let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
                             let mut out = Vec::new();
                             if let HeapObj::Array(a) = o {
                                 for (i, v) in a.items.borrow().iter().enumerate() {
-                                    out.push((Rc::from(i.to_string().as_str()), v.clone()));
+                                    out.push((Arc::from(i.to_string().as_str()), v.clone()));
                                 }
                             }
                             for (k, desc) in o.props().borrow().iter() {
@@ -1747,7 +1747,7 @@ impl Vm {
                 }
                 Op::ObjRest(count) => {
                     // stack: [src, k1..kN]; new obj with src's own enum props except k1..kN
-                    let mut excluded: Vec<Rc<str>> = Vec::with_capacity(count);
+                    let mut excluded: Vec<Arc<str>> = Vec::with_capacity(count);
                     for _ in 0..count {
                         if let Some(Value::String(s)) = self.stack.pop() {
                             excluded.push(s);
@@ -1756,7 +1756,7 @@ impl Vm {
                     let src = self.stack.pop().unwrap_or(Value::Undefined);
                     let new_obj = Value::Object(self.new_object());
                     if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&new_obj, &src) {
-                        let pairs: Vec<(Rc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
+                        let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
                             let mut out = Vec::new();
                             for (k, desc) in o.props().borrow().iter() {
                                 if desc.enumerable {
@@ -1788,11 +1788,11 @@ impl Vm {
                     if let Value::Object(idx) = &obj {
                         let pkey = match &key_val {
                             Value::String(s) => crate::value::PropertyKey::Str(s.clone()),
-                            Value::Number(n) => crate::value::PropertyKey::Str(Rc::from(
+                            Value::Number(n) => crate::value::PropertyKey::Str(Arc::from(
                                 crate::value::num_to_string(*n).as_str(),
                             )),
                             Value::Symbol(s) => crate::value::PropertyKey::Symbol(*s),
-                            _ => crate::value::PropertyKey::Str(Rc::from("undefined")),
+                            _ => crate::value::PropertyKey::Str(Arc::from("undefined")),
                         };
                         self.heap.with_obj(idx.0, |o| {
                             let props = o.props();
@@ -2046,7 +2046,7 @@ impl Vm {
                             if let HeapObj::Object(od) = o {
                                 od.private_fields
                                     .borrow_mut()
-                                    .insert(Rc::from(name.as_str()), value.clone());
+                                    .insert(Arc::from(name.as_str()), value.clone());
                             }
                         });
                     }
@@ -2299,7 +2299,7 @@ impl Vm {
                             _ => v.type_of(),
                         }
                     };
-                    self.stack.push(Value::String(Rc::from(t)));
+                    self.stack.push(Value::String(Arc::from(t)));
                 }
                 Op::TypeCoerce => {
                     // unary +: ToNumber coercion.
@@ -2340,7 +2340,7 @@ impl Vm {
                         }
                         None => "undefined",
                     };
-                    self.stack.push(Value::String(Rc::from(t)));
+                    self.stack.push(Value::String(Arc::from(t)));
                 }
                 Op::GetIterator => {
                     let iterable = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2682,7 +2682,7 @@ impl Vm {
                 let sa = self.to_string(&ap)?;
                 let sb = self.to_string(&bp)?;
                 self.stack
-                    .push(Value::String(Rc::from(format!("{}{}", sa, sb).as_str())));
+                    .push(Value::String(Arc::from(format!("{}{}", sa, sb).as_str())));
             }
             _ => {
                 let av = self.to_number(&ap)?;
@@ -2759,14 +2759,14 @@ impl Vm {
         })
     }
 
-    pub fn to_string(&mut self, v: &Value) -> error::Result<Rc<str>> {
+    pub fn to_string(&mut self, v: &Value) -> error::Result<Arc<str>> {
         Ok(match v {
-            Value::Undefined => Rc::from("undefined"),
-            Value::Null => Rc::from("null"),
-            Value::Bool(b) => Rc::from(b.to_string().as_str()),
-            Value::Number(n) => Rc::from(crate::value::num_to_string(*n).as_str()),
+            Value::Undefined => Arc::from("undefined"),
+            Value::Null => Arc::from("null"),
+            Value::Bool(b) => Arc::from(b.to_string().as_str()),
+            Value::Number(n) => Arc::from(crate::value::num_to_string(*n).as_str()),
             Value::String(s) => s.clone(),
-            Value::BigInt(n) => Rc::from(n.to_string().as_str()),
+            Value::BigInt(n) => Arc::from(n.to_string().as_str()),
             Value::Object(idx) => {
                 let is_array = self
                     .heap
@@ -2790,7 +2790,7 @@ impl Vm {
                             }
                         })
                         .collect();
-                    Rc::from(parts.join(",").as_str())
+                    Arc::from(parts.join(",").as_str())
                 } else {
                     // Honor a user-defined `toString` method (it returns a
                     // primitive that we then stringify). This is evaluated
@@ -2808,10 +2808,10 @@ impl Vm {
                             if let Some(cn) = &o.class_name {
                                 cn.clone()
                             } else {
-                                Rc::from("[object Object]")
+                                Arc::from("[object Object]")
                             }
                         }
-                        _ => Rc::from("[object Object]"),
+                        _ => Arc::from("[object Object]"),
                     })
                 }
             }
@@ -3153,7 +3153,7 @@ impl Vm {
                 }
                 if let Ok(idx) = key.parse::<usize>() {
                     if let Some(unit) = crate::value::utf16_get(s, idx) {
-                        return Ok(Value::String(Rc::from(
+                        return Ok(Value::String(Arc::from(
                             String::from_utf16_lossy(&[unit]).as_str(),
                         )));
                     }
@@ -3244,7 +3244,7 @@ impl Vm {
                             if let Some(n) = &f.name {
                                 return Ok(Value::String(n.clone()));
                             }
-                            return Ok(Value::String(Rc::from("")));
+                            return Ok(Value::String(Arc::from("")));
                         }
                         if key == "length" {
                             if let crate::value::FunctionKind::Native { length, .. } = &f.kind {
@@ -3906,7 +3906,7 @@ impl Vm {
                     let reason: Value = e
                         .thrown_value
                         .clone()
-                        .unwrap_or_else(|| Value::String(Rc::from(e.message.as_str())));
+                        .unwrap_or_else(|| Value::String(Arc::from(e.message.as_str())));
                     self.promise_reject(d.0, reason);
                 }
             }
@@ -3928,7 +3928,7 @@ impl Vm {
     /// Allocate a function with native impl.
     pub fn new_native_function(&mut self, name: &str, func: NativeFn, length: usize) -> GcIdx {
         let fdef = crate::value::FunctionData {
-            name: Some(Rc::from(name)),
+            name: Some(Arc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
             closure: self.global,
             // Native functions have no `prototype` property (they are not
@@ -4194,7 +4194,7 @@ impl Vm {
                                 // otherwise stringify the engine error.
                                 let reason = match &err.thrown_value {
                                     Some(v) => v.clone(),
-                                    None => Value::String(Rc::from(err.to_string().as_str())),
+                                    None => Value::String(Arc::from(err.to_string().as_str())),
                                 };
                                 let p_idx = self.heap.allocate(HeapObj::Promise(
                                     crate::value::PromiseData {
@@ -4304,7 +4304,7 @@ impl Vm {
         let items: Vec<Value> = match iterable {
             Value::String(s) => crate::value::utf16_from_str(s)
                 .into_iter()
-                .map(|unit| Value::String(Rc::from(String::from_utf16_lossy(&[unit]).as_str())))
+                .map(|unit| Value::String(Arc::from(String::from_utf16_lossy(&[unit]).as_str())))
                 .collect(),
             Value::Object(idx) => {
                 let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {
@@ -4406,7 +4406,7 @@ impl Vm {
                 let mut own = Vec::new();
                 if let HeapObj::Array(a) = o {
                     for i in 0..a.items.borrow().len() {
-                        own.push(Value::String(Rc::from(i.to_string().as_str())));
+                        own.push(Value::String(Arc::from(i.to_string().as_str())));
                     }
                 }
                 if let HeapObj::Map(m) = o {
@@ -4700,7 +4700,7 @@ impl Vm {
 enum FuncCallInfo {
     Native(NativeFn),
     Interpreted {
-        func: std::rc::Rc<crate::function::FunctionDef>,
+        func: std::sync::Arc<crate::function::FunctionDef>,
         closure: GcIdx,
         is_arrow: bool,
         is_async: bool,

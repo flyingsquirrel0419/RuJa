@@ -4,7 +4,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn class_basic() {
@@ -53,14 +53,17 @@ fn static_method() {
 
 #[test]
 fn template_literal() {
-    assert_eq!(run(r#"let n=5; `n=${n}`;"#), Value::String(Rc::from("n=5")));
+    assert_eq!(
+        run(r#"let n=5; `n=${n}`;"#),
+        Value::String(Arc::from("n=5"))
+    );
 }
 
 #[test]
 fn template_multi() {
     assert_eq!(
         run(r#"let a=1,b=2; `${a}+${b}=${a+b}`;"#),
-        Value::String(Rc::from("1+2=3"))
+        Value::String(Arc::from("1+2=3"))
     );
 }
 
@@ -149,7 +152,7 @@ fn for_of_array() {
 fn for_of_string() {
     assert_eq!(
         run("let s=''; for(let c of 'abc'){s+=c;} s;"),
-        Value::String(Rc::from("abc"))
+        Value::String(Arc::from("abc"))
     );
 }
 
@@ -171,7 +174,10 @@ fn for_in_object() {
 #[test]
 fn array_spread_literal() {
     assert_eq!(run("[1, ...[2,3], 4].length;"), Value::Number(4.0));
-    assert_eq!(run(r#"[..."hi"].join("");"#), Value::String(Rc::from("hi")));
+    assert_eq!(
+        run(r#"[..."hi"].join("");"#),
+        Value::String(Arc::from("hi"))
+    );
 }
 
 #[test]
@@ -208,14 +214,14 @@ fn set_basic() {
 
 #[test]
 fn symbol_type() {
-    assert_eq!(run("typeof Symbol();"), Value::String(Rc::from("symbol")));
+    assert_eq!(run("typeof Symbol();"), Value::String(Arc::from("symbol")));
 }
 
 #[test]
 fn symbol_to_string() {
     assert_eq!(
         run("Symbol('x').toString();"),
-        Value::String(Rc::from("Symbol()"))
+        Value::String(Arc::from("Symbol()"))
     );
 }
 
@@ -294,7 +300,7 @@ fn symbol_key_not_in_json_stringify() {
         o[it] = 99;
         JSON.stringify(o);
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("{\"a\":1}")));
+    assert_eq!(run(src), Value::String(Arc::from("{\"a\":1}")));
 }
 
 #[test]
@@ -306,7 +312,7 @@ fn symbol_key_survives_round_trip() {
         let out = o[s1];
         out;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("hi")));
+    assert_eq!(run(src), Value::String(Arc::from("hi")));
 }
 
 // ---- custom Symbol.iterator ----
@@ -330,7 +336,7 @@ fn custom_symbol_iterator_for_of() {
         for (let v of range) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2,3")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2,3")));
 }
 
 #[test]
@@ -350,7 +356,7 @@ fn custom_symbol_iterator_spread() {
         };
         [...range].join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("10,20,30,40,50")));
+    assert_eq!(run(src), Value::String(Arc::from("10,20,30,40,50")));
 }
 
 #[test]
@@ -369,7 +375,7 @@ fn custom_symbol_iterator_infinite_truncated() {
         }
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2,3,4")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2,3,4")));
 }
 
 #[test]
@@ -380,7 +386,7 @@ fn builtin_array_still_iterable() {
         for (let v of [10, 20, 30]) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("10,20,30")));
+    assert_eq!(run(src), Value::String(Arc::from("10,20,30")));
 }
 
 #[test]
@@ -410,5 +416,5 @@ fn array_prototype_iterator_override_honored() {
         for (let v of [1,2,3]) r2.push(v);
         r.join(",") + "|" + r2.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("10,20,30|1,2,3")));
+    assert_eq!(run(src), Value::String(Arc::from("10,20,30|1,2,3")));
 }

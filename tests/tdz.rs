@@ -112,7 +112,9 @@ fn const_destructure_reassign_is_typeerror() {
 fn tdz_caught_by_try_catch() {
     assert_eq!(
         run("(function(){ try { let x = x; } catch (e) { return e.message; } })()"),
-        Value::String(std::rc::Rc::from("Cannot access 'x' before initialization"))
+        Value::String(std::sync::Arc::from(
+            "Cannot access 'x' before initialization"
+        ))
     );
 }
 

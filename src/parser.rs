@@ -1,19 +1,19 @@
 use crate::ast::*;
 use crate::error;
 use crate::token::{Token, TokenKind};
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
-    last_arrow_params: Option<Vec<Rc<str>>>,
+    last_arrow_params: Option<Vec<Arc<str>>>,
     /// Parameter defaults collected by the most recent `parse_params` / arrow parse.
     cur_param_defaults: Vec<Option<Expr>>,
     /// Rest parameter name from the most recent `parse_params` / arrow parse.
-    cur_rest_param: Option<Rc<str>>,
+    cur_rest_param: Option<Arc<str>>,
     /// Arrow-specific defaults/rest (carried alongside `last_arrow_params`).
     arrow_defaults: Vec<Option<Expr>>,
-    arrow_rest: Option<Rc<str>>,
+    arrow_rest: Option<Arc<str>>,
     /// Whether the current parse context is strict (inherited from an
     /// enclosing strict function/program). Drives directive inheritance.
     is_strict_context: bool,
@@ -212,7 +212,7 @@ impl Parser {
         // expression statement.
         if let TokenKind::Ident(s) = self.peek().clone() {
             if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
-                let label = Rc::from(s.as_str());
+                let label = Arc::from(s.as_str());
                 self.advance(); // ident
                 self.advance(); // ':'
                 let body = self.parse_stmt_inner()?;
@@ -276,10 +276,10 @@ impl Parser {
         }
     }
 
-    fn parse_opt_label(&mut self) -> Option<Rc<str>> {
+    fn parse_opt_label(&mut self) -> Option<Arc<str>> {
         if let TokenKind::Ident(s) = self.peek().clone() {
             self.advance();
-            Some(Rc::from(s.as_str()))
+            Some(Arc::from(s.as_str()))
         } else {
             None
         }
@@ -305,7 +305,7 @@ impl Parser {
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
         let name = match self.advance() {
-            TokenKind::Ident(s) => Some(Rc::from(s.as_str())),
+            TokenKind::Ident(s) => Some(Arc::from(s.as_str())),
             other => {
                 return Err(error::Error::syntax(format!(
                     "Expected function name, got {:?}",
@@ -337,7 +337,7 @@ impl Parser {
         })))
     }
 
-    fn parse_params(&mut self) -> error::Result<Vec<Rc<str>>> {
+    fn parse_params(&mut self) -> error::Result<Vec<Arc<str>>> {
         self.expect(&TokenKind::LParen, "(")?;
         let mut params = Vec::new();
         while !self.check(&TokenKind::RParen) {
@@ -345,7 +345,7 @@ impl Parser {
                 // rest parameter: ...name (must be last)
                 self.advance();
                 if let TokenKind::Ident(s) = self.advance() {
-                    self.cur_rest_param = Some(Rc::from(s.as_str()));
+                    self.cur_rest_param = Some(Arc::from(s.as_str()));
                 } else {
                     return Err(error::Error::syntax(
                         "Expected rest parameter name".to_string(),
@@ -355,7 +355,7 @@ impl Parser {
             }
             match self.advance() {
                 TokenKind::Ident(s) => {
-                    params.push(Rc::from(s.as_str()));
+                    params.push(Arc::from(s.as_str()));
                     let default = if self.eat(&TokenKind::Assign) {
                         Some(self.parse_assign()?)
                     } else {
@@ -524,7 +524,7 @@ impl Parser {
                 }));
             }
             let name = match self.advance() {
-                TokenKind::Ident(s) => Rc::from(s.as_str()),
+                TokenKind::Ident(s) => Arc::from(s.as_str()),
                 other => {
                     return Err(error::Error::syntax(format!(
                         "Expected identifier, got {:?}",
@@ -569,7 +569,7 @@ impl Parser {
         if self.eat(&TokenKind::Catch) {
             if self.eat(&TokenKind::LParen) {
                 if let TokenKind::Ident(s) = self.advance() {
-                    catch_param = Some(Rc::from(s.as_str()));
+                    catch_param = Some(Arc::from(s.as_str()));
                 }
                 self.expect(&TokenKind::RParen, ")")?;
             }
@@ -925,11 +925,11 @@ impl Parser {
                         self.advance();
                         e = Expr::PrivateGet {
                             object: Box::new(e),
-                            name: Rc::from(name.as_str()),
+                            name: Arc::from(name.as_str()),
                         };
                     } else {
                         let name = self.read_property_name()?;
-                        let prop = Expr::String(Rc::from(name.as_str()));
+                        let prop = Expr::String(Arc::from(name.as_str()));
                         e = Expr::Member {
                             object: Box::new(e),
                             property: Box::new(prop),
@@ -964,7 +964,7 @@ impl Parser {
                         }
                         _ => {
                             let name = self.read_property_name()?;
-                            let prop = Expr::String(Rc::from(name.as_str()));
+                            let prop = Expr::String(Arc::from(name.as_str()));
                             e = Expr::Member {
                                 object: Box::new(e),
                                 property: Box::new(prop),
@@ -999,7 +999,7 @@ impl Parser {
                     // Tagged template: tag`str${expr}str`
                     self.advance(); // consume the TemplateString token
                     let tag = e;
-                    let quasi0: Rc<str> = Rc::from(s.as_str());
+                    let quasi0: Arc<str> = Arc::from(s.as_str());
                     e = self.parse_tagged_template(tag, quasi0)?;
                 }
                 _ => break,
@@ -1087,14 +1087,14 @@ impl Parser {
                     // Not an arrow; rewind and treat async as identifier.
                     self.pos -= 2;
                     self.advance();
-                    return Ok(Expr::Ident(Rc::from("async")));
+                    return Ok(Expr::Ident(Arc::from("async")));
                 }
                 if is_async_arrow_ident {
                     self.advance(); // async
                     let name = match self.peek().clone() {
                         TokenKind::Ident(s) => {
                             self.advance();
-                            Rc::from(s.as_str())
+                            Arc::from(s.as_str())
                         }
                         _ => unreachable!(),
                     };
@@ -1107,13 +1107,13 @@ impl Parser {
                 }
                 // fall through to identifier
                 self.advance();
-                Ok(Expr::Ident(Rc::from("async")))
+                Ok(Expr::Ident(Arc::from("async")))
             }
             TokenKind::Regex(pat, flags) => {
                 self.advance();
                 Ok(Expr::Regex(
-                    Rc::from(pat.as_str()),
-                    Rc::from(flags.as_str()),
+                    Arc::from(pat.as_str()),
+                    Arc::from(flags.as_str()),
                 ))
             }
             TokenKind::Number(n) => {
@@ -1127,7 +1127,7 @@ impl Parser {
             }
             TokenKind::String(s) => {
                 self.advance();
-                Ok(Expr::String(Rc::from(s.as_str())))
+                Ok(Expr::String(Arc::from(s.as_str())))
             }
             TokenKind::True => {
                 self.advance();
@@ -1160,10 +1160,10 @@ impl Parser {
                     self.arrow_rest = None;
                     self.advance(); // ident
                     self.advance(); // =>
-                    return self.parse_arrow_body(vec![Rc::from(s.as_str())]);
+                    return self.parse_arrow_body(vec![Arc::from(s.as_str())]);
                 }
                 self.advance();
-                Ok(Expr::Ident(Rc::from(s.as_str())))
+                Ok(Expr::Ident(Arc::from(s.as_str())))
             }
             TokenKind::LParen => {
                 // Could be arrow: (a, b) => ...
@@ -1183,7 +1183,7 @@ impl Parser {
             TokenKind::New => self.parse_new(),
             TokenKind::TemplateString(s) => {
                 self.advance();
-                self.parse_template_rest(Rc::from(s.as_str()))
+                self.parse_template_rest(Arc::from(s.as_str()))
             }
             other => Err(error::Error::syntax(format!(
                 "Unexpected token in expression: {:?}",
@@ -1195,12 +1195,12 @@ impl Parser {
     /// Finish parsing a template literal after consuming its first `TemplateString` quasi.
     /// If followed by `${ ... }` interpolations, build an interpolated template; otherwise
     /// it is a plain string literal.
-    fn parse_template_rest(&mut self, first: Rc<str>) -> error::Result<Expr> {
+    fn parse_template_rest(&mut self, first: Arc<str>) -> error::Result<Expr> {
         if !self.check(&TokenKind::TemplateExprStart) {
             // No interpolation: plain string.
             return Ok(Expr::String(first));
         }
-        let mut quasis: Vec<Rc<str>> = vec![first];
+        let mut quasis: Vec<Arc<str>> = vec![first];
         let mut exprs: Vec<Expr> = Vec::new();
         loop {
             self.expect(&TokenKind::TemplateExprStart, "${")?;
@@ -1209,7 +1209,7 @@ impl Parser {
             exprs.push(e);
             // next quasi
             match self.advance() {
-                TokenKind::TemplateString(s) => quasis.push(Rc::from(s.as_str())),
+                TokenKind::TemplateString(s) => quasis.push(Arc::from(s.as_str())),
                 other => {
                     return Err(error::Error::syntax(format!(
                         "Expected template string, got {:?}",
@@ -1225,10 +1225,10 @@ impl Parser {
     }
 
     /// Parse a tagged template after the tag expression and first quasi.
-    fn parse_tagged_template(&mut self, tag: Expr, first: Rc<str>) -> error::Result<Expr> {
-        let mut quasis: Vec<Rc<str>> = vec![first.clone()];
+    fn parse_tagged_template(&mut self, tag: Expr, first: Arc<str>) -> error::Result<Expr> {
+        let mut quasis: Vec<Arc<str>> = vec![first.clone()];
         // raw quasis: same as cooked for now (lexer already decoded escapes).
-        let mut raw: Vec<Rc<str>> = vec![first];
+        let mut raw: Vec<Arc<str>> = vec![first];
         let mut exprs: Vec<Expr> = Vec::new();
         if !self.check(&TokenKind::TemplateExprStart) {
             // No interpolation.
@@ -1246,7 +1246,7 @@ impl Parser {
             exprs.push(e);
             match self.advance() {
                 TokenKind::TemplateString(s) => {
-                    let q: Rc<str> = Rc::from(s.as_str());
+                    let q: Arc<str> = Arc::from(s.as_str());
                     quasis.push(q.clone());
                     raw.push(q);
                 }
@@ -1336,11 +1336,11 @@ impl Parser {
             let (key, computed) = match self.peek().clone() {
                 TokenKind::Ident(s) => {
                     self.advance();
-                    (PropertyKey::Ident(Rc::from(s.as_str())), false)
+                    (PropertyKey::Ident(Arc::from(s.as_str())), false)
                 }
                 TokenKind::String(s) => {
                     self.advance();
-                    (PropertyKey::String(Rc::from(s.as_str())), false)
+                    (PropertyKey::String(Arc::from(s.as_str())), false)
                 }
                 TokenKind::Number(n) => {
                     self.advance();
@@ -1465,7 +1465,7 @@ impl Parser {
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
                 self.advance();
-                Some(Rc::from(s.as_str()))
+                Some(Arc::from(s.as_str()))
             }
             _ => None,
         };
@@ -1507,7 +1507,7 @@ impl Parser {
         while self.check(&TokenKind::Dot) {
             self.advance();
             let name = self.read_property_name()?;
-            let prop = Expr::String(Rc::from(name.as_str()));
+            let prop = Expr::String(Arc::from(name.as_str()));
             callee = Expr::Member {
                 object: Box::new(callee),
                 property: Box::new(prop),
@@ -1537,7 +1537,7 @@ impl Parser {
         let save = self.pos;
         let mut params = Vec::new();
         let mut defaults: Vec<Option<Expr>> = Vec::new();
-        let mut rest: Option<Rc<str>> = None;
+        let mut rest: Option<Arc<str>> = None;
         // empty params: () =>
         if self.check(&TokenKind::RParen) {
             self.advance();
@@ -1554,7 +1554,7 @@ impl Parser {
             if self.check(&TokenKind::Spread) {
                 self.advance();
                 if let TokenKind::Ident(s) = self.advance() {
-                    rest = Some(Rc::from(s.as_str()));
+                    rest = Some(Arc::from(s.as_str()));
                 } else {
                     self.pos = save;
                     return Ok(false);
@@ -1564,7 +1564,7 @@ impl Parser {
             match self.peek().clone() {
                 TokenKind::Ident(s) => {
                     self.advance();
-                    params.push(Rc::from(s.as_str()));
+                    params.push(Arc::from(s.as_str()));
                     let d = if self.eat(&TokenKind::Assign) {
                         Some(self.parse_assign()?)
                     } else {
@@ -1601,7 +1601,7 @@ impl Parser {
         Ok(false)
     }
 
-    fn parse_arrow_body(&mut self, params: Vec<Rc<str>>) -> error::Result<Expr> {
+    fn parse_arrow_body(&mut self, params: Vec<Arc<str>>) -> error::Result<Expr> {
         let param_defaults = std::mem::take(&mut self.arrow_defaults);
         let rest_param = self.arrow_rest.take();
         // arrow body: expression or block
@@ -1702,7 +1702,7 @@ impl Parser {
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
                 self.advance();
-                Some(Rc::from(s.as_str()))
+                Some(Arc::from(s.as_str()))
             }
             _ => None,
         };
@@ -1738,7 +1738,7 @@ impl Parser {
                     let rest_param = self.cur_rest_param.take();
                     let body = self.parse_fn_body()?;
                     methods.push(ClassMethod {
-                        name: Rc::from(name.as_str()),
+                        name: Arc::from(name.as_str()),
                         params,
                         param_defaults,
                         rest_param,
@@ -1758,7 +1758,7 @@ impl Parser {
                 };
                 self.expect_semi()?;
                 private_fields.push(crate::ast::PrivateFieldDecl {
-                    name: Rc::from(name.as_str()),
+                    name: Arc::from(name.as_str()),
                     init,
                 });
                 continue;
@@ -1784,9 +1784,9 @@ impl Parser {
                 && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
             let method_name = if is_constructor {
                 self.advance();
-                Rc::from("constructor")
+                Arc::from("constructor")
             } else {
-                Rc::from(self.read_property_name()?.as_str())
+                Arc::from(self.read_property_name()?.as_str())
             };
             let params = self.parse_params()?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
@@ -1829,7 +1829,7 @@ impl Parser {
     fn parse_pattern(&mut self) -> error::Result<Pattern> {
         if let TokenKind::Ident(s) = self.peek().clone() {
             self.advance();
-            Ok(Pattern::Ident(Rc::from(s.as_str())))
+            Ok(Pattern::Ident(Arc::from(s.as_str())))
         } else {
             Err(error::Error::syntax("expected pattern".to_string()))
         }
@@ -1905,11 +1905,11 @@ impl Parser {
                     let key: PropertyKey = match self.peek().clone() {
                         TokenKind::Ident(s) => {
                             self.advance();
-                            PropertyKey::Ident(Rc::from(s.as_str()))
+                            PropertyKey::Ident(Arc::from(s.as_str()))
                         }
                         TokenKind::String(s) => {
                             self.advance();
-                            PropertyKey::String(Rc::from(s.as_str()))
+                            PropertyKey::String(Arc::from(s.as_str()))
                         }
                         TokenKind::Number(n) => {
                             self.advance();
@@ -1960,7 +1960,7 @@ impl Parser {
             }
             TokenKind::Ident(s) => {
                 self.advance();
-                Ok(Pattern::Ident(Rc::from(s.as_str())))
+                Ok(Pattern::Ident(Arc::from(s.as_str())))
             }
             other => Err(error::Error::syntax(format!(
                 "Expected pattern, got {:?}",

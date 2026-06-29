@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use std::cell::Cell;
 use std::cell::RefCell;
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> GcIdx {
     let env = HeapObj::Environment(crate::value::EnvironmentData {
@@ -33,7 +33,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             let vars = e.vars.borrow();
-            let cloned: Vec<(Rc<str>, crate::value::Binding)> = vars
+            let cloned: Vec<(Arc<str>, crate::value::Binding)> = vars
                 .iter()
                 .filter(|(_, b)| b.kind != BindingKind::Var)
                 .map(|(k, b)| {
@@ -65,12 +65,12 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
 /// NOT copied, so mutations to them in the body persist in `env` (via the
 /// chain). Each iteration's closures capture a distinct binding for the loop
 /// variable while sharing the rest of the scope.
-pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Rc<str>]) -> GcIdx {
+pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Arc<str>]) -> GcIdx {
     let child = new_env(heap, Some(env), false);
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             let vars = e.vars.borrow();
-            let cloned: Vec<(Rc<str>, crate::value::Binding)> = vars
+            let cloned: Vec<(Arc<str>, crate::value::Binding)> = vars
                 .iter()
                 .filter(|(k, _)| names.iter().any(|n| n.as_ref() == k.as_ref()))
                 .map(|(k, b)| {
@@ -128,7 +128,7 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             e.vars.borrow_mut().insert(
-                Rc::from(name),
+                Arc::from(name),
                 crate::value::Binding {
                     value: RefCell::new(value.clone()),
                     kind,
@@ -145,7 +145,7 @@ pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             e.vars.borrow_mut().insert(
-                Rc::from(name),
+                Arc::from(name),
                 crate::value::Binding {
                     value: RefCell::new(Value::Undefined),
                     kind,
@@ -249,7 +249,7 @@ pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: Bi
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             e.vars.borrow_mut().insert(
-                Rc::from(name),
+                Arc::from(name),
                 crate::value::Binding {
                     value: RefCell::new(value),
                     kind,
@@ -403,7 +403,7 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
                 }
             } else {
                 e.vars.borrow_mut().insert(
-                    Rc::from(name),
+                    Arc::from(name),
                     crate::value::Binding {
                         value: RefCell::new(value),
                         kind: BindingKind::Var,

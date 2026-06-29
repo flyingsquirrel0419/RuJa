@@ -15,7 +15,7 @@ use indexmap::IndexMap;
 use regex::Regex;
 use std::cell::{Cell, RefCell};
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,7 +33,7 @@ fn data_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
-fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Rc<str>, Value)]) {
+fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Arc<str>, Value)]) {
     if let Value::Object(idx) = proto {
         vm.heap.with_obj(idx.0, |obj| {
             let props = obj.props();
@@ -67,19 +67,19 @@ fn object_to_string(
 ) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
     if this.is_nullish() {
-        return Ok(Value::String(Rc::from("[object Null]")));
+        return Ok(Value::String(Arc::from("[object Null]")));
     }
     if let Value::String(_) = &this {
-        return Ok(Value::String(Rc::from("[object String]")));
+        return Ok(Value::String(Arc::from("[object String]")));
     }
     if let Value::Number(_) = &this {
-        return Ok(Value::String(Rc::from("[object Number]")));
+        return Ok(Value::String(Arc::from("[object Number]")));
     }
     if let Value::Bool(_) = &this {
-        return Ok(Value::String(Rc::from("[object Boolean]")));
+        return Ok(Value::String(Arc::from("[object Boolean]")));
     }
     if let Value::Symbol(_) = &this {
-        return Ok(Value::String(Rc::from("[object Symbol]")));
+        return Ok(Value::String(Arc::from("[object Symbol]")));
     }
     if let Value::Object(idx) = &this {
         let class = if let Some(hint) = class_hint {
@@ -113,11 +113,11 @@ fn object_to_string(
                 name.to_string()
             })
         };
-        return Ok(Value::String(Rc::from(
+        return Ok(Value::String(Arc::from(
             format!("[object {}]", class).as_str(),
         )));
     }
-    Ok(Value::String(Rc::from("[object Object]")))
+    Ok(Value::String(Arc::from("[object Object]")))
 }
 
 // ---------------------------------------------------------------------------
@@ -141,13 +141,13 @@ fn make_builtin_constructor(
         props: RefCell::new(method_props),
         proto: RefCell::new(Some(proto_value.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from(name)),
+        class_name: Some(Arc::from(name)),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
 
     let ctor_func = FunctionData {
-        name: Some(Rc::from(name)),
+        name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
             func: object_constructor,
             length: 1,
@@ -176,11 +176,11 @@ fn make_builtin_constructor(
         );
         obj.props().borrow_mut().insert(
             PropertyKey::from("name"),
-            data_prop(Value::String(Rc::from(name))),
+            data_prop(Value::String(Arc::from(name))),
         );
         obj.props().borrow_mut().insert(
             PropertyKey::from("message"),
-            data_prop(Value::String(Rc::from(""))),
+            data_prop(Value::String(Arc::from(""))),
         );
     });
 
@@ -193,13 +193,13 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(error_proto_val.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from(name)),
+        class_name: Some(Arc::from(name)),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
 
     let ctor_func = FunctionData {
-        name: Some(Rc::from(name)),
+        name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
             func: error_constructor,
             length: 1,
@@ -226,11 +226,11 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         );
         obj.props().borrow_mut().insert(
             PropertyKey::from("name"),
-            data_prop(Value::String(Rc::from(name))),
+            data_prop(Value::String(Arc::from(name))),
         );
         obj.props().borrow_mut().insert(
             PropertyKey::from("message"),
-            data_prop(Value::String(Rc::from(""))),
+            data_prop(Value::String(Arc::from(""))),
         );
     });
 
@@ -349,13 +349,13 @@ fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
 }
 
 /// Collect an object's own enumerable string keys in array-index-first then property order.
-fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
+fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
     let mut keys = Vec::new();
     if let Value::Object(idx) = obj {
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
                 for i in 0..a.items.borrow().len() {
-                    keys.push(Rc::from(i.to_string().as_str()));
+                    keys.push(Arc::from(i.to_string().as_str()));
                 }
             }
             if let HeapObj::Map(m) = o {
@@ -369,7 +369,7 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
             // indices) in ascending numeric order, then the remaining string
             // keys in insertion order.
             let mut index_keys: Vec<u32> = Vec::new();
-            let mut other_keys: Vec<Rc<str>> = Vec::new();
+            let mut other_keys: Vec<Arc<str>> = Vec::new();
             for (k, desc) in o.props().borrow().iter() {
                 if !desc.enumerable {
                     continue;
@@ -392,7 +392,7 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
             }
             index_keys.sort_unstable();
             for n in index_keys {
-                keys.push(Rc::from(n.to_string().as_str()));
+                keys.push(Arc::from(n.to_string().as_str()));
             }
             for k in other_keys {
                 keys.push(k);
@@ -418,7 +418,7 @@ fn norm_idx(n: f64, len: f64) -> f64 {
     }
 }
 
-fn make_str_array(vm: &mut Vm, strs: Vec<Rc<str>>) -> Value {
+fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> Value {
     let items: Vec<Value> = strs.into_iter().map(Value::String).collect();
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
@@ -803,7 +803,7 @@ fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
         Vec::new()
     };
     for (key, desc) in pairs {
-        let dp = vec![obj.clone(), Value::String(Rc::from(key.as_str())), desc];
+        let dp = vec![obj.clone(), Value::String(Arc::from(key.as_str())), desc];
         object_define_property(vm, &dp, None)?;
     }
     Ok(obj)
@@ -1012,8 +1012,8 @@ fn object_define_property(
 fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let msg = args
         .first()
-        .map(|v| vm.to_string(v).unwrap_or_else(|_| Rc::from("")))
-        .unwrap_or_else(|| Rc::from(""));
+        .map(|v| vm.to_string(v).unwrap_or_else(|_| Arc::from("")))
+        .unwrap_or_else(|| Arc::from(""));
     // Use the `this` provided by `construct` (already linked to <Error>.prototype).
     let idx = match this {
         Some(Value::Object(i)) => i,
@@ -1045,7 +1045,7 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
                     })
             })
         })
-        .unwrap_or_else(|| Rc::from("Error"));
+        .unwrap_or_else(|| Arc::from("Error"));
     // Optional `cause` from the options object (second argument).
     let cause = args.get(1).and_then(|v| {
         if let Value::Object(oi) = v {
@@ -1398,7 +1398,7 @@ fn build_math(vm: &mut Vm) -> Value {
         props: RefCell::new(props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(false),
-        class_name: Some(Rc::from("Math")),
+        class_name: Some(Arc::from("Math")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
@@ -1446,7 +1446,7 @@ fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error::Result<Str
                 } else {
                     Vec::new()
                 };
-                let pairs: Vec<(Rc<str>, Value)> = o
+                let pairs: Vec<(Arc<str>, Value)> = o
                     .props()
                     .borrow()
                     .iter()
@@ -1498,7 +1498,7 @@ fn build_console(vm: &mut Vm) -> Value {
         props: RefCell::new(props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("Object")),
+        class_name: Some(Arc::from("Object")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
@@ -1583,7 +1583,7 @@ fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
         replacer_fn,
     };
     match stringify_value(vm, &v, &mut Vec::new(), "", &mut ctx) {
-        Some(s) => Ok(Value::String(Rc::from(s.as_str()))),
+        Some(s) => Ok(Value::String(Arc::from(s.as_str()))),
         None => Ok(Value::Undefined),
     }
 }
@@ -1678,7 +1678,7 @@ fn stringify_value(
                         let val = apply_replacer(
                             vm,
                             ctx,
-                            &Value::String(Rc::from(i.to_string().as_str())),
+                            &Value::String(Arc::from(i.to_string().as_str())),
                             item,
                         );
                         let s = stringify_value(vm, &val, seen, &child_indent, ctx);
@@ -1733,7 +1733,7 @@ fn stringify_value(
                 };
                 for (key_str, val) in keys {
                     let val =
-                        apply_replacer(vm, ctx, &Value::String(Rc::from(key_str.as_str())), &val);
+                        apply_replacer(vm, ctx, &Value::String(Arc::from(key_str.as_str())), &val);
                     if let Some(vs) = stringify_value(vm, &val, seen, &child_indent, ctx) {
                         if ctx.gap.is_empty() {
                             pairs.push(format!("\"{}\":{}", key_str, vs));
@@ -1779,7 +1779,7 @@ fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     let parsed = parse_json_value(vm, &mut s.chars().peekable())?;
     if is_reviver_fn {
         if let Some(rf) = reviver {
-            return apply_reviver(vm, &rf, &Value::String(Rc::from("")), &parsed);
+            return apply_reviver(vm, &rf, &Value::String(Arc::from("")), &parsed);
         }
     }
     Ok(parsed)
@@ -1797,7 +1797,7 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
             if is_arr {
                 let mut new_items = Vec::new();
                 for (i, item) in items.iter().enumerate() {
-                    let k = Value::String(Rc::from(i.to_string().as_str()));
+                    let k = Value::String(Arc::from(i.to_string().as_str()));
                     let w = apply_reviver(vm, reviver, &k, item)?;
                     if !w.is_undefined() {
                         new_items.push(w);
@@ -2000,7 +2000,7 @@ fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
             s.push(c);
         }
     }
-    Ok(Value::String(Rc::from(s.as_str())))
+    Ok(Value::String(Arc::from(s.as_str())))
 }
 fn parse_json_num(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
     let mut s = String::new();
@@ -2040,7 +2040,7 @@ fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
         });
         Ok(this.unwrap())
     } else {
-        Ok(Value::String(Rc::from(format!("{}", ts as i64).as_str())))
+        Ok(Value::String(Arc::from(format!("{}", ts as i64).as_str())))
     }
 }
 fn date_get_time(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -2061,7 +2061,7 @@ fn date_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::
     if let Some(Value::Object(idx)) = &this {
         let _ = idx;
     }
-    Ok(Value::String(Rc::from("Date")))
+    Ok(Value::String(Arc::from("Date")))
 }
 fn date_now(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     Ok(Value::Number(now_ms()))
@@ -2191,7 +2191,7 @@ fn build_reflect(vm: &mut Vm) -> Value {
         props: RefCell::new(props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("Reflect")),
+        class_name: Some(Arc::from("Reflect")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
@@ -2207,7 +2207,7 @@ fn build_json(vm: &mut Vm) -> Value {
         props: RefCell::new(props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("JSON")),
+        class_name: Some(Arc::from("JSON")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
@@ -2332,7 +2332,7 @@ fn bigint_to_string(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         Some(_) => num_bigint::BigInt::from(0),
         None => num_bigint::BigInt::from(0),
     };
-    Ok(Value::String(Rc::from(v.to_string().as_str())))
+    Ok(Value::String(Arc::from(v.to_string().as_str())))
 }
 
 /// `eval(x)`: if `x` is not a string, return it as-is. Otherwise parse and
@@ -2355,7 +2355,7 @@ fn global_eval(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
 fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     use crate::ast::FunctionExpr;
     use crate::value::{FunctionData, FunctionKind};
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     // Build the parameter source: all args except the last, joined by commas.
     let (params_src, body_src) = if args.is_empty() {
@@ -2393,7 +2393,7 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
     // "use strict" is reflected in the parsed function (is_strict).
     let is_strict = params_fn.is_strict;
     let f = FunctionExpr {
-        name: Some(Rc::from("anonymous")),
+        name: Some(Arc::from("anonymous")),
         params,
         param_defaults,
         rest_param,
@@ -2406,12 +2406,12 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
     };
     let mut compiler = crate::compiler::Compiler::new();
     let (chunk, param_slots) = compiler.compile_function(&f)?;
-    let fdef = std::rc::Rc::new(crate::function::FunctionDef {
-        name: Some(Rc::from("anonymous")),
+    let fdef = std::sync::Arc::new(crate::function::FunctionDef {
+        name: Some(Arc::from("anonymous")),
         params: f.params.clone(),
         param_slots,
         rest_param: f.rest_param.clone(),
-        chunk: std::rc::Rc::new(chunk),
+        chunk: std::sync::Arc::new(chunk),
         num_locals: f.params.len() + 16,
         is_arrow: false,
         is_async: false,
@@ -2429,7 +2429,7 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
     });
     let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)));
     let fd = FunctionData {
-        name: Some(Rc::from("anonymous")),
+        name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
         closure: vm.global,
         prototype: RefCell::new(Some(proto_val.clone())),
@@ -2499,7 +2499,7 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
         }
     } else if let Value::String(s) = &src_val {
         for ch in s.chars() {
-            items.push(Value::String(Rc::from(ch.to_string().as_str())));
+            items.push(Value::String(Arc::from(ch.to_string().as_str())));
         }
     }
     if let Some(mfn) = map_fn {
@@ -2581,9 +2581,9 @@ fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
                 }
             })
             .collect();
-        return Ok(Value::String(Rc::from(parts.join(&sep).as_str())));
+        return Ok(Value::String(Arc::from(parts.join(&sep).as_str())));
     }
-    Ok(Value::String(Rc::from("")))
+    Ok(Value::String(Arc::from("")))
 }
 fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
@@ -3739,10 +3739,10 @@ fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     // Operate on UTF-16 code units: charAt returns a 1-unit string (a
     // surrogate half for supplementary characters, like real JS).
     match crate::value::utf16_get(&s, i) {
-        Some(unit) => Ok(Value::String(Rc::from(
+        Some(unit) => Ok(Value::String(Arc::from(
             String::from_utf16_lossy(&[unit]).as_str(),
         ))),
-        None => Ok(Value::String(Rc::from(""))),
+        None => Ok(Value::String(Arc::from(""))),
     }
 }
 fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3797,7 +3797,7 @@ fn str_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     for a in args {
         result.push_str(&vm.to_string(a)?);
     }
-    Ok(Value::String(Rc::from(result.as_str())))
+    Ok(Value::String(Arc::from(result.as_str())))
 }
 
 fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3826,7 +3826,7 @@ fn string_raw(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
         }
         i += 1;
     }
-    Ok(Value::String(Rc::from(result.as_str())))
+    Ok(Value::String(Arc::from(result.as_str())))
 }
 
 fn string_from_code_point(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -3844,7 +3844,7 @@ fn string_from_code_point(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
             units.push(0xDC00 + ((cp & 0x3FF) as u16));
         }
     }
-    Ok(Value::String(Rc::from(
+    Ok(Value::String(Arc::from(
         String::from_utf16_lossy(&units).as_str(),
     )))
 }
@@ -3895,20 +3895,20 @@ fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
         (end as usize).min(len as usize)
     };
     let r = crate::value::utf16_slice(&s, st, en);
-    Ok(Value::String(Rc::from(r.as_str())))
+    Ok(Value::String(Arc::from(r.as_str())))
 }
 fn str_to_upper(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(
+    Ok(Value::String(Arc::from(
         str_val(vm, &this)?.to_uppercase().as_str(),
     )))
 }
 fn str_to_lower(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(
+    Ok(Value::String(Arc::from(
         str_val(vm, &this)?.to_lowercase().as_str(),
     )))
 }
 fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Rc::from(str_val(vm, &this)?.trim())))
+    Ok(Value::String(Arc::from(str_val(vm, &this)?.trim())))
 }
 fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -3941,7 +3941,7 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
             }
             let items: Vec<Value> = parts
                 .into_iter()
-                .map(|p| Value::String(Rc::from(p.as_str())))
+                .map(|p| Value::String(Arc::from(p.as_str())))
                 .collect();
             let arr = HeapObj::Array(ArrayData {
                 items: RefCell::new(items),
@@ -3959,7 +3959,7 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     };
     let items: Vec<Value> = parts
         .into_iter()
-        .map(|p| Value::String(Rc::from(p.as_str())))
+        .map(|p| Value::String(Arc::from(p.as_str())))
         .collect();
     let arr = HeapObj::Array(ArrayData {
         items: RefCell::new(items),
@@ -4005,16 +4005,16 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
                 for caps in re.captures_iter(&s) {
                     let m = caps.get(0).unwrap();
                     result.push_str(&s[last_end..m.start()]);
-                    let mut cap_args = vec![Value::String(Rc::from(m.as_str()))];
+                    let mut cap_args = vec![Value::String(Arc::from(m.as_str()))];
                     // capture groups (1-indexed)
                     for i in 1..caps.len() {
                         match caps.get(i) {
-                            Some(g) => cap_args.push(Value::String(Rc::from(g.as_str()))),
+                            Some(g) => cap_args.push(Value::String(Arc::from(g.as_str()))),
                             None => cap_args.push(Value::Undefined),
                         }
                     }
                     cap_args.push(Value::Number(m.start() as f64));
-                    cap_args.push(Value::String(Rc::from(s.as_str())));
+                    cap_args.push(Value::String(Arc::from(s.as_str())));
                     let r = vm.call_function(&replacement, &cap_args, None)?;
                     result.push_str(vm.to_string(&r)?.as_ref());
                     last_end = m.end();
@@ -4023,26 +4023,26 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
                     }
                 }
                 result.push_str(&s[last_end..]);
-                return Ok(Value::String(Rc::from(result.as_str())));
+                return Ok(Value::String(Arc::from(result.as_str())));
             }
             let replaced = if global {
                 re.replace_all(&s, to_str.as_str())
             } else {
                 re.replace(&s, to_str.as_str())
             };
-            return Ok(Value::String(Rc::from(replaced.as_ref())));
+            return Ok(Value::String(Arc::from(replaced.as_ref())));
         }
     }
     let from = match args.first() {
         Some(v) => vm.to_string(v)?.to_string(),
-        None => return Ok(Value::String(Rc::from(s.as_str()))),
+        None => return Ok(Value::String(Arc::from(s.as_str()))),
     };
     if is_fn {
         if let Some(pos) = s.find(&from) {
             let cap_args = vec![
-                Value::String(Rc::from(from.as_str())),
+                Value::String(Arc::from(from.as_str())),
                 Value::Number(pos as f64),
-                Value::String(Rc::from(s.as_str())),
+                Value::String(Arc::from(s.as_str())),
             ];
             let r = vm.call_function(&replacement, &cap_args, None)?;
             let r_str = vm.to_string(&r)?;
@@ -4050,11 +4050,11 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             result.push_str(&s[..pos]);
             result.push_str(r_str.as_ref());
             result.push_str(&s[pos + from.len()..]);
-            return Ok(Value::String(Rc::from(result.as_str())));
+            return Ok(Value::String(Arc::from(result.as_str())));
         }
-        return Ok(Value::String(Rc::from(s.as_str())));
+        return Ok(Value::String(Arc::from(s.as_str())));
     }
-    Ok(Value::String(Rc::from(
+    Ok(Value::String(Arc::from(
         s.replacen(&from, &to_str, 1).as_str(),
     )))
 }
@@ -4136,7 +4136,7 @@ fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
             }
         })
         .unwrap_or(0);
-    Ok(Value::String(Rc::from(
+    Ok(Value::String(Arc::from(
         str_val(vm, &this)?.repeat(n).as_str(),
     )))
 }
@@ -4162,7 +4162,7 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
                     // Collect all matches (full-match substrings).
                     let items: Vec<Value> = re
                         .find_iter(&s)
-                        .map(|m| Value::String(Rc::from(m.as_str())))
+                        .map(|m| Value::String(Arc::from(m.as_str())))
                         .collect();
                     if items.is_empty() {
                         Ok(Value::Null)
@@ -4175,7 +4175,7 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
                             let items: Vec<Value> = caps
                                 .iter()
                                 .map(|c| match c {
-                                    Some(m) => Value::String(Rc::from(m.as_str())),
+                                    Some(m) => Value::String(Arc::from(m.as_str())),
                                     None => Value::Undefined,
                                 })
                                 .collect();
@@ -4228,12 +4228,12 @@ fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     };
     let cur_len = crate::value::utf16_len(&s);
     if pad.is_empty() || cur_len >= target {
-        return Ok(Value::String(Rc::from(s.as_str())));
+        return Ok(Value::String(Arc::from(s.as_str())));
     }
     let need = target - cur_len;
     let pad_len = crate::value::utf16_len(&pad);
     if pad_len == 0 {
-        return Ok(Value::String(Rc::from(s.as_str())));
+        return Ok(Value::String(Arc::from(s.as_str())));
     }
     let mut out = String::new();
     while crate::value::utf16_len(&out) < need {
@@ -4244,7 +4244,7 @@ fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     units.truncate(need);
     out = String::from_utf16_lossy(&units);
     out.push_str(&s);
-    Ok(Value::String(Rc::from(out.as_str())))
+    Ok(Value::String(Arc::from(out.as_str())))
 }
 fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -4259,7 +4259,7 @@ fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     };
     let cur_len = crate::value::utf16_len(&s);
     if pad.is_empty() || cur_len >= target {
-        return Ok(Value::String(Rc::from(s.as_str())));
+        return Ok(Value::String(Arc::from(s.as_str())));
     }
     let need = target - cur_len;
     let mut out = s.clone();
@@ -4269,7 +4269,7 @@ fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     let mut units: Vec<u16> = out.encode_utf16().collect();
     units.truncate(target);
     out = String::from_utf16_lossy(&units);
-    Ok(Value::String(Rc::from(out.as_str())))
+    Ok(Value::String(Arc::from(out.as_str())))
 }
 fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -4282,7 +4282,7 @@ fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Val
     if idx >= 0 && idx < len {
         // Return a 1-code-unit string (surrogate half for supplementary).
         let unit = crate::value::utf16_get(&s, idx as usize).unwrap();
-        return Ok(Value::String(Rc::from(
+        return Ok(Value::String(Arc::from(
             String::from_utf16_lossy(&[unit]).as_str(),
         )));
     }
@@ -4290,18 +4290,18 @@ fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Val
 }
 fn str_trim_start(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    Ok(Value::String(Rc::from(s.trim_start())))
+    Ok(Value::String(Arc::from(s.trim_start())))
 }
 fn str_trim_end(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    Ok(Value::String(Rc::from(s.trim_end())))
+    Ok(Value::String(Arc::from(s.trim_end())))
 }
 fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let from = match args.first() {
         Some(Value::String(p)) => p.to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
-        None => return Ok(Value::String(Rc::from(s.as_str()))),
+        None => return Ok(Value::String(Arc::from(s.as_str()))),
     };
     let to = match args.get(1) {
         Some(Value::String(p)) => p.to_string(),
@@ -4315,9 +4315,9 @@ fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
             out.push(ch);
         }
         out.push_str(&to);
-        return Ok(Value::String(Rc::from(out.as_str())));
+        return Ok(Value::String(Arc::from(out.as_str())));
     }
-    Ok(Value::String(Rc::from(s.replace(&from, &to))))
+    Ok(Value::String(Arc::from(s.replace(&from, &to))))
 }
 fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -4348,7 +4348,7 @@ fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     let start = start as usize;
     let end = end as usize;
     let result = crate::value::utf16_slice(&s, start, end);
-    Ok(Value::String(Rc::from(result.as_str())))
+    Ok(Value::String(Arc::from(result.as_str())))
 }
 
 fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -4366,7 +4366,7 @@ fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         })
         .collect();
     let s = crate::value::utf16_from_codes(&codes);
-    Ok(Value::String(Rc::from(s.as_str())))
+    Ok(Value::String(Arc::from(s.as_str())))
 }
 fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     // `new String(x)` returns the constructed wrapper object (the primitive
@@ -4379,7 +4379,7 @@ fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     // `String()` with no argument yields "" (per spec), distinct from
     // `String(undefined)` which yields "undefined".
     match args.first() {
-        None => Ok(Value::String(Rc::from(""))),
+        None => Ok(Value::String(Arc::from(""))),
         Some(v) => Ok(Value::String(vm.to_string(v)?)),
     }
 }
@@ -4436,10 +4436,10 @@ fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         None => 0.0,
     };
     if n.is_nan() {
-        return Ok(Value::String(Rc::from("NaN")));
+        return Ok(Value::String(Arc::from("NaN")));
     }
     if !n.is_finite() {
-        return Ok(Value::String(Rc::from(if n > 0.0 {
+        return Ok(Value::String(Arc::from(if n > 0.0 {
             "Infinity"
         } else {
             "-Infinity"
@@ -4449,7 +4449,7 @@ fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         Some(v) => vm.to_number(v)? as usize,
         None => 0,
     };
-    Ok(Value::String(Rc::from(format!("{:.*}", digits, n))))
+    Ok(Value::String(Arc::from(format!("{:.*}", digits, n))))
 }
 fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let n = match &this {
@@ -4458,10 +4458,10 @@ fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
         None => 0.0,
     };
     if n.is_nan() {
-        return Ok(Value::String(Rc::from("NaN")));
+        return Ok(Value::String(Arc::from("NaN")));
     }
     if !n.is_finite() {
-        return Ok(Value::String(Rc::from(if n > 0.0 {
+        return Ok(Value::String(Arc::from(if n > 0.0 {
             "Infinity"
         } else {
             "-Infinity"
@@ -4471,7 +4471,7 @@ fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
         Some(v) if !v.is_undefined() => {
             let p = vm.to_number(v)? as usize;
             if p == 0 {
-                return Ok(Value::String(Rc::from("0")));
+                return Ok(Value::String(Arc::from("0")));
             }
             // Use Rust's formatting with significant digits.
             let s = format!("{:.*e}", p - 1, n);
@@ -4501,9 +4501,9 @@ fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
             } else {
                 s
             };
-            Ok(Value::String(Rc::from(s.as_str())))
+            Ok(Value::String(Arc::from(s.as_str())))
         }
-        _ => Ok(Value::String(Rc::from(
+        _ => Ok(Value::String(Arc::from(
             crate::value::num_to_string(n).as_str(),
         ))),
     }
@@ -4516,10 +4516,10 @@ fn num_to_exponential(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
         None => 0.0,
     };
     if n.is_nan() {
-        return Ok(Value::String(Rc::from("NaN")));
+        return Ok(Value::String(Arc::from("NaN")));
     }
     if !n.is_finite() {
-        return Ok(Value::String(Rc::from(if n > 0.0 {
+        return Ok(Value::String(Arc::from(if n > 0.0 {
             "Infinity"
         } else {
             "-Infinity"
@@ -4531,12 +4531,12 @@ fn num_to_exponential(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
             let s = format!("{:.*e}", d, n);
             // Rust uses e0, e1; JS uses e+0, e+1.
             let s = s.replace('e', "e+");
-            Ok(Value::String(Rc::from(s.as_str())))
+            Ok(Value::String(Arc::from(s.as_str())))
         }
         _ => {
             let s = format!("{:e}", n);
             let s = s.replace('e', "e+");
-            Ok(Value::String(Rc::from(s.as_str())))
+            Ok(Value::String(Arc::from(s.as_str())))
         }
     }
 }
@@ -4552,7 +4552,7 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
         None => 10.0,
     } as u32;
     if radix == 10 || radix == 0 {
-        return Ok(Value::String(Rc::from(
+        return Ok(Value::String(Arc::from(
             crate::value::num_to_string(n).as_str(),
         )));
     }
@@ -4564,10 +4564,12 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
     if n.fract() == 0.0 {
         let i = n as i64;
         if i >= 0 {
-            return Ok(Value::String(Rc::from(format_i64_radix(i, radix).as_str())));
+            return Ok(Value::String(Arc::from(
+                format_i64_radix(i, radix).as_str(),
+            )));
         }
     }
-    Ok(Value::String(Rc::from(
+    Ok(Value::String(Arc::from(
         crate::value::num_to_string(n).as_str(),
     )))
 }
@@ -4776,28 +4778,28 @@ pub fn setup_full(vm: &mut Vm) {
         ("parseInt", number_parse_int, 2),
         ("parseFloat", number_parse_float, 1),
     ];
-    let mut static_props: Vec<(Rc<str>, Value)> = Vec::new();
+    let mut static_props: Vec<(Arc<str>, Value)> = Vec::new();
     for (name, fnp, len) in statics {
         let idx = vm.new_native_function(name, *fnp, *len);
-        static_props.push((Rc::from(*name), Value::Object(idx)));
+        static_props.push((Arc::from(*name), Value::Object(idx)));
     }
     static_props.push((
-        Rc::from("MAX_SAFE_INTEGER"),
+        Arc::from("MAX_SAFE_INTEGER"),
         Value::Number(9007199254740991.0),
     ));
     static_props.push((
-        Rc::from("MIN_SAFE_INTEGER"),
+        Arc::from("MIN_SAFE_INTEGER"),
         Value::Number(-9007199254740991.0),
     ));
-    static_props.push((Rc::from("EPSILON"), Value::Number(f64::EPSILON)));
-    static_props.push((Rc::from("MAX_VALUE"), Value::Number(f64::MAX)));
-    static_props.push((Rc::from("MIN_VALUE"), Value::Number(f64::MIN_POSITIVE)));
-    static_props.push((Rc::from("POSITIVE_INFINITY"), Value::Number(f64::INFINITY)));
+    static_props.push((Arc::from("EPSILON"), Value::Number(f64::EPSILON)));
+    static_props.push((Arc::from("MAX_VALUE"), Value::Number(f64::MAX)));
+    static_props.push((Arc::from("MIN_VALUE"), Value::Number(f64::MIN_POSITIVE)));
+    static_props.push((Arc::from("POSITIVE_INFINITY"), Value::Number(f64::INFINITY)));
     static_props.push((
-        Rc::from("NEGATIVE_INFINITY"),
+        Arc::from("NEGATIVE_INFINITY"),
         Value::Number(f64::NEG_INFINITY),
     ));
-    static_props.push((Rc::from("NaN"), Value::Number(f64::NAN)));
+    static_props.push((Arc::from("NaN"), Value::Number(f64::NAN)));
     vm.heap.with_obj(num_ctor.0, |o| {
         if let HeapObj::Function(f) = o {
             for (name, val) in &static_props {
@@ -4836,7 +4838,7 @@ pub fn setup_full(vm: &mut Vm) {
             props: RefCell::new(IndexMap::new()),
             proto: RefCell::new(Some(vm.object_proto.clone())),
             extensible: Cell::new(true),
-            class_name: Some(Rc::from("BigInt")),
+            class_name: Some(Arc::from("BigInt")),
             private_fields: RefCell::new(std::collections::HashMap::new()),
         }));
         let bproto = Value::Object(GcIdx(bp_idx));
@@ -4869,7 +4871,7 @@ pub fn setup_full(vm: &mut Vm) {
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("global")),
+        class_name: Some(Arc::from("global")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     vm.global_this = Value::Object(GcIdx(globalthis_idx));
@@ -4926,7 +4928,7 @@ pub fn setup_full(vm: &mut Vm) {
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("Generator")),
+        class_name: Some(Arc::from("Generator")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     {
@@ -4960,9 +4962,9 @@ pub fn setup_full(vm: &mut Vm) {
         vm,
         &Value::Object(function_proto_idx),
         &[
-            (Rc::from("call"), Value::Object(call_fn)),
-            (Rc::from("apply"), Value::Object(apply_fn)),
-            (Rc::from("bind"), Value::Object(bind_fn)),
+            (Arc::from("call"), Value::Object(call_fn)),
+            (Arc::from("apply"), Value::Object(apply_fn)),
+            (Arc::from("bind"), Value::Object(bind_fn)),
         ],
     );
     // Function.prototype points to the function prototype object.
@@ -5520,7 +5522,7 @@ fn symbol_for(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<V
 fn symbol_to_string(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     // RuJa's Symbol is `Value::Symbol(u32)` with no stored description, so
     // we return the no-description form "Symbol()".
-    Ok(Value::String(Rc::from("Symbol()")))
+    Ok(Value::String(Arc::from("Symbol()")))
 }
 
 // =========================================================================
@@ -5551,7 +5553,7 @@ fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
     let resolve_fn = vm
         .heap
         .allocate(HeapObj::Function(crate::value::FunctionData {
-            name: Some(Rc::from("resolve")),
+            name: Some(Arc::from("resolve")),
             kind: crate::value::FunctionKind::Bound {
                 target: resolve_target,
                 this_val: p_val.clone(),
@@ -5568,7 +5570,7 @@ fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
     let reject_fn = vm
         .heap
         .allocate(HeapObj::Function(crate::value::FunctionData {
-            name: Some(Rc::from("reject")),
+            name: Some(Arc::from("reject")),
             kind: crate::value::FunctionKind::Bound {
                 target: reject_target,
                 this_val: p_val.clone(),
@@ -5596,7 +5598,7 @@ fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
             let reason: Value = e
                 .thrown_value
                 .clone()
-                .unwrap_or_else(|| Value::String(Rc::from(e.message.as_str())));
+                .unwrap_or_else(|| Value::String(Arc::from(e.message.as_str())));
             vm.promise_reject(p_idx, reason);
         }
     }
@@ -5761,17 +5763,17 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(regex_proto_val)),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("RegExp")),
+        class_name: Some(Arc::from("RegExp")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     let mut props = IndexMap::new();
     props.insert(
         PropertyKey::from("source"),
-        data_prop(Value::String(Rc::from(pattern.as_str()))),
+        data_prop(Value::String(Arc::from(pattern.as_str()))),
     );
     props.insert(
         PropertyKey::from("flags"),
-        data_prop(Value::String(Rc::from(flags.as_str()))),
+        data_prop(Value::String(Arc::from(flags.as_str()))),
     );
     props.insert(
         PropertyKey::from("global"),
@@ -5865,7 +5867,7 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             let items: Vec<Value> = caps
                 .iter()
                 .map(|c| match c {
-                    Some(mch) => Value::String(Rc::from(mch.as_str())),
+                    Some(mch) => Value::String(Arc::from(mch.as_str())),
                     None => Value::Undefined,
                 })
                 .collect();
@@ -6224,7 +6226,7 @@ pub fn setup_collections(vm: &mut Vm) {
         props: RefCell::new(sym_proto_props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from("Symbol")),
+        class_name: Some(Arc::from("Symbol")),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj));
@@ -6246,12 +6248,12 @@ fn make_builtin_constructor_with(
         props: RefCell::new(method_props),
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
-        class_name: Some(Rc::from(name)),
+        class_name: Some(Arc::from(name)),
         private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
     let ctor_func = FunctionData {
-        name: Some(Rc::from(name)),
+        name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
             func: ctor,
             length: 0,
@@ -6374,7 +6376,7 @@ fn function_bind(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
         _ => return Err(error::Error::type_err("not a function")),
     };
     let bound = crate::value::FunctionData {
-        name: Some(Rc::from("bound")),
+        name: Some(Arc::from("bound")),
         kind: crate::value::FunctionKind::Bound {
             target: target_idx,
             this_val: this_arg,

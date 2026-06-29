@@ -4,7 +4,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn arithmetic() {
@@ -63,13 +63,13 @@ fn arrays() {
 
 #[test]
 fn typeof_values() {
-    assert_eq!(run("typeof 42;"), Value::String(Rc::from("number")));
-    assert_eq!(run("typeof 's';"), Value::String(Rc::from("string")));
+    assert_eq!(run("typeof 42;"), Value::String(Arc::from("number")));
+    assert_eq!(run("typeof 's';"), Value::String(Arc::from("string")));
     assert_eq!(
         run("typeof undefined;"),
-        Value::String(Rc::from("undefined"))
+        Value::String(Arc::from("undefined"))
     );
-    assert_eq!(run("typeof null;"), Value::String(Rc::from("object")));
+    assert_eq!(run("typeof null;"), Value::String(Arc::from("object")));
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn globals() {
 #[test]
 fn prototype_inheritance() {
     let src = r#"function Shape() {} Shape.prototype.describe = function() { return 'shape'; }; let s = new Shape(); s.describe();"#;
-    assert_eq!(run(src), Value::String(Rc::from("shape")));
+    assert_eq!(run(src), Value::String(Arc::from("shape")));
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn prototype_method() {
         Animal.prototype.speak = function() { return this.name + " speaks"; };
         new Animal("Rex").speak();
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("Rex speaks")));
+    assert_eq!(run(src), Value::String(Arc::from("Rex speaks")));
 }
 
 #[test]

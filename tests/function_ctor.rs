@@ -3,7 +3,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn function_ctor_two_params() {
@@ -23,7 +23,7 @@ fn function_ctor_no_params() {
 #[test]
 fn function_ctor_returns_string() {
     let src = r#"new Function("return 'hello';")();"#;
-    assert_eq!(run(src), Value::String(Rc::from("hello")));
+    assert_eq!(run(src), Value::String(Arc::from("hello")));
 }
 
 #[test]

@@ -1,9 +1,9 @@
 use num_bigint::BigInt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassExpr {
-    pub name: Option<Rc<str>>,
+    pub name: Option<Arc<str>>,
     pub superclass: Option<Box<Expr>>,
     pub methods: Vec<ClassMethod>,
     /// Static initialization blocks: `static { ... }`. Each runs with `this`
@@ -16,10 +16,10 @@ pub struct ClassExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassMethod {
-    pub name: Rc<str>,
-    pub params: Vec<Rc<str>>,
+    pub name: Arc<str>,
+    pub params: Vec<Arc<str>>,
     pub param_defaults: Vec<Option<Expr>>,
-    pub rest_param: Option<Rc<str>>,
+    pub rest_param: Option<Arc<str>>,
     pub body: Vec<Stmt>,
     pub is_static: bool,
     pub is_constructor: bool,
@@ -31,23 +31,23 @@ pub struct ClassMethod {
 pub enum Expr {
     Number(f64),
     BigInt(BigInt),
-    String(Rc<str>),
-    TemplateStr(Rc<str>),
+    String(Arc<str>),
+    TemplateStr(Arc<str>),
     /// Tagged template: `tag`...`` — calls tag(strings, raw, ...exprs).
     TaggedTemplate {
         tag: Box<Expr>,
-        quasis: Vec<Rc<str>>,
-        raw: Vec<Rc<str>>,
+        quasis: Vec<Arc<str>>,
+        raw: Vec<Arc<str>>,
         exprs: Vec<Expr>,
     },
     TemplateInterp {
-        quasis: Vec<Rc<str>>,
+        quasis: Vec<Arc<str>>,
         exprs: Vec<Expr>,
     },
     Bool(bool),
     Null,
     Undefined,
-    Ident(Rc<str>),
+    Ident(Arc<str>),
     This,
     Super,
     Array(Vec<Expr>),
@@ -58,17 +58,17 @@ pub enum Expr {
     /// Private field read: `obj.#name`.
     PrivateGet {
         object: Box<Expr>,
-        name: Rc<str>,
+        name: Arc<str>,
     },
     /// Private field write: `obj.#name = value`.
     PrivateSet {
         object: Box<Expr>,
-        name: Rc<str>,
+        name: Arc<str>,
         value: Box<Expr>,
     },
     /// Private field declaration: `#name = init` in a class body.
     PrivateFieldDecl {
-        name: Rc<str>,
+        name: Arc<str>,
         init: Option<Box<Expr>>,
     },
     Unary(UnOp, Box<Expr>),
@@ -95,7 +95,7 @@ pub enum Expr {
     },
     Spread(Box<Expr>),
     Sequence(Vec<Expr>),
-    Regex(Rc<str>, Rc<str>),
+    Regex(Arc<str>, Arc<str>),
     Await(Box<Expr>),
     Yield(Option<Box<Expr>>),
     /// `yield* expr` - delegate to another iterable/generator, forwarding each
@@ -105,7 +105,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrivateFieldDecl {
-    pub name: Rc<str>,
+    pub name: Arc<str>,
     pub init: Option<Box<Expr>>,
 }
 
@@ -129,8 +129,8 @@ pub struct Property {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyKey {
-    Ident(Rc<str>),
-    String(Rc<str>),
+    Ident(Arc<str>),
+    String(Arc<str>),
     Number(f64),
     Computed(Box<Expr>),
     Spread(Box<Expr>),
@@ -138,12 +138,12 @@ pub enum PropertyKey {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionExpr {
-    pub name: Option<Rc<str>>,
-    pub params: Vec<Rc<str>>,
+    pub name: Option<Arc<str>>,
+    pub params: Vec<Arc<str>>,
     /// Optional default expression for each parameter (None = no default).
     pub param_defaults: Vec<Option<Expr>>,
     /// Name of the rest parameter (`...rest`), if any.
-    pub rest_param: Option<Rc<str>>,
+    pub rest_param: Option<Arc<str>>,
     pub body: Vec<Stmt>,
     pub is_arrow: bool,
     pub is_async: bool,
@@ -157,7 +157,7 @@ pub struct FunctionExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
-    Ident(Rc<str>),
+    Ident(Arc<str>),
     Array(Vec<Pattern>),
     Object(Vec<(PropertyKey, Pattern)>, Option<Box<Pattern>>),
     Assign(Box<Pattern>, Expr),
@@ -245,7 +245,7 @@ pub struct Stmt {
 pub enum StmtNode {
     VarDecl {
         kind: VarKind,
-        decls: Vec<(Rc<str>, Option<Expr>)>,
+        decls: Vec<(Arc<str>, Option<Expr>)>,
     },
     ExprStmt(Expr),
     Block(Vec<Stmt>),
@@ -287,18 +287,18 @@ pub enum StmtNode {
         object: Expr,
         body: Box<Stmt>,
     },
-    Break(Option<Rc<str>>),
-    Continue(Option<Rc<str>>),
+    Break(Option<Arc<str>>),
+    Continue(Option<Arc<str>>),
     Return(Option<Expr>),
     Throw(Expr),
     TryCatch {
         try_body: Box<Stmt>,
-        catch_param: Option<Rc<str>>,
+        catch_param: Option<Arc<str>>,
         catch_body: Option<Box<Stmt>>,
         finally_body: Option<Box<Stmt>>,
     },
     FunctionDecl(FunctionExpr),
-    Labeled(Rc<str>, Box<Stmt>),
+    Labeled(Arc<str>, Box<Stmt>),
     Empty,
     Switch {
         disc: Expr,

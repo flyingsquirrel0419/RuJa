@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use std::cell::{Cell, RefCell};
 
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A property key: either a string (possibly numeric-origin) or a Symbol id.
 ///
@@ -17,15 +17,15 @@ use std::rc::Rc;
 /// `Symbol.iterator`) coexist with ordinary string-keyed ones.
 #[derive(Clone, Debug)]
 pub enum PropertyKey {
-    Str(Rc<str>),
+    Str(Arc<str>),
     Symbol(u32),
 }
 
 impl PropertyKey {
     pub fn from_string(s: String) -> Self {
-        PropertyKey::Str(Rc::from(s.as_str()))
+        PropertyKey::Str(Arc::from(s.as_str()))
     }
-    pub fn from_rc(s: Rc<str>) -> Self {
+    pub fn from_rc(s: Arc<str>) -> Self {
         PropertyKey::Str(s)
     }
 
@@ -44,16 +44,16 @@ impl PropertyKey {
 
 impl From<&str> for PropertyKey {
     fn from(s: &str) -> Self {
-        PropertyKey::Str(Rc::from(s))
+        PropertyKey::Str(Arc::from(s))
     }
 }
 impl From<String> for PropertyKey {
     fn from(s: String) -> Self {
-        PropertyKey::Str(Rc::from(s.as_str()))
+        PropertyKey::Str(Arc::from(s.as_str()))
     }
 }
-impl From<Rc<str>> for PropertyKey {
-    fn from(s: Rc<str>) -> Self {
+impl From<Arc<str>> for PropertyKey {
+    fn from(s: Arc<str>) -> Self {
         PropertyKey::Str(s)
     }
 }
@@ -100,7 +100,7 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     BigInt(BigInt),
-    String(Rc<str>),
+    String(Arc<str>),
     Object(GcIdx),
     Symbol(u32),
 }
@@ -119,7 +119,7 @@ impl Value {
         Value::Number(n)
     }
     pub fn from_string(s: &str) -> Self {
-        Value::String(Rc::from(s))
+        Value::String(Arc::from(s))
     }
 
     pub fn is_undefined(&self) -> bool {
@@ -225,10 +225,10 @@ pub struct ObjectData {
     pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
     pub extensible: Cell<bool>,
-    pub class_name: Option<Rc<str>>,
+    pub class_name: Option<Arc<str>>,
     /// Private field storage: `#name` -> value. Isolated from normal props
     /// (not enumerable, not accessible via [] or for...in).
-    pub private_fields: RefCell<std::collections::HashMap<Rc<str>, Value>>,
+    pub private_fields: RefCell<std::collections::HashMap<Arc<str>, Value>>,
 }
 
 pub struct ArrayData {
@@ -238,7 +238,7 @@ pub struct ArrayData {
 }
 
 pub struct FunctionData {
-    pub name: Option<Rc<str>>,
+    pub name: Option<Arc<str>>,
     pub kind: FunctionKind,
     pub closure: GcIdx,
     pub prototype: RefCell<Option<Value>>,
@@ -255,7 +255,7 @@ pub enum FunctionKind {
         length: usize,
     },
     Interpreted {
-        func: std::rc::Rc<crate::function::FunctionDef>,
+        func: std::sync::Arc<crate::function::FunctionDef>,
     },
     Bound {
         target: GcIdx,
@@ -265,7 +265,7 @@ pub enum FunctionKind {
 }
 
 pub struct EnvironmentData {
-    pub vars: RefCell<IndexMap<Rc<str>, Binding>>,
+    pub vars: RefCell<IndexMap<Arc<str>, Binding>>,
     pub parent: RefCell<Option<GcIdx>>,
     pub is_function_scope: bool,
     /// `with` statement object environment record: when `Some(obj)`, name
@@ -353,7 +353,7 @@ pub struct GeneratorData {
 /// across `next()` calls, suspending at each `yield`.
 pub struct LazyGeneratorData {
     /// The compiled function definition (holds the bytecode chunk).
-    pub fdef: Rc<crate::function::FunctionDef>,
+    pub fdef: Arc<crate::function::FunctionDef>,
     /// Closure environment captured at creation time.
     pub closure: GcIdx,
     /// Current environment (advanced by PushScope/PopScope); saved/restored

@@ -163,7 +163,7 @@ fn define_property_setter_is_invoked() {
            o.x = 1;
            o.x = 2;
            log.join(',');"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("1,2")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("1,2")));
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn inherited_setter_is_invoked_through_prototype_chain() {
            var o = Object.create(proto);
            o.x = 7;
            log.join(',');"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("7")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("7")));
 }
 
 #[test]
@@ -232,12 +232,12 @@ fn array_length_valid_truncates_and_extends() {
     let v = run(r#"var a = [1,2,3];
            a.length = 2;
            a.length + ':' + a[0] + ',' + a[1];"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("2:1,2")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("2:1,2")));
 
     let v = run(r#"var a = [1];
            a.length = 3;
            a.length + ':' + (a[2] === undefined ? 'hole' : 'val');"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("3:hole")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("3:hole")));
 }
 
 // ---------------------------------------------------------------------------
@@ -250,31 +250,31 @@ fn string_as_function_returns_primitive() {
     // String(x) is ToString(x); must be a primitive string, not an object.
     assert_eq!(
         run("typeof String(5) + ':' + String(5)"),
-        Value::String(std::rc::Rc::from("string:5"))
+        Value::String(std::sync::Arc::from("string:5"))
     );
     // exponential value routes through num_to_string.
     assert_eq!(
         run("String(5e-17)"),
-        Value::String(std::rc::Rc::from("5e-17"))
+        Value::String(std::sync::Arc::from("5e-17"))
     );
     assert_eq!(
         run("String(true)"),
-        Value::String(std::rc::Rc::from("true"))
+        Value::String(std::sync::Arc::from("true"))
     );
     assert_eq!(
         run("String(null)"),
-        Value::String(std::rc::Rc::from("null"))
+        Value::String(std::sync::Arc::from("null"))
     );
     assert_eq!(
         run("String(undefined)"),
-        Value::String(std::rc::Rc::from("undefined"))
+        Value::String(std::sync::Arc::from("undefined"))
     );
 }
 
 #[test]
 fn string_with_no_argument_is_empty_string() {
     // `String()` is "", distinct from `String(undefined)` which is "undefined".
-    assert_eq!(run("String()"), Value::String(std::rc::Rc::from("")));
+    assert_eq!(run("String()"), Value::String(std::sync::Arc::from("")));
 }
 
 #[test]
@@ -306,15 +306,15 @@ fn new_string_number_boolean_return_objects() {
     // `new` must produce objects (typeof "object"), not primitives.
     assert_eq!(
         run("typeof new String(5)"),
-        Value::String(std::rc::Rc::from("object"))
+        Value::String(std::sync::Arc::from("object"))
     );
     assert_eq!(
         run("typeof new Number(5)"),
-        Value::String(std::rc::Rc::from("object"))
+        Value::String(std::sync::Arc::from("object"))
     );
     assert_eq!(
         run("typeof new Boolean(5)"),
-        Value::String(std::rc::Rc::from("object"))
+        Value::String(std::sync::Arc::from("object"))
     );
 }
 
@@ -364,11 +364,11 @@ fn array_constructor_with_length() {
 fn array_constructor_with_elements() {
     assert_eq!(
         run("Array(1,2,3).join(',')"),
-        Value::String(std::rc::Rc::from("1,2,3"))
+        Value::String(std::sync::Arc::from("1,2,3"))
     );
     assert_eq!(
         run("new Array('a','b').join('-')"),
-        Value::String(std::rc::Rc::from("a-b"))
+        Value::String(std::sync::Arc::from("a-b"))
     );
 }
 
@@ -406,7 +406,7 @@ fn delete_non_configurable_returns_false() {
            Object.defineProperty(o, 'a', { value: 1, configurable: false });
            var r = delete o.a;
            r + ':' + o.a"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("false:1")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("false:1")));
 }
 
 #[test]
@@ -429,7 +429,7 @@ fn delete_normal_property_works() {
     let v = run(r#"var o = { a: 1, b: 2 };
            delete o.a;
            Object.keys(o).join(',')"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("b")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("b")));
 }
 
 // ---------------------------------------------------------------------------
@@ -445,16 +445,16 @@ fn value_of_called_in_to_primitive() {
 #[test]
 fn to_string_called_in_to_primitive() {
     let v = run("var o = { toString() { return 'hi' } }; o + ''");
-    assert_eq!(v, Value::String(std::rc::Rc::from("hi")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("hi")));
 }
 
 #[test]
 fn array_to_primitive_joins() {
     assert_eq!(
         run("[1,2] + [3,4]"),
-        Value::String(std::rc::Rc::from("1,23,4"))
+        Value::String(std::sync::Arc::from("1,23,4"))
     );
-    assert_eq!(run("[] + []"), Value::String(std::rc::Rc::from("")));
+    assert_eq!(run("[] + []"), Value::String(std::sync::Arc::from("")));
 }
 
 // ---------------------------------------------------------------------------
@@ -485,7 +485,7 @@ fn labeled_break_works() {
              }
            }
            r.join(',')"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("0-0")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("0-0")));
 }
 
 #[test]
@@ -498,14 +498,14 @@ fn labeled_continue_works() {
              }
            }
            r.join(',')"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("0-0,1-0,2-0")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("0-0,1-0,2-0")));
 }
 
 #[test]
 fn labeled_statement_runs_body() {
     // A labeled statement runs its body; here a side effect confirms it.
     let v = run("label1: { var ran = 'yes' }; ran");
-    assert_eq!(v, Value::String(std::rc::Rc::from("yes")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("yes")));
 }
 
 // ---------------------------------------------------------------------------
@@ -527,7 +527,7 @@ fn finally_runs_after_try_return() {
            function f() { try { return 1; } finally { log.push('fin'); } }
            var r = f();
            r + ':' + log.join(',')"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("1:fin")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("1:fin")));
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn finally_runs_after_catch() {
            try { throw 1; } catch (e) { r.push('catch'); }
            finally { r.push('fin'); }
            r.join(',')"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("catch,fin")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("catch,fin")));
 }
 
 #[test]
@@ -551,5 +551,5 @@ fn finally_runs_on_normal_completion() {
     let v = run(r#"var r = [];
            try { r.push('try'); } finally { r.push('fin'); }
            r.join(',')"#);
-    assert_eq!(v, Value::String(std::rc::Rc::from("try,fin")));
+    assert_eq!(v, Value::String(std::sync::Arc::from("try,fin")));
 }

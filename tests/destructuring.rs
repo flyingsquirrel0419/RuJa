@@ -118,7 +118,7 @@ fn destructure_generator_rest() {
         let [first, ...rest] = gen();
         first + "," + rest.length + "," + rest[0] + "," + rest[1];
     "#;
-    assert_eq!(run(src), Value::String(std::rc::Rc::from("10,2,20,30")));
+    assert_eq!(run(src), Value::String(std::sync::Arc::from("10,2,20,30")));
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn destructure_string_iterable() {
         let [a, b] = "hi";
         a + b;
     "#;
-    assert_eq!(run(src), Value::String(std::rc::Rc::from("hi")));
+    assert_eq!(run(src), Value::String(std::sync::Arc::from("hi")));
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn destructure_short_iterable_pads_undefined() {
         let [a, b, c] = custom;
         a + "|" + (b === undefined) + "|" + (c === undefined);
     "#;
-    assert_eq!(run(src), Value::String(std::rc::Rc::from("1|true|true")));
+    assert_eq!(run(src), Value::String(std::sync::Arc::from("1|true|true")));
 }
 
 #[test]

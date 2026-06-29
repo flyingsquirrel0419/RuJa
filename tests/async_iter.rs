@@ -3,7 +3,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn for_await_over_async_generator() {
@@ -45,7 +45,7 @@ fn for_await_over_sync_iterable_fallback() {
         }
         await main();
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("abc")));
+    assert_eq!(run(src), Value::String(Arc::from("abc")));
 }
 
 #[test]
@@ -62,7 +62,7 @@ fn for_await_break_exits_early() {
         }
         await main();
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2")));
 }
 
 #[test]

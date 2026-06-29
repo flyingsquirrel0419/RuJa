@@ -4,7 +4,7 @@
 //! stack, and operations consume from the top.
 
 use crate::value::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A compiled function's bytecode.
 #[derive(Clone)]
@@ -14,7 +14,7 @@ pub struct Chunk {
     /// Per-iteration `for (let ...)` loop variable name lists, referenced by
     /// `Op::CloneLetNames(idx)`. Each entry is the set of names declared in the
     /// loop's `let`/`const` init that must be rebound per iteration.
-    pub let_names: Vec<Vec<Rc<str>>>,
+    pub let_names: Vec<Vec<Arc<str>>>,
     /// Source spans for error reporting (ip -> line).
     pub lines: Vec<(usize, usize)>,
     /// Whether this chunk was compiled under strict-mode rules. The VM uses
