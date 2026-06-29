@@ -24,7 +24,7 @@ bytecode VM):
 
 | Suite            | Total | Ran  | Pass | Fail | Pass rate |
 |------------------|-------|------|------|------|----------|
-| expressions      | 11101 | 8736 | 2476 | 6260 | 28.3%    |
+| expressions      | 11101 | 8736 | 2790 | 5946 | 31.9%    |
 
 The pass rate is dominated by spec features RuJa deliberately does not yet
 implement (computed class names, optional chaining edge cases, tagged

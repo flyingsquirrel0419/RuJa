@@ -56,6 +56,10 @@ impl<'a> Lexer<'a> {
                 Some(b' ') | Some(b'\t') | Some(b'\r') => {
                     self.advance();
                 }
+                Some(0x0b) | Some(0x0c) => {
+                    // vertical tab and form feed are whitespace per ES.
+                    self.advance();
+                }
                 Some(b'\n') => {
                     self.advance();
                 }
@@ -624,6 +628,9 @@ impl<'a> Lexer<'a> {
                 self.read_ident_or_keyword()
             }
             Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') => {
+                return self.next_token();
+            }
+            Some(0x0b) | Some(0x0c) => {
                 return self.next_token();
             }
             _ => {

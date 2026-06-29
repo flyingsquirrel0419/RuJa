@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Added
+- **Boxed primitives store their value**: `new Number(5)`, `new Boolean(true)`,
+  `new String("x")`, and `Object(x)` now keep the wrapped primitive on the
+  object, so `.valueOf()` returns it and `ToPrimitive` resolves to it
+  (`new Number(5) + 1 === 6`). Previously wrappers were empty objects.
+- **`ToPrimitive` throws on unconvertible objects**: when both `valueOf` and
+  `toString` return objects, OrdinaryToPrimitive now throws `TypeError` per
+  spec (was: silently fell back to a string form).
+- **`Object(1n) + 1` throws `TypeError`**: BigInt-wrapper arithmetic now
+  applies the BigInt/Number mixing rule after ToPrimitive unwraps the box.
+- **Vertical tab / form feed are whitespace**: the lexer now treats `\x0b`
+  and `\x0c` as whitespace, fixing a class of test262 parse failures.
+- test262 expressions pass rate: 28.3% -> 31.9% (2476 -> 2790 passing).
 - **`Vm` is now `Send`**: the engine migrated from `Rc`/`RefCell`/`Cell`
   to `Arc`/`Mutex`/atomics for shared ownership and interior mutability.
   A `Vm` can be moved between threads; concurrent shared access still needs

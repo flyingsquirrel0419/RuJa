@@ -27,9 +27,10 @@
   static initialization blocks (`static { }`) are
 - BigInt: arbitrary precision via `num-bigint`, but `toString(radix)`,
   `asIntN`/`asUintN`, and `DataView` interop are not yet implemented
-- Wrapper objects (`new String(5)`) do not store the inner primitive; the
-  prototype is correct and `typeof` is `"object"`, but `.valueOf()` is not
-  implemented on wrapper objects
+- Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
+  `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
+  `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string
+  `.toString()` still falls back to the default object form.
 
 ---
 
