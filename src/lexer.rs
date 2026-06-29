@@ -22,8 +22,7 @@ fn decode_utf8_at(bytes: &[u8]) -> (char, usize) {
         return ('\0', 0);
     }
     let mut cp = init;
-    for i in 1..len {
-        let b = bytes[i];
+    for &b in bytes.iter().take(len).skip(1) {
         if (b & 0xC0) != 0x80 {
             return ('\0', 0);
         }
@@ -48,6 +47,53 @@ fn is_id_continue(c: char) -> bool {
         || c == '_'
         || c == '$'
         || c.is_alphabetic()
+}
+
+/// ES IdentifierStart: ID_Start plus `$` and `_`. We approximate with
+/// `is_alphabetic`/`$`/`_`, plus the Other_ID_Start punctuation that real
+/// test262 exercises (`\u{2118}` ℘, `\u{212E}` ℮).
+fn is_id_start(c: char) -> bool {
+    c == '$' || c == '_' || c.is_alphabetic() || c == '\u{2118}' || c == '\u{212E}'
+}
+
+/// Read a Unicode escape that may appear inside an identifier: `\uXXXX` or
+/// `\u{XXXX...}`. Returns the decoded char and the number of source bytes
+/// consumed (including the leading backslash). `None` if not a valid escape.
+fn read_ident_escape(src: &[u8]) -> Option<(char, usize)> {
+    if src.len() < 2 || src[0] != b'\\' || src[1] != b'u' {
+        return None;
+    }
+    if src.len() > 2 && src[2] == b'{' {
+        // \u{XXXX...} form: up to 6 hex digits then `}`.
+        let mut i = 3;
+        let mut cp = 0u32;
+        let mut count = 0;
+        while i < src.len() {
+            let b = src[i];
+            if b == b'}' {
+                if count == 0 || count > 6 {
+                    return None;
+                }
+                return char::from_u32(cp).map(|c| (c, i + 1));
+            }
+            let d = (b as char).to_digit(16)?;
+            cp = cp.checked_mul(16)?.checked_add(d)?;
+            i += 1;
+            count += 1;
+        }
+        None
+    } else {
+        // \uXXXX form: exactly 4 hex digits.
+        if src.len() < 6 {
+            return None;
+        }
+        let mut cp = 0u32;
+        for &b in src.iter().take(6).skip(2) {
+            let d = (b as char).to_digit(16)?;
+            cp = cp * 16 + d;
+        }
+        char::from_u32(cp).map(|c| (c, 6))
+    }
 }
 
 pub struct Lexer<'a> {
@@ -125,8 +171,9 @@ impl<'a> Lexer<'a> {
                     self.saw_newline = true;
                 }
                 // LS (U+2028) / PS (U+2029) line terminators: 0xE2 0x80 0xA8/0xA9
-                Some(0xE2) if self.peek_at(1) == Some(0x80)
-                    && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
+                Some(0xE2)
+                    if self.peek_at(1) == Some(0x80)
+                        && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
                 {
                     self.advance();
                     self.advance();
@@ -342,7 +389,7 @@ impl<'a> Lexer<'a> {
         TokenKind::String(s)
     }
 
-   fn read_ident_or_keyword(&mut self) -> TokenKind {
+    fn read_ident_or_keyword(&mut self) -> TokenKind {
         // Identifiers may contain Unicode escapes (`\uXXXX` / `\u{XXXX}`),
         // which decode to the corresponding character. Escapes fold into the
         // logical name so keyword matching uses the decoded form (e.g.
@@ -351,38 +398,42 @@ impl<'a> Lexer<'a> {
         let mut had_escape = false;
         let mut first = true;
         loop {
-           if self.peek() == Some(b'\\') && self.peek_at(1) == Some(b'u') {
-               let (ch, len) = match read_ident_escape(&self.src[self.pos..]) {
-                   Some(v) => v,
-                   None => {
-                       // Invalid escape: if nothing consumed yet,
-                       // advance past `\u` to avoid looping forever.
-                       if buf.is_empty() {
-                           self.advance();
-                           self.advance();
-                       }
-                       break;
-                   },
-               };
-               let ok = if first { is_id_start(ch) } else { is_id_continue(ch) };
-              if !ok {
-                  // Valid escape but not an id char (e.g. `\u007B` -> `{`):
-                  // consume the escape so the lexer advances, then end the
-                  // identifier here. If nothing was consumed yet this yields
-                  // an empty identifier, surfaced as a parse error upstream.
-                  for _ in 0..len {
-                      self.advance();
-                  }
-                  break;
-              }
-              buf.push(ch);
-              for _ in 0..len {
-                  self.advance();
-              }
-              had_escape = true;
-              first = false;
-              continue;
-          }
+            if self.peek() == Some(b'\\') && self.peek_at(1) == Some(b'u') {
+                let (ch, len) = match read_ident_escape(&self.src[self.pos..]) {
+                    Some(v) => v,
+                    None => {
+                        // Invalid escape: if nothing consumed yet,
+                        // advance past `\u` to avoid looping forever.
+                        if buf.is_empty() {
+                            self.advance();
+                            self.advance();
+                        }
+                        break;
+                    }
+                };
+                let ok = if first {
+                    is_id_start(ch)
+                } else {
+                    is_id_continue(ch)
+                };
+                if !ok {
+                    // Valid escape but not an id char (e.g. `\u007B` -> `{`):
+                    // consume the escape so the lexer advances, then end the
+                    // identifier here. If nothing was consumed yet this yields
+                    // an empty identifier, surfaced as a parse error upstream.
+                    for _ in 0..len {
+                        self.advance();
+                    }
+                    break;
+                }
+                buf.push(ch);
+                for _ in 0..len {
+                    self.advance();
+                }
+                had_escape = true;
+                first = false;
+                continue;
+            }
             // If we got here with a leading `\u` that is not a valid escape
             // (e.g. `\u00` with too few hex digits) and nothing was consumed
             // yet, surface a parse error instead of looping forever.
@@ -417,7 +468,7 @@ impl<'a> Lexer<'a> {
         } else {
             std::str::from_utf8(&self.src[self.pos - buf.len()..self.pos]).unwrap_or("")
         };
-       match s {
+        match s {
             "var" => TokenKind::Var,
             "let" => TokenKind::Let,
             "const" => TokenKind::Const,
@@ -759,28 +810,28 @@ impl<'a> Lexer<'a> {
                     self.read_regex()
                 }
             }
-           Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => {
-               self.read_ident_or_keyword()
-           }
-           Some(c) if c >= 0x80 => {
-               // Unicode identifier start (e.g. `π`, `café`, CJK names).
-               let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
-               if len > 0 && is_id_start(ch) {
-                   self.read_ident_or_keyword()
-               } else {
-                   // Not a valid id start: advance past the byte(s) so the
-                   // lexer does not loop, and surface as a parse error token.
-                   let step = if len > 0 { len } else { 1 };
-                   for _ in 0..step {
-                       self.advance();
-                   }
-                   TokenKind::Ident(format!("Unexpected char '{}'", ch))
-               }
-           }
-           Some(b'\\') if self.peek_at(1) == Some(b'u') => {
-               // `\uXXXX` / `\u{XXXX}` identifier start.
-               self.read_ident_or_keyword()
-           }
+            Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => {
+                self.read_ident_or_keyword()
+            }
+            Some(c) if c >= 0x80 => {
+                // Unicode identifier start (e.g. `π`, `café`, CJK names).
+                let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
+                if len > 0 && is_id_start(ch) {
+                    self.read_ident_or_keyword()
+                } else {
+                    // Not a valid id start: advance past the byte(s) so the
+                    // lexer does not loop, and surface as a parse error token.
+                    let step = if len > 0 { len } else { 1 };
+                    for _ in 0..step {
+                        self.advance();
+                    }
+                    TokenKind::Ident(format!("Unexpected char '{}'", ch))
+                }
+            }
+            Some(b'\\') if self.peek_at(1) == Some(b'u') => {
+                // `\uXXXX` / `\u{XXXX}` identifier start.
+                self.read_ident_or_keyword()
+            }
             Some(b'\\') => {
                 // A backslash that is not a valid identifier escape here is a
                 // stray character; consume it so the lexer does not loop and
@@ -1026,55 +1077,5 @@ mod tests {
     fn comments() {
         assert_eq!(kinds("1 // hi\n2"), vec![Number(1.0), Number(2.0), Eof]);
         assert_eq!(kinds("1 /* x */ 2"), vec![Number(1.0), Number(2.0), Eof]);
-    }
-}
-/// ES IdentifierStart: ID_Start plus `$` and `_`. We approximate with
-/// `is_alphabetic`/`$`/`_`, plus the Other_ID_Start punctuation that real
-/// test262 exercises (`\u{2118}` ℘, `\u{212E}` ℮).
-fn is_id_start(c: char) -> bool {
-    c == '$'
-        || c == '_'
-        || c.is_alphabetic()
-        || c == '\u{2118}'
-        || c == '\u{212E}'
-}
-
-/// Read a Unicode escape that may appear inside an identifier: `\uXXXX` or
-/// `\u{XXXX...}`. Returns the decoded char and the number of source bytes
-/// consumed (including the leading backslash). `None` if not a valid escape.
-fn read_ident_escape(src: &[u8]) -> Option<(char, usize)> {
-    if src.len() < 2 || src[0] != b'\\' || src[1] != b'u' {
-        return None;
-    }
-    if src.len() > 2 && src[2] == b'{' {
-        // \u{XXXX...} form: up to 6 hex digits then `}`.
-        let mut i = 3;
-        let mut cp = 0u32;
-        let mut count = 0;
-        while i < src.len() {
-            let b = src[i];
-            if b == b'}' {
-                if count == 0 || count > 6 {
-                    return None;
-                }
-                return char::from_u32(cp).map(|c| (c, i + 1));
-            }
-            let d = (b as char).to_digit(16)?;
-            cp = cp.checked_mul(16)?.checked_add(d)?;
-            i += 1;
-            count += 1;
-        }
-        None
-    } else {
-        // \uXXXX form: exactly 4 hex digits.
-        if src.len() < 6 {
-            return None;
-        }
-        let mut cp = 0u32;
-        for k in 2..6 {
-            let d = (src[k] as char).to_digit(16)?;
-            cp = cp * 16 + d;
-        }
-        char::from_u32(cp).map(|c| (c, 6))
     }
 }
