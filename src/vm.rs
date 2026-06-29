@@ -216,6 +216,17 @@ impl Vm {
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let _base = self.functions.len();
         self.functions.extend(funcs);
+        // In sloppy (non-strict) script mode, top-level `this` is the global
+        // object. Bind it on the global environment so `LoadEnv("this")` finds it.
+        if !program.is_strict {
+            crate::environment::declare(
+                &self.heap,
+                self.global,
+                "this",
+                self.global_this.clone(),
+                crate::value::BindingKind::Const,
+            );
+        }
         let result = self.execute_chunk(chunk, self.global, Value::Undefined);
         // Drain microtasks (Promise callbacks) after the synchronous run.
         if !self.microtask_queue.is_empty() {
