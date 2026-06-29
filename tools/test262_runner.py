@@ -35,6 +35,12 @@ def parse_meta(src):
         m2 = re.search(rf'^{key}:\s*\[(.*?)\]', block, re.MULTILINE | re.DOTALL)
         if m2:
             meta[key] = [x.strip() for x in m2.group(1).split(',') if x.strip()]
+    # negative: { phase: <parse|runtime|resolution>, type: <ErrorName> }
+    mn = re.search(r'^negative:\s*\n(  phase:\s*(\w+)\n  type:\s*(\w+)|  type:\s*(\w+)\n  phase:\s*(\w+))', block, re.MULTILINE)
+    if mn:
+        phase = mn.group(2) or mn.group(5)
+        typ = mn.group(3) or mn.group(4)
+        meta['negative'] = {'phase': phase, 'type': typ}
     return meta
 
 def should_skip(meta):
@@ -72,8 +78,22 @@ def run_test(path):
     if should_skip(meta):
         return 'skip'
     try:
-        r = subprocess.run([RUJA, '-e', full], capture_output=True, text=True, timeout=8)
-        return 'pass' if r.returncode == 0 else 'fail'
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as tf:
+            tf.write(full)
+            tmpname = tf.name
+        try:
+            r = subprocess.run([RUJA, tmpname], capture_output=True, text=True, timeout=8)
+        finally:
+            os.unlink(tmpname)
+        out = (r.stderr + r.stdout).strip()
+        neg = meta.get('negative')
+        if neg:
+            want = neg.get('type', '')
+            if want and want in out:
+                return 'pass'
+            return 'fail'
+        return 'pass' if (r.returncode == 0 and not out) else 'fail'
     except subprocess.TimeoutExpired:
         return 'timeout'
     except Exception:
