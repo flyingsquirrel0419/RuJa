@@ -92,13 +92,14 @@ impl<'a> Lexer<'a> {
             self.advance();
             self.advance();
             while let Some(c) = self.peek() {
-                if c.is_ascii_hexdigit() {
+                if c.is_ascii_hexdigit() || c == b'_' {
                     self.advance();
                 } else {
                     break;
                 }
             }
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
+            let s: String = s.chars().filter(|&c| c != '_').collect();
             return TokenKind::Number(i64::from_str_radix(&s[2..], 16).unwrap_or(0) as f64);
         }
         if self.peek() == Some(b'0')
@@ -107,14 +108,15 @@ impl<'a> Lexer<'a> {
             self.advance();
             self.advance();
             while let Some(c) = self.peek() {
-                if (b'0'..=b'7').contains(&c) {
+                if (b'0'..=b'7').contains(&c) || c == b'_' {
                     self.advance();
                 } else {
                     break;
                 }
             }
             let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
-            return TokenKind::Number(i64::from_str_radix(s, 8).unwrap_or(0) as f64);
+            let s: String = s.chars().filter(|&c| c != '_').collect();
+            return TokenKind::Number(i64::from_str_radix(&s, 8).unwrap_or(0) as f64);
         }
         if self.peek() == Some(b'0')
             && (self.peek_at(1) == Some(b'b') || self.peek_at(1) == Some(b'B'))
@@ -122,20 +124,22 @@ impl<'a> Lexer<'a> {
             self.advance();
             self.advance();
             while let Some(c) = self.peek() {
-                if c == b'0' || c == b'1' {
+                if c == b'0' || c == b'1' || c == b'_' {
                     self.advance();
                 } else {
                     break;
                 }
             }
             let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
-            return TokenKind::Number(i64::from_str_radix(s, 2).unwrap_or(0) as f64);
+            let s: String = s.chars().filter(|&c| c != '_').collect();
+            return TokenKind::Number(i64::from_str_radix(&s, 2).unwrap_or(0) as f64);
         }
         while let Some(c) = self.peek() {
             if c.is_ascii_digit()
                 || c == b'.'
                 || c == b'e'
                 || c == b'E'
+                || c == b'_'
                 || (c == b'+' || c == b'-')
                     && (self.src.get(self.pos.wrapping_sub(1)) == Some(&b'e')
                         || self.src.get(self.pos.wrapping_sub(1)) == Some(&b'E'))
@@ -146,6 +150,7 @@ impl<'a> Lexer<'a> {
             }
         }
         let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
+        let s: String = s.chars().filter(|&c| c != '_').collect();
         TokenKind::Number(s.parse::<f64>().unwrap_or(f64::NAN))
     }
 
