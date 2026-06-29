@@ -1,5 +1,5 @@
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::value::Value;
 
@@ -27,13 +27,13 @@ pub enum ErrorKind {
 impl Error {
     /// Return a copy of this error with the source line attached, unless a
     /// line is already set (the first occurrence wins).
-    pub fn with_line(&self, line: Option<usize>) -> Rc<Error> {
+    pub fn with_line(&self, line: Option<usize>) -> Arc<Error> {
         let new_line = match (&self.line, line) {
             (Some(_), _) => self.line,
             (None, Some(l)) => Some(l),
             _ => self.line,
         };
-        Rc::new(Error {
+        Arc::new(Error {
             kind: self.kind.clone(),
             message: self.message.clone(),
             stack: self.stack.clone(),
@@ -41,8 +41,8 @@ impl Error {
             line: new_line,
         })
     }
-    pub fn syntax(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error {
+    pub fn syntax(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
             kind: ErrorKind::Syntax,
             message: msg.into(),
             stack: Vec::new(),
@@ -50,8 +50,8 @@ impl Error {
             line: None,
         })
     }
-    pub fn reference(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error {
+    pub fn reference(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
             kind: ErrorKind::Reference,
             message: msg.into(),
             stack: Vec::new(),
@@ -59,8 +59,8 @@ impl Error {
             line: None,
         })
     }
-    pub fn type_err(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error {
+    pub fn type_err(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
             kind: ErrorKind::Type,
             message: msg.into(),
             stack: Vec::new(),
@@ -68,8 +68,8 @@ impl Error {
             line: None,
         })
     }
-    pub fn range(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error {
+    pub fn range(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
             kind: ErrorKind::Range,
             message: msg.into(),
             stack: Vec::new(),
@@ -77,8 +77,8 @@ impl Error {
             line: None,
         })
     }
-    pub fn internal(msg: impl Into<String>) -> Rc<Error> {
-        Rc::new(Error {
+    pub fn internal(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
             kind: ErrorKind::Internal,
             message: msg.into(),
             stack: Vec::new(),
@@ -86,9 +86,9 @@ impl Error {
             line: None,
         })
     }
-    pub fn thrown(v: Value, heap: &crate::gc::Heap) -> Rc<Error> {
+    pub fn thrown(v: Value, heap: &crate::gc::Heap) -> Arc<Error> {
         let msg = value_to_message(&v, heap);
-        Rc::new(Error {
+        Arc::new(Error {
             kind: ErrorKind::User,
             message: msg,
             stack: Vec::new(),
@@ -144,7 +144,7 @@ impl fmt::Display for Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Rc<Error>>;
+pub type Result<T> = std::result::Result<T, Arc<Error>>;
 
 /// Internal control-flow signals.
 #[derive(Debug)]

@@ -5,7 +5,7 @@
 mod common;
 use common::{run, run_err};
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 // --- break / continue ---
 
@@ -63,7 +63,7 @@ fn nested_break() {
 fn switch_fallthrough() {
     assert_eq!(
         run("let r=''; switch(2){case 1: r+='a'; case 2: r+='b'; case 3: r+='c'; break; default: r+='d';} r;"),
-        Value::String(Rc::from("bc"))
+        Value::String(Arc::from("bc"))
     );
 }
 
@@ -71,7 +71,7 @@ fn switch_fallthrough() {
 fn switch_default() {
     assert_eq!(
         run("let r=''; switch(99){case 1: r+='a'; default: r+='d'; case 3: r+='c';} r;"),
-        Value::String(Rc::from("dc"))
+        Value::String(Arc::from("dc"))
     );
 }
 
@@ -79,7 +79,7 @@ fn switch_default() {
 fn switch_break() {
     assert_eq!(
         run("let r=''; switch(1){case 1: r+='a'; break; case 2: r+='b';} r;"),
-        Value::String(Rc::from("a"))
+        Value::String(Arc::from("a"))
     );
 }
 
@@ -100,17 +100,17 @@ fn finally_executes_after_catch() {
 #[test]
 fn break_in_try_runs_outer_finally() {
     let src = "let r=[];for(let i=0;i<5;i++){try{if(i===2)break;r.push(i);}finally{r.push('f'+i);}}r.join(',');";
-    assert_eq!(run(src), Value::String(Rc::from("0,f0,1,f1,f2")));
+    assert_eq!(run(src), Value::String(Arc::from("0,f0,1,f1,f2")));
 }
 #[test]
 fn continue_in_try_runs_finally() {
     let src = "let r=[];for(let i=0;i<4;i++){try{if(i===1)continue;r.push(i);}finally{r.push('f'+i);}}r.join(',');";
-    assert_eq!(run(src), Value::String(Rc::from("0,f0,f1,2,f2,3,f3")));
+    assert_eq!(run(src), Value::String(Arc::from("0,f0,f1,2,f2,3,f3")));
 }
 #[test]
 fn nested_finally_break_runs_both() {
     let src = "let r=[];for(let i=0;i<3;i++){try{try{if(i===1)break;r.push('i'+i);}finally{r.push('if'+i);}}finally{r.push('of'+i);}}r.join(',');";
-    assert_eq!(run(src), Value::String(Rc::from("i0,if0,of0,if1,of1")));
+    assert_eq!(run(src), Value::String(Arc::from("i0,if0,of0,if1,of1")));
 }
 #[test]
 fn return_through_nested_finally() {
@@ -120,7 +120,7 @@ fn return_through_nested_finally() {
 #[test]
 fn throw_runs_inner_finally_before_catch() {
     let src = "let r=[];try{try{throw 1;}finally{r.push('if');}}catch(e){r.push('c');}finally{r.push('of');}r.join(',');";
-    assert_eq!(run(src), Value::String(Rc::from("if,c,of")));
+    assert_eq!(run(src), Value::String(Arc::from("if,c,of")));
 }
 
 // --- operators ---
@@ -129,7 +129,7 @@ fn throw_runs_inner_finally_before_catch() {
 fn typeof_undeclared() {
     assert_eq!(
         run("typeof noSuchVar;"),
-        Value::String(Rc::from("undefined"))
+        Value::String(Arc::from("undefined"))
     );
 }
 
@@ -143,7 +143,7 @@ fn unary_plus() {
 #[test]
 fn void_operator() {
     assert_eq!(run("void 5;"), Value::Undefined);
-    assert_eq!(run("typeof void 0;"), Value::String(Rc::from("undefined")));
+    assert_eq!(run("typeof void 0;"), Value::String(Arc::from("undefined")));
 }
 
 #[test]
@@ -258,30 +258,30 @@ fn catch_type_error_null_property() {
 #[test]
 fn catch_undefined_property() {
     let r = run("var r; try { (undefined).foo; } catch(e) { r = 'caught'; } r;");
-    assert_eq!(r, Value::String(Rc::from("caught")));
+    assert_eq!(r, Value::String(Arc::from("caught")));
 }
 
 #[test]
 fn catch_reference_error() {
     let r = run("var r; try { missingVar; } catch(e) { r = 'ref'; } r;");
-    assert_eq!(r, Value::String(Rc::from("ref")));
+    assert_eq!(r, Value::String(Arc::from("ref")));
 }
 
 #[test]
 fn catch_call_non_function() {
     let r = run("var r; try { (5)(); } catch(e) { r = 'call'; } r;");
-    assert_eq!(r, Value::String(Rc::from("call")));
+    assert_eq!(r, Value::String(Arc::from("call")));
 }
 
 #[test]
 fn catch_rethrow() {
     let r = run("var r; try { try { throw 'inner'; } catch(e) { throw 'rethrow'; } } catch(e) { r = e; } r;");
-    assert_eq!(r, Value::String(Rc::from("rethrow")));
+    assert_eq!(r, Value::String(Arc::from("rethrow")));
 }
 
 #[test]
 fn catch_native_error_has_name_and_message() {
     let r =
         run("var r; try { null.x; } catch(e) { r = e.name + ':' + (e.message.length > 0); } r;");
-    assert_eq!(r, Value::String(Rc::from("TypeError:true")));
+    assert_eq!(r, Value::String(Arc::from("TypeError:true")));
 }

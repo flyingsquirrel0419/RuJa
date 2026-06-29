@@ -4,21 +4,21 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 // --- && short-circuit ---
 
 #[test]
 fn logical_and_truthy() {
     assert_eq!(run("1 && 2;"), Value::Number(2.0));
-    assert_eq!(run("true && 'x';"), Value::String(Rc::from("x")));
+    assert_eq!(run("true && 'x';"), Value::String(Arc::from("x")));
 }
 
 #[test]
 fn logical_and_falsy_keeps_left() {
     assert_eq!(run("0 && 2;"), Value::Number(0.0));
     assert_eq!(run("null && 2;"), Value::Null);
-    assert_eq!(run("'' && 'x';"), Value::String(Rc::from("")));
+    assert_eq!(run("'' && 'x';"), Value::String(Arc::from("")));
     assert_eq!(run("false && true;"), Value::Bool(false));
     assert_eq!(run("undefined && 1;"), Value::Undefined);
 }
@@ -34,15 +34,15 @@ fn logical_and_chain() {
 #[test]
 fn logical_or_falsy() {
     assert_eq!(run("0 || 2;"), Value::Number(2.0));
-    assert_eq!(run("null || 'd';"), Value::String(Rc::from("d")));
+    assert_eq!(run("null || 'd';"), Value::String(Arc::from("d")));
     assert_eq!(run("false || true;"), Value::Bool(true));
-    assert_eq!(run("'' || 'x';"), Value::String(Rc::from("x")));
+    assert_eq!(run("'' || 'x';"), Value::String(Arc::from("x")));
 }
 
 #[test]
 fn logical_or_truthy_keeps_left() {
     assert_eq!(run("1 || 2;"), Value::Number(1.0));
-    assert_eq!(run("'a' || 'b';"), Value::String(Rc::from("a")));
+    assert_eq!(run("'a' || 'b';"), Value::String(Arc::from("a")));
 }
 
 #[test]
@@ -67,14 +67,14 @@ fn nullish_undefined() {
 fn nullish_keeps_falsy_non_nullish() {
     // 0, '', false are NOT nullish -> kept as-is.
     assert_eq!(run("0 ?? 2;"), Value::Number(0.0));
-    assert_eq!(run("'' ?? 'x';"), Value::String(Rc::from("")));
+    assert_eq!(run("'' ?? 'x';"), Value::String(Arc::from("")));
     assert_eq!(run("false ?? true;"), Value::Bool(false));
 }
 
 #[test]
 fn nullish_non_nullish() {
     assert_eq!(run("1 ?? null;"), Value::Number(1.0));
-    assert_eq!(run("'a' ?? 'b';"), Value::String(Rc::from("a")));
+    assert_eq!(run("'a' ?? 'b';"), Value::String(Arc::from("a")));
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn optional_computed() {
 fn optional_method_call() {
     assert_eq!(
         run("var o = {greet: function(){return 'hi';}}; o?.greet();"),
-        Value::String(Rc::from("hi"))
+        Value::String(Arc::from("hi"))
     );
 }
 
@@ -272,23 +272,23 @@ fn optional_chain_deep() {
 
 #[test]
 fn number_to_string_large() {
-    assert_eq!(run("1e21 + '';"), Value::String(Rc::from("1e+21")));
-    assert_eq!(run("1e22 + '';"), Value::String(Rc::from("1e+22")));
+    assert_eq!(run("1e21 + '';"), Value::String(Arc::from("1e+21")));
+    assert_eq!(run("1e22 + '';"), Value::String(Arc::from("1e+22")));
 }
 
 #[test]
 fn number_to_string_small() {
-    assert_eq!(run("1e-7 + '';"), Value::String(Rc::from("1e-7")));
-    assert_eq!(run("0.0000001 + '';"), Value::String(Rc::from("1e-7")));
-    assert_eq!(run("5e-8 + '';"), Value::String(Rc::from("5e-8")));
+    assert_eq!(run("1e-7 + '';"), Value::String(Arc::from("1e-7")));
+    assert_eq!(run("0.0000001 + '';"), Value::String(Arc::from("1e-7")));
+    assert_eq!(run("5e-8 + '';"), Value::String(Arc::from("5e-8")));
 }
 
 #[test]
 fn number_to_string_normal() {
-    assert_eq!(run("(1.5e3) + '';"), Value::String(Rc::from("1500")));
-    assert_eq!(run("42 + '';"), Value::String(Rc::from("42")));
-    assert_eq!(run("0 + '';"), Value::String(Rc::from("0")));
-    assert_eq!(run("3.14 + '';"), Value::String(Rc::from("3.14")));
+    assert_eq!(run("(1.5e3) + '';"), Value::String(Arc::from("1500")));
+    assert_eq!(run("42 + '';"), Value::String(Arc::from("42")));
+    assert_eq!(run("0 + '';"), Value::String(Arc::from("0")));
+    assert_eq!(run("3.14 + '';"), Value::String(Arc::from("3.14")));
 }
 
 // --- deep optional method chains ---
@@ -310,6 +310,6 @@ fn optional_method_chain_null_root() {
 fn optional_method_chain_present() {
     assert_eq!(
         run("var o = {greet: function(){return 'hi';}}; o?.greet?.();"),
-        Value::String(Rc::from("hi"))
+        Value::String(Arc::from("hi"))
     );
 }

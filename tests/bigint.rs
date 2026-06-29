@@ -3,11 +3,11 @@
 mod common;
 use common::{run, run_err};
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn bigint_literal_typeof() {
-    assert_eq!(run("typeof 0n;"), Value::String(Rc::from("bigint")));
+    assert_eq!(run("typeof 0n;"), Value::String(Arc::from("bigint")));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn bigint_mix_with_number_is_typeerror() {
 
 #[test]
 fn bigint_to_string() {
-    assert_eq!(run("(123n).toString();"), Value::String(Rc::from("123")));
+    assert_eq!(run("(123n).toString();"), Value::String(Arc::from("123")));
 }
 
 #[test]

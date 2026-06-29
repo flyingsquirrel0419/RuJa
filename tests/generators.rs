@@ -5,7 +5,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn gen_next_returns_value_done() {
@@ -28,7 +28,7 @@ fn gen_for_of_consumes_all() {
 fn gen_spread_into_array() {
     assert_eq!(
         run("function* g(){ yield 1; yield 2; yield 3; } [...g()].join(',');"),
-        Value::String(std::rc::Rc::from("1,2,3"))
+        Value::String(std::sync::Arc::from("1,2,3"))
     );
 }
 
@@ -138,7 +138,7 @@ fn nested_generator_next_is_isolated() {
         for (let v of o) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2,99,3")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2,99,3")));
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn nested_generator_interleaved() {
         for (let v of b()) out.push(v);
         out.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("b1,a1,b2,a2,b3,a3")));
+    assert_eq!(run(src), Value::String(Arc::from("b1,a1,b2,a2,b3,a3")));
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn two_generators_pulled_independently() {
         // Pull g1 twice, then g2 once, then g1 again: states stay independent.
         [g1.next().value, g1.next().value, g2.next().value, g1.next().value, g2.next().value].join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("0,1,0,2,1")));
+    assert_eq!(run(src), Value::String(Arc::from("0,1,0,2,1")));
 }
 
 // ---- yield* delegation ----
@@ -184,7 +184,7 @@ fn yield_star_delegates_to_generator() {
         for (let v of outer()) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("0,1,2,3,4")));
+    assert_eq!(run(src), Value::String(Arc::from("0,1,2,3,4")));
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn yield_star_delegates_to_array() {
         for (let v of g()) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("10,20,30")));
+    assert_eq!(run(src), Value::String(Arc::from("10,20,30")));
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn yield_star_delegates_to_string() {
         for (let v of g()) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("a,b")));
+    assert_eq!(run(src), Value::String(Arc::from("a,b")));
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn yield_star_nested_delegation() {
         for (let v of c()) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2,3,4")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2,3,4")));
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn yield_star_interleaved_with_own_yields() {
         for (let v of outer()) r.push(v);
         r.join(",");
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("o1,i1,i2,o2,i1,i2")));
+    assert_eq!(run(src), Value::String(Arc::from("o1,i1,i2,o2,i1,i2")));
 }
 
 // ---- async function* ----
@@ -265,7 +265,7 @@ fn async_generator_consumes_all() {
         r = await g.next();
         out.join(",") + "|" + r.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2,3|true")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2,3|true")));
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn async_generator_await_inside_body() {
         let b = await g.next();
         a.value + "," + b.value;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("10,30")));
+    assert_eq!(run(src), Value::String(Arc::from("10,30")));
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn yield_star_preserves_inner_return_value() {
         let d = g.next();
         a.value + "," + b.value + "," + c.value + "," + c.done + "," + d.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,2,99,true,true")));
+    assert_eq!(run(src), Value::String(Arc::from("1,2,99,true,true")));
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn yield_star_forwards_resume_value() {
         let c = g.next();
         a.value + "," + b.value + "," + b.done + "," + c.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,105,true,true")));
+    assert_eq!(run(src), Value::String(Arc::from("1,105,true,true")));
 }
 
 // ---- generator.return / generator.throw ----
@@ -349,7 +349,7 @@ fn generator_return_terminates() {
         let after = it.next();
         r.value + "," + r.done + "," + after.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("99,true,true")));
+    assert_eq!(run(src), Value::String(Arc::from("99,true,true")));
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn async_generator_return_promise() {
         let r = await it.return(42);
         r.value + "," + r.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("42,true")));
+    assert_eq!(run(src), Value::String(Arc::from("42,true")));
 }
 
 // ---- generator throw/return injection into the body ----
@@ -396,7 +396,7 @@ fn generator_throw_caught_by_body() {
         let c = it.next();
         a.value + "," + b.value + "," + c.value + "," + c.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("1,caught:boom,3,false")));
+    assert_eq!(run(src), Value::String(Arc::from("1,caught:boom,3,false")));
 }
 
 #[test]
@@ -428,7 +428,7 @@ fn generator_throw_uncaught_propagates_through_call() {
         catch(e) { result = "caught:" + e; }
         result;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("caught:err")));
+    assert_eq!(run(src), Value::String(Arc::from("caught:err")));
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn generator_return_value_surfaces() {
         let r = it.return(77);
         r.value + "," + r.done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("77,true")));
+    assert_eq!(run(src), Value::String(Arc::from("77,true")));
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn generator_return_runs_finally() {
         let r = it.return(42);
         r.value + "," + r.done + "," + it.next().done;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("42,true,true")));
+    assert_eq!(run(src), Value::String(Arc::from("42,true,true")));
 }
 
 #[test]

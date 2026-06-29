@@ -3,7 +3,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 // --- static initialization blocks ---
 
@@ -41,7 +41,7 @@ fn static_block_does_not_leak_locals() {
     // locals declared in a static block must not be visible outside it
     assert_eq!(
         run("class A{static{let secret=7;this.pub=secret;}}typeof secret;"),
-        Value::String(Rc::from("undefined"))
+        Value::String(Arc::from("undefined"))
     );
 }
 

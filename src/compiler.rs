@@ -5,14 +5,14 @@ use crate::bytecode::{Chunk, Op};
 use crate::error;
 use crate::value::Value;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[allow(dead_code)]
 pub struct Compiler {
     chunk: Chunk,
     scopes: Vec<Scope>,
     /// Function table: compiled nested functions.
-    funcs: Vec<Rc<crate::function::FunctionDef>>,
+    funcs: Vec<Arc<crate::function::FunctionDef>>,
     /// String constant pool for names.
     names: Vec<String>,
     name_map: HashMap<String, usize>,
@@ -23,7 +23,7 @@ pub struct Compiler {
     /// (continue_target, pending break jumps, pending continue jumps, label)
     loop_stack: Vec<LoopFrame>,
     /// A label waiting to be attached to the next begin_loop call.
-    pending_label: Option<Rc<str>>,
+    pending_label: Option<Arc<str>>,
     /// Active finally guard ip stack (the `PushFinally` instruction's position).
     /// Each entry is the ip of the `PushFinally` op whose target has been (or
     /// will be) patched to the finally body's start ip. Used to detect whether
@@ -55,7 +55,7 @@ struct Scope {
 #[allow(dead_code)]
 enum PathStep {
     Index(usize),
-    Prop(Rc<str>),
+    Prop(Arc<str>),
     RestFrom(usize),
 }
 
@@ -67,7 +67,7 @@ impl Default for Compiler {
 
 /// A loop-stack frame: (continue_target, pending break jumps,
 /// pending continue jumps, optional label).
-type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Rc<str>>);
+type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>);
 
 impl Compiler {
     pub fn new() -> Self {
@@ -94,7 +94,7 @@ impl Compiler {
         if let Some(&idx) = self.name_map.get(name) {
             return idx;
         }
-        let idx = self.chunk.add_constant(Value::String(Rc::from(name)));
+        let idx = self.chunk.add_constant(Value::String(Arc::from(name)));
         self.name_map.insert(name.to_string(), idx);
         idx
     }
@@ -108,7 +108,7 @@ impl Compiler {
     pub fn compile_program(
         &mut self,
         program: &Program,
-    ) -> error::Result<(Chunk, Vec<Rc<crate::function::FunctionDef>>)> {
+    ) -> error::Result<(Chunk, Vec<Arc<crate::function::FunctionDef>>)> {
         // The top-level scope inherits the program's strictness (from a leading
         // "use strict" directive prologue).
         if let Some(top) = self.scopes.last_mut() {
@@ -230,7 +230,7 @@ impl Compiler {
     /// Like `begin_loop` but tags the loop with a label so `break label` /
     /// `continue label` can target it.
     #[allow(dead_code)]
-    fn begin_labeled_loop(&mut self, continue_target: usize, label: Rc<str>) {
+    fn begin_labeled_loop(&mut self, continue_target: usize, label: Arc<str>) {
         self.loop_stack
             .push((continue_target, Vec::new(), Vec::new(), Some(label)));
     }
@@ -330,7 +330,7 @@ impl Compiler {
     }
 
     /// Collect all binding names introduced by a destructuring pattern.
-    fn pattern_names(pattern: &Pattern, out: &mut Vec<Rc<str>>) {
+    fn pattern_names(pattern: &Pattern, out: &mut Vec<Arc<str>>) {
         match pattern {
             Pattern::Ident(name) => out.push(name.clone()),
             Pattern::Array(elems) => {
@@ -354,7 +354,7 @@ impl Compiler {
     /// Collect lexical (`let`/`const`) names declared at the top level of a
     /// statement list. Does NOT descend into nested blocks/functions/loops:
     /// those introduce their own scopes and hoist their own lexicals.
-    fn collect_lexical_names(body: &[Stmt]) -> Vec<(Rc<str>, VarKind)> {
+    fn collect_lexical_names(body: &[Stmt]) -> Vec<(Arc<str>, VarKind)> {
         let mut out = Vec::new();
         for stmt in body {
             match &stmt.node {
@@ -381,7 +381,7 @@ impl Compiler {
 
     /// Collect top-level `var` and function-declaration names from a statement
     /// list (for direct-eval leak into the caller's function scope).
-    pub fn collect_var_names(body: &[Stmt]) -> Vec<Rc<str>> {
+    pub fn collect_var_names(body: &[Stmt]) -> Vec<Arc<str>> {
         let mut out = Vec::new();
         for stmt in body {
             match &stmt.node {
@@ -404,7 +404,7 @@ impl Compiler {
     /// Emit TDZ (uninitialized) declarations for lexical bindings at scope entry.
     /// Also registers them in the compiler's scope table so `resolve` works and
     /// later `declare` calls for the same name are no-ops (preventing slot reuse).
-    fn emit_lexical_hoist(&mut self, names: &[(Rc<str>, VarKind)]) -> error::Result<()> {
+    fn emit_lexical_hoist(&mut self, names: &[(Arc<str>, VarKind)]) -> error::Result<()> {
         for (name, kind) in names {
             self.declare(name, *kind)?;
             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -458,7 +458,7 @@ impl Compiler {
                         // `var` is function-scoped: declare at the function-scope root
                         // (or global at top level), regardless of block nesting.
                         self.declare(name, *kind)?;
-                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                        let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                         if self.scopes.len() == 1 {
                             // top-level var: store as global
                             self.chunk.emit(Op::Const(name_idx), self.current_line);
@@ -471,7 +471,7 @@ impl Compiler {
                         // Lexical (let/const): already declared uninitialized at scope
                         // entry by `emit_lexical_hoist`. Initialize the binding with the
                         // value now (this lifts the TDZ).
-                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                        let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                         match kind {
                             VarKind::Const => {
                                 self.chunk.emit(Op::InitConst(name_idx), self.current_line)
@@ -619,7 +619,7 @@ impl Compiler {
                 );
                 // Collect the loop's declared lexical names so only those are
                 // rebound per iteration (outer lets are shared via the chain).
-                let loop_names: Vec<Rc<str>> = match init.as_ref().map(|s| &s.node) {
+                let loop_names: Vec<Arc<str>> = match init.as_ref().map(|s| &s.node) {
                     Some(StmtNode::VarDecl {
                         kind: VarKind::Let | VarKind::Const,
                         decls,
@@ -834,13 +834,13 @@ impl Compiler {
                     params: f.params.clone(),
                     param_slots,
                     rest_param: f.rest_param.clone(),
-                    chunk: Rc::new(func_chunk),
+                    chunk: Arc::new(func_chunk),
                     num_locals: f.params.len() + 16,
                     is_arrow: f.is_arrow,
                     is_async: f.is_async,
                     is_generator: f.is_generator,
                 };
-                self.funcs.push(Rc::new(fdef));
+                self.funcs.push(Arc::new(fdef));
                 self.chunk
                     .emit(Op::MakeClosure(func_idx), self.current_line);
                 if let Some(name) = &f.name {
@@ -848,7 +848,7 @@ impl Compiler {
                         self.chunk.emit(Op::StoreLocal(slot), self.current_line);
                     } else {
                         // store as global so recursive calls can find it
-                        let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                        let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                         self.chunk.emit(Op::Const(name_idx), self.current_line);
                         self.chunk.emit(Op::StoreGlobal, self.current_line);
                     }
@@ -1028,7 +1028,7 @@ impl Compiler {
                 // Single declarator: bind the on-stack value as a let/const in the loop scope.
                 if let Some((name, _)) = decls.first() {
                     self.declare(name, *kind)?;
-                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                     self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
                 } else {
                     self.chunk.emit(Op::Pop, self.current_line);
@@ -1260,7 +1260,7 @@ impl Compiler {
                 }
             }
             Pattern::Object(props, rest) => {
-                let mut bound_keys: Vec<Rc<str>> = Vec::new();
+                let mut bound_keys: Vec<Arc<str>> = Vec::new();
                 for (key, target) in props {
                     // Static keys extend the access path; computed/numeric keys
                     // load the source via GetElem into a temp env binding.
@@ -1273,7 +1273,7 @@ impl Compiler {
                         }
                         PropertyKey::Number(n) => {
                             let ks = crate::value::num_to_string(*n);
-                            bound_keys.push(Rc::from(ks.as_str()));
+                            bound_keys.push(Arc::from(ks.as_str()));
                             self.load_path(temp_idx, path);
                             let key_idx = self.chunk.add_constant(Value::Number(*n));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
@@ -1435,7 +1435,7 @@ impl Compiler {
                         PropertyKey::Number(n) => {
                             let key = self
                                 .chunk
-                                .add_constant(Value::String(Rc::from(n.to_string().as_str())));
+                                .add_constant(Value::String(Arc::from(n.to_string().as_str())));
                             // numeric key: load via computed element access
                             self.load_path(temp_idx, path);
                             self.chunk.emit(Op::Const(key), self.current_line);
@@ -1511,7 +1511,7 @@ impl Compiler {
         from: usize,
     ) -> error::Result<()> {
         self.load_path(temp_idx, path);
-        let slice_key = self.chunk.add_constant(Value::String(Rc::from("slice")));
+        let slice_key = self.chunk.add_constant(Value::String(Arc::from("slice")));
         self.chunk.emit(Op::Const(slice_key), self.current_line);
         let from_c = self.chunk.add_constant(Value::Number(from as f64));
         self.chunk.emit(Op::Const(from_c), self.current_line);
@@ -1534,7 +1534,7 @@ impl Compiler {
     ) -> error::Result<()> {
         // Load the value at path (the array to slice), then call .slice(from).
         self.load_path(temp_idx, path);
-        let slice_key = self.chunk.add_constant(Value::String(Rc::from("slice")));
+        let slice_key = self.chunk.add_constant(Value::String(Arc::from("slice")));
         self.chunk.emit(Op::Const(slice_key), self.current_line);
         let from_c = self.chunk.add_constant(Value::Number(from as f64));
         self.chunk.emit(Op::Const(from_c), self.current_line);
@@ -1591,11 +1591,11 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
-                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                     self.chunk
                         .emit(Op::LoadEnvName(name_idx), self.current_line);
                 } else {
-                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                     self.chunk.emit(Op::Const(name_idx), self.current_line);
                     self.chunk.emit(Op::LoadGlobal, self.current_line);
                 }
@@ -1628,7 +1628,7 @@ impl Compiler {
                             };
                             let key_idx = self
                                 .chunk
-                                .add_constant(Value::String(Rc::from(key.as_str())));
+                                .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line); // [obj, key]
                             self.chunk.emit(Op::GetProp, self.current_line); // [oldVal]
                         }
@@ -1648,7 +1648,7 @@ impl Compiler {
                             };
                             let key_idx = self
                                 .chunk
-                                .add_constant(Value::String(Rc::from(key.as_str())));
+                                .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             // [obj, key]
                         }
@@ -1788,7 +1788,7 @@ impl Compiler {
                                     };
                                     let key_idx = self
                                         .chunk
-                                        .add_constant(Value::String(Rc::from(key.as_str())));
+                                        .add_constant(Value::String(Arc::from(key.as_str())));
                                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                                     self.chunk.emit(Op::DeleteProp, self.current_line);
                                 }
@@ -1900,7 +1900,7 @@ impl Compiler {
                                 let key = crate::value::num_to_string(*n);
                                 let key_idx = self
                                     .chunk
-                                    .add_constant(Value::String(Rc::from(key.as_str())));
+                                    .add_constant(Value::String(Arc::from(key.as_str())));
                                 self.chunk.emit(Op::Const(key_idx), self.current_line);
                             }
                             PropertyKey::Computed(e) => {
@@ -1938,7 +1938,7 @@ impl Compiler {
                             let key = crate::value::num_to_string(*n);
                             let key_idx = self
                                 .chunk
-                                .add_constant(Value::String(Rc::from(key.as_str())));
+                                .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
                             self.chunk.emit(Op::SetProp, self.current_line);
@@ -2029,7 +2029,7 @@ impl Compiler {
                                 };
                                 let key_idx = self
                                     .chunk
-                                    .add_constant(Value::String(Rc::from(key.as_str())));
+                                    .add_constant(Value::String(Arc::from(key.as_str())));
                                 self.chunk.emit(Op::Const(key_idx), self.current_line);
                             }
                             for a in args {
@@ -2067,7 +2067,7 @@ impl Compiler {
                         };
                         let key_idx = self
                             .chunk
-                            .add_constant(Value::String(Rc::from(key.as_str())));
+                            .add_constant(Value::String(Arc::from(key.as_str())));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);
                         // push args
                         for a in args {
@@ -2230,7 +2230,7 @@ impl Compiler {
                     };
                     let key_idx = self
                         .chunk
-                        .add_constant(Value::String(Rc::from(key.as_str())));
+                        .add_constant(Value::String(Arc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                     self.chunk.emit(Op::GetProp, self.current_line);
                 }
@@ -2264,7 +2264,7 @@ impl Compiler {
                 }
                 // [tag, strings, strings, rawArr]
                 // SetProp wants [obj, key, value]; reorder to [strings, "raw", rawArr].
-                let raw_key = self.chunk.add_constant(Value::String(Rc::from("raw")));
+                let raw_key = self.chunk.add_constant(Value::String(Arc::from("raw")));
                 self.chunk.emit(Op::Const(raw_key), self.current_line); // [tag, strings, strings, rawArr, "raw"]
                 self.chunk.emit(Op::Swap, self.current_line); // [tag, strings, strings, "raw", rawArr]
                 self.chunk.emit(Op::SetProp, self.current_line); // [tag, strings, rawArr]
@@ -2278,7 +2278,7 @@ impl Compiler {
             }
             Expr::Regex(pattern, flags) => {
                 // Compile to `new RegExp(pattern, flags)`.
-                let name_idx = self.chunk.add_constant(Value::String(Rc::from("RegExp")));
+                let name_idx = self.chunk.add_constant(Value::String(Arc::from("RegExp")));
                 let pat_idx = self.chunk.add_constant(Value::String(pattern.clone()));
                 let flg_idx = self.chunk.add_constant(Value::String(flags.clone()));
                 self.chunk.emit(Op::Const(name_idx), self.current_line);
@@ -2344,13 +2344,13 @@ impl Compiler {
                     params: f.params.clone(),
                     param_slots,
                     rest_param: f.rest_param.clone(),
-                    chunk: Rc::new(func_chunk),
+                    chunk: Arc::new(func_chunk),
                     num_locals: f.params.len() + 16,
                     is_arrow: f.is_arrow,
                     is_async: f.is_async,
                     is_generator: f.is_generator,
                 };
-                self.funcs.push(Rc::new(fdef));
+                self.funcs.push(Arc::new(fdef));
                 self.chunk
                     .emit(Op::MakeClosure(func_idx), self.current_line);
             }
@@ -2360,9 +2360,9 @@ impl Compiler {
                 let has_ctor = cls.methods.iter().any(|m| m.is_constructor);
                 // For derived classes without an explicit constructor, synthesize one
                 // that forwards all arguments to `super(...)`.
-                let synthetic_params: Vec<Rc<str>> = if cls.superclass.is_some() && !has_ctor {
+                let synthetic_params: Vec<Arc<str>> = if cls.superclass.is_some() && !has_ctor {
                     (0..16)
-                        .map(|i| Rc::from(format!("#a{}", i).as_str()))
+                        .map(|i| Arc::from(format!("#a{}", i).as_str()))
                         .collect()
                 } else {
                     Vec::new()
@@ -2477,13 +2477,13 @@ impl Compiler {
                     params: ctor_fn.params.clone(),
                     param_slots,
                     rest_param: ctor_fn.rest_param.clone(),
-                    chunk: Rc::new(func_chunk),
+                    chunk: Arc::new(func_chunk),
                     num_locals: ctor_fn.params.len() + 16,
                     is_arrow: false,
                     is_async: false,
                     is_generator: false,
                 };
-                self.funcs.push(Rc::new(fdef));
+                self.funcs.push(Arc::new(fdef));
                 self.chunk
                     .emit(Op::MakeClosure(func_idx), self.current_line);
                 // If there is a superclass, evaluate it and wire up the prototype chain.
@@ -2500,7 +2500,7 @@ impl Compiler {
                         .emit(Op::DeclareEnv(superctor_idx), self.current_line); // [ctor, parentCtor]
                     let proto_key = self
                         .chunk
-                        .add_constant(Value::String(Rc::from("prototype")));
+                        .add_constant(Value::String(Arc::from("prototype")));
                     self.chunk.emit(Op::Const(proto_key), self.current_line);
                     // stack: [ctor, parentCtor, "prototype"]; GetProp pops key then obj
                     self.chunk.emit(Op::GetProp, self.current_line); // -> [ctor, parentProto]
@@ -2514,7 +2514,7 @@ impl Compiler {
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     let cp_key = self
                         .chunk
-                        .add_constant(Value::String(Rc::from("prototype")));
+                        .add_constant(Value::String(Arc::from("prototype")));
                     self.chunk.emit(Op::Const(cp_key), self.current_line);
                     self.chunk.emit(Op::GetProp, self.current_line); // [ctor, childProto]
                     self.chunk
@@ -2530,7 +2530,7 @@ impl Compiler {
                                                                                // but it's already consumed. Use parentProto.constructor.
                     let ctor_key = self
                         .chunk
-                        .add_constant(Value::String(Rc::from("constructor")));
+                        .add_constant(Value::String(Arc::from("constructor")));
                     self.chunk.emit(Op::Const(ctor_key), self.current_line); // [ctor, ctor, parentProto, "constructor"]
                     self.chunk.emit(Op::GetProp, self.current_line); // pop "constructor",parentProto -> [ctor, ctor, parentCtor]
                     self.chunk.emit(Op::SetProto, self.current_line); // set ctor.__proto__ = parentCtor
@@ -2571,13 +2571,13 @@ impl Compiler {
                         params: method.params.clone(),
                         param_slots: m_slots,
                         rest_param: method.rest_param.clone(),
-                        chunk: Rc::new(m_chunk),
+                        chunk: Arc::new(m_chunk),
                         num_locals: method.params.len() + 16,
                         is_arrow: false,
                         is_async: false,
                         is_generator: false,
                     };
-                    self.funcs.push(Rc::new(mdef));
+                    self.funcs.push(Arc::new(mdef));
                     let is_accessor = matches!(
                         method.kind,
                         crate::ast::PropKind::Get | crate::ast::PropKind::Set
@@ -2606,7 +2606,7 @@ impl Compiler {
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                             let proto_key = self
                                 .chunk
-                                .add_constant(Value::String(Rc::from("prototype")));
+                                .add_constant(Value::String(Arc::from("prototype")));
                             self.chunk.emit(Op::Const(proto_key), self.current_line);
                             self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
@@ -2632,7 +2632,7 @@ impl Compiler {
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                         let proto_key = self
                             .chunk
-                            .add_constant(Value::String(Rc::from("prototype")));
+                            .add_constant(Value::String(Arc::from("prototype")));
                         self.chunk.emit(Op::Const(proto_key), self.current_line);
                         self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
                         let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
@@ -2674,13 +2674,13 @@ impl Compiler {
                         params: Vec::new(),
                         param_slots: sb_slots,
                         rest_param: None,
-                        chunk: Rc::new(sb_chunk),
+                        chunk: Arc::new(sb_chunk),
                         num_locals: 16,
                         is_arrow: false,
                         is_async: false,
                         is_generator: false,
                     };
-                    self.funcs.push(Rc::new(sbdef));
+                    self.funcs.push(Arc::new(sbdef));
                     // stack: [ctor]. Dup ctor for `this`, then MakeClosure.
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     self.chunk.emit(Op::MakeClosure(sb_idx), self.current_line); // [ctor, ctor, fn]
@@ -2754,7 +2754,7 @@ impl Compiler {
                     };
                     let key_idx = self
                         .chunk
-                        .add_constant(Value::String(Rc::from(key.as_str())));
+                        .add_constant(Value::String(Arc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                     self.compile_expr(value)?;
                     self.chunk.emit(Op::SetProp, self.current_line);
@@ -2763,7 +2763,7 @@ impl Compiler {
             Expr::Ident(name) => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Op::Dup, self.current_line);
-                let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                 self.chunk.emit(Op::StoreEnv(name_idx), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
@@ -2778,11 +2778,11 @@ impl Compiler {
         match target {
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
-                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                     self.chunk
                         .emit(Op::StoreEnvName(name_idx), self.current_line);
                 } else {
-                    let name_idx = self.chunk.add_constant(Value::String(Rc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                     self.chunk.emit(Op::Const(name_idx), self.current_line);
                     self.chunk.emit(Op::StoreGlobal, self.current_line);
                 }
@@ -2805,7 +2805,7 @@ impl Compiler {
                     };
                     let key_idx = self
                         .chunk
-                        .add_constant(Value::String(Rc::from(key.as_str())));
+                        .add_constant(Value::String(Arc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                     self.chunk.emit(Op::SetProp, self.current_line);
                 }
@@ -2942,7 +2942,7 @@ impl Compiler {
             };
             let key_idx = self
                 .chunk
-                .add_constant(Value::String(Rc::from(key.as_str())));
+                .add_constant(Value::String(Arc::from(key.as_str())));
             self.chunk.emit(Op::Const(key_idx), self.current_line);
             self.chunk.emit(Op::GetProp, self.current_line);
         }
@@ -2967,7 +2967,7 @@ impl Compiler {
             };
             let key_idx = self
                 .chunk
-                .add_constant(Value::String(Rc::from(key.as_str())));
+                .add_constant(Value::String(Arc::from(key.as_str())));
             self.chunk.emit(Op::Const(key_idx), self.current_line);
         }
         Ok(())

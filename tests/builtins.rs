@@ -3,13 +3,13 @@
 mod common;
 use common::{run, run_err};
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),
-        Value::String(Rc::from("2,4,6"))
+        Value::String(Arc::from("2,4,6"))
     );
     assert_eq!(run("[1,2,3].reduce((a,b)=>a+b, 0);"), Value::Number(6.0));
 }
@@ -18,7 +18,7 @@ fn array_map_reduce() {
 fn array_method_chaining() {
     assert_eq!(
         run("[1,2,3,4,5].filter(x => x > 2).map(x => x * 2).join(',');"),
-        Value::String(Rc::from("6,8,10"))
+        Value::String(Arc::from("6,8,10"))
     );
 }
 
@@ -51,7 +51,7 @@ fn array_includes_nan() {
 fn array_sort() {
     assert_eq!(
         run("[3,1,2].sort().join(',');"),
-        Value::String(Rc::from("1,2,3"))
+        Value::String(Arc::from("1,2,3"))
     );
 }
 
@@ -59,7 +59,7 @@ fn array_sort() {
 fn array_sort_cmp() {
     assert_eq!(
         run("[10,5,8].sort((a,b)=>a-b).join(',');"),
-        Value::String(Rc::from("5,8,10"))
+        Value::String(Arc::from("5,8,10"))
     );
 }
 
@@ -67,7 +67,7 @@ fn array_sort_cmp() {
 fn array_reverse() {
     assert_eq!(
         run("[1,2,3].reverse().join(',');"),
-        Value::String(Rc::from("3,2,1"))
+        Value::String(Arc::from("3,2,1"))
     );
 }
 
@@ -75,16 +75,16 @@ fn array_reverse() {
 fn string_methods() {
     assert_eq!(
         run("'hello'.toUpperCase();"),
-        Value::String(Rc::from("HELLO"))
+        Value::String(Arc::from("HELLO"))
     );
-    assert_eq!(run("'hello'.charAt(1);"), Value::String(Rc::from("e")));
+    assert_eq!(run("'hello'.charAt(1);"), Value::String(Arc::from("e")));
 }
 
 #[test]
 fn string_split_join() {
     assert_eq!(
         run("'a,b,c'.split(',').join('-');"),
-        Value::String(Rc::from("a-b-c"))
+        Value::String(Arc::from("a-b-c"))
     );
 }
 
@@ -97,7 +97,7 @@ fn split_limit() {
 fn string_split_reverse() {
     assert_eq!(
         run(r#""hello world".split(" ").reverse().join(" ");"#),
-        Value::String(Rc::from("world hello"))
+        Value::String(Arc::from("world hello"))
     );
 }
 
@@ -141,7 +141,7 @@ fn json() {
     assert_eq!(run("JSON.parse('[1,2,3]')[1];"), Value::Number(2.0));
     assert_eq!(
         run("JSON.stringify({a:1});"),
-        Value::String(Rc::from("{\"a\":1}"))
+        Value::String(Arc::from("{\"a\":1}"))
     );
 }
 
@@ -149,7 +149,7 @@ fn json() {
 fn error_subclass() {
     assert_eq!(
         run(r#"new TypeError("x").message;"#),
-        Value::String(Rc::from("x"))
+        Value::String(Arc::from("x"))
     );
 }
 
@@ -205,7 +205,7 @@ fn json_stringify_shared_reference_ok() {
     // shared (non-cyclic) references must still serialize both occurrences.
     assert_eq!(
         run("var s = {v:1}; var t = {l:s, r:s}; JSON.stringify(t);"),
-        Value::String(Rc::from(r#"{"l":{"v":1},"r":{"v":1}}"#))
+        Value::String(Arc::from(r#"{"l":{"v":1},"r":{"v":1}}"#))
     );
 }
 
@@ -213,7 +213,7 @@ fn json_stringify_shared_reference_ok() {
 fn json_stringify_nested_object() {
     assert_eq!(
         run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#),
-        Value::String(Rc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
+        Value::String(Arc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
     );
 }
 
@@ -231,13 +231,13 @@ fn object_keys_insertion_order() {
 #[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
-    assert_eq!(run(src), Value::String(Rc::from("a,b,c,d,e")));
+    assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));
 }
 
 #[test]
 fn object_entries_insertion_order() {
     let src = "Object.entries({z:1,a:2,m:3,b:4}).map(e=>e[0]+'='+e[1]).join(',');";
-    assert_eq!(run(src), Value::String(Rc::from("z=1,a=2,m=3,b=4")));
+    assert_eq!(run(src), Value::String(Arc::from("z=1,a=2,m=3,b=4")));
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn json_stringify_key_order() {
     // JSON.stringify now preserves insertion order.
     assert_eq!(
         run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#),
-        Value::String(Rc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
+        Value::String(Arc::from(r#"{"a":1,"b":"hi","c":[1,2],"d":{"e":true}}"#))
     );
 }
 
@@ -255,15 +255,15 @@ fn json_stringify_key_order() {
 fn array_flat_flatmap() {
     assert_eq!(
         run("[1,[2,[3]]].flat().join(',')"),
-        Value::String(Rc::from("1,2,3"))
+        Value::String(Arc::from("1,2,3"))
     );
     assert_eq!(
         run("[1,[2,[3]]].flat(2).join(',')"),
-        Value::String(Rc::from("1,2,3"))
+        Value::String(Arc::from("1,2,3"))
     );
     assert_eq!(
         run("[1,2,3].flatMap(x=>[x,x*10]).join(',')"),
-        Value::String(Rc::from("1,10,2,20,3,30"))
+        Value::String(Arc::from("1,10,2,20,3,30"))
     );
 }
 
@@ -273,15 +273,15 @@ fn array_at_shift_unshift_splice() {
     assert_eq!(run("[1,2,3].at(0);"), Value::Number(1.0));
     assert_eq!(
         run("var a=[1,2,3]; a.shift(); a.join(',');"),
-        Value::String(Rc::from("2,3"))
+        Value::String(Arc::from("2,3"))
     );
     assert_eq!(
         run("var b=[1,2,3]; b.unshift(0); b.join(',');"),
-        Value::String(Rc::from("0,1,2,3"))
+        Value::String(Arc::from("0,1,2,3"))
     );
     assert_eq!(
         run("var c=[1,2,3,4,5]; c.splice(1,2); c.join(',');"),
-        Value::String(Rc::from("1,4,5"))
+        Value::String(Arc::from("1,4,5"))
     );
 }
 
@@ -295,24 +295,24 @@ fn array_last_index_of() {
 fn string_pad_at_replaceall_substring() {
     assert_eq!(
         run("'abc'.padStart(6,'0');"),
-        Value::String(Rc::from("000abc"))
+        Value::String(Arc::from("000abc"))
     );
     assert_eq!(
         run("'abc'.padEnd(6,'0');"),
-        Value::String(Rc::from("abc000"))
+        Value::String(Arc::from("abc000"))
     );
-    assert_eq!(run("'abc'.at(-1);"), Value::String(Rc::from("c")));
+    assert_eq!(run("'abc'.at(-1);"), Value::String(Arc::from("c")));
     assert_eq!(
         run("'a-b-a'.replaceAll('-','_');"),
-        Value::String(Rc::from("a_b_a"))
+        Value::String(Arc::from("a_b_a"))
     );
     assert_eq!(
         run("'hello'.substring(1,3);"),
-        Value::String(Rc::from("el"))
+        Value::String(Arc::from("el"))
     );
     assert_eq!(
         run("'  hi  '.trimStart();"),
-        Value::String(Rc::from("hi  "))
+        Value::String(Arc::from("hi  "))
     );
 }
 
@@ -333,10 +333,10 @@ fn number_constants_and_radix() {
         Value::Number(9007199254740991.0)
     );
     assert_eq!(run("Number.EPSILON > 0;"), Value::Bool(true));
-    assert_eq!(run("(255).toString(16);"), Value::String(Rc::from("ff")));
+    assert_eq!(run("(255).toString(16);"), Value::String(Arc::from("ff")));
     assert_eq!(
         run("(3.14159).toFixed(2);"),
-        Value::String(Rc::from("3.14"))
+        Value::String(Arc::from("3.14"))
     );
 }
 
@@ -361,7 +361,7 @@ fn object_statics() {
     );
     assert_eq!(
         run("typeof Object.create(null);"),
-        Value::String(Rc::from("object"))
+        Value::String(Arc::from("object"))
     );
 }
 
@@ -418,7 +418,7 @@ fn promise_callback_runs() {
 fn promise_keyword_method_names() {
     // `.catch` and `.then` use reserved words as property names.
     let r = run("typeof Promise.prototype.then;");
-    assert_eq!(r, Value::String(Rc::from("function")));
+    assert_eq!(r, Value::String(Arc::from("function")));
 }
 
 // --- RegExp ---
@@ -437,15 +437,15 @@ fn regex_exec_captures() {
     assert!(matches!(r, Value::Object(_)));
     assert_eq!(
         run("/(\\w+)@(\\w+)/.exec('user@host')[0];"),
-        Value::String(Rc::from("user@host"))
+        Value::String(Arc::from("user@host"))
     );
     assert_eq!(
         run("/(\\w+)@(\\w+)/.exec('user@host')[1];"),
-        Value::String(Rc::from("user"))
+        Value::String(Arc::from("user"))
     );
     assert_eq!(
         run("/(\\w+)@(\\w+)/.exec('user@host')[2];"),
-        Value::String(Rc::from("host"))
+        Value::String(Arc::from("host"))
     );
 }
 
@@ -456,19 +456,19 @@ fn regex_exec_no_match() {
 
 #[test]
 fn regex_source_flags() {
-    assert_eq!(run("/abc/gi.source;"), Value::String(Rc::from("abc")));
-    assert_eq!(run("/abc/gi.flags;"), Value::String(Rc::from("gi")));
+    assert_eq!(run("/abc/gi.source;"), Value::String(Arc::from("abc")));
+    assert_eq!(run("/abc/gi.flags;"), Value::String(Arc::from("gi")));
 }
 
 #[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),
-        Value::String(Rc::from("heLlo"))
+        Value::String(Arc::from("heLlo"))
     );
     assert_eq!(
         run("'hello world'.replace(/o/g, '0');"),
-        Value::String(Rc::from("hell0 w0rld"))
+        Value::String(Arc::from("hell0 w0rld"))
     );
 }
 
@@ -485,11 +485,11 @@ fn division_not_regex() {
 fn array_from_iterable_and_map() {
     assert_eq!(
         run("Array.from('abc').join(',');"),
-        Value::String(Rc::from("a,b,c"))
+        Value::String(Arc::from("a,b,c"))
     );
     assert_eq!(
         run("Array.from([1,2,3], x=>x*2).join(',');"),
-        Value::String(Rc::from("2,4,6"))
+        Value::String(Arc::from("2,4,6"))
     );
 }
 
@@ -497,7 +497,7 @@ fn array_from_iterable_and_map() {
 fn array_from_arraylike() {
     assert_eq!(
         run("Array.from({0:'a',1:'b',length:2}).join(',');"),
-        Value::String(Rc::from("a,b"))
+        Value::String(Arc::from("a,b"))
     );
 }
 
@@ -505,7 +505,7 @@ fn array_from_arraylike() {
 fn array_of_and_isarray() {
     assert_eq!(
         run("Array.of(1,2,3).join(',');"),
-        Value::String(Rc::from("1,2,3"))
+        Value::String(Arc::from("1,2,3"))
     );
     assert_eq!(run("Array.isArray([]);"), Value::Bool(true));
     assert_eq!(run("Array.isArray({});"), Value::Bool(false));
@@ -516,7 +516,7 @@ fn array_of_and_isarray() {
 #[test]
 fn async_function_returns_promise() {
     let r = run("async function f(){ return 5; } typeof f();");
-    assert_eq!(r, Value::String(Rc::from("object")));
+    assert_eq!(r, Value::String(Arc::from("object")));
 }
 
 #[test]
@@ -584,7 +584,7 @@ fn generator_for_of() {
 fn generator_spread() {
     assert_eq!(
         run("function* r(a,b){ for(var i=a;i<b;i++) yield i; } [...r(1,4)].join(',');"),
-        Value::String(Rc::from("1,2,3"))
+        Value::String(Arc::from("1,2,3"))
     );
 }
 
@@ -602,12 +602,12 @@ fn generator_yield_undefined() {
 fn json_parse_invalid_returns_error() {
     // Invalid JSON must throw (not hang). run returns Undefined on error.
     let r = run("var r; try { JSON.parse('{bad}'); } catch(e) { r = e.name; } r;");
-    assert_eq!(r, Value::String(Rc::from("SyntaxError")));
+    assert_eq!(r, Value::String(Arc::from("SyntaxError")));
 }
 
 #[test]
 fn function_error_reaches_caller_catch() {
     let r =
         run("var r; function f(){ return missing; } try { f(); } catch(e) { r = 'caught'; } r;");
-    assert_eq!(r, Value::String(Rc::from("caught")));
+    assert_eq!(r, Value::String(Arc::from("caught")));
 }

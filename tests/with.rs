@@ -3,7 +3,7 @@
 mod common;
 use common::run;
 use ruja::Value;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[test]
 fn with_reads_object_property() {
@@ -28,7 +28,7 @@ fn with_shadows_outer_var() {
         with (p) { r = name; }
         r;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("inner")));
+    assert_eq!(run(src), Value::String(Arc::from("inner")));
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn with_outer_var_unchanged_after_block() {
         with (p) { name; }
         name;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("outer")));
+    assert_eq!(run(src), Value::String(Arc::from("outer")));
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn with_sees_undefined_valued_property() {
         }
         r;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("true|5")));
+    assert_eq!(run(src), Value::String(Arc::from("true|5")));
 }
 
 // ---- `with` rebinding of `this` for unqualified calls (#6) ----
@@ -144,7 +144,7 @@ fn with_this_does_not_leak_to_outer_call() {
         let outside = g();
         inside + "|" + outside;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("with-obj|leaked")));
+    assert_eq!(run(src), Value::String(Arc::from("with-obj|leaked")));
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn with_this_nested_inner_object_wins() {
         }
         r;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("inner")));
+    assert_eq!(run(src), Value::String(Arc::from("inner")));
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn with_this_uses_outer_when_inner_lacks_property() {
         }
         r;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("outer")));
+    assert_eq!(run(src), Value::String(Arc::from("outer")));
 }
 
 #[test]

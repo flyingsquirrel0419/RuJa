@@ -54,7 +54,7 @@ fn promise_resolve_reject_values_survive_gc() {
         }
         await main();
     "#;
-    assert_eq!(run(src), Value::String(std::rc::Rc::from("kept|true")));
+    assert_eq!(run(src), Value::String(std::sync::Arc::from("kept|true")));
 }
 
 #[test]
