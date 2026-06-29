@@ -827,19 +827,17 @@ fn object_get_own_property_descriptors(
         class_name: None,
     }));
     if let Value::Object(idx) = &obj {
-        let descs: Vec<(String, crate::value::PropertyDescriptor)> = vm.heap.with_obj(idx.0, |o| {
-            o.props()
-                .borrow()
-                .iter()
-                .filter_map(|(k, d)| {
-                    if let crate::value::PropertyKey::Str(s) = k {
-                        Some((s.to_string(), d.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        });
+        let keys = own_string_keys(vm, &obj);
+        let descs: Vec<(String, crate::value::PropertyDescriptor)> = keys
+            .iter()
+            .filter_map(|k| {
+                let pkey = crate::value::PropertyKey::from(k.as_ref());
+                let d = vm
+                    .heap
+                    .with_obj(idx.0, |o| o.props().borrow().get(&pkey).cloned())?;
+                Some((k.to_string(), d))
+            })
+            .collect();
         let mut p = IndexMap::new();
         for (key, d) in descs {
             let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
@@ -1373,6 +1371,11 @@ fn math_clz32(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))? as u32;
     Ok(Value::Number(n.leading_zeros() as f64))
 }
+fn math_imul(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let a = vm.to_number(args.first().unwrap_or(&Value::Undefined))? as i32;
+    let b = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))? as i32;
+    Ok(Value::Number((a.wrapping_mul(b)) as f64))
+}
 fn math_fround(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(n as f32 as f64))
@@ -1457,6 +1460,7 @@ fn build_math(vm: &mut Vm) -> Value {
         ("hypot", math_hypot, 2),
         ("clz32", math_clz32, 1),
         ("fround", math_fround, 1),
+        ("imul", math_imul, 2),
         ("cos", math_cos, 1),
         ("tan", math_tan, 1),
         ("pow", math_pow, 2),
@@ -2281,6 +2285,189 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     }
     Ok(Value::Undefined)
 }
+/// Build a heap array from a Vec of values.
+fn make_array(vm: &mut Vm, items: Vec<Value>) -> Value {
+    let idx = vm.heap.allocate(HeapObj::Array(crate::value::ArrayData {
+        items: RefCell::new(items),
+        props: RefCell::new(IndexMap::new()),
+        proto: RefCell::new(Some(vm.array_proto.clone())),
+    }));
+    Value::Object(GcIdx(idx))
+}
+
+/// Normalize an array index argument (negative wraps from end).
+fn norm_index(v: Value, len: f64, vm: &mut Vm) -> error::Result<usize> {
+    let n = vm.to_number(&v)?;
+    if n < 0.0 {
+        Ok(((len + n).max(0.0)) as usize)
+    } else {
+        Ok((n as usize).min(len as usize))
+    }
+}
+
+/// Sort items with an optional comparator callback (default: string compare).
+fn sort_with_cb(vm: &mut Vm, items: &mut [Value], cmp: &Option<Value>) -> error::Result<()> {
+    match cmp {
+        None | Some(Value::Undefined) | Some(Value::Null) => {
+            items.sort_by(|a, b| {
+                if a.is_undefined() && b.is_undefined() {
+                    return std::cmp::Ordering::Equal;
+                }
+                if a.is_undefined() {
+                    return std::cmp::Ordering::Greater;
+                }
+                if b.is_undefined() {
+                    return std::cmp::Ordering::Less;
+                }
+                let sa = vm.to_string(a).map(|s| s.to_string()).unwrap_or_default();
+                let sb = vm.to_string(b).map(|s| s.to_string()).unwrap_or_default();
+                sa.cmp(&sb)
+            });
+        }
+        Some(cmp_fn) => {
+            let n = items.len();
+            for i in 1..n {
+                let mut j = i;
+                while j > 0 {
+                    let a = items[j - 1].clone();
+                    let b = items[j].clone();
+                    let r = vm.call_function(cmp_fn, &[a.clone(), b.clone()], None)?;
+                    let ord = vm.to_number(&r)?;
+                    if ord > 0.0 {
+                        items.swap(j - 1, j);
+                        j -= 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn array_reduce_right(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let len = items.len();
+        let (mut acc, start) = if args.len() >= 2 {
+            (args[1].clone(), len)
+        } else {
+            (
+                items.last().cloned().unwrap_or(Value::Undefined),
+                len.saturating_sub(1),
+            )
+        };
+        if items.is_empty() && args.len() < 2 {
+            return Err(Error::type_err(
+                "Reduce of empty array with no initial value",
+            ));
+        }
+        let mut i = start;
+        while i > 0 {
+            i -= 1;
+            acc = vm.call_function(
+                &cb,
+                &[
+                    acc,
+                    items[i].clone(),
+                    Value::Number(i as f64),
+                    this.clone().unwrap_or(Value::Undefined),
+                ],
+                args.get(2).cloned(),
+            )?;
+        }
+        return Ok(acc);
+    }
+    Ok(Value::Undefined)
+}
+
+fn array_to_reversed(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().iter().rev().cloned().collect()
+            } else {
+                Vec::new()
+            }
+        });
+        return Ok(make_array(vm, items));
+    }
+    Ok(Value::Undefined)
+}
+
+fn array_to_sorted(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let mut items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let cb = args.first().cloned();
+        sort_with_cb(vm, &mut items, &cb)?;
+        return Ok(make_array(vm, items));
+    }
+    Ok(Value::Undefined)
+}
+
+fn array_to_spliced(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let len = items.len() as f64;
+        let start = norm_index(get_arg(args, 0), len, vm)?;
+        let start = start.min(items.len());
+        let del_count = if args.len() >= 2 {
+            let d = vm.to_number(&get_arg(args, 1))?;
+            let d = if d < 0.0 { 0.0 } else { d };
+            (d as usize).min(items.len().saturating_sub(start))
+        } else {
+            items.len() - start
+        };
+        let mut result = items[..start].to_vec();
+        for a in args.iter().skip(2) {
+            result.push(a.clone());
+        }
+        result.extend_from_slice(&items[start + del_count..]);
+        return Ok(make_array(vm, result));
+    }
+    Ok(Value::Undefined)
+}
+
+fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let mut items = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        let len = items.len() as f64;
+        let index = norm_index(get_arg(args, 0), len, vm)?;
+        if index >= items.len() {
+            return Err(Error::range("Invalid array index"));
+        }
+        items[index] = get_arg(args, 1);
+        return Ok(make_array(vm, items));
+    }
+    Ok(Value::Undefined)
+}
+
 fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
@@ -3173,6 +3360,94 @@ fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
         .map(|unit| Value::Number(unit as f64))
         .unwrap_or(Value::Number(f64::NAN)))
 }
+fn str_code_point_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let i = args
+        .first()
+        .and_then(|v| {
+            if let Value::Number(n) = v {
+                Some(*n as usize)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+    let len = crate::value::utf16_len(&s);
+    if i >= len {
+        return Ok(Value::Undefined);
+    }
+    let unit = crate::value::utf16_get(&s, i).unwrap_or(0) as u32;
+    if (0xD800..=0xDBFF).contains(&unit) {
+        // High surrogate; combine with next unit.
+        if let Some(low) = crate::value::utf16_get(&s, i + 1) {
+            let low = low as u32;
+            if (0xDC00..=0xDFFF).contains(&low) {
+                let cp = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00);
+                return Ok(Value::Number(cp as f64));
+            }
+        }
+    }
+    Ok(Value::Number(unit as f64))
+}
+
+fn str_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let mut result = s.to_string();
+    for a in args {
+        result.push_str(&vm.to_string(a)?);
+    }
+    Ok(Value::String(Rc::from(result.as_str())))
+}
+
+fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let pattern = args.first().cloned().unwrap_or(Value::Undefined);
+    let p = vm.to_string(&pattern)?;
+    Ok(crate::value::utf16_index_of(&s, &p, 0)
+        .map(|i| Value::Number(i as f64))
+        .unwrap_or(Value::Number(-1.0)))
+}
+
+fn string_raw(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    // String.raw(template, ...substitutions)
+    let template = args.first().cloned().unwrap_or(Value::Undefined);
+    let raw = vm.get_property(&template, "raw")?;
+    let len_val = vm.get_property(&raw, "length")?;
+    let len = vm.to_number(&len_val)? as usize;
+    let mut result = String::new();
+    let mut i = 0;
+    while i < len {
+        let seg = vm.get_property_key(&raw, &Value::Number(i as f64))?;
+        result.push_str(&vm.to_string(&seg)?);
+        if i + 1 < len {
+            let sub = args.get(i + 1).cloned().unwrap_or(Value::Undefined);
+            result.push_str(&vm.to_string(&sub)?);
+        }
+        i += 1;
+    }
+    Ok(Value::String(Rc::from(result.as_str())))
+}
+
+fn string_from_code_point(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let mut units: Vec<u16> = Vec::new();
+    for a in args {
+        let cp = vm.to_number(a)? as u32;
+        if cp > 0x10FFFF {
+            return Err(Error::range("Invalid code point"));
+        }
+        if cp <= 0xFFFF {
+            units.push(cp as u16);
+        } else {
+            let cp = cp - 0x10000;
+            units.push(0xD800 + ((cp >> 10) as u16));
+            units.push(0xDC00 + ((cp & 0x3FF) as u16));
+        }
+    }
+    Ok(Value::String(Rc::from(
+        String::from_utf16_lossy(&units).as_str(),
+    )))
+}
+
 fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let n = args
@@ -3687,6 +3962,96 @@ fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     };
     Ok(Value::String(Rc::from(format!("{:.*}", digits, n))))
 }
+fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let n = match &this {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if n.is_nan() {
+        return Ok(Value::String(Rc::from("NaN")));
+    }
+    if !n.is_finite() {
+        return Ok(Value::String(Rc::from(if n > 0.0 {
+            "Infinity"
+        } else {
+            "-Infinity"
+        })));
+    }
+    match args.first() {
+        Some(v) if !v.is_undefined() => {
+            let p = vm.to_number(v)? as usize;
+            if p == 0 {
+                return Ok(Value::String(Rc::from("0")));
+            }
+            // Use Rust's formatting with significant digits.
+            let s = format!("{:.*e}", p - 1, n);
+            // Convert exponential "1.23e4" to "12300" form for integer exp, else keep exp.
+            let s = if let Some(pos) = s.find('e') {
+                let mantissa = &s[..pos];
+                let exp: i32 = s[pos + 1..].parse().unwrap_or(0);
+                if exp >= 0 && exp < p as i32 {
+                    // Convert to fixed notation.
+                    let m = mantissa.replace('.', "");
+                    let target_len = (exp + 1) as usize;
+                    if m.len() >= target_len {
+                        let mut result = m[..target_len].to_string();
+                        if m.len() > target_len {
+                            result.push('.');
+                            result.push_str(&m[target_len..]);
+                        }
+                        result
+                    } else {
+                        let mut result = m.clone();
+                        result.push_str(&"0".repeat(target_len - m.len()));
+                        result
+                    }
+                } else {
+                    format!("{}e{}", mantissa, exp)
+                }
+            } else {
+                s
+            };
+            Ok(Value::String(Rc::from(s.as_str())))
+        }
+        _ => Ok(Value::String(Rc::from(
+            crate::value::num_to_string(n).as_str(),
+        ))),
+    }
+}
+
+fn num_to_exponential(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let n = match &this {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if n.is_nan() {
+        return Ok(Value::String(Rc::from("NaN")));
+    }
+    if !n.is_finite() {
+        return Ok(Value::String(Rc::from(if n > 0.0 {
+            "Infinity"
+        } else {
+            "-Infinity"
+        })));
+    }
+    match args.first() {
+        Some(v) if !v.is_undefined() => {
+            let d = vm.to_number(v)? as usize;
+            let s = format!("{:.*e}", d, n);
+            // Rust uses e0, e1; JS uses e+0, e+1.
+            let s = s.replace('e', "e+");
+            Ok(Value::String(Rc::from(s.as_str())))
+        }
+        _ => {
+            let s = format!("{:e}", n);
+            let s = s.replace('e', "e+");
+            Ok(Value::String(Rc::from(s.as_str())))
+        }
+    }
+}
+
 fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let n = match &this {
         Some(Value::Number(n)) => *n,
@@ -3771,6 +4136,11 @@ pub fn setup_full(vm: &mut Vm) {
             ("map", array_map, 1),
             ("filter", array_filter, 1),
             ("reduce", array_reduce, 1),
+            ("reduceRight", array_reduce_right, 1),
+            ("toReversed", array_to_reversed, 0),
+            ("toSorted", array_to_sorted, 1),
+            ("toSpliced", array_to_spliced, 2),
+            ("with", array_with, 2),
             ("forEach", array_for_each, 1),
             ("indexOf", array_index_of, 1),
             ("includes", array_includes, 1),
@@ -3843,10 +4213,27 @@ pub fn setup_full(vm: &mut Vm) {
             ("trimEnd", str_trim_end, 0),
             ("replaceAll", str_replace_all, 2),
             ("substring", str_substring, 2),
+            ("codePointAt", str_code_point_at, 1),
+            ("concat", str_concat, 1),
+            ("search", str_search, 1),
         ],
     );
     vm.string_proto = Value::Object(str_proto);
     define_global(vm, "String", Value::Object(str_ctor));
+    // String static methods
+    let raw_fn = vm.new_native_function("raw", string_raw, 1);
+    vm.heap.with_obj(str_ctor.0, |obj| {
+        obj.props()
+            .borrow_mut()
+            .insert(PropertyKey::from("raw"), data_prop(Value::Object(raw_fn)));
+    });
+    let fcp_fn = vm.new_native_function("fromCodePoint", string_from_code_point, 1);
+    vm.heap.with_obj(str_ctor.0, |obj| {
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("fromCodePoint"),
+            data_prop(Value::Object(fcp_fn)),
+        );
+    });
     // String statics
     let from_char_code_fn = vm.new_native_function("fromCharCode", str_from_char_code, 1);
     vm.heap.with_obj(str_ctor.0, |obj| {
@@ -3862,6 +4249,8 @@ pub fn setup_full(vm: &mut Vm) {
         number_constructor,
         &[
             ("toFixed", num_to_fixed, 1),
+            ("toPrecision", num_to_precision, 1),
+            ("toExponential", num_to_exponential, 1),
             ("toString", num_proto_to_string, 1),
         ],
     );
