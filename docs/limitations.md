@@ -3,7 +3,10 @@
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
 - Async generator scheduling uses a synchronous microtask-drain model (no
   real event-loop preemption)
-- test262 conformance is a future target, not achieved
+- test262 conformance is partial: the runner uses the real test262 harness
+  (with `negative:` handling) and passes a representative `language/`
+  subset at roughly 50-60%, but full conformance is not claimed. See
+  [test262.md](test262.md) for current numbers and the failure breakdown.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

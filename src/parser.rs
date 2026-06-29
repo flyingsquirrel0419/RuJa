@@ -1366,7 +1366,35 @@ impl Parser {
                 if !self.eat(&TokenKind::Comma) {
                     break;
                 }
-                continue;
+               continue;
+           }
+           // Async method: `async foo() {}` / `async *foo() {}` / async
+           // generator. Detect `async` followed by a property-name start.
+           let is_async_method = matches!(self.peek(), TokenKind::Ident(s) if s == "async")
+               && matches!(
+                   self.peek_at_tok(1).kind,
+                   TokenKind::Ident(_)
+                       | TokenKind::String(_)
+                       | TokenKind::Number(_)
+                       | TokenKind::LBracket
+                       | TokenKind::Star
+                       | TokenKind::LParen
+               )
+               && !matches!(self.peek_at_tok(1).kind, TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace | TokenKind::Assign);
+            // Also recognise the `async` keyword token as a method prefix.
+            let is_async_method = is_async_method || matches!(self.peek(), TokenKind::Async)
+                && matches!(
+                    self.peek_at_tok(1).kind,
+                    TokenKind::Ident(_)
+                        | TokenKind::String(_)
+                        | TokenKind::Number(_)
+                        | TokenKind::LBracket
+                        | TokenKind::Star
+                        | TokenKind::LParen
+                )
+                && !matches!(self.peek_at_tok(1).kind, TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace | TokenKind::Assign);
+            if is_async_method {
+                self.advance(); // consume `async`
             }
            // Getter/setter: `get prop() {}` / `set prop(v) {}`
            let (is_getter, is_setter) = match self.peek().clone() {
@@ -1388,17 +1416,22 @@ impl Parser {
            if is_getter || is_setter {
                self.advance(); // consume get/set
            }
-            // Generator method: `*foo() {}` / async generator `async *foo()`.
-            let is_generator_method = self.eat(&TokenKind::Star);
-           let (key, computed) = match self.peek().clone() {
-               TokenKind::Ident(s) => {
+           // Generator method: `*foo() {}` / async generator `async *foo()`.
+           let is_generator_method = self.eat(&TokenKind::Star);
+          let (key, computed) = match self.peek().clone() {
+              TokenKind::Ident(s) => {
+                  self.advance();
+                  (PropertyKey::Ident(Arc::from(s.as_str())), false)
+              }
+               other if other.as_keyword_str().is_some() => {
+                   let s = other.as_keyword_str().unwrap();
                    self.advance();
-                   (PropertyKey::Ident(Arc::from(s.as_str())), false)
+                   (PropertyKey::Ident(Arc::from(s)), false)
                }
-               TokenKind::String(s) => {
-                   self.advance();
-                   (PropertyKey::String(Arc::from(s.as_str())), false)
-               }
+              TokenKind::String(s) => {
+                  self.advance();
+                  (PropertyKey::String(Arc::from(s.as_str())), false)
+              }
                TokenKind::Number(n) => {
                    self.advance();
                    (PropertyKey::Number(n), false)
@@ -1479,7 +1512,7 @@ impl Parser {
                        rest_param,
                        body,
                        is_arrow: false,
-                       is_async: false,
+                       is_async: is_async_method,
                        is_generator: is_generator_method,
                        param_decls: Vec::new(),
                        is_strict,

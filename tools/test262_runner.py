@@ -9,7 +9,7 @@ any per-test `includes:`) rather than a hand-rolled stub, so tests relying on
 import os, re, subprocess, sys
 from pathlib import Path
 
-RUJA = str(Path(__file__).resolve().parent.parent / "target/debug/ruja")
+RUJA = str(Path(__file__).resolve().parent.parent / "target/release/ruja")
 TEST262 = os.environ.get("TEST262", "/root/test262")
 HARNESS = Path(TEST262) / "harness"
 
