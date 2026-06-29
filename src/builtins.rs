@@ -5917,6 +5917,35 @@ pub fn setup_collections(vm: &mut Vm) {
             );
         });
     }
+    // WeakMap / WeakSet (strong-ref implementation: API-compatible but
+    // entries are not actually weakly held; they survive until explicitly
+    // deleted).
+    let (weakmap_ctor, weakmap_proto) = make_builtin_constructor_with(
+        vm,
+        "WeakMap",
+        map_constructor,
+        &[
+            ("get", map_get, 1),
+            ("set", map_set, 2),
+            ("has", map_has, 1),
+            ("delete", map_delete, 1),
+        ],
+    );
+    define_global(vm, "WeakMap", Value::Object(weakmap_ctor));
+    let _ = weakmap_proto;
+    let (weakset_ctor, weakset_proto) = make_builtin_constructor_with(
+        vm,
+        "WeakSet",
+        set_constructor,
+        &[
+            ("add", set_add, 1),
+            ("has", set_has, 1),
+            ("delete", set_delete, 1),
+        ],
+    );
+    define_global(vm, "WeakSet", Value::Object(weakset_ctor));
+    let _ = weakset_proto;
+
     // Symbol
     let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1);
     define_global(vm, "Symbol", Value::Object(sym_idx));
