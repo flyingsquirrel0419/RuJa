@@ -2443,21 +2443,11 @@ impl Vm {
                     t.parse::<f64>().unwrap_or(f64::NAN)
                 }
             }
-            Value::Object(idx) => {
-                self.heap.with_obj(idx.0, |obj| {
-                    match obj {
-                        HeapObj::Array(a) => {
-                            let items = a.items.borrow();
-                            if items.len() <= 1 {
-                                0.0
-                            } else {
-                                // recurse needed
-                                f64::NAN
-                            }
-                        }
-                        _ => f64::NAN,
-                    }
-                })
+            Value::Object(_) => {
+                // Per ES ToNumber on objects: run ToPrimitive(number hint)
+                // (valueOf then toString), then convert the primitive result.
+                let prim = self.to_primitive(v)?;
+                self.to_number(&prim)?
             }
             Value::Symbol(_) => {
                 return Err(Error::type_err(
@@ -2869,6 +2859,12 @@ impl Vm {
                     }
                     return Ok(Value::Undefined);
                 }
+                // __proto__ getter returns the object's [[Prototype]].
+                if key == "__proto__" {
+                    return Ok(self
+                        .heap
+                        .with_obj(idx.0, |o| o.proto().borrow().clone().unwrap_or(Value::Null)));
+                }
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
@@ -3015,6 +3011,24 @@ impl Vm {
         // logic below before falling back to ordinary object semantics.
         match obj {
             Value::Object(idx) => {
+                // __proto__ assignment sets the object's [[Prototype]].
+                if key == "__proto__" {
+                    match &value {
+                        Value::Object(_) | Value::Null => {
+                            let proto = if value.is_null() {
+                                None
+                            } else {
+                                Some(value.clone())
+                            };
+                            self.heap.with_obj(idx.0, |o| {
+                                *o.proto().borrow_mut() = proto;
+                            });
+                            return Ok(());
+                        }
+                        // non-object, non-null: ignore (spec: no-op in sloppy mode)
+                        _ => return Ok(()),
+                    }
+                }
                 // --- Array fast paths ---
                 let is_array_length = self
                     .heap
