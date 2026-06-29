@@ -895,7 +895,7 @@ impl<'a> Lexer<'a> {
                 | TokenKind::Number(_)
                 | TokenKind::BigInt(_)
                 | TokenKind::String(_)
-                | TokenKind::TemplateString(_)
+                | TokenKind::TemplateString { .. }
                 | TokenKind::True
                 | TokenKind::False
                 | TokenKind::Null
@@ -970,7 +970,8 @@ impl<'a> Lexer<'a> {
         col: usize,
         preceded_by_newline: bool,
     ) -> Token {
-        let mut s = String::new();
+        let mut cooked = String::new();
+        let mut raw = String::new();
         while let Some(c) = self.peek() {
             if c == b'`' {
                 self.advance();
@@ -980,27 +981,84 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 self.advance();
                 self.template_state = 1;
-                let mut tok = Token::new(TokenKind::TemplateString(s), line, col);
+                let mut tok = Token::new(TokenKind::TemplateString { cooked, raw }, line, col);
                 tok.preceded_by_newline = preceded_by_newline;
                 return tok;
             }
             if c == b'\\' {
-                self.advance();
+                // Record the raw escape sequence verbatim (backslash + the
+                // following chars we consume for this escape), while decoding
+                // the cooked form.
+                let raw_start = self.pos;
+                self.advance(); // consume '\'
                 match self.advance() {
-                    Some(b'n') => s.push('\n'),
-                    Some(b't') => s.push('\t'),
-                    Some(b'r') => s.push('\r'),
-                    Some(b'\\') => s.push('\\'),
-                    Some(b'\'') => s.push('\''),
-                    Some(b'"') => s.push('"'),
-                    Some(b'`') => s.push('`'),
-                    Some(b'$') => s.push('$'),
-                    Some(b'0') => s.push('\0'),
-                    Some(b'b') => s.push('\u{0008}'),
-                    Some(b'f') => s.push('\u{000C}'),
-                    Some(b'v') => s.push('\u{000B}'),
+                    Some(b'n') => {
+                        cooked.push('\n');
+                        raw.push('\\');
+                        raw.push('n');
+                    }
+                    Some(b't') => {
+                        cooked.push('\t');
+                        raw.push('\\');
+                        raw.push('t');
+                    }
+                    Some(b'r') => {
+                        cooked.push('\r');
+                        raw.push('\\');
+                        raw.push('r');
+                    }
+                    Some(b'\\') => {
+                        cooked.push('\\');
+                        raw.push('\\');
+                        raw.push('\\');
+                    }
+                    Some(b'\'') => {
+                        cooked.push('\'');
+                        raw.push('\\');
+                        raw.push('\'');
+                    }
+                    Some(b'"') => {
+                        cooked.push('"');
+                        raw.push('\\');
+                        raw.push('"');
+                    }
+                    Some(b'`') => {
+                        cooked.push('`');
+                        raw.push('\\');
+                        raw.push('`');
+                    }
+                    Some(b'$') => {
+                        cooked.push('$');
+                        raw.push('\\');
+                        raw.push('$');
+                    }
+                    Some(b'0') => {
+                        cooked.push('\0');
+                        raw.push('\\');
+                        raw.push('0');
+                    }
+                    Some(b'b') => {
+                        cooked.push('\u{0008}');
+                        raw.push('\\');
+                        raw.push('b');
+                    }
+                    Some(b'f') => {
+                        cooked.push('\u{000C}');
+                        raw.push('\\');
+                        raw.push('f');
+                    }
+                    Some(b'v') => {
+                        cooked.push('\u{000B}');
+                        raw.push('\\');
+                        raw.push('v');
+                    }
                     Some(b'x') => match self.read_hex_digits(2) {
-                        Some(n) => s.push(char::from_u32(n).unwrap_or('\u{FFFD}')),
+                        Some(n) => {
+                            cooked.push(char::from_u32(n).unwrap_or('\u{FFFD}'));
+                            raw.push_str(
+                                std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
+                            );
+                        }
                         None => {
                             let mut tok = Token::new(
                                 TokenKind::LexError("invalid hex escape sequence".to_string()),
@@ -1012,7 +1070,12 @@ impl<'a> Lexer<'a> {
                         }
                     },
                     Some(b'u') => match self.read_unicode_escape() {
-                        Some(ch) => s.push(ch),
+                        Some(ch) => {
+                            cooked.push(ch);
+                            raw.push_str(
+                                std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
+                            );
+                        }
                         None => {
                             let mut tok = Token::new(
                                 TokenKind::LexError("invalid unicode escape sequence".to_string()),
@@ -1023,13 +1086,18 @@ impl<'a> Lexer<'a> {
                             return tok;
                         }
                     },
-                    Some(c) => s.push(c as char),
+                    Some(c) => {
+                        cooked.push(c as char);
+                        raw.push('\\');
+                        raw.push(c as char);
+                    }
                     None => break,
                 }
             } else {
                 self.advance();
                 if c < 0x80 {
-                    s.push(c as char);
+                    cooked.push(c as char);
+                    raw.push(c as char);
                 } else {
                     let need = if c >= 0xF0 {
                         3
@@ -1046,14 +1114,15 @@ impl<'a> Lexer<'a> {
                         }
                     }
                     if let Ok(st) = std::str::from_utf8(&buf) {
-                        s.push_str(st);
+                        cooked.push_str(st);
+                        raw.push_str(st);
                     }
                 }
             }
         }
         // closed the template literal with a backtick: return to normal scanning.
         self.template_state = 0;
-        let mut tok = Token::new(TokenKind::TemplateString(s), line, col);
+        let mut tok = Token::new(TokenKind::TemplateString { cooked, raw }, line, col);
         tok.preceded_by_newline = preceded_by_newline;
         tok
     }

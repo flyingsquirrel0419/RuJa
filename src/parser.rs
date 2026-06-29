@@ -1068,12 +1068,13 @@ impl Parser {
                         optional: false,
                     };
                 }
-                TokenKind::TemplateString(s) => {
+                TokenKind::TemplateString { cooked, raw } => {
                     // Tagged template: tag`str${expr}str`
+                    let quasi0: Arc<str> = Arc::from(cooked.as_str());
+                    let raw0: Arc<str> = Arc::from(raw.as_str());
                     self.advance(); // consume the TemplateString token
                     let tag = e;
-                    let quasi0: Arc<str> = Arc::from(s.as_str());
-                    e = self.parse_tagged_template(tag, quasi0)?;
+                    e = self.parse_tagged_template(tag, quasi0, raw0)?;
                 }
                 _ => break,
             }
@@ -1254,9 +1255,9 @@ impl Parser {
             TokenKind::LBrace => self.parse_object(),
             TokenKind::Function => self.parse_function_expr(),
             TokenKind::New => self.parse_new(),
-            TokenKind::TemplateString(s) => {
+            TokenKind::TemplateString { cooked, .. } => {
                 self.advance();
-                self.parse_template_rest(Arc::from(s.as_str()))
+                self.parse_template_rest(Arc::from(cooked.as_str()))
             }
             other => Err(error::Error::syntax(format!(
                 "Unexpected token in expression: {:?}",
@@ -1282,7 +1283,7 @@ impl Parser {
             exprs.push(e);
             // next quasi
             match self.advance() {
-                TokenKind::TemplateString(s) => quasis.push(Arc::from(s.as_str())),
+                TokenKind::TemplateString { cooked, .. } => quasis.push(Arc::from(cooked.as_str())),
                 other => {
                     return Err(error::Error::syntax(format!(
                         "Expected template string, got {:?}",
@@ -1298,10 +1299,14 @@ impl Parser {
     }
 
     /// Parse a tagged template after the tag expression and first quasi.
-    fn parse_tagged_template(&mut self, tag: Expr, first: Arc<str>) -> error::Result<Expr> {
-        let mut quasis: Vec<Arc<str>> = vec![first.clone()];
-        // raw quasis: same as cooked for now (lexer already decoded escapes).
-        let mut raw: Vec<Arc<str>> = vec![first];
+    fn parse_tagged_template(
+        &mut self,
+        tag: Expr,
+        first: Arc<str>,
+        first_raw: Arc<str>,
+    ) -> error::Result<Expr> {
+        let mut quasis: Vec<Arc<str>> = vec![first];
+        let mut raw: Vec<Arc<str>> = vec![first_raw];
         let mut exprs: Vec<Expr> = Vec::new();
         if !self.check(&TokenKind::TemplateExprStart) {
             // No interpolation.
@@ -1318,10 +1323,11 @@ impl Parser {
             self.expect(&TokenKind::TemplateExprEnd, "}")?;
             exprs.push(e);
             match self.advance() {
-                TokenKind::TemplateString(s) => {
-                    let q: Arc<str> = Arc::from(s.as_str());
-                    quasis.push(q.clone());
-                    raw.push(q);
+                TokenKind::TemplateString { cooked, raw: rstr } => {
+                    let c: Arc<str> = Arc::from(cooked.as_str());
+                    let r: Arc<str> = Arc::from(rstr.as_str());
+                    quasis.push(c);
+                    raw.push(r);
                 }
                 other => {
                     return Err(error::Error::syntax(format!(

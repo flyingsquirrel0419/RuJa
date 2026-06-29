@@ -6,7 +6,10 @@ pub enum TokenKind {
     Number(f64),
     BigInt(String),
     String(String),
-    TemplateString(String),
+    TemplateString {
+        cooked: String,
+        raw: String,
+    },
     Ident(String),
     TemplateExprStart, // ${
     TemplateExprEnd,   // } inside template
