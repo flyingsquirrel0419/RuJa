@@ -669,6 +669,7 @@ impl Vm {
             extensible: AtomicBool::new(true),
             class_name: Some(Arc::from(ctor_name)),
             private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
         });
         Value::Object(GcIdx(self.heap.allocate(obj)))
     }
@@ -1682,6 +1683,7 @@ impl Vm {
                         extensible: std::sync::atomic::AtomicBool::new(true),
                         class_name: None,
                         private_fields: Mutex::new(std::collections::HashMap::new()),
+                        primitive: Mutex::new(None),
                     });
                     let idx = self.heap.allocate(obj);
                     self.stack.push(Value::Object(GcIdx(idx)));
@@ -2595,6 +2597,7 @@ impl Vm {
                     extensible: std::sync::atomic::AtomicBool::new(true),
                     class_name: None,
                     private_fields: Mutex::new(std::collections::HashMap::new()),
+                    primitive: Mutex::new(None),
                 });
                 Value::Object(GcIdx(self.heap.allocate(proto)))
             } else {
@@ -2704,6 +2707,16 @@ impl Vm {
         let ap = self.to_primitive(&a)?;
         let bp = self.to_primitive(&b)?;
         match (&ap, &bp) {
+            // BigInt + BigInt stays BigInt; mixing with other types is a TypeError.
+            (Value::BigInt(x), Value::BigInt(y)) => {
+                self.stack.push(Value::BigInt(x + y));
+                return Ok(());
+            }
+            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+                return Err(Error::type_err(
+                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
+                ));
+            }
             (Value::String(_), _) | (_, Value::String(_)) => {
                 let sa = self.to_string(&ap)?;
                 let sb = self.to_string(&bp)?;
@@ -2862,6 +2875,23 @@ impl Vm {
     pub fn to_primitive_hint(&mut self, v: &Value, string_hint: bool) -> error::Result<Value> {
         match v {
             Value::Object(_) => {
+                // Boxed primitives (`new Number(5)`, `Object("x")`):
+                // ToPrimitive returns the wrapped primitive via valueOf,
+                // unless a string hint asks for toString (e.g. `${...}`).
+                if !string_hint {
+                    if let Value::Object(idx) = v {
+                        let prim = self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Object(od) = o {
+                                od.primitive.lock().unwrap().clone()
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(p) = prim {
+                            return Ok(p);
+                        }
+                    }
+                }
                 // Arrays have a well-defined default toString (join with ",");
                 // honor it directly rather than looking up a method that may
                 // not be installed on Array.prototype yet.
@@ -2892,7 +2922,12 @@ impl Vm {
                 }
                 // Both returned objects (or were missing): fall back to a
                 // best-effort string form.
-                Ok(Value::String(self.to_string(v)?))
+                // Both returned objects (or were missing): per spec
+                // OrdinaryToPrimitive throws a TypeError when neither yields
+                // a primitive.
+                Err(Error::type_err(
+                    "Cannot convert object to primitive value".to_string(),
+                ))
             }
             _ => Ok(v.clone()),
         }
@@ -3969,8 +4004,22 @@ impl Vm {
             extensible: std::sync::atomic::AtomicBool::new(true),
             class_name: None,
             private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
         });
         GcIdx(self.heap.allocate(obj))
+    }
+
+    /// Set the wrapped primitive on an object (for `new Number(5)`,
+    /// `new Boolean(true)`, `new String("x")`, `Object(1n)`). `valueOf()` and
+    /// `ToPrimitive` consult this so `new Number(5) + 1 === 6`.
+    pub fn set_primitive(&mut self, obj: &Value, prim: Value) {
+        if let Value::Object(idx) = obj {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    *od.primitive.lock().unwrap() = Some(prim);
+                }
+            });
+        }
     }
 
     /// Allocate a function with native impl.
@@ -4013,7 +4062,11 @@ impl Vm {
     pub fn to_object(&mut self, value: &Value) -> error::Result<Value> {
         Ok(match value {
             Value::Object(idx) => Value::Object(*idx),
-            _ => Value::Object(self.new_object()),
+            _ => {
+                let idx = self.new_object();
+                self.set_primitive(&Value::Object(idx), value.clone());
+                Value::Object(idx)
+            }
         })
     }
 }
@@ -4296,6 +4349,7 @@ impl Vm {
             extensible: std::sync::atomic::AtomicBool::new(true),
             class_name: None,
             private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)));
         self.pending_new_target = Some(constructor.clone());

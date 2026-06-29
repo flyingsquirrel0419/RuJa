@@ -611,3 +611,45 @@ fn function_error_reaches_caller_catch() {
         run("var r; function f(){ return missing; } try { f(); } catch(e) { r = 'caught'; } r;");
     assert_eq!(r, Value::String(Arc::from("caught")));
 }
+
+// --- wrapper objects (boxed primitives) ---
+
+#[test]
+fn boxed_number_valueof() {
+    assert_eq!(run("new Number(5).valueOf();"), Value::Number(5.0));
+    assert_eq!(
+        run("typeof new Number(5).valueOf();"),
+        Value::String(std::sync::Arc::from("number"))
+    );
+}
+
+#[test]
+fn boxed_boolean_valueof() {
+    assert_eq!(run("new Boolean(true).valueOf();"), Value::Bool(true));
+}
+
+#[test]
+fn boxed_string_valueof() {
+    assert_eq!(
+        run("new String('hi').valueOf();"),
+        Value::String(std::sync::Arc::from("hi"))
+    );
+}
+
+#[test]
+fn boxed_number_addition_uses_valueof() {
+    assert_eq!(run("new Number(5) + 1;"), Value::Number(6.0));
+    assert_eq!(run("new Boolean(true) + 1;"), Value::Number(2.0));
+}
+
+#[test]
+fn boxed_bigint_mixed_throws() {
+    let err = run_err("Object(1n) + 1;");
+    assert!(err.contains("TypeError"), "got: {}", err);
+}
+
+#[test]
+fn to_primitive_both_object_throws() {
+    let err = run_err("1 + {valueOf: function() {return {}}, toString: function() {return {}}};");
+    assert!(err.contains("TypeError"), "got: {}", err);
+}

@@ -147,6 +147,7 @@ fn make_builtin_constructor(
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from(name)),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
 
@@ -199,6 +200,7 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from(name)),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
 
@@ -351,6 +353,25 @@ fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
         return Ok(v);
     }
     Ok(Value::Undefined)
+}
+
+/// `Number.prototype.valueOf` / `Boolean.prototype.valueOf` /
+/// `String.prototype.valueOf`: return the wrapped primitive of `this`.
+fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = &this {
+        let prim = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                od.primitive.lock().unwrap().clone()
+            } else {
+                None
+            }
+        });
+        if let Some(p) = prim {
+            return Ok(p);
+        }
+    }
+    // No wrapped primitive: fall back to `this` (an ordinary object).
+    Ok(this.unwrap_or(Value::Undefined))
 }
 
 /// Collect an object's own enumerable string keys in array-index-first then property order.
@@ -526,6 +547,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     // Accept an array (or array-like) of [key, value] pairs.
     if let Value::Object(arr_idx) = &entries {
@@ -584,6 +606,7 @@ fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     Ok(Value::Object(GcIdx(obj_idx)))
 }
@@ -723,6 +746,7 @@ fn object_get_own_property_descriptors(
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     if let Value::Object(idx) = &obj {
         let keys = own_string_keys(vm, &obj);
@@ -744,6 +768,7 @@ fn object_get_own_property_descriptors(
                 extensible: AtomicBool::new(true),
                 class_name: None,
                 private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
             }));
             let mut dp = IndexMap::new();
             if d.is_accessor {
@@ -839,6 +864,7 @@ fn object_get_own_property_descriptor(
                 extensible: AtomicBool::new(true),
                 class_name: None,
                 private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
             }));
             let mut p = IndexMap::new();
             if d.is_accessor {
@@ -1414,6 +1440,7 @@ fn build_math(vm: &mut Vm) -> Value {
         extensible: AtomicBool::new(false),
         class_name: Some(Arc::from("Math")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -1515,6 +1542,7 @@ fn build_console(vm: &mut Vm) -> Value {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Object")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -1846,6 +1874,7 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
                         extensible: AtomicBool::new(true),
                         class_name: None,
                         private_fields: Mutex::new(std::collections::HashMap::new()),
+                        primitive: Mutex::new(None),
                     },
                 ))))
             }
@@ -1957,6 +1986,7 @@ fn parse_json_obj(
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
 }
@@ -2211,6 +2241,7 @@ fn build_reflect(vm: &mut Vm) -> Value {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Reflect")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -2227,6 +2258,7 @@ fn build_json(vm: &mut Vm) -> Value {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("JSON")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -2444,6 +2476,7 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)));
     let fd = FunctionData {
@@ -4392,11 +4425,12 @@ fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
     Ok(Value::String(Arc::from(s.as_str())))
 }
 fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    // `new String(x)` returns the constructed wrapper object (the primitive
-    // is not stored because RuJa does not model wrapper objects, but the
-    // prototype is correct). A normal call passes `this` as
-    // `Some(Undefined)`, so detect `new` by checking for an object `this`.
-    if let Some(Value::Object(_)) = this {
+    if let Some(Value::Object(_)) = &this {
+        let prim = match args.first() {
+            None => Value::String(Arc::from("")),
+            Some(v) => Value::String(vm.to_string(v)?),
+        };
+        vm.set_primitive(this.as_ref().unwrap(), prim);
         return Ok(this.unwrap());
     }
     // `String()` with no argument yields "" (per spec), distinct from
@@ -4407,11 +4441,14 @@ fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     }
 }
 fn number_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(_)) = this {
+    if let Some(Value::Object(_)) = &this {
+        let prim = match args.first() {
+            None => Value::Number(0.0),
+            Some(v) => Value::Number(vm.to_number(v)?),
+        };
+        vm.set_primitive(this.as_ref().unwrap(), prim);
         return Ok(this.unwrap());
     }
-    // `Number()` with no argument yields 0 (per spec), distinct from
-    // `Number(undefined)` which yields NaN.
     match args.first() {
         None => Ok(Value::Number(0.0)),
         Some(v) => Ok(Value::Number(vm.to_number(v)?)),
@@ -4611,8 +4648,10 @@ fn format_i64_radix(n: i64, radix: u32) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn boolean_constructor(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(_)) = this {
+fn boolean_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(_)) = &this {
+        let prim = Value::Bool(args.first().unwrap_or(&Value::Undefined).is_truthy());
+        vm.set_primitive(this.as_ref().unwrap(), prim);
         return Ok(this.unwrap());
     }
     Ok(Value::Bool(
@@ -4734,6 +4773,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("charCodeAt", str_char_code_at, 1),
             ("indexOf", str_index_of, 1),
             ("lastIndexOf", str_last_index_of, 1),
+            ("valueOf", boxed_value_of, 0),
             ("slice", str_slice, 2),
             ("toUpperCase", str_to_upper, 0),
             ("toLowerCase", str_to_lower, 0),
@@ -4792,6 +4832,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("toPrecision", num_to_precision, 1),
             ("toExponential", num_to_exponential, 1),
             ("toString", num_proto_to_string, 1),
+            ("valueOf", boxed_value_of, 0),
         ],
     );
     vm.number_proto = Value::Object(num_proto);
@@ -4838,8 +4879,12 @@ pub fn setup_full(vm: &mut Vm) {
     });
     define_global(vm, "Number", Value::Object(num_ctor));
     // Boolean
-    let (bool_ctor, bool_proto) =
-        make_builtin_constructor_with(vm, "Boolean", boolean_constructor, &[]);
+    let (bool_ctor, bool_proto) = make_builtin_constructor_with(
+        vm,
+        "Boolean",
+        boolean_constructor,
+        &[("valueOf", boxed_value_of, 0)],
+    );
     vm.boolean_proto = Value::Object(bool_proto);
     define_global(vm, "Boolean", Value::Object(bool_ctor));
     // globals
@@ -4867,6 +4912,7 @@ pub fn setup_full(vm: &mut Vm) {
             extensible: AtomicBool::new(true),
             class_name: Some(Arc::from("BigInt")),
             private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
         }));
         let bproto = Value::Object(GcIdx(bp_idx));
         vm.bigint_proto = bproto.clone();
@@ -4900,6 +4946,7 @@ pub fn setup_full(vm: &mut Vm) {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("global")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     vm.global_this = Value::Object(GcIdx(globalthis_idx));
     define_global(vm, "globalThis", vm.global_this.clone());
@@ -4957,6 +5004,7 @@ pub fn setup_full(vm: &mut Vm) {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Generator")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     {
         let next_fn = vm.new_native_function("next", generator_next, 0);
@@ -5814,6 +5862,7 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("RegExp")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     let mut props = IndexMap::new();
     props.insert(
@@ -6031,6 +6080,7 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
@@ -6070,6 +6120,7 @@ fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bool) -> erro
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     }));
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
@@ -6283,6 +6334,7 @@ pub fn setup_collections(vm: &mut Vm) {
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Symbol")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj));
     vm.symbol_proto = Value::Object(sym_proto_idx);
@@ -6305,6 +6357,7 @@ fn make_builtin_constructor_with(
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from(name)),
         private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
     let ctor_func = FunctionData {

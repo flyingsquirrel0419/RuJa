@@ -230,6 +230,10 @@ pub struct ObjectData {
     /// Private field storage: `#name` -> value. Isolated from normal props
     /// (not enumerable, not accessible via [] or for...in).
     pub private_fields: Mutex<std::collections::HashMap<Arc<str>, Value>>,
+    /// Wrapped primitive for boxed primitives created via `new Boolean(x)`,
+    /// `new Number(x)`, `new String(x)`, or `Object(x)`. `None` for ordinary
+    /// objects. `valueOf()` returns this so `new Number(5) + 1 === 6`.
+    pub primitive: Mutex<Option<Value>>,
 }
 
 pub struct ArrayData {
