@@ -212,8 +212,32 @@ impl<'a> Lexer<'a> {
                     None => break,
                 }
             } else {
+                // Decode a UTF-8 multibyte sequence (non-ASCII byte). The
+                // source is UTF-8; pushing each byte as a Latin-1 char would
+                // corrupt supplementary characters (emoji etc.).
                 self.advance();
-                s.push(c as char);
+                if c < 0x80 {
+                    s.push(c as char);
+                } else {
+                    // Read the remaining bytes of the UTF-8 sequence.
+                    let need = if c >= 0xF0 {
+                        3
+                    } else if c >= 0xE0 {
+                        2
+                    } else {
+                        1
+                    };
+                    let mut buf = vec![c];
+                    for _ in 0..need {
+                        if let Some(b) = self.peek() {
+                            self.advance();
+                            buf.push(b);
+                        }
+                    }
+                    if let Ok(st) = std::str::from_utf8(&buf) {
+                        s.push_str(st);
+                    }
+                }
             }
         }
         TokenKind::String(s)
@@ -684,7 +708,27 @@ impl<'a> Lexer<'a> {
                 }
             } else {
                 self.advance();
-                s.push(c as char);
+                if c < 0x80 {
+                    s.push(c as char);
+                } else {
+                    let need = if c >= 0xF0 {
+                        3
+                    } else if c >= 0xE0 {
+                        2
+                    } else {
+                        1
+                    };
+                    let mut buf = vec![c];
+                    for _ in 0..need {
+                        if let Some(b) = self.peek() {
+                            self.advance();
+                            buf.push(b);
+                        }
+                    }
+                    if let Ok(st) = std::str::from_utf8(&buf) {
+                        s.push_str(st);
+                    }
+                }
             }
         }
         // closed the template literal with a backtick: return to normal scanning.

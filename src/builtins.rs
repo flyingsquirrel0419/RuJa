@@ -415,7 +415,7 @@ fn object_has_own_property(
                 return Ok(Value::Bool(true));
             }
             if let Ok(i) = key.parse::<usize>() {
-                return Ok(Value::Bool(i < s.chars().count()));
+                return Ok(Value::Bool(i < crate::value::utf16_len(s)));
             }
             Ok(Value::Bool(false))
         }
@@ -2940,10 +2940,14 @@ fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             }
         })
         .unwrap_or(0);
-    Ok(s.chars()
-        .nth(i)
-        .map(|c| Value::String(Rc::from(c.to_string().as_str())))
-        .unwrap_or(Value::String(Rc::from(""))))
+    // Operate on UTF-16 code units: charAt returns a 1-unit string (a
+    // surrogate half for supplementary characters, like real JS).
+    match crate::value::utf16_get(&s, i) {
+        Some(unit) => Ok(Value::String(Rc::from(
+            String::from_utf16_lossy(&[unit]).as_str(),
+        ))),
+        None => Ok(Value::String(Rc::from(""))),
+    }
 }
 fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -2957,9 +2961,8 @@ fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
             }
         })
         .unwrap_or(0);
-    Ok(s.chars()
-        .nth(i)
-        .map(|c| Value::Number(c as u32 as f64))
+    Ok(crate::value::utf16_get(&s, i)
+        .map(|unit| Value::Number(unit as f64))
         .unwrap_or(Value::Number(f64::NAN)))
 }
 fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -2968,34 +2971,15 @@ fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         .first()
         .map(crate::value::value_to_debug_string)
         .unwrap_or_default();
-    let len = s.chars().count();
+    let len = crate::value::utf16_len(&s);
     let start = from_index_arg(vm, args, 1, len)?;
-    // Start scanning at the given code-unit index; return the code-unit index
-    // of the first match at or after `start`, or -1.
-    let bytes = s.as_bytes();
-    let mut byte_off = 0;
-    for _ in 0..start {
-        byte_off += s[byte_off..]
-            .chars()
-            .next()
-            .map(|c| c.len_utf8())
-            .unwrap_or(0);
-        if byte_off >= bytes.len() {
-            break;
-        }
-    }
-    if let Some(rel) = s[byte_off..].find(&n) {
-        let abs = byte_off + rel;
-        let idx = s[..abs].chars().count();
-        Ok(Value::Number(idx as f64))
-    } else {
-        Ok(Value::Number(-1.0))
-    }
+    Ok(crate::value::utf16_index_of(&s, &n, start)
+        .map(|i| Value::Number(i as f64))
+        .unwrap_or(Value::Number(-1.0)))
 }
 fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let chars: Vec<char> = s.chars().collect();
-    let len = chars.len() as i64;
+    let len = crate::value::utf16_len(&s) as i64;
     let start = args
         .first()
         .and_then(|v| {
@@ -3019,18 +3003,14 @@ fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     let st = if start < 0 {
         (len + start).max(0) as usize
     } else {
-        (start as usize).min(chars.len())
+        (start as usize).min(len as usize)
     };
     let en = if end < 0 {
         (len + end).max(0) as usize
     } else {
-        (end as usize).min(chars.len())
+        (end as usize).min(len as usize)
     };
-    let r: String = if st < en {
-        chars[st..en].iter().collect()
-    } else {
-        String::new()
-    };
+    let r = crate::value::utf16_slice(&s, st, en);
     Ok(Value::String(Rc::from(r.as_str())))
 }
 fn str_to_upper(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3114,12 +3094,11 @@ fn str_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         .first()
         .map(crate::value::value_to_debug_string)
         .unwrap_or_default();
-    let len = s.chars().count();
+    let len = crate::value::utf16_len(&s);
     let raw = match args.get(1) {
         Some(v) => vm.to_number(v)?,
         None => f64::INFINITY,
     };
-    let nchars = n.chars().count();
     let end = if raw.is_nan() {
         len
     } else if raw.is_infinite() && raw < 0.0 {
@@ -3128,29 +3107,9 @@ fn str_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         let n_int = raw as i64;
         (if n_int < 0 { len as i64 + n_int } else { n_int }).max(0) as usize
     };
-    let max_start = len.saturating_sub(nchars).min(end);
-    let mut byte_end = 0;
-    for _ in 0..=max_start {
-        if byte_end >= s.len() {
-            break;
-        }
-        byte_end += s[byte_end..]
-            .chars()
-            .next()
-            .map(|c| c.len_utf8())
-            .unwrap_or(0);
-    }
-    let region: &str = if byte_end >= s.len() {
-        &s[..]
-    } else {
-        &s[..byte_end]
-    };
-    Ok(Value::Number(
-        region
-            .rfind(n.as_str())
-            .map(|b| s[..b].chars().count() as f64)
-            .unwrap_or(-1.0),
-    ))
+    Ok(crate::value::utf16_last_index_of(&s, &n, end)
+        .map(|i| Value::Number(i as f64))
+        .unwrap_or(Value::Number(-1.0)))
 }
 
 fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3295,15 +3254,23 @@ fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
         _ => " ".to_string(),
     };
-    if pad.is_empty() || s.len() >= target {
+    let cur_len = crate::value::utf16_len(&s);
+    if pad.is_empty() || cur_len >= target {
         return Ok(Value::String(Rc::from(s.as_str())));
     }
-    let need = target - s.len();
+    let need = target - cur_len;
+    let pad_len = crate::value::utf16_len(&pad);
+    if pad_len == 0 {
+        return Ok(Value::String(Rc::from(s.as_str())));
+    }
     let mut out = String::new();
-    while out.len() < need {
+    while crate::value::utf16_len(&out) < need {
         out.push_str(&pad);
     }
-    out.truncate(need);
+    // Truncate by code units.
+    let mut units: Vec<u16> = out.encode_utf16().collect();
+    units.truncate(need);
+    out = String::from_utf16_lossy(&units);
     out.push_str(&s);
     Ok(Value::String(Rc::from(out.as_str())))
 }
@@ -3318,14 +3285,18 @@ fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
         _ => " ".to_string(),
     };
-    if pad.is_empty() || s.len() >= target {
+    let cur_len = crate::value::utf16_len(&s);
+    if pad.is_empty() || cur_len >= target {
         return Ok(Value::String(Rc::from(s.as_str())));
     }
+    let need = target - cur_len;
     let mut out = s.clone();
-    while out.len() < target {
+    while crate::value::utf16_len(&out) - cur_len < need {
         out.push_str(&pad);
     }
-    out.truncate(target);
+    let mut units: Vec<u16> = out.encode_utf16().collect();
+    units.truncate(target);
+    out = String::from_utf16_lossy(&units);
     Ok(Value::String(Rc::from(out.as_str())))
 }
 fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3334,11 +3305,14 @@ fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Val
         Some(v) => vm.to_number(v)?,
         None => 0.0,
     } as isize;
-    let len = s.chars().count() as isize;
+    let len = crate::value::utf16_len(&s) as isize;
     let idx = if n < 0 { len + n } else { n };
     if idx >= 0 && idx < len {
-        let ch = s.chars().nth(idx as usize).unwrap();
-        return Ok(Value::String(Rc::from(ch.to_string().as_str())));
+        // Return a 1-code-unit string (surrogate half for supplementary).
+        let unit = crate::value::utf16_get(&s, idx as usize).unwrap();
+        return Ok(Value::String(Rc::from(
+            String::from_utf16_lossy(&[unit]).as_str(),
+        )));
     }
     Ok(Value::Undefined)
 }
@@ -3375,7 +3349,7 @@ fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
 }
 fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let len = s.chars().count() as f64;
+    let len = crate::value::utf16_len(&s) as f64;
     let mut start = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
@@ -3401,21 +3375,25 @@ fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     }
     let start = start as usize;
     let end = end as usize;
-    let result: String = s.chars().skip(start).take(end - start).collect();
+    let result = crate::value::utf16_slice(&s, start, end);
     Ok(Value::String(Rc::from(result.as_str())))
 }
 
 fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let s: String = args
+    // Build from UTF-16 code units. Unlike char::from_u32, this handles
+    // surrogate pairs and lone surrogates correctly (each arg is one code
+    // unit in [0, 65535] after ToUint16).
+    let codes: Vec<u16> = args
         .iter()
         .filter_map(|v| {
             if let Value::Number(n) = v {
-                char::from_u32(*n as u32)
+                Some((*n as u32) as u16)
             } else {
                 None
             }
         })
         .collect();
+    let s = crate::value::utf16_from_codes(&codes);
     Ok(Value::String(Rc::from(s.as_str())))
 }
 fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3661,6 +3639,14 @@ pub fn setup_full(vm: &mut Vm) {
     );
     vm.string_proto = Value::Object(str_proto);
     define_global(vm, "String", Value::Object(str_ctor));
+    // String statics
+    let from_char_code_fn = vm.new_native_function("fromCharCode", str_from_char_code, 1);
+    vm.heap.with_obj(str_ctor.0, |obj| {
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("fromCharCode"),
+            data_prop(Value::Object(from_char_code_fn)),
+        );
+    });
     // Number
     let (num_ctor, num_proto) = make_builtin_constructor_with(
         vm,
