@@ -920,14 +920,23 @@ impl Parser {
             match self.peek().clone() {
                 TokenKind::Dot => {
                     self.advance();
-                    let name = self.read_property_name()?;
-                    let prop = Expr::String(Rc::from(name.as_str()));
-                    e = Expr::Member {
-                        object: Box::new(e),
-                        property: Box::new(prop),
-                        computed: false,
-                        optional: false,
-                    };
+                    // Private field access: obj.#field
+                    if let TokenKind::PrivateName(name) = self.peek().clone() {
+                        self.advance();
+                        e = Expr::PrivateGet {
+                            object: Box::new(e),
+                            name: Rc::from(name.as_str()),
+                        };
+                    } else {
+                        let name = self.read_property_name()?;
+                        let prop = Expr::String(Rc::from(name.as_str()));
+                        e = Expr::Member {
+                            object: Box::new(e),
+                            property: Box::new(prop),
+                            computed: false,
+                            optional: false,
+                        };
+                    }
                 }
                 TokenKind::QuestionDot => {
                     self.advance();
@@ -1700,6 +1709,7 @@ impl Parser {
         self.expect(&TokenKind::LBrace, "{")?;
         let mut methods = Vec::new();
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
+        let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             // static { ... } initialization block
             if self.check(&TokenKind::Static)
@@ -1711,6 +1721,21 @@ impl Parser {
                 continue;
             }
             let is_static = self.eat(&TokenKind::Static);
+            // Private field declaration: #name = init  or  #name;
+            if let TokenKind::PrivateName(name) = self.peek().clone() {
+                self.advance();
+                let init = if self.eat(&TokenKind::Assign) {
+                    Some(Box::new(self.parse_assign()?))
+                } else {
+                    None
+                };
+                self.expect_semi()?;
+                private_fields.push(crate::ast::PrivateFieldDecl {
+                    name: Rc::from(name.as_str()),
+                    init,
+                });
+                continue;
+            }
             // Getter/setter in class body.
             let (is_getter, is_setter) = match self.peek().clone() {
                 TokenKind::Ident(s)
@@ -1763,6 +1788,7 @@ impl Parser {
             superclass,
             methods,
             static_blocks,
+            private_fields,
         })
     }
     fn parse_async_or_expr_stmt(&mut self) -> error::Result<Stmt> {

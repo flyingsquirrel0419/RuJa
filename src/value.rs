@@ -215,6 +215,9 @@ pub struct ObjectData {
     pub proto: RefCell<Option<Value>>,
     pub extensible: Cell<bool>,
     pub class_name: Option<Rc<str>>,
+    /// Private field storage: `#name` -> value. Isolated from normal props
+    /// (not enumerable, not accessible via [] or for...in).
+    pub private_fields: RefCell<std::collections::HashMap<Rc<str>, Value>>,
 }
 
 pub struct ArrayData {
