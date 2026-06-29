@@ -2078,6 +2078,7 @@ impl Vm {
                     self.stack.push(result);
                 }
                 Op::New(arg_count) => self.op_new(arg_count)?,
+                Op::NewSpread => self.op_new_spread()?,
                 Op::MakeClosure(func_idx) => self.op_make_closure(func_idx),
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2297,6 +2298,26 @@ impl Vm {
         }
         args.reverse();
         let constructor = self.stack.pop().unwrap_or(Value::Undefined);
+        let result = self.construct(&constructor, &args)?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::NewSpread`: constructor call with spread args. Stack: [ctor, argsArr].
+    fn op_new_spread(&mut self) -> error::Result<()> {
+        let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+        let constructor = self.stack.pop().unwrap_or(Value::Undefined);
+        let args = if let Value::Object(idx) = &args_arr {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    a.items.borrow().clone()
+                } else {
+                    Vec::new()
+                }
+            })
+        } else {
+            Vec::new()
+        };
         let result = self.construct(&constructor, &args)?;
         self.stack.push(result);
         Ok(())
