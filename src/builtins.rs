@@ -3788,11 +3788,46 @@ fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
 }
 fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let sep = args.first().map(crate::value::value_to_debug_string);
     let limit = match args.get(1) {
         Some(Value::Undefined) | None => usize::MAX,
         Some(v) => vm.to_number(v).map(|n| n as usize).unwrap_or(usize::MAX),
     };
+    // If the separator is a RegExp, split on regex matches.
+    if let Some(Value::Object(idx)) = args.first() {
+        let source = vm.heap.with_obj(idx.0, |o| {
+            o.props()
+                .borrow()
+                .get(&crate::value::PropertyKey::from("source"))
+                .map(|d| d.value.clone())
+        });
+        if let Some(Value::String(source)) = source {
+            let re =
+                Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+            let mut parts: Vec<String> = Vec::new();
+            let mut last_end = 0;
+            for m in re.find_iter(&s) {
+                if parts.len() >= limit {
+                    break;
+                }
+                parts.push(s[last_end..m.start()].to_string());
+                last_end = m.end();
+            }
+            if parts.len() < limit {
+                parts.push(s[last_end..].to_string());
+            }
+            let items: Vec<Value> = parts
+                .into_iter()
+                .map(|p| Value::String(Rc::from(p.as_str())))
+                .collect();
+            let arr = HeapObj::Array(ArrayData {
+                items: RefCell::new(items),
+                props: RefCell::new(IndexMap::new()),
+                proto: RefCell::new(Some(vm.array_proto.clone())),
+            });
+            return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+        }
+    }
+    let sep = args.first().map(crate::value::value_to_debug_string);
     let parts: Vec<String> = match sep {
         None => vec![s],
         Some(sep) if sep.is_empty() => s.chars().take(limit).map(|c| c.to_string()).collect(),
@@ -3811,9 +3846,17 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
 }
 fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let to = match args.get(1) {
-        Some(v) => vm.to_string(v)?.to_string(),
-        None => "undefined".to_string(),
+    let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+    // Is the replacement a function?
+    let is_fn = if let Value::Object(idx) = &replacement {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    } else {
+        false
+    };
+    let to_str = if is_fn {
+        String::new()
+    } else {
+        vm.to_string(&replacement)?.to_string()
     };
     // If the search value is a RegExp, use regex replacement.
     if let Some(Value::Object(idx)) = args.first() {
@@ -3832,10 +3875,36 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             }) == Some(Value::Bool(true));
             let re =
                 Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+            if is_fn {
+                let mut result = String::new();
+                let mut last_end = 0;
+                for caps in re.captures_iter(&s) {
+                    let m = caps.get(0).unwrap();
+                    result.push_str(&s[last_end..m.start()]);
+                    let mut cap_args = vec![Value::String(Rc::from(m.as_str()))];
+                    // capture groups (1-indexed)
+                    for i in 1..caps.len() {
+                        match caps.get(i) {
+                            Some(g) => cap_args.push(Value::String(Rc::from(g.as_str()))),
+                            None => cap_args.push(Value::Undefined),
+                        }
+                    }
+                    cap_args.push(Value::Number(m.start() as f64));
+                    cap_args.push(Value::String(Rc::from(s.as_str())));
+                    let r = vm.call_function(&replacement, &cap_args, None)?;
+                    result.push_str(vm.to_string(&r)?.as_ref());
+                    last_end = m.end();
+                    if !global {
+                        break;
+                    }
+                }
+                result.push_str(&s[last_end..]);
+                return Ok(Value::String(Rc::from(result.as_str())));
+            }
             let replaced = if global {
-                re.replace_all(&s, to.as_str())
+                re.replace_all(&s, to_str.as_str())
             } else {
-                re.replace(&s, to.as_str())
+                re.replace(&s, to_str.as_str())
             };
             return Ok(Value::String(Rc::from(replaced.as_ref())));
         }
@@ -3844,7 +3913,26 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         Some(v) => vm.to_string(v)?.to_string(),
         None => return Ok(Value::String(Rc::from(s.as_str()))),
     };
-    Ok(Value::String(Rc::from(s.replacen(&from, &to, 1).as_str())))
+    if is_fn {
+        if let Some(pos) = s.find(&from) {
+            let cap_args = vec![
+                Value::String(Rc::from(from.as_str())),
+                Value::Number(pos as f64),
+                Value::String(Rc::from(s.as_str())),
+            ];
+            let r = vm.call_function(&replacement, &cap_args, None)?;
+            let r_str = vm.to_string(&r)?;
+            let mut result = String::new();
+            result.push_str(&s[..pos]);
+            result.push_str(r_str.as_ref());
+            result.push_str(&s[pos + from.len()..]);
+            return Ok(Value::String(Rc::from(result.as_str())));
+        }
+        return Ok(Value::String(Rc::from(s.as_str())));
+    }
+    Ok(Value::String(Rc::from(
+        s.replacen(&from, &to_str, 1).as_str(),
+    )))
 }
 /// String.prototype.lastIndexOf(searchString, fromIndex): last occurrence at
 /// or before `fromIndex` (default +Inf -> search from end).
