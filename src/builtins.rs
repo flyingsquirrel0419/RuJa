@@ -2117,6 +2117,135 @@ fn parse_json_num(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
     }
     Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
 }
+fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let key = match args.get(1) {
+        Some(v) => vm.to_property_key(v)?,
+        None => return Ok(Value::Undefined),
+    };
+    vm.get_property(&target, &key)
+}
+fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let key = match args.get(1) {
+        Some(v) => vm.to_property_key(v)?,
+        None => return Ok(Value::Bool(false)),
+    };
+    let value = args.get(2).cloned().unwrap_or(Value::Undefined);
+    match vm.set_property(&target, &key, value) {
+        Ok(()) => Ok(Value::Bool(true)),
+        Err(_) => Ok(Value::Bool(false)),
+    }
+}
+fn reflect_has(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let key = match args.get(1) {
+        Some(v) => vm.to_property_key(v)?,
+        None => return Ok(Value::Bool(false)),
+    };
+    let has = vm
+        .get_property(&target, &key)
+        .map(|v| !v.is_undefined())
+        .unwrap_or(false);
+    Ok(Value::Bool(has))
+}
+fn reflect_delete_property(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let key = match args.get(1) {
+        Some(v) => vm.to_property_key(v)?,
+        None => return Ok(Value::Bool(false)),
+    };
+    vm.delete_property(&target, &key)
+        .map(|_| Value::Bool(true))
+        .or(Ok(Value::Bool(false)))
+}
+fn reflect_own_keys(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let keys = own_string_keys(vm, &target);
+    Ok(make_str_array(vm, keys))
+}
+fn reflect_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    object_get_prototype_of(vm, args, None)
+}
+fn reflect_set_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    object_set_prototype_of(vm, args, None)
+}
+fn reflect_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    object_is_extensible(vm, args, None)
+}
+fn reflect_prevent_extensions(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    object_prevent_extensions(vm, args, None)
+}
+fn reflect_apply(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let args_arr = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let call_args = if let Value::Object(idx) = &args_arr {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Array(a) = o {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    vm.call_function(&target, &call_args, Some(this_arg))
+}
+fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    let args_arr = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let call_args = if let Value::Object(idx) = &args_arr {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Array(a) = o {
+                a.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    vm.construct(&target, &call_args)
+}
+
+fn build_reflect(vm: &mut Vm) -> Value {
+    let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
+    let entries: &[(&str, NativeFn, usize)] = &[
+        ("get", reflect_get as NativeFn, 2),
+        ("set", reflect_set as NativeFn, 3),
+        ("has", reflect_has as NativeFn, 2),
+        ("deleteProperty", reflect_delete_property as NativeFn, 2),
+        ("ownKeys", reflect_own_keys as NativeFn, 1),
+        ("getPrototypeOf", reflect_get_prototype_of as NativeFn, 1),
+        ("setPrototypeOf", reflect_set_prototype_of as NativeFn, 2),
+        ("isExtensible", reflect_is_extensible as NativeFn, 1),
+        (
+            "preventExtensions",
+            reflect_prevent_extensions as NativeFn,
+            1,
+        ),
+        ("apply", reflect_apply as NativeFn, 3),
+        ("construct", reflect_construct as NativeFn, 2),
+    ];
+    for (name, f, len) in entries {
+        let idx = vm.new_native_function(name, *f, *len);
+        props.insert(PropertyKey::from(*name), data_prop(Value::Object(idx)));
+    }
+    let obj = HeapObj::Object(ObjectData {
+        props: RefCell::new(props),
+        proto: RefCell::new(Some(vm.object_proto.clone())),
+        extensible: Cell::new(true),
+        class_name: Some(Rc::from("Reflect")),
+    });
+    Value::Object(GcIdx(vm.heap.allocate(obj)))
+}
+
 fn build_json(vm: &mut Vm) -> Value {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     let pi = vm.new_native_function("parse", json_parse, 1);
@@ -4489,6 +4618,9 @@ pub fn setup_full(vm: &mut Vm) {
     // JSON
     let json = build_json(vm);
     define_global(vm, "JSON", json);
+    // Reflect
+    let reflect = build_reflect(vm);
+    define_global(vm, "Reflect", reflect);
     // Array
     let (array_ctor, array_proto) = make_builtin_constructor_with(
         vm,

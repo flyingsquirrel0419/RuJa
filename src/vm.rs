@@ -3052,6 +3052,26 @@ impl Vm {
         Ok(Value::Undefined)
     }
 
+    /// Delete an own property. Returns true if removed (or didn't exist).
+    pub fn delete_property(&mut self, obj: &Value, key: &str) -> error::Result<bool> {
+        if let Value::Object(idx) = obj {
+            let pkey = crate::value::PropertyKey::from(key);
+            let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
+                o.props()
+                    .borrow()
+                    .get(&pkey)
+                    .map_or((false, true), |d| (true, d.configurable))
+            });
+            if exists && !configurable {
+                return Ok(false);
+            }
+            self.heap.with_obj(idx.0, |o| {
+                o.props().borrow_mut().shift_remove(&pkey);
+            });
+        }
+        Ok(true)
+    }
+
     pub fn set_property(&mut self, obj: &Value, key: &str, value: Value) -> error::Result<()> {
         // ES [[Set]] semantics, simplified:
         //  1. Walk the prototype chain for an accessor descriptor with a
