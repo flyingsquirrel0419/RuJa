@@ -115,6 +115,8 @@ pub enum TokenKind {
     RBracket,
     Comma,
     Semicolon,
+    /// Private name: `#field`. The string excludes the `#`.
+    PrivateName(String),
 
     // Special
     Eof,

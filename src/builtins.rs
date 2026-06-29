@@ -60,6 +60,7 @@ fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
         proto: RefCell::new(proto),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Object")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     GcIdx(heap.allocate(obj))
 }
@@ -74,6 +75,7 @@ fn new_object_with_props(heap: &Heap, proto: Option<Value>, props: Vec<(&str, Va
         proto: RefCell::new(proto),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Object")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     GcIdx(heap.allocate(obj))
 }
@@ -187,6 +189,7 @@ fn make_builtin_constructor(
         proto: RefCell::new(Some(proto_value.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from(name)),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
 
@@ -238,6 +241,7 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         proto: RefCell::new(Some(error_proto_val.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from(name)),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
 
@@ -630,6 +634,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     // Accept an array (or array-like) of [key, value] pairs.
     if let Value::Object(arr_idx) = &entries {
@@ -687,6 +692,7 @@ fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
         proto: RefCell::new(if proto.is_null() { None } else { Some(proto) }),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     Ok(Value::Object(GcIdx(obj_idx)))
 }
@@ -824,6 +830,7 @@ fn object_get_own_property_descriptors(
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     if let Value::Object(idx) = &obj {
         let keys = own_string_keys(vm, &obj);
@@ -844,6 +851,7 @@ fn object_get_own_property_descriptors(
                 proto: RefCell::new(Some(vm.object_proto.clone())),
                 extensible: Cell::new(true),
                 class_name: None,
+                private_fields: RefCell::new(std::collections::HashMap::new()),
             }));
             let mut dp = IndexMap::new();
             if d.is_accessor {
@@ -937,6 +945,7 @@ fn object_get_own_property_descriptor(
                 proto: RefCell::new(Some(vm.object_proto.clone())),
                 extensible: Cell::new(true),
                 class_name: None,
+                private_fields: RefCell::new(std::collections::HashMap::new()),
             }));
             let mut p = IndexMap::new();
             if d.is_accessor {
@@ -1508,6 +1517,7 @@ fn build_math(vm: &mut Vm) -> Value {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(false),
         class_name: Some(Rc::from("Math")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -1606,6 +1616,7 @@ fn build_console(vm: &mut Vm) -> Value {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Object")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -1934,6 +1945,7 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
                         proto: RefCell::new(Some(vm.object_proto.clone())),
                         extensible: Cell::new(true),
                         class_name: None,
+                        private_fields: RefCell::new(std::collections::HashMap::new()),
                     },
                 ))))
             }
@@ -2044,6 +2056,7 @@ fn parse_json_obj(
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
 }
@@ -2295,6 +2308,7 @@ fn build_reflect(vm: &mut Vm) -> Value {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Reflect")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -2310,6 +2324,7 @@ fn build_json(vm: &mut Vm) -> Value {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("JSON")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
@@ -2484,6 +2499,7 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)));
     let fd = FunctionData {
@@ -4892,6 +4908,7 @@ pub fn setup_full(vm: &mut Vm) {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("global")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     vm.global_this = Value::Object(GcIdx(globalthis_idx));
     define_global(vm, "globalThis", vm.global_this.clone());
@@ -4948,6 +4965,7 @@ pub fn setup_full(vm: &mut Vm) {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Generator")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     {
         let next_fn = vm.new_native_function("next", generator_next, 0);
@@ -5596,6 +5614,7 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
         proto: RefCell::new(Some(regex_proto_val)),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("RegExp")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     let mut props = IndexMap::new();
     props.insert(
@@ -5810,6 +5829,7 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
@@ -5846,6 +5866,7 @@ fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bool) -> erro
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: None,
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     }));
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
@@ -6057,6 +6078,7 @@ pub fn setup_collections(vm: &mut Vm) {
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from("Symbol")),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj));
     vm.symbol_proto = Value::Object(sym_proto_idx);
@@ -6078,6 +6100,7 @@ fn make_builtin_constructor_with(
         proto: RefCell::new(Some(vm.object_proto.clone())),
         extensible: Cell::new(true),
         class_name: Some(Rc::from(name)),
+        private_fields: RefCell::new(std::collections::HashMap::new()),
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
     let ctor_func = FunctionData {

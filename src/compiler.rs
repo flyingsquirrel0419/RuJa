@@ -2329,31 +2329,53 @@ impl Compiler {
                         .iter()
                         .find(|m| m.is_constructor)
                         .and_then(|m| m.rest_param.clone()),
-                    body: cls
-                        .methods
-                        .iter()
-                        .find(|m| m.is_constructor)
-                        .map(|m| m.body.clone())
-                        .or_else(|| {
-                            if cls.superclass.is_some() {
-                                // super(#a0, #a1, ... #a15) — extra args are harmlessly undefined.
-                                let args: Vec<Expr> = synthetic_params
-                                    .iter()
-                                    .map(|n| Expr::Ident(n.clone()))
-                                    .collect();
-                                Some(vec![Stmt {
+                    body: {
+                        let body = cls
+                            .methods
+                            .iter()
+                            .find(|m| m.is_constructor)
+                            .map(|m| m.body.clone())
+                            .or_else(|| {
+                                if cls.superclass.is_some() {
+                                    // super(#a0, #a1, ... #a15)
+                                    let args: Vec<Expr> = synthetic_params
+                                        .iter()
+                                        .map(|n| Expr::Ident(n.clone()))
+                                        .collect();
+                                    Some(vec![Stmt {
+                                        line: 0,
+                                        node: StmtNode::ExprStmt(Expr::Call {
+                                            callee: Box::new(Expr::Super),
+                                            args,
+                                            optional: false,
+                                        }),
+                                    }])
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or_default();
+                        // Prepend private field initializers.
+                        let pf_stmts: Vec<Stmt> = cls
+                            .private_fields
+                            .iter()
+                            .map(|pf| {
+                                let init =
+                                    pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
+                                Stmt {
                                     line: 0,
-                                    node: StmtNode::ExprStmt(Expr::Call {
-                                        callee: Box::new(Expr::Super),
-                                        args,
-                                        optional: false,
+                                    node: StmtNode::ExprStmt(Expr::PrivateSet {
+                                        object: Box::new(Expr::This),
+                                        name: pf.name.clone(),
+                                        value: init,
                                     }),
-                                }])
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or_default(),
+                                }
+                            })
+                            .collect();
+                        let mut combined = pf_stmts;
+                        combined.extend(body);
+                        combined
+                    },
                     is_arrow: false,
                     is_async: false,
                     is_generator: false,
@@ -2540,6 +2562,21 @@ impl Compiler {
                 // limitation (this binding in inline class context not yet wired).
                 let _ = &cls.static_blocks;
             }
+            Expr::PrivateGet { object, name } => {
+                self.compile_expr(object)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::GetPrivate(name_idx), self.current_line);
+            }
+            Expr::PrivateSet {
+                object,
+                name,
+                value,
+            } => {
+                self.compile_expr(object)?;
+                self.compile_expr(value)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+            }
             Expr::Sequence(exprs) => {
                 for (i, e) in exprs.iter().enumerate() {
                     self.compile_expr(e)?;
@@ -2557,6 +2594,13 @@ impl Compiler {
 
     fn compile_assign_target_store(&mut self, target: &Expr, value: &Expr) -> error::Result<()> {
         match target {
+            // Private field assignment: obj.#name = value
+            Expr::PrivateGet { object, name } => {
+                self.compile_expr(object)?;
+                self.compile_expr(value)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+            }
             // Destructuring assignment: `[a, b] = expr` / `{a, b} = expr`.
             Expr::Array(_) | Expr::Object(_) => {
                 self.compile_expr(value)?;

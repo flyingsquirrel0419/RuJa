@@ -653,6 +653,7 @@ impl Vm {
             proto: RefCell::new(Some(proto)),
             extensible: Cell::new(true),
             class_name: Some(Rc::from(ctor_name)),
+            private_fields: RefCell::new(std::collections::HashMap::new()),
         });
         Value::Object(GcIdx(self.heap.allocate(obj)))
     }
@@ -1619,6 +1620,7 @@ impl Vm {
                         proto: RefCell::new(Some(self.object_proto.clone())),
                         extensible: std::cell::Cell::new(true),
                         class_name: None,
+                        private_fields: RefCell::new(std::collections::HashMap::new()),
                     });
                     let idx = self.heap.allocate(obj);
                     self.stack.push(Value::Object(GcIdx(idx)));
@@ -1942,6 +1944,53 @@ impl Vm {
                     let this = self.stack.pop().unwrap_or(Value::Undefined);
                     let result = self.call_function(&func, &args, Some(this))?;
                     self.stack.push(result);
+                }
+                Op::GetPrivate(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let v = if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Object(od) = o {
+                                od.private_fields
+                                    .borrow()
+                                    .get(name.as_str())
+                                    .cloned()
+                                    .unwrap_or(Value::Undefined)
+                            } else {
+                                Value::Undefined
+                            }
+                        })
+                    } else {
+                        Value::Undefined
+                    };
+                    self.stack.push(v);
+                }
+                Op::SetPrivate(name_idx) => {
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Object(od) = o {
+                                od.private_fields
+                                    .borrow_mut()
+                                    .insert(Rc::from(name.as_str()), value.clone());
+                            }
+                        });
+                    }
+                    self.stack.push(value);
                 }
                 Op::PopFinallyRethrow => {
                     // The finally body has run. Re-raise the pending
@@ -2396,6 +2445,7 @@ impl Vm {
                     proto: RefCell::new(Some(self.object_proto.clone())),
                     extensible: std::cell::Cell::new(true),
                     class_name: None,
+                    private_fields: RefCell::new(std::collections::HashMap::new()),
                 });
                 Value::Object(GcIdx(self.heap.allocate(proto)))
             } else {
@@ -3662,6 +3712,7 @@ impl Vm {
             proto: RefCell::new(Some(self.object_proto.clone())),
             extensible: std::cell::Cell::new(true),
             class_name: None,
+            private_fields: RefCell::new(std::collections::HashMap::new()),
         });
         GcIdx(self.heap.allocate(obj))
     }
@@ -3970,6 +4021,7 @@ impl Vm {
             proto: RefCell::new(Some(proto)),
             extensible: std::cell::Cell::new(true),
             class_name: None,
+            private_fields: RefCell::new(std::collections::HashMap::new()),
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)));
         self.pending_new_target = Some(constructor.clone());

@@ -9,6 +9,8 @@ pub struct ClassExpr {
     /// bound to the class (constructor), in source order, at class definition
     /// time.
     pub static_blocks: Vec<Vec<Stmt>>,
+    /// Private instance field declarations: `#name = init`.
+    pub private_fields: Vec<PrivateFieldDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +52,22 @@ pub enum Expr {
     Function(FunctionExpr),
     Arrow(FunctionExpr),
     Class(ClassExpr),
+    /// Private field read: `obj.#name`.
+    PrivateGet {
+        object: Box<Expr>,
+        name: Rc<str>,
+    },
+    /// Private field write: `obj.#name = value`.
+    PrivateSet {
+        object: Box<Expr>,
+        name: Rc<str>,
+        value: Box<Expr>,
+    },
+    /// Private field declaration: `#name = init` in a class body.
+    PrivateFieldDecl {
+        name: Rc<str>,
+        init: Option<Box<Expr>>,
+    },
     Unary(UnOp, Box<Expr>),
     Update(UpdateOp, bool, Box<Expr>), // op, prefix, expr
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -80,6 +98,12 @@ pub enum Expr {
     /// `yield* expr` - delegate to another iterable/generator, forwarding each
     /// yielded value to the outer generator.
     YieldDelegate(Box<Expr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrivateFieldDecl {
+    pub name: Rc<str>,
+    pub init: Option<Box<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]

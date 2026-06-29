@@ -512,6 +512,19 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 Some(TokenKind::Semicolon)
             }
+            b'#' => {
+                self.advance();
+                let start = self.pos;
+                while let Some(c) = self.peek() {
+                    if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                let name = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("");
+                Some(TokenKind::PrivateName(name.to_string()))
+            }
             b'(' => {
                 self.advance();
                 Some(TokenKind::LParen)
