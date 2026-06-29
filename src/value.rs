@@ -538,3 +538,94 @@ fn format_exponential(n: f64, _abs: f64) -> String {
     let digits = if digits.is_empty() { "0" } else { digits };
     format!("{}e{}{}", mant, sign, digits)
 }
+
+// =========================================================================
+// UTF-16 helpers
+//
+// JS strings are sequences of UTF-16 code units. Rust `&str`/`String` are
+// UTF-8 and cannot represent lone (unpaired) surrogates. We model JS string
+// length/indexing/charCodeAt on UTF-16 code units by converting to `Vec<u16>`
+// for code-unit-level operations. Lone surrogates round-trip through the
+// `u16` vector (they just can't be losslessly re-encoded to UTF-8).
+// =========================================================================
+
+/// Encode a Rust string into a Vec of UTF-16 code units. Supplementary
+/// characters become surrogate pairs; the result mirrors `String.prototype.length`.
+pub fn utf16_from_str(s: &str) -> Vec<u16> {
+    s.encode_utf16().collect()
+}
+
+/// Decode a sequence of UTF-16 code units back into a Rust `String`. Lone
+/// surrogates are replaced with U+FFFD (matches JS `ToString` behavior where
+/// the string already contains them internally; for our purposes this is
+/// only called on well-formed sequences).
+pub fn utf16_to_string(units: &[u16]) -> String {
+    String::from_utf16_lossy(units)
+}
+
+/// Build a Rust `String` from a series of UTF-16 code-unit numeric arguments
+/// (as used by `String.fromCharCode`). Unlike `char::from_u32`, this handles
+/// lone surrogates by emitting them directly into the u16 vector, then
+/// decoding. Lone surrogates become U+FFFD in the resulting String (so the
+/// length seen by the engine is correct even though the lone surrogate is
+/// not round-trippable through UTF-8).
+pub fn utf16_from_codes(codes: &[u16]) -> String {
+    String::from_utf16_lossy(codes)
+}
+
+/// Return the JS length (UTF-16 code-unit count) of a Rust string.
+pub fn utf16_len(s: &str) -> usize {
+    s.encode_utf16().count()
+}
+
+/// Get the code unit at UTF-16 index `i`, or None if out of range.
+pub fn utf16_get(s: &str, i: usize) -> Option<u16> {
+    s.encode_utf16().nth(i)
+}
+
+/// Slice a Rust string by UTF-16 code-unit indices [start, end).
+pub fn utf16_slice(s: &str, start: usize, end: usize) -> String {
+    let units: Vec<u16> = s.encode_utf16().collect();
+    let start = start.min(units.len());
+    let end = end.clamp(start, units.len());
+    String::from_utf16_lossy(&units[start..end])
+}
+
+/// Find the UTF-16 code-unit index of `needle` in `s` starting at or after
+/// code-unit index `start`. Returns the code-unit index or None.
+pub fn utf16_index_of(s: &str, needle: &str, start: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(start.min(utf16_len(s)));
+    }
+    let hay: Vec<u16> = s.encode_utf16().collect();
+    let nee: Vec<u16> = needle.encode_utf16().collect();
+    let start = start.min(hay.len());
+    if nee.len() > hay.len() - start {
+        return None;
+    }
+    'outer: for i in start..=(hay.len() - nee.len()) {
+        for j in 0..nee.len() {
+            if hay[i + j] != nee[j] {
+                continue 'outer;
+            }
+        }
+        return Some(i);
+    }
+    None
+}
+
+/// Last index of `needle` at or before code-unit index `end`.
+pub fn utf16_last_index_of(s: &str, needle: &str, end: usize) -> Option<usize> {
+    let hay: Vec<u16> = s.encode_utf16().collect();
+    let nee: Vec<u16> = needle.encode_utf16().collect();
+    if nee.is_empty() {
+        return Some(end.min(hay.len()));
+    }
+    let max_start = hay.len().saturating_sub(nee.len()).min(end);
+    for i in (0..=max_start).rev() {
+        if hay[i..i + nee.len()] == nee[..] {
+            return Some(i);
+        }
+    }
+    None
+}

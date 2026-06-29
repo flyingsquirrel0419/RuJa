@@ -2624,7 +2624,7 @@ impl Vm {
                 Ok(false)
             }
             Value::String(st) => {
-                let len = st.chars().count();
+                let len = crate::value::utf16_len(st);
                 Ok(name == "length" || name.parse::<usize>().is_ok_and(|i| i < len))
             }
             _ => Ok(false),
@@ -2651,7 +2651,7 @@ impl Vm {
                 o.props().borrow().contains_key(&pkey)
             }),
             Value::String(st) => {
-                let len = st.chars().count();
+                let len = crate::value::utf16_len(st);
                 name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
             }
             _ => false,
@@ -2722,11 +2722,13 @@ impl Vm {
         match obj {
             Value::String(s) => {
                 if key == "length" {
-                    return Ok(Value::Number(s.chars().count() as f64));
+                    return Ok(Value::Number(crate::value::utf16_len(s) as f64));
                 }
                 if let Ok(idx) = key.parse::<usize>() {
-                    if let Some(c) = s.chars().nth(idx) {
-                        return Ok(Value::String(Rc::from(c.to_string().as_str())));
+                    if let Some(unit) = crate::value::utf16_get(s, idx) {
+                        return Ok(Value::String(Rc::from(
+                            String::from_utf16_lossy(&[unit]).as_str(),
+                        )));
                     }
                     return Ok(Value::Undefined);
                 }
@@ -3708,9 +3710,9 @@ impl Vm {
             }
         }
         let items: Vec<Value> = match iterable {
-            Value::String(s) => s
-                .chars()
-                .map(|c| Value::String(Rc::from(c.to_string().as_str())))
+            Value::String(s) => crate::value::utf16_from_str(s)
+                .into_iter()
+                .map(|unit| Value::String(Rc::from(String::from_utf16_lossy(&[unit]).as_str())))
                 .collect(),
             Value::Object(idx) => {
                 let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {
