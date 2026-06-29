@@ -1572,7 +1572,11 @@ impl Compiler {
                 self.chunk.emit(Op::Const(first_idx), self.current_line);
                 for (i, e) in exprs.iter().enumerate() {
                     self.compile_expr(e)?;
-                    self.chunk.emit(Op::Add, self.current_line); // string + value -> string concat
+                    // Template interpolation uses the *string* hint, not the
+                    // number/default hint that binary `+` would use, so coerce
+                    // via ToPrimitive(string) + ToString before concatenating.
+                    self.chunk.emit(Op::ToString, self.current_line);
+                    self.chunk.emit(Op::Add, self.current_line); // string + string concat
                     let q_idx = self
                         .chunk
                         .add_constant(Value::String(quasis[i + 1].clone()));

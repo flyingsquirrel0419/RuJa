@@ -285,6 +285,10 @@ pub enum Op {
     LoadEnvName(usize), // push name const then load from env
     StoreEnvName(usize), // push name const then store to env
 
+    // Coerce top-of-stack to a string via ToPrimitive(string) + ToString
+    // (used by template-literal interpolation).
+    ToString,
+
     // Halt
     Halt,
 }
