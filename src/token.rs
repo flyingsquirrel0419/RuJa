@@ -153,3 +153,54 @@ impl fmt::Display for TokenKind {
         }
     }
 }
+
+impl TokenKind {
+    /// If this token is a reserved word usable as a property/identifier name
+    /// (`return`, `class`, `default`, ...), return its source spelling.
+    pub fn as_keyword_str(&self) -> Option<&'static str> {
+        Some(match self {
+            TokenKind::Var => "var",
+            TokenKind::Let => "let",
+            TokenKind::Const => "const",
+            TokenKind::Function => "function",
+            TokenKind::Class => "class",
+            TokenKind::Extends => "extends",
+            TokenKind::Static => "static",
+            TokenKind::Return => "return",
+            TokenKind::If => "if",
+            TokenKind::Else => "else",
+            TokenKind::While => "while",
+            TokenKind::With => "with",
+            TokenKind::For => "for",
+            TokenKind::Do => "do",
+            TokenKind::Break => "break",
+            TokenKind::Continue => "continue",
+            TokenKind::Null => "null",
+            TokenKind::True => "true",
+            TokenKind::False => "false",
+            TokenKind::Undefined => "undefined",
+            TokenKind::New => "new",
+            TokenKind::This => "this",
+            TokenKind::Super => "super",
+            TokenKind::Typeof => "typeof",
+            TokenKind::Instanceof => "instanceof",
+            TokenKind::In => "in",
+            TokenKind::Of => "of",
+            TokenKind::Delete => "delete",
+            TokenKind::Void => "void",
+            TokenKind::Throw => "throw",
+            TokenKind::Try => "try",
+            TokenKind::Catch => "catch",
+            TokenKind::Finally => "finally",
+            TokenKind::Switch => "switch",
+            TokenKind::Case => "case",
+            TokenKind::Default => "default",
+            TokenKind::Async => "async",
+            TokenKind::Await => "await",
+            TokenKind::Yield => "yield",
+            TokenKind::Get => "get",
+            TokenKind::Set => "set",
+            _ => return None,
+        })
+    }
+}

@@ -3,6 +3,27 @@
 ## [Unreleased]
 
 ### Added
+- **Unicode identifiers & escapes**: `IdentifierStart`/`IdentifierContinue`
+  now accept Unicode letters and the `\uXXXX` / `\u{XXXX}` escape forms
+  inside identifiers (`\u{63}ase` parses as `case`; `café`/`π`/CJK names
+  lex correctly). NEL/LS/PS are recognized as line terminators. Invalid
+  escapes and non-id Unicode bytes advance the cursor instead of looping.
+- **Destructuring parameters**: arrow functions and ordinary functions
+  accept destructuring params (`([a, b]) =>`, `function f({x, y})`),
+  including nested patterns and defaults (`[[x, y, z] = [4, 5, 6]]) =>`).
+  Each destructuring param binds from a synthesized positional temp.
+- **Object-literal methods**: generator methods (`*foo() {}`) and async
+  methods (`async foo() {}`, `async *foo() {}`) now parse; reserved words
+  (`return`, `class`, `default`, ...) are accepted as property keys.
+- **Sloppy-mode `this`**: top-level `this` in non-strict script binds to
+  the global object.
+- **test262 negative-test handling**: the runner parses `negative: { phase,
+  type }` metadata so a test that expects a `SyntaxError`/`TypeError`
+  passes when RuJa raises the matching error; tests run via a temp file
+  instead of `-e` argv so long sources and non-ASCII survive intact.
+- **test262 subset pass rate**: raised from ~20% to ~57% on a
+  representative `language/` subset (arrow-function 35%→53%, function
+  16%→40%, object 26%→44%, identifiers 28%→59%).
 - **test262 harness**: the runner now loads the real test262 harness files
   (`assert.js`, `sta.js`, and per-test `includes:` like `propertyHelper.js`,
   `compareArray.js`) instead of a hand-rolled stub. This makes pass/fail
