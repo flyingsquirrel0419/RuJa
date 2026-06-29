@@ -1699,7 +1699,17 @@ impl Parser {
         };
         self.expect(&TokenKind::LBrace, "{")?;
         let mut methods = Vec::new();
+        let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            // static { ... } initialization block
+            if self.check(&TokenKind::Static)
+                && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
+            {
+                self.advance(); // static
+                let block = self.parse_fn_body()?;
+                static_blocks.push(block);
+                continue;
+            }
             let is_static = self.eat(&TokenKind::Static);
             // Getter/setter in class body.
             let (is_getter, is_setter) = match self.peek().clone() {
@@ -1752,6 +1762,7 @@ impl Parser {
             name,
             superclass,
             methods,
+            static_blocks,
         })
     }
     fn parse_async_or_expr_stmt(&mut self) -> error::Result<Stmt> {

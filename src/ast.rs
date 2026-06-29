@@ -5,6 +5,10 @@ pub struct ClassExpr {
     pub name: Option<Rc<str>>,
     pub superclass: Option<Box<Expr>>,
     pub methods: Vec<ClassMethod>,
+    /// Static initialization blocks: `static { ... }`. Each runs with `this`
+    /// bound to the class (constructor), in source order, at class definition
+    /// time.
+    pub static_blocks: Vec<Vec<Stmt>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

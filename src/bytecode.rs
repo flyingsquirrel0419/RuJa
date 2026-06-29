@@ -198,6 +198,8 @@ pub enum Op {
     /// Divert a `continue` through an active finally: set tag=3, val=cont,
     /// jump to finally.
     DivertContinue(usize, usize),
+    /// Call a function with an explicit `this`: stack [this, fn, args...].
+    CallThis(usize),
 
     // Closures
     MakeClosure(usize), // function index, captures current env
