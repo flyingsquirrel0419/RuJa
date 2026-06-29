@@ -333,6 +333,7 @@ impl Compiler {
     fn pattern_names(pattern: &Pattern, out: &mut Vec<Arc<str>>) {
         match pattern {
             Pattern::Ident(name) => out.push(name.clone()),
+            Pattern::Hole => {}
             Pattern::Array(elems) => {
                 for el in elems {
                     Self::pattern_names(el, out);
@@ -1332,6 +1333,11 @@ impl Compiler {
                 let t2 = self.intern("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_pattern(inner, t2, &[], kind)?;
+            }
+            Pattern::Hole => {
+                // An elision hole: the source value (already loaded by the
+                // caller's IteratorNext) is consumed but not bound. Discard it.
+                self.chunk.emit(Op::Pop, self.current_line);
             }
         }
         Ok(())
