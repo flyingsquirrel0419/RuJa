@@ -4,13 +4,13 @@
 - Async generator scheduling uses a synchronous microtask-drain model (no
   real event-loop preemption)
 - test262 conformance is a future target, not achieved
-- `Vm` is `!Send`/`!Sync`: the engine uses `Rc`/`RefCell`/`Cell` for
-  interior mutability and shared ownership (zero-cost single-threaded
-  ergonomics). An embedding that needs to share a VM across threads must
-  keep it on one thread (e.g. behind a channel or a single-worker model).
-  Migrating to `Arc`/`Mutex`/atomics is a planned but invasive change
-  (it touches the GC, every heap object, and the trace loop's nested
-  borrows), so for now single-threaded embedding is the supported model.
+- `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
+  for shared ownership and interior mutability, so a `Vm` can be moved
+  between threads. Concurrent *shared* access still requires external
+  synchronization (e.g. wrapping it in a `Mutex<Vm>`), since the internal
+  mutexes protect individual fields, not the whole-VM invariant. The GC
+  trace loop is worklist-based to avoid re-entrant locking of the cells
+  mutex.
 - `yield*` throw/return propagation into a delegated generator is not yet
   forwarded (direct `g.throw`/`g.return` work)
 - Some strict-mode edge cases are not fully enforced: `this` defaults to

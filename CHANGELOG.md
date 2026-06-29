@@ -3,7 +3,15 @@
 ## [Unreleased]
 
 ### Added
- now run the `finally` body before completing the transfer (single-level).
+- **`Vm` is now `Send`**: the engine migrated from `Rc`/`RefCell`/`Cell`
+  to `Arc`/`Mutex`/atomics for shared ownership and interior mutability.
+  A `Vm` can be moved between threads; concurrent shared access still needs
+  external synchronization (e.g. `Mutex<Vm>`). The GC trace loop is now
+  worklist-based to avoid re-entrant locking of the cells mutex (which
+  would deadlock under `Mutex`). `with_obj` takes the object out of its
+  cell during the callback so the cells mutex is never held across a
+  user/allocation callback.
+now run the `finally` body before completing the transfer (single-level).
 - **Private class fields** (`#field = init`): isolated per-instance storage
   via `GetPrivate`/`SetPrivate` opcodes; not enumerable or in `Object.keys`.
  a known limitation).

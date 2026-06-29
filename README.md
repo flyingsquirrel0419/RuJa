@@ -10,7 +10,7 @@
 [English](README.md) · [한국어](readme/README.ko.md) · [Español](readme/README.es.md) · [日本語](readme/README.ja.md) · [中文](readme/README.zh.md)
 
 A JavaScript engine written in Rust — **bytecode VM** + **mark-and-sweep GC**,
-with **minimal dependencies** and a **single-threaded embedding model**.
+with **minimal dependencies** and a **Send (movable) VM**.
 
 Runs a pragmatic ES5.1 subset plus selected ES2015+ features: classes,
 async/await (incl. async arrows), generators, Promises, destructuring (incl.
@@ -80,8 +80,8 @@ fn main() {
 }
 ```
 
-> The `Vm` is `!Send`/`!Sync` (single-threaded). Embeddings that need to
-> share a VM across threads should keep it on one worker behind a channel.
+> The `Vm` is `Send` (but not `Sync`): it can move between threads, but
+> concurrent shared access needs external sync (e.g. `Mutex<Vm>`).
 > See [Limitations](docs/limitations.md).
 
 ## Documentation

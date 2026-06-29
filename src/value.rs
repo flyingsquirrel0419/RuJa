@@ -6,7 +6,8 @@
 
 use crate::ast::FunctionExpr;
 use indexmap::IndexMap;
-use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use std::fmt;
 use std::sync::Arc;
@@ -222,31 +223,31 @@ pub enum HeapObj {
 
 /// Generic JS object.
 pub struct ObjectData {
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
-    pub extensible: Cell<bool>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
     pub class_name: Option<Arc<str>>,
     /// Private field storage: `#name` -> value. Isolated from normal props
     /// (not enumerable, not accessible via [] or for...in).
-    pub private_fields: RefCell<std::collections::HashMap<Arc<str>, Value>>,
+    pub private_fields: Mutex<std::collections::HashMap<Arc<str>, Value>>,
 }
 
 pub struct ArrayData {
-    pub items: RefCell<Vec<Value>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub items: Mutex<Vec<Value>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 pub struct FunctionData {
     pub name: Option<Arc<str>>,
     pub kind: FunctionKind,
     pub closure: GcIdx,
-    pub prototype: RefCell<Option<Value>>,
+    pub prototype: Mutex<Option<Value>>,
     /// The function's [[Prototype]] (`__proto__`), normally
     /// `Function.prototype`. Kept separate from `prototype` (which is the
     /// object used as [[Prototype]] of instances created via `new`).
-    pub proto: RefCell<Option<Value>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
 }
 
 pub enum FunctionKind {
@@ -265,18 +266,18 @@ pub enum FunctionKind {
 }
 
 pub struct EnvironmentData {
-    pub vars: RefCell<IndexMap<Arc<str>, Binding>>,
-    pub parent: RefCell<Option<GcIdx>>,
+    pub vars: Mutex<IndexMap<Arc<str>, Binding>>,
+    pub parent: Mutex<Option<GcIdx>>,
     pub is_function_scope: bool,
     /// `with` statement object environment record: when `Some(obj)`, name
     /// lookups fall back to `obj`'s properties before reaching the parent.
-    pub with_object: RefCell<Option<Value>>,
+    pub with_object: Mutex<Option<Value>>,
 }
 
 pub struct Binding {
-    pub value: RefCell<Value>,
+    pub value: Mutex<Value>,
     pub kind: BindingKind,
-    pub initialized: Cell<bool>,
+    pub initialized: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -287,15 +288,15 @@ pub enum BindingKind {
 }
 
 pub struct MapData {
-    pub entries: RefCell<Vec<(Value, Value)>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub entries: Mutex<Vec<(Value, Value)>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 pub struct SetData {
-    pub items: RefCell<Vec<Value>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub items: Mutex<Vec<Value>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 /// A WeakMap holds (object-key -> value) pairs where the key is held
@@ -305,25 +306,25 @@ pub struct SetData {
 pub struct WeakMapData {
     /// (key heap idx, value) pairs. The key idx is not marked as a GC root,
     /// so an unreachable key causes the entry to be swept.
-    pub entries: RefCell<Vec<(usize, Value)>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub entries: Mutex<Vec<(usize, Value)>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 /// A WeakSet holds object members weakly: an unreachable member is dropped
 /// during GC. Members must be objects.
 pub struct WeakSetData {
-    pub items: RefCell<Vec<usize>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub items: Mutex<Vec<usize>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 pub struct PromiseData {
-    pub state: Cell<PromiseStatus>,
-    pub result: RefCell<Value>,
-    pub handlers: RefCell<Vec<PromiseHandler>>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub state: Mutex<PromiseStatus>,
+    pub result: Mutex<Value>,
+    pub handlers: Mutex<Vec<PromiseHandler>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -342,11 +343,11 @@ pub struct PromiseHandler {
 pub struct GeneratorData {
     pub function: FunctionExpr,
     pub closure: GcIdx,
-    pub state: RefCell<Vec<Value>>,
-    pub ip: Cell<usize>,
-    pub done: Cell<bool>,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub state: Mutex<Vec<Value>>,
+    pub ip: AtomicUsize,
+    pub done: AtomicBool,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 /// A lazy (pull-based) generator: its function body is executed incrementally
@@ -358,47 +359,47 @@ pub struct LazyGeneratorData {
     pub closure: GcIdx,
     /// Current environment (advanced by PushScope/PopScope); saved/restored
     /// across yields so block scopes resume correctly.
-    pub env: RefCell<GcIdx>,
+    pub env: Mutex<GcIdx>,
     /// `this` value for the generator function call.
-    pub this_val: RefCell<Value>,
+    pub this_val: Mutex<Value>,
     /// Arguments bound to the generator function's parameters.
-    pub args: RefCell<Vec<Value>>,
+    pub args: Mutex<Vec<Value>>,
     /// Current instruction pointer; 0 before the first `next()`.
-    pub ip: Cell<usize>,
+    pub ip: AtomicUsize,
     /// Saved operand stack depth at suspension (for incremental runs we keep a
     /// per-generator value stack).
-    pub stack: RefCell<Vec<Value>>,
+    pub stack: Mutex<Vec<Value>>,
     /// Local variables slot table.
-    pub locals: RefCell<Vec<Value>>,
+    pub locals: Mutex<Vec<Value>>,
     /// Saved try/catch handler stack (so catches resume across yields).
-    pub catch_stack: RefCell<Vec<(usize, u32)>>,
+    pub catch_stack: Mutex<Vec<(usize, u32)>>,
     /// True once the body has begun executing.
-    pub started: Cell<bool>,
+    pub started: AtomicBool,
     /// True once the body has run to completion (return / fall-off end).
-    pub done: Cell<bool>,
+    pub done: AtomicBool,
     /// The value sent into the generator via `next(v)` (consumed by `yield`).
-    pub resume_value: RefCell<Value>,
+    pub resume_value: Mutex<Value>,
     /// True for `async function*`: `next()` wraps results in a Promise.
     pub is_async: bool,
-    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
-    pub proto: RefCell<Option<Value>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
 }
 
 /// Internal iterator state used by `for...of` / `for...in` and the spread operator.
 pub struct IteratorData {
     /// Remaining values to yield, in order (eager mode).
-    pub items: RefCell<Vec<Value>>,
+    pub items: Mutex<Vec<Value>>,
     /// Current position into `items` (eager mode).
-    pub index: Cell<usize>,
+    pub index: AtomicUsize,
     /// Lazy mode: a JS iterator object whose `next()` method is called on each
     /// pull. When `Some`, `items`/`index` are ignored. `done` is set once the
     /// JS `next()` reports `done: true`.
-    pub lazy_iter: RefCell<Option<Value>>,
+    pub lazy_iter: Mutex<Option<Value>>,
     /// Lazy mode: a generator object to pull via `resume_generator` on each
     /// `next()`. Mutually exclusive with `lazy_iter`. Preserves the
     /// generator's return value (used by `yield*`).
-    pub generator: RefCell<Option<Value>>,
-    pub done: Cell<bool>,
+    pub generator: Mutex<Option<Value>>,
+    pub done: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -442,7 +443,7 @@ impl HeapObj {
     }
 
     /// Common props accessor for any object kind.
-    pub fn props(&self) -> &RefCell<IndexMap<PropertyKey, PropertyDescriptor>> {
+    pub fn props(&self) -> &Mutex<IndexMap<PropertyKey, PropertyDescriptor>> {
         match self {
             HeapObj::Object(o) => &o.props,
             HeapObj::Array(a) => &a.props,
@@ -460,7 +461,7 @@ impl HeapObj {
     }
 
     /// Common proto accessor.
-    pub fn proto(&self) -> &RefCell<Option<Value>> {
+    pub fn proto(&self) -> &Mutex<Option<Value>> {
         match self {
             HeapObj::Object(o) => &o.proto,
             HeapObj::Array(a) => &a.proto,
@@ -504,7 +505,7 @@ impl HeapObj {
     }
     pub fn is_extensible(&self) -> bool {
         match self {
-            HeapObj::Object(o) => o.extensible.get(),
+            HeapObj::Object(o) => o.extensible.load(Ordering::Relaxed),
             _ => true,
         }
     }

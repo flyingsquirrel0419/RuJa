@@ -109,7 +109,8 @@ fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
         Value::Object(idx) => heap.with_obj(idx.0, |obj| {
             let props = obj.props();
             if let Some(desc) = props
-                .borrow()
+                .lock()
+                .unwrap()
                 .get(&crate::value::PropertyKey::from("message"))
             {
                 match &desc.value {
