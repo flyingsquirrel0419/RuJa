@@ -10,14 +10,14 @@
 [English](README.md) · [한국어](readme/README.ko.md) · [Español](readme/README.es.md) · [日本語](readme/README.ja.md) · [中文](readme/README.zh.md)
 
 A JavaScript engine written in Rust — **bytecode VM** + **mark-and-sweep GC**,
-with **zero external dependencies**.
+with **minimal dependencies** and a **single-threaded embedding model**.
 
 Runs a pragmatic ES5.1 subset plus selected ES2015+ features: classes,
 async/await (incl. async arrows), generators, Promises, destructuring (incl.
 object rest/spread), getters/setters, tagged templates, Symbols, Map/Set,
-WeakMap/WeakSet, Reflect, Date, regex, and more. JavaScript is compiled to a
-stack-based bytecode and executed on a custom VM with automatic memory
-management.
+WeakMap/WeakSet (true weak-ref semantics), Reflect, Date, regex, BigInt
+(arbitrary precision), and more. JavaScript is compiled to a stack-based
+bytecode and executed on a custom VM with automatic memory management.
 
 ```sh
 $ cargo run --release -- examples/fib.js
@@ -61,11 +61,35 @@ fn main() {
 }
 ```
 
+Register native functions and expose them to JS:
+
+```rust
+use ruja::{error::Result, NativeFn, Value, Vm};
+
+fn add(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> Result<Value> {
+    let a = vm.to_number(&args[0])?;
+    let b = vm.to_number(&args[1])?;
+    Ok(Value::Number(a + b))
+}
+
+fn main() {
+    let mut vm = Vm::new();
+    let f = vm.new_native_function("add", add as NativeFn, 2);
+    vm.define_global("add", Value::Object(f.into()));
+    assert_eq!(vm.run("add(3, 4)").unwrap(), Value::Number(7.0));
+}
+```
+
+> The `Vm` is `!Send`/`!Sync` (single-threaded). Embeddings that need to
+> share a VM across threads should keep it on one worker behind a channel.
+> See [Limitations](docs/limitations.md).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — pipeline, GC, and module layout
 - [Features](docs/features.md) — full language and stdlib reference
 - [Limitations](docs/limitations.md) — known gaps and edge cases
+- [test262](docs/test262.md) — conformance suite runner and pass rate
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — how to propose changes
 
