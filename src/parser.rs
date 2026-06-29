@@ -1202,11 +1202,32 @@ impl Parser {
                     computed: false,
                     method: false,
                     shorthand: false,
+                    kind: PropKind::Normal,
                 });
                 if !self.eat(&TokenKind::Comma) {
                     break;
                 }
                 continue;
+            }
+            // Getter/setter: `get prop() {}` / `set prop(v) {}`
+            let (is_getter, is_setter) = match self.peek().clone() {
+                TokenKind::Ident(s)
+                    if (s == "get" || s == "set")
+                        && !matches!(
+                            self.peek_at_tok(1).kind,
+                            TokenKind::Colon
+                                | TokenKind::Comma
+                                | TokenKind::RBrace
+                                | TokenKind::LParen
+                                | TokenKind::Assign
+                        ) =>
+                {
+                    (s == "get", s == "set")
+                }
+                _ => (false, false),
+            };
+            if is_getter || is_setter {
+                self.advance(); // consume get/set
             }
             let (key, computed) = match self.peek().clone() {
                 TokenKind::Ident(s) => {
@@ -1242,8 +1263,37 @@ impl Parser {
                     )))
                 }
             };
-            // method shorthand or value
-            if self.check(&TokenKind::LParen) {
+            if is_getter || is_setter {
+                let params = self.parse_params()?;
+                let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+                let rest_param = self.cur_rest_param.take();
+                let body = self.parse_fn_body()?;
+                let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+                props.push(Property {
+                    key,
+                    value: Expr::Function(FunctionExpr {
+                        name: None,
+                        params,
+                        param_defaults,
+                        rest_param,
+                        body,
+                        is_arrow: false,
+                        is_async: false,
+                        is_generator: false,
+                        param_decls: Vec::new(),
+                        is_strict,
+                    }),
+                    computed,
+                    method: false,
+                    shorthand: false,
+                    kind: if is_getter {
+                        PropKind::Get
+                    } else {
+                        PropKind::Set
+                    },
+                });
+            } else if self.check(&TokenKind::LParen) {
+                // method shorthand or value
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
@@ -1266,6 +1316,7 @@ impl Parser {
                     computed,
                     method: true,
                     shorthand: false,
+                    kind: PropKind::Method,
                 });
             } else if !self.check(&TokenKind::Colon) && !computed {
                 // Shorthand property: `{x}` is equivalent to `{x: x}`.
@@ -1282,6 +1333,7 @@ impl Parser {
                     computed,
                     method: false,
                     shorthand: true,
+                    kind: PropKind::Normal,
                 });
             } else {
                 self.expect(&TokenKind::Colon, ":")?;
@@ -1292,6 +1344,7 @@ impl Parser {
                     computed,
                     method: false,
                     shorthand: false,
+                    kind: PropKind::Normal,
                 });
             }
             if !self.eat(&TokenKind::Comma) {
@@ -1547,8 +1600,25 @@ impl Parser {
         let mut methods = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let is_static = self.eat(&TokenKind::Static);
-            let is_constructor =
-                matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
+            // Getter/setter in class body.
+            let (is_getter, is_setter) = match self.peek().clone() {
+                TokenKind::Ident(s)
+                    if (s == "get" || s == "set")
+                        && !matches!(
+                            self.peek_at_tok(1).kind,
+                            TokenKind::LParen | TokenKind::Assign | TokenKind::Semicolon
+                        ) =>
+                {
+                    (s == "get", s == "set")
+                }
+                _ => (false, false),
+            };
+            if is_getter || is_setter {
+                self.advance();
+            }
+            let is_constructor = !is_getter
+                && !is_setter
+                && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
             let method_name = if is_constructor {
                 self.advance();
                 Rc::from("constructor")
@@ -1567,6 +1637,13 @@ impl Parser {
                 body,
                 is_static,
                 is_constructor,
+                kind: if is_getter {
+                    crate::ast::PropKind::Get
+                } else if is_setter {
+                    crate::ast::PropKind::Set
+                } else {
+                    crate::ast::PropKind::Method
+                },
             });
         }
         self.expect(&TokenKind::RBrace, "}")?;
