@@ -3766,7 +3766,20 @@ impl Vm {
                     Value::Object(GcIdx(self.heap.allocate(arr))),
                     crate::value::BindingKind::Const,
                 );
-                let this_val = this.unwrap_or(Value::Undefined);
+                // In sloppy (non-strict) mode, an unbound `this` (plain
+                // function call with no receiver) defaults to the global
+                // object. In strict mode it stays `undefined`. Arrow functions
+                // ignore `this` entirely (lexical capture).
+                let this_val = if is_arrow {
+                    this.unwrap_or(Value::Undefined)
+                } else {
+                    let raw = this.unwrap_or(Value::Undefined);
+                    if raw.is_undefined() && !func.chunk.is_strict {
+                        self.global_this.clone()
+                    } else {
+                        raw
+                    }
+                };
                 // Arrow functions capture `this` lexically from their
                 // enclosing scope, so they must NOT redeclare `this` in
                 // their own call environment (which would shadow the
