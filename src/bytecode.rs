@@ -192,6 +192,12 @@ pub enum Op {
     /// (return/break/continue/throw) that diverted into the finally, if any.
     /// A normal completion (tag 0) falls through.
     PopFinallyRethrow,
+    /// Divert a `break` through an active finally: set tag=2, val=next ip
+    /// (the break jump that runs after the finally body), jump to finally.
+    DivertBreak(usize),
+    /// Divert a `continue` through an active finally: set tag=3, val=cont,
+    /// jump to finally.
+    DivertContinue(usize, usize),
 
     // Closures
     MakeClosure(usize), // function index, captures current env

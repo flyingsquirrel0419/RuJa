@@ -1913,6 +1913,24 @@ impl Vm {
                     // already popped when the transfer diverted to finally.
                     self.frames.last_mut().unwrap().finally_stack.pop();
                 }
+                Op::DivertBreak(finally_start) => {
+                    let resume_ip = ip + 1;
+                    let f = self.frames.last_mut().unwrap();
+                    f.finally_completion_tag.set(2);
+                    *f.finally_completion_val.borrow_mut() = Value::Number(resume_ip as f64);
+                    f.ip = finally_start;
+                    continue;
+                }
+                Op::DivertContinue(finally_start, cont) => {
+                    // A `continue` inside an active try/finally: record the
+                    // completion as a continue with the loop's continue target,
+                    // and divert to the finally body.
+                    let f = self.frames.last_mut().unwrap();
+                    f.finally_completion_tag.set(3);
+                    *f.finally_completion_val.borrow_mut() = Value::Number(cont as f64);
+                    f.ip = finally_start;
+                    continue;
+                }
                 Op::PopFinallyRethrow => {
                     // The finally body has run. Re-raise the pending
                     // completion (return/break/continue/throw) that diverted

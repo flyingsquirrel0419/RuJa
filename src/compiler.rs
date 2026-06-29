@@ -23,6 +23,11 @@ pub struct Compiler {
     loop_stack: Vec<LoopFrame>,
     /// A label waiting to be attached to the next begin_loop call.
     pending_label: Option<Rc<str>>,
+    /// Active finally guard ip stack (the `PushFinally` instruction's position).
+    /// Each entry is the ip of the `PushFinally` op whose target has been (or
+    /// will be) patched to the finally body's start ip. Used to detect whether
+    /// a break/continue is inside an active try/finally so it can divert.
+    finally_stack: Vec<Vec<usize>>,
     /// Current source line being compiled; emitted onto each `Op` so runtime
     /// errors can report `(at line N)`. Updated as `compile_stmt` enters a stmt.
     current_line: usize,
@@ -77,6 +82,7 @@ impl Compiler {
             name_map: HashMap::new(),
             loop_stack: Vec::new(),
             pending_label: None,
+            finally_stack: Vec::new(),
             current_line: 0,
         }
     }
@@ -233,6 +239,31 @@ impl Compiler {
             for j in cont_jumps.drain(..) {
                 self.chunk.patch_jump(j, target);
             }
+        }
+    }
+
+    /// Resolve the innermost active finally body start ip, if any.
+    /// Returns None if no try/finally is active.
+    fn finally_active(&self) -> bool {
+        !self.finally_stack.is_empty()
+    }
+
+    fn record_divert(&mut self, divert_ip: usize) {
+        if let Some(frame) = self.finally_stack.last_mut() {
+            frame.push(divert_ip);
+        }
+    }
+
+    fn patch_diverts(&mut self, finally_start: usize) {
+        if let Some(diverts) = self.finally_stack.last_mut() {
+            for &ip in diverts.iter() {
+                match &mut self.chunk.code[ip] {
+                    Op::DivertBreak(t) => *t = finally_start,
+                    Op::DivertContinue(t, _) => *t = finally_start,
+                    _ => {}
+                }
+            }
+            diverts.clear();
         }
     }
 
@@ -714,6 +745,9 @@ impl Compiler {
                 } else {
                     usize::MAX
                 };
+                if has_finally {
+                    self.finally_stack.push(Vec::new());
+                }
                 self.compile_stmt(try_body)?;
                 if has_catch {
                     self.chunk.emit(Op::PopTry, self.current_line);
@@ -750,6 +784,7 @@ impl Compiler {
                         if let Op::PushFinally(ref mut t) = self.chunk.code[finally_guard_ip] {
                             *t = finally_start;
                         }
+                        self.patch_diverts(finally_start);
                     }
                     self.chunk.patch_jump(jump_past_catch, finally_start);
                     self.chunk.patch_jump(jump_past_catch2, finally_start);
@@ -761,6 +796,7 @@ impl Compiler {
                         if let Op::PushFinally(ref mut t) = self.chunk.code[finally_guard_ip] {
                             *t = finally_start;
                         }
+                        self.patch_diverts(finally_start);
                     }
                     self.chunk.patch_jump(jump_past_catch, finally_start);
                 }
@@ -769,6 +805,7 @@ impl Compiler {
                     // Re-raise the pending completion (return/break/continue/throw)
                     // that diverted here. A normal completion falls through.
                     self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
+                    self.finally_stack.pop();
                 }
             }
             StmtNode::FunctionDecl(f) => {
@@ -831,6 +868,12 @@ impl Compiler {
                     }
                 };
                 if let Some(i) = target {
+                    let active = self.finally_active();
+                    if active {
+                        let divert_ip = self.chunk.code.len();
+                        self.chunk.emit(Op::DivertBreak(0), self.current_line);
+                        self.finally_stack.last_mut().unwrap().push(divert_ip);
+                    }
                     let (_, breaks, _, _) = &mut self.loop_stack[i];
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
@@ -851,14 +894,29 @@ impl Compiler {
                     }
                 };
                 if let Some(i) = target {
-                    let (cont, _, cont_jumps, _) = &mut self.loop_stack[i];
-                    if *cont != usize::MAX {
-                        self.chunk.emit(Op::Jump(*cont), self.current_line);
+                    let active = self.finally_active();
+                    let cont = self.loop_stack[i].0;
+                    if active {
+                        if cont != usize::MAX {
+                            let divert_ip = self.chunk.code.len();
+                            self.chunk
+                                .emit(Op::DivertContinue(0, cont), self.current_line);
+                            self.finally_stack.last_mut().unwrap().push(divert_ip);
+                        } else {
+                            let divert_ip = self.chunk.code.len();
+                            self.chunk.emit(Op::DivertBreak(0), self.current_line);
+                            self.finally_stack.last_mut().unwrap().push(divert_ip);
+                            let j = self.chunk.code.len();
+                            self.chunk.emit(Op::Jump(0), self.current_line);
+                            self.loop_stack[i].2.push(j);
+                        }
+                    } else if cont != usize::MAX {
+                        self.chunk.emit(Op::Jump(cont), self.current_line);
                     } else {
                         // Target unknown yet (C-style for); record and patch later.
                         let j = self.chunk.code.len();
                         self.chunk.emit(Op::Jump(0), self.current_line);
-                        cont_jumps.push(j);
+                        self.loop_stack[i].2.push(j);
                     }
                 }
             }
