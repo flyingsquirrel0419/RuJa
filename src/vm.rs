@@ -1931,6 +1931,18 @@ impl Vm {
                     f.ip = finally_start;
                     continue;
                 }
+                Op::CallThis(arg_count) => {
+                    // stack: [this, fn, args...]
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let func = self.stack.pop().unwrap_or(Value::Undefined);
+                    let this = self.stack.pop().unwrap_or(Value::Undefined);
+                    let result = self.call_function(&func, &args, Some(this))?;
+                    self.stack.push(result);
+                }
                 Op::PopFinallyRethrow => {
                     // The finally body has run. Re-raise the pending
                     // completion (return/break/continue/throw) that diverted
