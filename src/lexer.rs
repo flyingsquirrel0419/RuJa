@@ -318,42 +318,24 @@ impl<'a> Lexer<'a> {
                     Some(b'f') => s.push('\u{000C}'),
                     Some(b'v') => s.push('\u{000B}'),
                     Some(b'x') => {
-                        let h1 = self.advance().unwrap_or(b'0');
-                        let h2 = self.advance().unwrap_or(b'0');
-                        let hex_bytes = [h1, h2];
-                        let hex = std::str::from_utf8(&hex_bytes).unwrap_or("00");
-                        if let Ok(n) = u32::from_str_radix(hex, 16) {
-                            s.push(char::from_u32(n).unwrap_or(' '));
-                        }
-                    }
-                    Some(b'u') => {
-                        if self.peek() == Some(b'{') {
-                            self.advance();
-                            let mut hex = String::new();
-                            while let Some(c) = self.peek() {
-                                if c == b'}' {
-                                    self.advance();
-                                    break;
-                                }
-                                hex.push(c as char);
-                                self.advance();
-                            }
-                            if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(n) {
-                                    s.push(ch);
-                                }
-                            }
-                        } else {
-                            let h: String = (0..4)
-                                .filter_map(|_| self.advance().map(|c| c as char))
-                                .collect();
-                            if let Ok(n) = u32::from_str_radix(&h, 16) {
-                                if let Some(ch) = char::from_u32(n) {
-                                    s.push(ch);
-                                }
+                        // \xHH: exactly two hex digits -> one code unit.
+                        match self.read_hex_digits(2) {
+                            Some(n) => s.push(char::from_u32(n).unwrap_or('\u{FFFD}')),
+                            None => {
+                                return TokenKind::LexError(
+                                    "invalid hex escape sequence".to_string(),
+                                );
                             }
                         }
                     }
+                    Some(b'u') => match self.read_unicode_escape() {
+                        Some(ch) => s.push(ch),
+                        None => {
+                            return TokenKind::LexError(
+                                "invalid unicode escape sequence".to_string(),
+                            );
+                        }
+                    },
                     Some(c) => s.push(c as char),
                     None => break,
                 }
@@ -387,6 +369,47 @@ impl<'a> Lexer<'a> {
             }
         }
         TokenKind::String(s)
+    }
+
+    /// Read exactly `n` hex digits and return the parsed value, or None if
+    /// any digit is missing/invalid. Assumes the `\x`/`\u` introducer was
+    /// already consumed.
+    fn read_hex_digits(&mut self, n: usize) -> Option<u32> {
+        let mut v = 0u32;
+        for _ in 0..n {
+            let b = self.advance()?;
+            let d = (b as char).to_digit(16)?;
+            v = v * 16 + d;
+        }
+        Some(v)
+    }
+
+    /// Read a `\uXXXX` or `\u{XXXX...}` escape (the `\u` already consumed),
+    /// returning the decoded char or None on invalid input.
+    fn read_unicode_escape(&mut self) -> Option<char> {
+        if self.peek() == Some(b'{') {
+            self.advance();
+            let mut v = 0u32;
+            let mut count = 0;
+            while let Some(b) = self.peek() {
+                if b == b'}' {
+                    self.advance();
+                    if count == 0 || count > 6 {
+                        return None;
+                    }
+                    return char::from_u32(v);
+                }
+                let d = (b as char).to_digit(16)?;
+                v = v.checked_mul(16)?.checked_add(d)?;
+                self.advance();
+                count += 1;
+            }
+            // Unterminated \u{...}
+            None
+        } else {
+            let v = self.read_hex_digits(4)?;
+            char::from_u32(v)
+        }
     }
 
     fn read_ident_or_keyword(&mut self) -> TokenKind {
@@ -965,9 +988,41 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 match self.advance() {
                     Some(b'n') => s.push('\n'),
+                    Some(b't') => s.push('\t'),
+                    Some(b'r') => s.push('\r'),
                     Some(b'\\') => s.push('\\'),
+                    Some(b'\'') => s.push('\''),
+                    Some(b'"') => s.push('"'),
                     Some(b'`') => s.push('`'),
                     Some(b'$') => s.push('$'),
+                    Some(b'0') => s.push('\0'),
+                    Some(b'b') => s.push('\u{0008}'),
+                    Some(b'f') => s.push('\u{000C}'),
+                    Some(b'v') => s.push('\u{000B}'),
+                    Some(b'x') => match self.read_hex_digits(2) {
+                        Some(n) => s.push(char::from_u32(n).unwrap_or('\u{FFFD}')),
+                        None => {
+                            let mut tok = Token::new(
+                                TokenKind::LexError("invalid hex escape sequence".to_string()),
+                                line,
+                                col,
+                            );
+                            tok.preceded_by_newline = preceded_by_newline;
+                            return tok;
+                        }
+                    },
+                    Some(b'u') => match self.read_unicode_escape() {
+                        Some(ch) => s.push(ch),
+                        None => {
+                            let mut tok = Token::new(
+                                TokenKind::LexError("invalid unicode escape sequence".to_string()),
+                                line,
+                                col,
+                            );
+                            tok.preceded_by_newline = preceded_by_newline;
+                            return tok;
+                        }
+                    },
                     Some(c) => s.push(c as char),
                     None => break,
                 }
