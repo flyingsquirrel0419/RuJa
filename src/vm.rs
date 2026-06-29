@@ -33,6 +33,7 @@ pub struct Vm {
     pub generator_proto: Value,
     pub map_proto: Value,
     pub set_proto: Value,
+    pub date_proto: Value,
     pub microtask_queue: std::collections::VecDeque<Microtask>,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
@@ -179,6 +180,7 @@ impl Vm {
             generator_proto: Value::Undefined,
             map_proto: Value::Undefined,
             set_proto: Value::Undefined,
+            date_proto: Value::Undefined,
             microtask_queue: std::collections::VecDeque::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
