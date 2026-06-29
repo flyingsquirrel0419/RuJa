@@ -1378,13 +1378,11 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
         Value::Undefined => None,
         Value::Null => Some("null".into()),
         Value::Bool(b) => Some(b.to_string()),
-        Value::Number(n) => {
-            if n.is_nan() || n.is_infinite() {
-                None
-            } else {
-                Some(crate::value::num_to_string(*n))
-            }
-        }
+        Value::Number(n) => Some(if n.is_nan() || n.is_infinite() {
+            "null".to_string()
+        } else {
+            crate::value::num_to_string(*n)
+        }),
         Value::String(s) => Some(format!(
             "\"{}\"",
             s.replace('\\', "\\\\")
@@ -1399,6 +1397,13 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
                 return None;
             }
             seen.push(idx.0);
+            // Functions are not serializable (omitted from objects, null in
+            // arrays).
+            let is_function = vm.heap.with_obj(idx.0, |obj| obj.is_function());
+            if is_function {
+                seen.pop();
+                return None;
+            }
             let (is_arr, items, props, proto) = vm.heap.with_obj(idx.0, |obj| match obj {
                 HeapObj::Array(a) => (true, a.items.borrow().clone(), IndexMap::new(), None),
                 HeapObj::Object(o) => (
@@ -1418,7 +1423,11 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
             if is_arr {
                 let parts: Vec<String> = items
                     .iter()
-                    .filter_map(|i| stringify_value(vm, i, seen))
+                    .map(|i| match stringify_value(vm, i, seen) {
+                        Some(s) => s,
+                        // undefined/function/symbol -> null in arrays
+                        None => "null".to_string(),
+                    })
                     .collect();
                 seen.pop();
                 Some(format!("[{}]", parts.join(",")))
@@ -3205,27 +3214,44 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     let s = str_val(vm, &this)?;
     match args.first() {
         Some(Value::Object(idx)) => {
-            let source = vm.heap.with_obj(idx.0, |o| {
-                o.props()
-                    .borrow()
-                    .get(&crate::value::PropertyKey::from("source"))
+            let (source, flags) = vm.heap.with_obj(idx.0, |o| {
+                let p = o.props().borrow();
+                let src = p.get(&PropertyKey::from("source")).map(|d| d.value.clone());
+                let flg = p
+                    .get(&PropertyKey::from("flags"))
                     .map(|d| d.value.clone())
+                    .unwrap_or(Value::Undefined);
+                (src, flg)
             });
             if let Some(Value::String(source)) = source {
                 let re = Regex::new(&source)
                     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-                match re.captures(&s) {
-                    Some(caps) => {
-                        let items: Vec<Value> = caps
-                            .iter()
-                            .map(|c| match c {
-                                Some(m) => Value::String(Rc::from(m.as_str())),
-                                None => Value::Undefined,
-                            })
-                            .collect();
+                let global = matches!(&flags, Value::String(ref f) if f.contains('g'));
+                if global {
+                    // Collect all matches (full-match substrings).
+                    let items: Vec<Value> = re
+                        .find_iter(&s)
+                        .map(|m| Value::String(Rc::from(m.as_str())))
+                        .collect();
+                    if items.is_empty() {
+                        Ok(Value::Null)
+                    } else {
                         Ok(make_value_array(vm, items))
                     }
-                    None => Ok(Value::Null),
+                } else {
+                    match re.captures(&s) {
+                        Some(caps) => {
+                            let items: Vec<Value> = caps
+                                .iter()
+                                .map(|c| match c {
+                                    Some(m) => Value::String(Rc::from(m.as_str())),
+                                    None => Value::Undefined,
+                                })
+                                .collect();
+                            Ok(make_value_array(vm, items))
+                        }
+                        None => Ok(Value::Null),
+                    }
                 }
             } else {
                 Ok(Value::Null)
@@ -3902,13 +3928,120 @@ fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
     }
     Ok(Value::Number(0.0))
 }
+/// Collect Map entries as [key, value] arrays.
+fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
+    if let Some(Value::Object(idx)) = this {
+        let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                m.entries.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        pairs
+            .into_iter()
+            .map(|(k, v)| make_value_array(vm, vec![k, v]))
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+fn map_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let pairs = map_entries_list(vm, &this);
+    Ok(make_value_array(vm, pairs))
+}
+fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let keys: Vec<Value> = if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                m.entries.borrow().iter().map(|(k, _)| k.clone()).collect()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    Ok(make_value_array(vm, keys))
+}
+fn map_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let vals: Vec<Value> = if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                m.entries.borrow().iter().map(|(_, v)| v.clone()).collect()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    };
+    Ok(make_value_array(vm, vals))
+}
+fn map_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    let this_arg = args.get(1).cloned();
+    if let Some(Value::Object(idx)) = this {
+        let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(m) = obj {
+                m.entries.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        for (k, v) in &pairs {
+            vm.call_function(
+                &cb,
+                &[
+                    v.clone(),
+                    k.clone(),
+                    this.clone().unwrap_or(Value::Undefined),
+                ],
+                this_arg.clone(),
+            )?;
+        }
+    }
+    Ok(Value::Undefined)
+}
 fn map_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = HeapObj::Map(MapData {
+    let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
         entries: RefCell::new(Vec::new()),
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.map_proto.clone())),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+    }));
+    // Initialize from an optional iterable of [key, value] pairs.
+    if let Some(iterable) = _args.first() {
+        if !iterable.is_undefined() && !iterable.is_null() {
+            let it = vm.make_iterator(iterable)?;
+            loop {
+                let (pair, done) = vm.iterator_next(&it)?;
+                if done {
+                    break;
+                }
+                let (k, v) = if let Value::Object(pi) = &pair {
+                    vm.heap.with_obj(pi.0, |o| {
+                        if let HeapObj::Array(a) = o {
+                            let it2 = a.items.borrow();
+                            (
+                                it2.first().cloned().unwrap_or(Value::Undefined),
+                                it2.get(1).cloned().unwrap_or(Value::Undefined),
+                            )
+                        } else {
+                            (Value::Undefined, Value::Undefined)
+                        }
+                    })
+                } else {
+                    (Value::Undefined, Value::Undefined)
+                };
+                vm.heap.with_obj(obj_idx, |o| {
+                    if let HeapObj::Map(m) = o {
+                        m.entries.borrow_mut().push((k, v));
+                    }
+                });
+            }
+        }
+    }
+    Ok(Value::Object(GcIdx(obj_idx)))
 }
 
 // =========================================================================
@@ -3969,13 +4102,76 @@ fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
     }
     Ok(Value::Number(0.0))
 }
+fn set_values_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(s) = obj {
+                s.items.borrow().clone()
+            } else {
+                Vec::new()
+            }
+        })
+    } else {
+        Vec::new()
+    }
+}
+fn set_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let vals = set_values_list(vm, &this);
+    let mut pairs: Vec<Value> = Vec::new();
+    for v in vals {
+        pairs.push(make_value_array(vm, vec![v.clone(), v]));
+    }
+    Ok(make_value_array(vm, pairs))
+}
+fn set_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let vals = set_values_list(vm, &this);
+    Ok(make_value_array(vm, vals))
+}
+fn set_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let vals = set_values_list(vm, &this);
+    Ok(make_value_array(vm, vals))
+}
+fn set_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    let this_arg = args.get(1).cloned();
+    let vals = set_values_list(vm, &this);
+    for v in &vals {
+        vm.call_function(
+            &cb,
+            &[
+                v.clone(),
+                v.clone(),
+                this.clone().unwrap_or(Value::Undefined),
+            ],
+            this_arg.clone(),
+        )?;
+    }
+    Ok(Value::Undefined)
+}
 fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = HeapObj::Set(SetData {
+    let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
         items: RefCell::new(Vec::new()),
         props: RefCell::new(IndexMap::new()),
         proto: RefCell::new(Some(vm.set_proto.clone())),
-    });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+    }));
+    // Initialize from an optional iterable.
+    if let Some(iterable) = _args.first() {
+        if !iterable.is_undefined() && !iterable.is_null() {
+            let it = vm.make_iterator(iterable)?;
+            loop {
+                let (v, done) = vm.iterator_next(&it)?;
+                if done {
+                    break;
+                }
+                vm.heap.with_obj(obj_idx, |o| {
+                    if let HeapObj::Set(s) = o {
+                        s.items.borrow_mut().push(v);
+                    }
+                });
+            }
+        }
+    }
+    Ok(Value::Object(GcIdx(obj_idx)))
 }
 
 // =========================================================================
@@ -4259,6 +4455,10 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
         PropertyKey::from("multiline"),
         data_prop(Value::Bool(flags.contains('m'))),
     );
+    props.insert(
+        PropertyKey::from("lastIndex"),
+        data_prop(Value::Number(0.0)),
+    );
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
             *obj.props.borrow_mut() = props;
@@ -4286,33 +4486,121 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         None => String::new(),
     };
     let re = Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    match re.captures(&input) {
+    let flags = read_regexp_flags(vm, &this).unwrap_or_default();
+    let global = flags.contains('g');
+    let sticky = flags.contains('y');
+    // Read lastIndex (a number property; default 0).
+    let last_idx: f64 = match &this {
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| {
+            o.props()
+                .borrow()
+                .get(&PropertyKey::from("lastIndex"))
+                .map(|d| match &d.value {
+                    Value::Number(n) => *n,
+                    _ => 0.0,
+                })
+                .unwrap_or(0.0)
+        }),
+        _ => 0.0,
+    };
+    // Start position: for global/sticky, read lastIndex; else 0.
+    let start: usize = if global || sticky {
+        last_idx as usize
+    } else {
+        0
+    };
+    if start > input.len() {
+        if let Some(Value::Object(idx)) = &this {
+            vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(obj) = o {
+                    obj.props.borrow_mut().insert(
+                        PropertyKey::from("lastIndex"),
+                        data_prop(Value::Number(0.0)),
+                    );
+                }
+            });
+        }
+        return Ok(Value::Null);
+    }
+    let region = &input[start..];
+    // For sticky, match must start exactly at `start`; for global, find from start.
+    let m = if sticky {
+        re.captures_at(region, 0)
+            .filter(|c| c.get(0).map(|mch| mch.start() == 0).unwrap_or(false))
+    } else {
+        re.captures(region)
+    };
+    match m {
         Some(caps) => {
             let items: Vec<Value> = caps
                 .iter()
                 .map(|c| match c {
-                    Some(m) => Value::String(Rc::from(m.as_str())),
+                    Some(mch) => Value::String(Rc::from(mch.as_str())),
                     None => Value::Undefined,
                 })
                 .collect();
+            if global || sticky {
+                let match_end = start + caps.get(0).map(|mch| mch.end()).unwrap_or(0);
+                if let Some(Value::Object(idx)) = &this {
+                    vm.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Object(obj) = o {
+                            obj.props.borrow_mut().insert(
+                                PropertyKey::from("lastIndex"),
+                                data_prop(Value::Number(match_end as f64)),
+                            );
+                        }
+                    });
+                }
+            }
             Ok(make_value_array(vm, items))
         }
-        None => Ok(Value::Null),
+        None => {
+            // No match: for global/sticky, reset lastIndex to 0.
+            if global || sticky {
+                if let Some(Value::Object(idx)) = &this {
+                    vm.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Object(obj) = o {
+                            obj.props.borrow_mut().insert(
+                                PropertyKey::from("lastIndex"),
+                                data_prop(Value::Number(0.0)),
+                            );
+                        }
+                    });
+                }
+            }
+            Ok(Value::Null)
+        }
     }
 }
 
 fn read_regexp_source(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
+    read_regexp_field(vm, this, "source")
+}
+
+/// Read the `flags` string of a RegExp object.
+fn read_regexp_flags(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
+    read_regexp_field(vm, this, "flags")
+}
+
+/// Read a string field (`source`/`flags`/`lastIndex`) from a RegExp object.
+fn read_regexp_field(vm: &mut Vm, this: &Option<Value>, field: &str) -> error::Result<String> {
     match this {
         Some(Value::Object(idx)) => {
             let s = vm.heap.with_obj(idx.0, |o| {
                 o.props()
                     .borrow()
-                    .get(&crate::value::PropertyKey::from("source"))
+                    .get(&crate::value::PropertyKey::from(field))
                     .map(|d| d.value.clone())
             });
             match s {
                 Some(Value::String(s)) => Ok(s.to_string()),
-                _ => Err(Error::type_err("not a RegExp".to_string())),
+                _ => {
+                    if field == "lastIndex" {
+                        Ok("0".to_string())
+                    } else {
+                        Err(Error::type_err("not a RegExp".to_string()))
+                    }
+                }
             }
         }
         _ => Err(Error::type_err("not a RegExp".to_string())),
@@ -4493,10 +4781,24 @@ pub fn setup_collections(vm: &mut Vm) {
             ("delete", map_delete, 1),
             ("clear", map_clear, 0),
             ("size", map_size, 0),
+            ("entries", map_entries, 0),
+            ("keys", map_keys, 0),
+            ("values", map_values, 0),
+            ("forEach", map_for_each, 1),
         ],
     );
     vm.map_proto = Value::Object(map_proto);
     define_global(vm, "Map", Value::Object(map_ctor));
+    // Map.prototype[Symbol.iterator] === Map.prototype.entries
+    let map_entries_fn = vm.new_native_function("entries", map_entries, 0);
+    if let Value::Object(mp) = vm.map_proto.clone() {
+        vm.heap.with_obj(mp.0, |o| {
+            o.props().borrow_mut().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                data_prop(Value::Object(map_entries_fn)),
+            );
+        });
+    }
     // Set
     let (set_ctor, set_proto) = make_builtin_constructor_with(
         vm,
@@ -4507,10 +4809,24 @@ pub fn setup_collections(vm: &mut Vm) {
             ("has", set_has, 1),
             ("delete", set_delete, 1),
             ("size", set_size, 0),
+            ("entries", set_entries, 0),
+            ("keys", set_keys, 0),
+            ("values", set_values, 0),
+            ("forEach", set_for_each, 1),
         ],
     );
     vm.set_proto = Value::Object(set_proto);
     define_global(vm, "Set", Value::Object(set_ctor));
+    // Set.prototype[Symbol.iterator] === Set.prototype.values
+    let set_values_fn = vm.new_native_function("values", set_values, 0);
+    if let Value::Object(sp) = vm.set_proto.clone() {
+        vm.heap.with_obj(sp.0, |o| {
+            o.props().borrow_mut().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                data_prop(Value::Object(set_values_fn)),
+            );
+        });
+    }
     // Symbol
     let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1);
     define_global(vm, "Symbol", Value::Object(sym_idx));
