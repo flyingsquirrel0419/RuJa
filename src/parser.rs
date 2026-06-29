@@ -438,7 +438,6 @@ impl Parser {
         self.expect(&TokenKind::LParen, "(")?;
         // init
         let init: Option<Box<Stmt>> = if self.check(&TokenKind::Semicolon) {
-            self.advance();
             None
         } else if matches!(
             self.peek(),
