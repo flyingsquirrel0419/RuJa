@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Added
+- **Sloppy-mode `this`**: plain function calls now bind `this` to `globalThis`
+  in non-strict mode (strict mode stays `undefined`).
+- **`new C(...spread)`**: constructor calls with spread arguments via a new
+  `NewSpread` opcode.
+- **Tagged template literals**: `tag`q0${e0}q1`` calls `tag(strings, e0)`
+  with a `strings.raw` array.
+- **Async arrow functions**: `async () => ...`, `async (a,b) => ...`,
+  `async x => ...`.
+- **JSON.stringify** replacer (array whitelist / function) and space
+  (indentation); **JSON.parse** reviver (bottom-up transform).
+- **String.replace** with a function callback (match, captures, offset,
+  string); **String.split** with a RegExp separator.
+- **Reflect** global: get/set/has/deleteProperty/ownKeys/getPrototypeOf/
+  setPrototypeOf/isExtensible/preventExtensions/apply/construct.
+- **WeakMap**/`WeakSet` globals (API-compatible; entries are strong-ref).
+- **Date** global (minimal): `Date.now()`, constructor, `getTime()`.
+
+
+### Added
 - **Object spread** `{...a, y:2}` copies enumerable own properties via a new
   `ObjSpread` opcode.
 - **Object rest destructuring** `{a, ...r} = obj` collects remaining own
