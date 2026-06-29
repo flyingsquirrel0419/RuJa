@@ -2,8 +2,9 @@
 """Minimal test262 runner for RuJa.
 
 Runs a subset of test262 language tests through the RuJa binary and reports
-pass/fail counts. NOT a full conformance harness — it skips tests requiring
-features RuJa doesn't support and uses a minimal assert stub.
+pass/fail counts. Uses the real test262 harness files (assert.js, sta.js, and
+any per-test `includes:`) rather than a hand-rolled stub, so tests relying on
+`verifyProperty`, `compareArray`, etc. are exercised correctly.
 """
 import os, re, subprocess, sys
 from pathlib import Path
@@ -21,91 +22,85 @@ SKIP_FEATURES = {
     "regexp-named-groups", "regexp-unicode-property-escapes",
 }
 
-STUB = r'''
-var __result = {passed: 0, failed: 0, errors: []};
-function $FAIL(msg) { __result.failed++; __result.errors.push(String(msg)); }
-function $ERROR(msg) { throw String(msg); }
-var assert = {};
-assert._isSameValue = function(a, b) {
-  if (a === b) return true;
-  if (a !== a && b !== b) return true;
-  return false;
-};
-assert.sameValue = function(actual, expected, msg) {
-  if (!assert._isSameValue(actual, expected)) $FAIL((msg||''));
-};
-assert.notSameValue = function(actual, unexpected, msg) {
-  if (assert._isSameValue(actual, unexpected)) $FAIL((msg||''));
-};
-assert.throws = function(expected, fn, msg) {
-  var threw = false;
-  try { fn(); } catch(e) { threw = true; }
-  if (!threw) $FAIL((msg||''));
-};
-function Test262Error(msg) { this.message = msg; }
-Test262Error.prototype = new Error();
-var $DONOTEVALUATE = function(){};
-'''
-
 def parse_meta(src):
+    """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
-    if not m: return {}
+    if not m:
+        return {}
     meta = {}
     block = m.group(1)
-    for line in block.split('\n'):
-        line = line.strip()
-        if line.startswith('flags:'):
-            meta['flags'] = re.findall(r'(\w+)', line[len('flags:'):])
-        elif line.startswith('features:'):
-            meta['features'] = re.findall(r'(\w+)', line[len('features:'):])
-        elif line.startswith('includes:'):
-            meta['includes'] = re.findall(r'(\S+\.js)', line[len('includes:'):])
+    # YAML-ish: we capture flags/features/includes as bracketed or bare lists.
+    for key in ('flags', 'features', 'includes'):
+        # match `key: [a, b]` or `key: [a]`
+        m2 = re.search(rf'^{key}:\s*\[(.*?)\]', block, re.MULTILINE | re.DOTALL)
+        if m2:
+            meta[key] = [x.strip() for x in m2.group(1).split(',') if x.strip()]
     return meta
 
 def should_skip(meta):
     feats = set(meta.get('features', []))
-    if feats & SKIP_FEATURES: return True
+    if feats & SKIP_FEATURES:
+        return True
     flags = meta.get('flags', [])
-    if 'module' in flags or 'async' in flags: return True
+    if 'module' in flags or 'async' in flags:
+        return True
     return False
 
-def run_test(path):
+# Harness files always loaded (the minimum test262 requires).
+BASE_HARNESS = ['sta.js', 'assert.js']
+
+def build_source(path):
+    """Build the full source: harness files + the test."""
     src = Path(path).read_text()
     meta = parse_meta(src)
-    if should_skip(meta): return 'skip'
-    parts = [STUB]
-    for inc in ['sta.js']:
+    parts = []
+    # Base harness (sta.js defines Test262Error; assert.js needs it).
+    for inc in BASE_HARNESS:
         p = HARNESS / inc
-        if p.exists(): parts.append(p.read_text())
+        if p.exists():
+            parts.append(p.read_text())
+    # Per-test includes (propertyHelper.js, compareArray.js, etc.).
+    for inc in meta.get('includes', []):
+        p = HARNESS / inc
+        if p.exists():
+            parts.append(p.read_text())
     parts.append(src)
-    full = "\n".join(parts)
+    return "\n".join(parts), meta
+
+def run_test(path):
+    full, meta = build_source(path)
+    if should_skip(meta):
+        return 'skip'
     try:
         r = subprocess.run([RUJA, '-e', full], capture_output=True, text=True, timeout=8)
         return 'pass' if r.returncode == 0 else 'fail'
-    except subprocess.TimeoutExpired: return 'timeout'
-    except Exception: return 'error'
+    except subprocess.TimeoutExpired:
+        return 'timeout'
+    except Exception:
+        return 'error'
 
 def main():
-    dirs = sys.argv[1:] if len(sys.argv) > 1 else ['language/expressions', 'language/statements']
-    counts = {'pass':0,'fail':0,'skip':0,'timeout':0,'error':0}
+    dirs = sys.argv[1:] if len(sys.argv) > 1 else ['language/expressions']
+    counts = {'pass': 0, 'fail': 0, 'skip': 0, 'timeout': 0, 'error': 0}
     total = 0
     for d in dirs:
         base = Path(TEST262) / 'test' / d
-        if not base.exists(): continue
+        if not base.exists():
+            continue
         for f in sorted(base.rglob('*.js')):
-            if '_FIXTURE' in f.name: continue
+            if '_FIXTURE' in f.name:
+                continue
             total += 1
             if total % 100 == 0:
                 sys.stderr.write(f"  ...{total} tests, {counts['pass']} pass, {counts['fail']} fail\n")
             counts[run_test(f)] += 1
     ran = counts['pass'] + counts['fail']
     print(f"\nResults over {total} tests (ran {ran}):")
-    for k in ['pass','fail','skip','timeout','error']:
+    for k in ['pass', 'fail', 'skip', 'timeout', 'error']:
         print(f"  {k}: {counts[k]}")
     if ran > 0:
-        rate = 100*counts['pass']/ran
+        rate = 100 * counts['pass'] / ran
         print(f"  pass rate (of run): {rate:.1f}%")
-        # Machine-readable line for CI to parse.
         print(f"RATE={rate:.1f} PASS={counts['pass']} FAIL={counts['fail']} "
               f"SKIP={counts['skip']} TOTAL={total} RAN={ran}")
     else:

@@ -5034,6 +5034,7 @@ pub fn setup_full(vm: &mut Vm) {
     let call_fn = vm.new_native_function("call", function_call, 1);
     let apply_fn = vm.new_native_function("apply", function_apply, 2);
     let bind_fn = vm.new_native_function("bind", function_bind, 1);
+    let tostring_fn = vm.new_native_function("toString", function_to_string, 0);
     install_methods(
         vm,
         &Value::Object(function_proto_idx),
@@ -5041,6 +5042,7 @@ pub fn setup_full(vm: &mut Vm) {
             (Arc::from("call"), Value::Object(call_fn)),
             (Arc::from("apply"), Value::Object(apply_fn)),
             (Arc::from("bind"), Value::Object(bind_fn)),
+            (Arc::from("toString"), Value::Object(tostring_fn)),
         ],
     );
     // Function.prototype points to the function prototype object.
@@ -6396,6 +6398,32 @@ fn make_builtin_constructor_with(
 
 /// `Function.prototype.call(thisArg, ...args)`: invoke `this` (a function)
 /// with an explicit `this` binding and a list of arguments.
+/// `Function.prototype.toString`: return a spec-ish string representation.
+/// For native functions: `function name() { [native code] }`. For interpreted
+/// functions, the source is not retained, so we emit `function name() { ... }`.
+fn function_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let f = match this {
+        Some(v) => v,
+        None => return Ok(Value::String(Arc::from("function () { [native code] }"))),
+    };
+    if let Value::Object(idx) = &f {
+        let (name, is_native) = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Function(fun) = o {
+                let n = fun.name.as_ref().map(|s| s.to_string()).unwrap_or_default();
+                let native = matches!(fun.kind, crate::value::FunctionKind::Native { .. });
+                (n, native)
+            } else {
+                (String::new(), true)
+            }
+        });
+        let body = if is_native { "[native code]" } else { "..." };
+        return Ok(Value::String(Arc::from(
+            format!("function {}() {{ {} }}", name, body).as_str(),
+        )));
+    }
+    Ok(Value::String(Arc::from("function () { [native code] }")))
+}
+
 fn function_call(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let target = match this {
         Some(t) => t,
