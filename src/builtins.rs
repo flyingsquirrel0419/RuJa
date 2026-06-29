@@ -1519,10 +1519,82 @@ fn build_math(vm: &mut Vm) -> Value {
 fn console_log(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let parts: Vec<String> = args
         .iter()
-        .map(|a| vm.to_string(a).map(|s| s.to_string()).unwrap_or_default())
+        .map(|a| format_for_console(vm, a, 0).unwrap_or_default())
         .collect();
     println!("{}", parts.join(" "));
     Ok(Value::Undefined)
+}
+
+/// Format a value for console output, approximating Node.js's inspect format:
+/// arrays as `[ 1, 2, 3 ]`, objects as `{ a: 1, b: 2 }`, strings unquoted
+/// at top level, nested strings quoted.
+fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error::Result<String> {
+    if depth > 6 {
+        return Ok(vm.to_string(v)?.to_string());
+    }
+    match v {
+        Value::Undefined => Ok("undefined".to_string()),
+        Value::Null => Ok("null".to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        Value::Number(n) => Ok(crate::value::num_to_string(*n)),
+        Value::String(s) => {
+            if depth == 0 {
+                Ok(s.to_string())
+            } else {
+                Ok(format!("'{}'", s))
+            }
+        }
+        Value::Symbol(_) => Ok("Symbol()".to_string()),
+        Value::Object(idx) => {
+            let (is_array, is_func, items, pairs) = vm.heap.with_obj(idx.0, |o| {
+                let is_array = matches!(o, HeapObj::Array(_));
+                let is_func = matches!(o, HeapObj::Function(_));
+                let items = if let HeapObj::Array(a) = o {
+                    a.items.borrow().clone()
+                } else {
+                    Vec::new()
+                };
+                let pairs: Vec<(Rc<str>, Value)> = o
+                    .props()
+                    .borrow()
+                    .iter()
+                    .filter(|(_, d)| d.enumerable)
+                    .filter_map(|(k, d)| {
+                        if let crate::value::PropertyKey::Str(s) = k {
+                            Some((s.clone(), d.value.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                (is_array, is_func, items, pairs)
+            });
+            if is_func {
+                return Ok("[Function]".to_string());
+            }
+            if is_array {
+                if items.is_empty() {
+                    return Ok("[]".to_string());
+                }
+                let inner: Vec<String> = items
+                    .iter()
+                    .map(|i| format_for_console(vm, i, depth + 1))
+                    .collect::<error::Result<Vec<_>>>()?;
+                return Ok(format!("[ {} ]", inner.join(", ")));
+            }
+            if pairs.is_empty() {
+                return Ok("{}".to_string());
+            }
+            let inner: Vec<String> = pairs
+                .iter()
+                .map(|(k, v)| {
+                    let val = format_for_console(vm, v, depth + 1)?;
+                    Ok(format!("{}: {}", k, val))
+                })
+                .collect::<error::Result<Vec<_>>>()?;
+            Ok(format!("{{ {} }}", inner.join(", ")))
+        }
+    }
 }
 fn build_console(vm: &mut Vm) -> Value {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
