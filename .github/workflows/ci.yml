@@ -22,3 +22,46 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  test262:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build RuJa (debug)
+        run: cargo build
+      - name: Checkout test262 (sparse)
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/tc39/test262.git ~/test262
+          cd ~/test262
+          git sparse-checkout set harness test/language/expressions test/language/statements test/language/types
+      - name: Run test262 subset
+        run: |
+          TEST262=~/test262 python3 tools/test262_runner.py language/expressions > test262_result.txt 2>&1
+          cat test262_result.txt
+     - name: Publish pass rate to job summary
+       if: always()
+       run: |
+         rate=$(grep '^RATE=' test262_result.txt | sed 's/RATE=//;s/ .*//')
+         pass=$(grep '^RATE=' test262_result.txt | sed 's/.*PASS=//;s/ .*//')
+         fail=$(grep '^RATE=' test262_result.txt | sed 's/.*FAIL=//;s/ .*//')
+         {
+           echo "## test262 conformance"
+           echo ""
+           echo "**Pass rate: ${rate}%** — ${pass} passed, ${fail} failed"
+           echo "(subset: \`language/expressions\`; unsupported-feature tests are skipped)"
+           echo ""
+           echo "<details><summary>Full breakdown</summary>"
+           echo ""
+           echo '```'
+           cat test262_result.txt
+           echo '```'
+           echo ""
+           echo "</details>"
+         } >> $GITHUB_STEP_SUMMARY
+     - name: Upload test262 result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test262-result
+          path: test262_result.txt
