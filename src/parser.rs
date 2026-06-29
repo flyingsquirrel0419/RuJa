@@ -140,6 +140,13 @@ impl Parser {
     }
 
     fn parse_program(&mut self) -> error::Result<Program> {
+        // Surface any lexer-level error (e.g. an invalid escape
+        // sequence in a string literal) as a SyntaxError before parsing.
+        for t in &self.tokens {
+            if let TokenKind::LexError(msg) = &t.kind {
+                return Err(error::Error::syntax(msg.clone()));
+            }
+        }
         // Detect a leading "use strict" directive from the raw token stream
         // *before* parsing the body, so that nested function declarations
         // parsed within the body inherit strictness. A directive prologue is
