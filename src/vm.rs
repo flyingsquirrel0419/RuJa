@@ -15,6 +15,7 @@ pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>
 pub struct Vm {
     pub heap: Heap,
     pub global: GcIdx,
+    pub global_this: Value,
     pub stack: Vec<Value>,
     pub frames: Vec<CallFrame>,
     pub object_proto: Value,
@@ -155,6 +156,7 @@ impl Vm {
         let mut vm = Vm {
             heap,
             global,
+            global_this: Value::Undefined,
             stack: Vec::new(),
             frames: Vec::new(),
             object_proto: Value::Undefined,
@@ -2865,6 +2867,15 @@ impl Vm {
                         .heap
                         .with_obj(idx.0, |o| o.proto().borrow().clone().unwrap_or(Value::Null)));
                 }
+                // globalThis routes property reads to the global environment.
+                let is_global_this = self.heap.with_obj(idx.0, |o| {
+                    matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
+                });
+                if is_global_this {
+                    if let Some(v) = crate::environment::get(&self.heap, self.global, key) {
+                        return Ok(v);
+                    }
+                }
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
@@ -3028,6 +3039,24 @@ impl Vm {
                         // non-object, non-null: ignore (spec: no-op in sloppy mode)
                         _ => return Ok(()),
                     }
+                }
+                // globalThis routes property writes to the global environment.
+                let is_global_this = self.heap.with_obj(idx.0, |o| {
+                    matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
+                });
+                if is_global_this {
+                    // Set on the global environment: update if it exists,
+                    // otherwise declare a new global binding.
+                    if !crate::environment::set(&self.heap, self.global, key, value.clone()) {
+                        crate::environment::declare(
+                            &self.heap,
+                            self.global,
+                            key,
+                            value.clone(),
+                            crate::value::BindingKind::Var,
+                        );
+                    }
+                    return Ok(());
                 }
                 // --- Array fast paths ---
                 let is_array_length = self
@@ -3198,6 +3227,9 @@ impl Vm {
     // ---- GC roots ----
     pub fn collect_roots(&self) -> Vec<usize> {
         let mut roots = vec![self.global.0];
+        if let Value::Object(idx) = &self.global_this {
+            roots.push(idx.0);
+        }
         for v in &self.stack {
             if let Value::Object(idx) = v {
                 roots.push(idx.0);
