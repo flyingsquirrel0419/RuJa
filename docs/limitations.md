@@ -17,8 +17,6 @@
   in `try`/`catch` are correctly suspended across `finally` (and a `return`
   in `finally` overrides them), but `break`/`continue` inside `try`/`catch`
   do not yet route through `finally`
-- `for(;;)` with an empty condition (infinite C-for) is not parsed; use
-  `while(true)` instead
 - Wrapper objects (`new String(5)`) do not store the inner primitive; the
   prototype is correct and `typeof` is `"object"`, but `.valueOf()` is not
   implemented on wrapper objects

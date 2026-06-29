@@ -11,8 +11,9 @@ Un motor de JavaScript escrito en Rust — **VM de bytecode** + **recolector de 
 con **cero dependencias externas**.
 
 Ejecuta un subconjunto pragmático de ES5.1 más funciones seleccionadas de ES2015+:
-clases, async/await, generadores, Promesas, desestructuración, Symbols, Map/Set,
-expresiones regulares y más. JavaScript se compila a un bytecode basado en pila
+clases, async/await, generadores, Promesas, desestructuración (incl. rest/spread
+de objetos), getters/setters, Symbols, Map/Set, expresiones regulares y más.
+JavaScript se compila a un bytecode basado en pila
 y se ejecuta en una VM propia con gestión automática de memoria.
 
 ```sh

@@ -9,9 +9,7 @@
 
 用 Rust 编写的 JavaScript 引擎 — **字节码 VM** + **标记清除 GC**，**零外部依赖**。
 
-运行实用的 ES5.1 子集加精选 ES2015+ 特性：类、async/await、生成器、Promise、解构赋值、
-Symbol、Map/Set、正则表达式等。JavaScript 被编译为基于栈的字节码，在自研 VM 上执行，
-并通过垃圾回收管理内存。
+运行实用的 ES5.1 子集加精选 ES2015+ 特性：类、async/await、生成器、Promise、解构赋值（含对象 rest/spread）、getter/setter、Symbol、Map/Set、正则表达式等。JavaScript 被编译为基于栈的字节码，在自研 VM 上执行，并通过垃圾回收管理内存。
 
 ```sh
 $ cargo run --release -- examples/fib.js
