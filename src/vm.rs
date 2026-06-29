@@ -2798,7 +2798,7 @@ impl Vm {
             Value::Object(_) => {
                 // Per ES ToNumber on objects: run ToPrimitive(number hint)
                 // (valueOf then toString), then convert the primitive result.
-                let prim = self.to_primitive(v)?;
+                let prim = self.to_primitive_number(v)?;
                 self.to_number(&prim)?
             }
             Value::Symbol(_) => {
@@ -2873,10 +2873,15 @@ impl Vm {
         })
     }
 
-    /// Default-hint ToPrimitive (number preference): valueOf then toString.
-    /// Callers that already want a string should use `to_string` directly.
+    /// Default-hint ToPrimitive (used by binary `+` and `==`): valueOf then
+    /// toString, with "default" passed to @@toPrimitive.
     pub fn to_primitive(&mut self, v: &Value) -> error::Result<Value> {
-        self.to_primitive_hint(v, false)
+        self.to_primitive_ex(v, false, "default")
+    }
+    /// Number-hint ToPrimitive (used by unary `+`, arithmetic, Number()):
+    /// valueOf then toString, with "number" passed to @@toPrimitive.
+    pub fn to_primitive_number(&mut self, v: &Value) -> error::Result<Value> {
+        self.to_primitive_ex(v, false, "number")
     }
     /// Convert a value to a primitive per the ES OrdinaryToPrimitive
     /// abstract operation. For objects, invoke `valueOf` then `toString`
@@ -2884,8 +2889,41 @@ impl Vm {
     /// returning the first non-object result. Arrays/objects without custom
     /// methods fall back to their default string form.
     pub fn to_primitive_hint(&mut self, v: &Value, string_hint: bool) -> error::Result<Value> {
+        let hint = if string_hint { "string" } else { "number" };
+        self.to_primitive_ex(v, string_hint, hint)
+    }
+    /// Shared ToPrimitive body. `string_hint` controls the valueOf/toString
+    /// order; `hint` is the string passed to @@toPrimitive.
+    #[allow(clippy::wrong_self_convention)]
+    fn to_primitive_ex(
+        &mut self,
+        v: &Value,
+        string_hint: bool,
+        hint: &'static str,
+    ) -> error::Result<Value> {
         match v {
             Value::Object(_) => {
+                // ES ToPrimitive: an object may define @@toPrimitive, which
+                // takes precedence over valueOf/toString and receives the hint.
+                {
+                    let tp_key =
+                        crate::value::PropertyKey::Symbol(self.well_known_symbols.to_primitive);
+                    let method = self.get_property_by_key(v, &tp_key)?;
+                    if matches!(method, Value::Object(_)) {
+                        let hint_str = Arc::from(hint);
+                        let result = self.call_function(
+                            &method,
+                            &[Value::String(hint_str)],
+                            Some(v.clone()),
+                        )?;
+                        if matches!(result, Value::Object(_)) {
+                            return Err(Error::type_err(
+                                "Cannot convert object to primitive value".to_string(),
+                            ));
+                        }
+                        return Ok(result);
+                    }
+                }
                 // Boxed primitives (`new Number(5)`, `Object("x")`):
                 // ToPrimitive returns the wrapped primitive via valueOf,
                 // unless a string hint asks for toString (e.g. `${...}`).
