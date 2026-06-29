@@ -37,7 +37,19 @@
   the receiver, not the prototype that defines them
 - Private class fields (`#field = init`): isolated storage per instance,
   not enumerable or accessible via `[]`/`for...in`/`Object.keys`
-- `break`/`continue` inside `try` diverts through `finally` (single-level)
+- Private class methods (`#method() {}`): called via `this.#method(...)`,
+  may call other private methods and mutate private fields (`#f++` works)
+- Static initialization blocks (`static { }`): run with `this` = the
+  constructor in source order; can reference the class by name and hold
+  local `let`/`const` bindings that do not leak
+- BigInt literals (`123n`, `0xffn`, `0o17n`, `0b101n`): exact-integer
+  arithmetic (`+ - * / % **`, comparisons, `===`/`==` with `Number`);
+  mixing BigInt with `Number` throws `TypeError`; `BigInt()` constructor
+  and `.toString()` supported
+- `try/finally` non-local transfers: `return`/`throw`/`break`/`continue`
+  in `try`/`catch` divert through **all** enclosing `finally` blocks,
+  innermost-first, including nested `try/finally`; a `return`/`throw`
+  inside a `finally` overrides the pending completion
 
 ## Async & generators
 

@@ -3,12 +3,10 @@
 ## [Unreleased]
 
 ### Added
-- **break/continue in try/finally**: `break`/`continue` inside a `try` block
-  now run the `finally` body before completing the transfer (single-level).
+ now run the `finally` body before completing the transfer (single-level).
 - **Private class fields** (`#field = init`): isolated per-instance storage
   via `GetPrivate`/`SetPrivate` opcodes; not enumerable or in `Object.keys`.
-- **Class static block parsing**: `static { ... }` is parsed (execution is
-  a known limitation).
+ a known limitation).
 - **Sloppy-mode `this`**: plain function calls now bind `this` to `globalThis`
   in non-strict mode (strict mode stays `undefined`).
 - **`new C(...spread)`**: constructor calls with spread arguments via a new
@@ -25,6 +23,25 @@
   setPrototypeOf/isExtensible/preventExtensions/apply/construct.
 - **WeakMap**/`WeakSet` globals (API-compatible; entries are strong-ref).
 - **Date** global (minimal): `Date.now()`, constructor, `getTime()`.
+
+### Added (round 2)
+- **Static initialization blocks executed**: `static { }` now runs with
+  `this` = the constructor in source order (was parsed-but-ignored). Fixed
+  the `CallThis` stack ordering and a `StoreEnv` undefined leak that left
+  the constructor off the top of the stack.
+- **Private class methods** (`#method() {}`): called via `this.#method(...)`;
+  private method calls use a new `CallPrivateMethod` opcode so `this` binds
+  to the receiver. Private field `++`/`--` also works.
+- **BigInt literals**: `123n`, `0xffn`, `0o17n`, `0b101n` with exact
+  arithmetic (`+ - * / % **`), comparison, `===`/`==` (BigInt vs Number is
+  `false` for `===`, numeric for `==`); mixing throws `TypeError`. `BigInt()`
+  constructor and `BigInt.prototype.toString` supported.
+- **Nested try/finally**: non-local transfers (`return`/`throw`/`break`/
+  `continue`) now run **all** enclosing `finally` blocks innermost-first
+  (was: only the innermost for break/continue). Guard ordering is tracked
+  with push-sequence numbers so a throw runs a finally nested inside the
+  nearest catch before reaching the catch; a `return`/`throw` inside a
+  `finally` overrides the pending completion.
 
 
 ### Added

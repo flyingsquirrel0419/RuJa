@@ -726,18 +726,24 @@ impl Compiler {
                 let has_catch = catch_body.is_some();
                 // --- try body, guarded by the catch handler (and finally guard) ---
                 let try_start = self.chunk.code.len();
-                if has_catch {
-                    self.chunk.emit(Op::PushTry(0), self.current_line); // catch handler placeholder
-                }
                 if has_finally {
                     // Push a finally guard whose target is patched to finally_start
                     // below; non-local transfers (return/break/continue/throw) inside
                     // try/catch divert to it with their completion recorded.
                     self.chunk.emit(Op::PushFinally(0), self.current_line);
                 }
+                if has_catch {
+                    self.chunk.emit(Op::PushTry(0), self.current_line); // catch handler placeholder
+                }
                 let finally_guard_ip = if has_finally {
-                    // finally guard is at try_start when there is no PushTry before it
-                    if has_catch {
+                    // finally guard is the first opcode (PushFinally) of the try.
+                    try_start
+                } else {
+                    usize::MAX
+                };
+                let _ = &finally_guard_ip;
+                let try_guard_ip = if has_catch {
+                    if has_finally {
                         try_start + 1
                     } else {
                         try_start
@@ -761,7 +767,7 @@ impl Compiler {
                 // --- catch handler ---
                 let catch_start = self.chunk.code.len();
                 if has_catch {
-                    if let Op::PushTry(ref mut h) = self.chunk.code[try_start] {
+                    if let Op::PushTry(ref mut h) = self.chunk.code[try_guard_ip] {
                         *h = catch_start;
                     }
                     self.push_scope(true);
@@ -801,6 +807,11 @@ impl Compiler {
                     self.chunk.patch_jump(jump_past_catch, finally_start);
                 }
                 if let Some(fin) = finally_body {
+                    // Drop the finally guard before running the finally body, so
+                    // a non-local transfer *inside* the finally (return/throw/
+                    // break/continue) completes directly instead of diverting
+                    // back into this same finally (infinite loop).
+                    self.chunk.emit(Op::PopFinally, self.current_line);
                     self.compile_stmt(fin)?;
                     // Re-raise the pending completion (return/break/continue/throw)
                     // that diverted here. A normal completion falls through.
@@ -1533,6 +1544,10 @@ impl Compiler {
                 let idx = self.chunk.add_constant(Value::Number(*n));
                 self.chunk.emit(Op::Const(idx), self.current_line);
             }
+            Expr::BigInt(n) => {
+                let idx = self.chunk.add_constant(Value::BigInt(*n));
+                self.chunk.emit(Op::Const(idx), self.current_line);
+            }
             Expr::String(s) => {
                 let idx = self.chunk.add_constant(Value::String(s.clone()));
                 self.chunk.emit(Op::Const(idx), self.current_line);
@@ -1651,6 +1666,32 @@ impl Compiler {
                     }
                     _ => {
                         // Identifier target.
+                        // Private field target: `obj.#f++` / `++obj.#f`.
+                        if let Expr::PrivateGet { object, name } = target.as_ref() {
+                            // Load current value.
+                            self.compile_expr(object)?; // [obj]
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk.emit(Op::GetPrivate(name_idx), self.current_line); // [oldVal]
+                            self.chunk.emit(Op::TypeCoerce, self.current_line); // [oldNum]
+                            let tmp_idx = self.intern("#upd");
+                            self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line); // []
+                                                                                         // Build [obj, newNum] and store.
+                            self.compile_expr(object)?; // [obj]
+                            self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [obj, oldNum]
+                            self.chunk.emit(Op::Const(c), self.current_line); // [obj, oldNum, delta]
+                            self.chunk.emit(Op::Add, self.current_line); // [obj, newNum]
+                            self.chunk.emit(Op::SetPrivate(name_idx), self.current_line); // [newVal]
+                            self.chunk.emit(Op::Pop, self.current_line); // []
+                            if *prefix {
+                                self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
+                                self.chunk.emit(Op::Const(c), self.current_line);
+                                self.chunk.emit(Op::Add, self.current_line); // [newNum]
+                            } else {
+                                self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
+                                // [oldNum]
+                            }
+                            return Ok(());
+                        }
                         self.compile_expr(target)?; // [old]
                         self.chunk.emit(Op::TypeCoerce, self.current_line); // [oldNum]
                         self.chunk.emit(Op::Dup, self.current_line); // [oldNum, oldNum]
@@ -1943,6 +1984,22 @@ impl Compiler {
                     return Ok(());
                 }
                 match callee.as_ref() {
+                    // `obj.#method(args)`: call a private method with this=obj.
+                    Expr::PrivateGet { object, name } => {
+                        self.compile_expr(object)?; // [obj]
+                        for a in args {
+                            if let Expr::Spread(_) = a {
+                            } else {
+                                self.compile_expr(a)?;
+                            }
+                        }
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk.emit(
+                            Op::CallPrivateMethod(name_idx, args.len()),
+                            self.current_line,
+                        );
+                        return Ok(());
+                    }
                     Expr::Member {
                         object,
                         property,
@@ -2356,9 +2413,33 @@ impl Compiler {
                             })
                             .unwrap_or_default();
                         // Prepend private field initializers.
+                        // Private methods are stored as private fields whose
+                        // value is a function expression, so `this.#m()`
+                        // resolves via PrivateGet like a field.
+                        let pm_fields: Vec<crate::ast::PrivateFieldDecl> = cls
+                            .methods
+                            .iter()
+                            .filter(|m| m.is_private && !m.is_static)
+                            .map(|m| crate::ast::PrivateFieldDecl {
+                                name: m.name.clone(),
+                                init: Some(Box::new(Expr::Function(FunctionExpr {
+                                    name: Some(m.name.clone()),
+                                    params: m.params.clone(),
+                                    param_defaults: m.param_defaults.clone(),
+                                    rest_param: m.rest_param.clone(),
+                                    body: m.body.clone(),
+                                    is_arrow: false,
+                                    is_async: false,
+                                    is_generator: false,
+                                    param_decls: Vec::new(),
+                                    is_strict: true,
+                                }))),
+                            })
+                            .collect();
                         let pf_stmts: Vec<Stmt> = cls
                             .private_fields
                             .iter()
+                            .chain(pm_fields.iter())
                             .map(|pf| {
                                 let init =
                                     pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
@@ -2459,6 +2540,11 @@ impl Compiler {
                     if method.is_constructor {
                         continue;
                     }
+                    // Instance private methods are installed as private fields
+                    // in the constructor body; skip them here.
+                    if method.is_private && !method.is_static {
+                        continue;
+                    }
                     let m_fn = FunctionExpr {
                         name: Some(method.name.clone()),
                         params: method.params.clone(),
@@ -2553,14 +2639,48 @@ impl Compiler {
                 if let Some(name) = &cls.name {
                     let name_idx = self.intern(name);
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    self.chunk.emit(Op::StoreEnv(name_idx), self.current_line); // [ctor]
+                    self.chunk.emit(Op::StoreEnv(name_idx), self.current_line); // [ctor, undefined]
+                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                 }
                 // Static initialization blocks: each runs with `this` = the
                 // class (constructor), in source order. We bind `this` in a
                 // temp env so the block body sees it, then compile inline.
-                // Static initialization blocks: parsed but execution is a known
-                // limitation (this binding in inline class context not yet wired).
-                let _ = &cls.static_blocks;
+                // Static initialization blocks: compile each as a separate
+                // function and call it with this=ctor via CallThis.
+                for block in &cls.static_blocks {
+                    let sb_fn = FunctionExpr {
+                        name: None,
+                        params: Vec::new(),
+                        param_defaults: Vec::new(),
+                        rest_param: None,
+                        body: block.clone(),
+                        is_arrow: false,
+                        is_async: false,
+                        is_generator: false,
+                        param_decls: Vec::new(),
+                        is_strict: true,
+                    };
+                    let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
+                    let sb_idx = self.funcs.len();
+                    let sbdef = crate::function::FunctionDef {
+                        name: None,
+                        params: Vec::new(),
+                        param_slots: sb_slots,
+                        rest_param: None,
+                        chunk: Rc::new(sb_chunk),
+                        num_locals: 16,
+                        is_arrow: false,
+                        is_async: false,
+                        is_generator: false,
+                    };
+                    self.funcs.push(Rc::new(sbdef));
+                    // stack: [ctor]. Dup ctor for `this`, then MakeClosure.
+                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                    self.chunk.emit(Op::MakeClosure(sb_idx), self.current_line); // [ctor, ctor, fn]
+                                                                                 // CallThis expects [..., this, fn, args...]; here this=ctor (dup), fn on top.
+                    self.chunk.emit(Op::CallThis(0), self.current_line); // [ctor, result]
+                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                }
             }
             Expr::PrivateGet { object, name } => {
                 self.compile_expr(object)?;

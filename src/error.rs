@@ -105,6 +105,7 @@ fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
         Value::Null => "null".to_string(),
         Value::Number(n) => crate::value::num_to_string(*n),
         Value::Bool(b) => b.to_string(),
+        Value::BigInt(n) => n.to_string(),
         Value::Object(idx) => heap.with_obj(idx.0, |obj| {
             let props = obj.props();
             if let Some(desc) = props

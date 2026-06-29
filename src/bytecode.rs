@@ -204,6 +204,9 @@ pub enum Op {
     GetPrivate(usize),
     /// Set a private field on `this`. arg = name constant idx. Pops value.
     SetPrivate(usize),
+    /// Call a private method: stack [..., obj, args...], args = (name idx, arg count).
+    /// Resolves `obj.#name` as a function and calls it with this=obj.
+    CallPrivateMethod(usize, usize),
 
     // Closures
     MakeClosure(usize), // function index, captures current env

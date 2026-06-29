@@ -4,6 +4,7 @@ use std::fmt;
 pub enum TokenKind {
     // Literals
     Number(f64),
+    BigInt(String),
     String(String),
     TemplateString(String),
     Ident(String),
