@@ -1048,12 +1048,50 @@ impl Parser {
                 Ok(Expr::Yield(inner))
             }
             TokenKind::Async => {
-                // `async function ...` expression; otherwise `async` is treated
-                // as a plain identifier (handled below).
+                // `async function ...` expression; `async () =>` arrow; otherwise
+                // `async` is treated as a plain identifier.
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
                     self.advance(); // async
                     let mut f = self.parse_function_expr()?;
                     if let Expr::Function(fe) = &mut f {
+                        fe.is_async = true;
+                    }
+                    return Ok(f);
+                }
+                // async arrow: `async (params) => body` or `async ident => body`
+                let is_async_arrow_paren = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
+                let is_async_arrow_ident = matches!(self.peek_at_tok(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at_tok(2).kind, TokenKind::Arrow);
+                if is_async_arrow_paren {
+                    self.advance(); // async
+                                    // Now at `(`; parse like a parenthesized arrow.
+                    self.advance(); // (
+                    if self.try_parse_arrow_params()? {
+                        let params = self.last_arrow_params.take().unwrap();
+                        self.expect(&TokenKind::Arrow, "=>")?;
+                        let mut f = self.parse_arrow_body(params)?;
+                        if let Expr::Arrow(fe) = &mut f {
+                            fe.is_async = true;
+                        }
+                        return Ok(f);
+                    }
+                    // Not an arrow; rewind and treat async as identifier.
+                    self.pos -= 2;
+                    self.advance();
+                    return Ok(Expr::Ident(Rc::from("async")));
+                }
+                if is_async_arrow_ident {
+                    self.advance(); // async
+                    let name = match self.peek().clone() {
+                        TokenKind::Ident(s) => {
+                            self.advance();
+                            Rc::from(s.as_str())
+                        }
+                        _ => unreachable!(),
+                    };
+                    self.advance(); // =>
+                    let mut f = self.parse_arrow_body(vec![name])?;
+                    if let Expr::Arrow(fe) = &mut f {
                         fe.is_async = true;
                     }
                     return Ok(f);
