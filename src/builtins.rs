@@ -218,6 +218,14 @@ fn make_builtin_constructor(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
         );
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("name"),
+            data_prop(Value::String(Rc::from(name))),
+        );
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("message"),
+            data_prop(Value::String(Rc::from(""))),
+        );
     });
 
     (ctor_idx, proto_idx)
@@ -258,6 +266,14 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
         obj.props().borrow_mut().insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
+        );
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("name"),
+            data_prop(Value::String(Rc::from(name))),
+        );
+        obj.props().borrow_mut().insert(
+            PropertyKey::from("message"),
+            data_prop(Value::String(Rc::from(""))),
         );
     });
 
@@ -431,12 +447,37 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Rc<str>> {
                     }
                 }
             }
+            // Spec enumeration order: array-index keys (canonical integer
+            // indices) in ascending numeric order, then the remaining string
+            // keys in insertion order.
+            let mut index_keys: Vec<u32> = Vec::new();
+            let mut other_keys: Vec<Rc<str>> = Vec::new();
             for (k, desc) in o.props().borrow().iter() {
-                if desc.enumerable {
-                    if let crate::value::PropertyKey::Str(s) = k {
-                        keys.push(s.clone());
+                if !desc.enumerable {
+                    continue;
+                }
+                if let crate::value::PropertyKey::Str(s) = k {
+                    // A string is an array index iff it is a canonical decimal
+                    // integer in [0, 2^32-1) (no leading zeros, no sign).
+                    let is_index = !s.is_empty()
+                        && s.bytes().all(|b| b.is_ascii_digit())
+                        && !(s.len() > 1 && s.starts_with('0'))
+                        && s.parse::<u32>()
+                            .map(|n| (n as u64) < (1u64 << 32))
+                            .unwrap_or(false);
+                    if is_index {
+                        index_keys.push(s.parse::<u32>().unwrap());
+                    } else {
+                        other_keys.push(s.clone());
                     }
                 }
+            }
+            index_keys.sort_unstable();
+            for n in index_keys {
+                keys.push(Rc::from(n.to_string().as_str()));
+            }
+            for k in other_keys {
+                keys.push(k);
             }
         });
     }
@@ -590,15 +631,17 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         extensible: Cell::new(true),
         class_name: None,
     }));
+    // Accept an array (or array-like) of [key, value] pairs.
     if let Value::Object(arr_idx) = &entries {
-        let items: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
+        let pairs: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
             if let HeapObj::Array(a) = o {
                 a.items.borrow().clone()
             } else {
                 Vec::new()
             }
         });
-        for pair in &items {
+        for pair in &pairs {
+            // Each pair is an array [key, value].
             if let Value::Object(pi) = pair {
                 let (k, v) = vm.heap.with_obj(pi.0, |o| {
                     if let HeapObj::Array(a) = o {
@@ -611,12 +654,25 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
                         (Value::Undefined, Value::Undefined)
                     }
                 });
-                let key = vm.to_property_key(&k)?;
+                let _key_str = vm.to_string(&k)?.to_string();
+                let key_str = vm.to_string(&k)?.to_string();
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Object(obj) = o {
-                        obj.props
-                            .borrow_mut()
-                            .insert(PropertyKey::from(key.as_str()), data_prop(v));
+                        // Own enumerable data property (data_prop is
+                        // non-enumerable, which would hide it from
+                        // Object.keys / JSON.stringify).
+                        obj.props.borrow_mut().insert(
+                            PropertyKey::from(key_str.as_str()),
+                            PropertyDescriptor {
+                                value: v,
+                                writable: true,
+                                enumerable: true,
+                                configurable: true,
+                                get: None,
+                                set: None,
+                                is_accessor: false,
+                            },
+                        );
                     }
                 });
             }
@@ -880,15 +936,59 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         Some(Value::Object(i)) => i,
         _ => vm.new_object(),
     };
+    // Inherit `name` from the prototype (each Error subclass proto sets it),
+    // falling back to "Error".
+    let proto_idx = vm.heap.with_obj(idx.0, |obj| {
+        obj.proto().borrow().as_ref().and_then(|p| {
+            if let Value::Object(pi) = p {
+                Some(*pi)
+            } else {
+                None
+            }
+        })
+    });
+    let name = proto_idx
+        .and_then(|pi| {
+            vm.heap.with_obj(pi.0, |o| {
+                o.props()
+                    .borrow()
+                    .get(&PropertyKey::from("name"))
+                    .and_then(|d| {
+                        if let Value::String(s) = &d.value {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+            })
+        })
+        .unwrap_or_else(|| Rc::from("Error"));
+    // Optional `cause` from the options object (second argument).
+    let cause = args.get(1).and_then(|v| {
+        if let Value::Object(oi) = v {
+            vm.heap.with_obj(oi.0, |o| {
+                o.props()
+                    .borrow()
+                    .get(&PropertyKey::from("cause"))
+                    .map(|d| d.value.clone())
+            })
+        } else {
+            None
+        }
+    });
     vm.heap.with_obj(idx.0, |obj| {
         if let HeapObj::Object(o) = obj {
             o.props
                 .borrow_mut()
                 .insert(PropertyKey::from("message"), data_prop(Value::String(msg)));
-            o.props.borrow_mut().insert(
-                PropertyKey::from("name"),
-                data_prop(Value::String(Rc::from("Error"))),
-            );
+            o.props
+                .borrow_mut()
+                .insert(PropertyKey::from("name"), data_prop(Value::String(name)));
+            if let Some(c) = cause {
+                o.props
+                    .borrow_mut()
+                    .insert(PropertyKey::from("cause"), data_prop(c));
+            }
         }
     });
     Ok(Value::Object(idx))
@@ -1829,6 +1929,12 @@ fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result
     }
     Ok(Value::Undefined)
 }
+/// Array.prototype.toString: delegates to join(",") (Object.prototype.toString
+/// would otherwise return "[object Array]").
+fn array_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    array_join(vm, &[], this)
+}
+
 fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let sep = match args.first() {
         Some(Value::String(s)) => s.to_string(),
@@ -1876,7 +1982,7 @@ fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?);
         }
         let arr = HeapObj::Array(ArrayData {
@@ -1907,7 +2013,7 @@ fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
             if keep.is_truthy() {
                 result.push(item.clone());
@@ -1937,6 +2043,11 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         } else {
             (items.first().cloned().unwrap_or(Value::Undefined), 1)
         };
+        if items.is_empty() && args.len() < 2 {
+            return Err(Error::type_err(
+                "Reduce of empty array with no initial value",
+            ));
+        }
         for (i, item) in items.iter().enumerate().skip(start) {
             acc = vm.call_function(
                 &cb,
@@ -1946,7 +2057,7 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(2).cloned(),
             )?;
         }
         return Ok(acc);
@@ -1971,44 +2082,81 @@ fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
         }
     }
     Ok(Value::Undefined)
 }
-fn array_index_of(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+/// Resolve a `fromIndex`-style argument (ToInteger, default 0) to a starting
+/// position clamped into `[0, len]`. Negative wraps from the end.
+fn from_index_arg(vm: &mut Vm, args: &[Value], idx: usize, len: usize) -> error::Result<usize> {
+    let raw = match args.get(idx) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if raw.is_nan() || raw == 0.0 || raw.is_infinite() {
+        // +Inf -> len, -Inf/-0/NaN -> 0
+        return Ok(if raw.is_infinite() && raw > 0.0 {
+            len
+        } else {
+            0
+        });
+    }
+    let n = raw as i64;
+    let start = if n < 0 {
+        (len as i64 + n).max(0) as usize
+    } else {
+        (n as usize).min(len)
+    };
+    Ok(start)
+}
+
+fn array_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
-        let pos = _vm.heap.with_obj(idx.0, |obj| {
+        let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.borrow().iter().position(|i| i == &target)
+                a.items.borrow().clone()
             } else {
-                None
+                Vec::new()
             }
         });
-        return Ok(Value::Number(pos.map(|i| i as f64).unwrap_or(-1.0)));
+        let len = items.len();
+        let start = from_index_arg(vm, args, 1, len)?;
+        for (i, v) in items.iter().enumerate().skip(start) {
+            if v == &target {
+                return Ok(Value::Number(i as f64));
+            }
+        }
+        return Ok(Value::Number(-1.0));
     }
     Ok(Value::Number(-1.0))
 }
 fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
-        let found = vm.heap.with_obj(idx.0, |obj| {
-            // includes uses SameValueZero: NaN matches NaN (unlike indexOf's ===).
+        let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.borrow().iter().any(|i| {
-                    if let (Value::Number(x), Value::Number(y)) = (i, &target) {
-                        x.is_nan() && y.is_nan() || x == y
-                    } else {
-                        i == &target
-                    }
-                })
+                a.items.borrow().clone()
             } else {
-                false
+                Vec::new()
             }
         });
-        return Ok(Value::Bool(found));
+        let len = items.len();
+        let start = from_index_arg(vm, args, 1, len)?;
+        // includes uses SameValueZero: NaN matches NaN (unlike indexOf's ===).
+        for (_i, v) in items.iter().enumerate().skip(start) {
+            let matched = if let (Value::Number(x), Value::Number(y)) = (v, &target) {
+                x.is_nan() && y.is_nan() || x == y
+            } else {
+                v == &target
+            };
+            if matched {
+                return Ok(Value::Bool(true));
+            }
+        }
+        return Ok(Value::Bool(false));
     }
     Ok(Value::Bool(false))
 }
@@ -2274,8 +2422,23 @@ fn array_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
                 Vec::new()
             }
         });
-        for (i, v) in items.iter().enumerate().rev() {
-            if vm.strict_eq(v, &target) {
+        let len = items.len();
+        // fromIndex for lastIndexOf: default +Inf (start from end); negative
+        // wraps from the end; clamped into [0, len-1].
+        let raw = match args.get(1) {
+            Some(v) => vm.to_number(v)?,
+            None => f64::INFINITY,
+        };
+        let end = if raw.is_nan() {
+            len
+        } else if raw.is_infinite() && raw < 0.0 {
+            return Ok(Value::Number(-1.0));
+        } else {
+            let n = raw as i64;
+            (if n < 0 { len as i64 + n } else { n }).clamp(0, len as i64) as usize
+        };
+        for i in (0..end).rev() {
+            if vm.strict_eq(&items[i], &target) {
                 return Ok(Value::Number(i as f64));
             }
         }
@@ -2562,7 +2725,7 @@ fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
             if found.is_truthy() {
                 return Ok(item.clone());
@@ -2589,7 +2752,7 @@ fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
             if found.is_truthy() {
                 return Ok(Value::Number(i as f64));
@@ -2616,7 +2779,7 @@ fn array_find_last(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
             if found.is_truthy() {
                 return Ok(item.clone());
@@ -2698,7 +2861,7 @@ fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
             if found.is_truthy() {
                 return Ok(Value::Bool(true));
@@ -2725,7 +2888,7 @@ fn array_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
                     Value::Number(i as f64),
                     this.clone().unwrap_or(Value::Undefined),
                 ],
-                Some(Value::Undefined),
+                args.get(1).cloned(),
             )?;
             if !ok.is_truthy() {
                 return Ok(Value::Bool(false));
@@ -2796,7 +2959,29 @@ fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         .first()
         .map(crate::value::value_to_debug_string)
         .unwrap_or_default();
-    Ok(Value::Number(s.find(&n).map(|i| i as f64).unwrap_or(-1.0)))
+    let len = s.chars().count();
+    let start = from_index_arg(vm, args, 1, len)?;
+    // Start scanning at the given code-unit index; return the code-unit index
+    // of the first match at or after `start`, or -1.
+    let bytes = s.as_bytes();
+    let mut byte_off = 0;
+    for _ in 0..start {
+        byte_off += s[byte_off..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0);
+        if byte_off >= bytes.len() {
+            break;
+        }
+    }
+    if let Some(rel) = s[byte_off..].find(&n) {
+        let abs = byte_off + rel;
+        let idx = s[..abs].chars().count();
+        Ok(Value::Number(idx as f64))
+    } else {
+        Ok(Value::Number(-1.0))
+    }
 }
 fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -2912,15 +3097,73 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     };
     Ok(Value::String(Rc::from(s.replacen(&from, &to, 1).as_str())))
 }
-fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::Bool(
-        str_val(vm, &this)?.contains(
-            args.first()
-                .map(crate::value::value_to_debug_string)
-                .unwrap_or_default()
-                .as_str(),
-        ),
+/// String.prototype.lastIndexOf(searchString, fromIndex): last occurrence at
+/// or before `fromIndex` (default +Inf -> search from end).
+fn str_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let n = args
+        .first()
+        .map(crate::value::value_to_debug_string)
+        .unwrap_or_default();
+    let len = s.chars().count();
+    let raw = match args.get(1) {
+        Some(v) => vm.to_number(v)?,
+        None => f64::INFINITY,
+    };
+    let nchars = n.chars().count();
+    let end = if raw.is_nan() {
+        len
+    } else if raw.is_infinite() && raw < 0.0 {
+        return Ok(Value::Number(-1.0));
+    } else {
+        let n_int = raw as i64;
+        (if n_int < 0 { len as i64 + n_int } else { n_int }).max(0) as usize
+    };
+    let max_start = len.saturating_sub(nchars).min(end);
+    let mut byte_end = 0;
+    for _ in 0..=max_start {
+        if byte_end >= s.len() {
+            break;
+        }
+        byte_end += s[byte_end..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0);
+    }
+    let region: &str = if byte_end >= s.len() {
+        &s[..]
+    } else {
+        &s[..byte_end]
+    };
+    Ok(Value::Number(
+        region
+            .rfind(n.as_str())
+            .map(|b| s[..b].chars().count() as f64)
+            .unwrap_or(-1.0),
     ))
+}
+
+fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let n = args
+        .first()
+        .map(crate::value::value_to_debug_string)
+        .unwrap_or_default();
+    let len = s.chars().count();
+    let start = from_index_arg(vm, args, 1, len)?;
+    let mut byte_off = 0;
+    for _ in 0..start {
+        byte_off += s[byte_off..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0);
+        if byte_off >= s.len() {
+            break;
+        }
+    }
+    Ok(Value::Bool(s[byte_off..].contains(n.as_str())))
 }
 fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
@@ -3341,6 +3584,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("keys", array_keys, 0),
             ("values", array_values, 0),
             ("entries", array_entries, 0),
+            ("toString", array_to_string, 0),
         ],
     );
     // override the constructor function to use array_constructor
@@ -3368,6 +3612,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("charAt", str_char_at, 1),
             ("charCodeAt", str_char_code_at, 1),
             ("indexOf", str_index_of, 1),
+            ("lastIndexOf", str_last_index_of, 1),
             ("slice", str_slice, 2),
             ("toUpperCase", str_to_upper, 0),
             ("toLowerCase", str_to_lower, 0),
