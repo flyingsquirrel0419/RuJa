@@ -1614,19 +1614,90 @@ fn build_console(vm: &mut Vm) -> Value {
 // JSON
 // =========================================================================
 fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let v = args.first().unwrap_or(&Value::Undefined);
+    let v = args.first().unwrap_or(&Value::Undefined).clone();
+    let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let space_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+
+    // Determine the gap (indentation) string.
+    let gap: String = match &space_arg {
+        Value::Number(n) => {
+            let n = (*n as usize).min(10);
+            " ".repeat(n)
+        }
+        Value::String(s) => {
+            if s.len() <= 10 {
+                s.to_string()
+            } else {
+                s[..10].to_string()
+            }
+        }
+        _ => String::new(),
+    };
+
+    // Build the replacer whitelist from an array replacer.
+    let whitelist: Option<Vec<String>> = if let Value::Object(idx) = &replacer {
+        let is_arr = vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
+        if is_arr {
+            let items = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    a.items.borrow().clone()
+                } else {
+                    Vec::new()
+                }
+            });
+            let mut wl = Vec::new();
+            for item in items {
+                match item {
+                    Value::String(s) => wl.push(s.to_string()),
+                    Value::Number(n) => wl.push(crate::value::num_to_string(n)),
+                    _ => {}
+                }
+            }
+            Some(wl)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let replacer_fn = if matches!(replacer, Value::Object(_)) && whitelist.is_none() {
+        let is_fn = if let Value::Object(idx) = &replacer {
+            vm.heap.with_obj(idx.0, |o| o.is_function())
+        } else {
+            false
+        };
+        if is_fn {
+            Some(replacer.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Reject circular references per ECMAScript (TypeError).
-    if let Value::Object(_) = v {
-        if has_json_cycle(vm, v, &mut Vec::new()) {
+    if let Value::Object(_) = &v {
+        if has_json_cycle(vm, &v, &mut Vec::new()) {
             return Err(Error::type_err(
                 "Converting circular structure to JSON".to_string(),
             ));
         }
     }
-    match stringify_value(vm, v, &mut Vec::new()) {
+    let mut ctx = StringifyCtx {
+        gap,
+        whitelist,
+        replacer_fn,
+    };
+    match stringify_value(vm, &v, &mut Vec::new(), "", &mut ctx) {
         Some(s) => Ok(Value::String(Rc::from(s.as_str()))),
         None => Ok(Value::Undefined),
     }
+}
+
+struct StringifyCtx {
+    gap: String,
+    whitelist: Option<Vec<String>>,
+    replacer_fn: Option<Value>,
 }
 
 /// Detect whether `v` (transitively) contains a cycle through object/array
@@ -1656,15 +1727,23 @@ fn has_json_cycle(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> bool {
     seen.pop();
     result
 }
-fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<String> {
-    match v {
+fn stringify_value(
+    vm: &mut Vm,
+    v: &Value,
+    seen: &mut Vec<usize>,
+    indent: &str,
+    ctx: &mut StringifyCtx,
+) -> Option<String> {
+    // (Top-level replacer application is handled by callers; this function
+    //  applies the replacer per-property via apply_replacer.)
+    match v.clone() {
         Value::Undefined => None,
         Value::Null => Some("null".into()),
         Value::Bool(b) => Some(b.to_string()),
         Value::Number(n) => Some(if n.is_nan() || n.is_infinite() {
             "null".to_string()
         } else {
-            crate::value::num_to_string(*n)
+            crate::value::num_to_string(n)
         }),
         Value::String(s) => Some(format!(
             "\"{}\"",
@@ -1675,72 +1754,199 @@ fn stringify_value(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> Option<Stri
         )),
         Value::Symbol(_) => None,
         Value::Object(idx) => {
-            // Detect circular references; throw TypeError per ECMAScript.
             if seen.contains(&idx.0) {
                 return None;
             }
             seen.push(idx.0);
-            // Functions are not serializable (omitted from objects, null in
-            // arrays).
             let is_function = vm.heap.with_obj(idx.0, |obj| obj.is_function());
             if is_function {
                 seen.pop();
                 return None;
             }
-            let (is_arr, items, props, proto) = vm.heap.with_obj(idx.0, |obj| match obj {
-                HeapObj::Array(a) => (true, a.items.borrow().clone(), IndexMap::new(), None),
-                HeapObj::Object(o) => (
-                    false,
-                    Vec::new(),
-                    o.props.borrow().clone(),
-                    o.proto.borrow().clone(),
-                ),
-                HeapObj::Function(_) => (false, Vec::new(), IndexMap::new(), None),
-                _ => (
-                    false,
-                    Vec::new(),
-                    obj.props().borrow().clone(),
-                    obj.proto().borrow().clone(),
-                ),
+            let (is_arr, items, props) = vm.heap.with_obj(idx.0, |obj| match obj {
+                HeapObj::Array(a) => (true, a.items.borrow().clone(), IndexMap::new()),
+                HeapObj::Object(o) => (false, Vec::new(), o.props.borrow().clone()),
+                HeapObj::Function(_) => (false, Vec::new(), IndexMap::new()),
+                _ => (false, Vec::new(), obj.props().borrow().clone()),
             });
+            let child_indent = if ctx.gap.is_empty() {
+                String::new()
+            } else {
+                format!("{}{}", indent, ctx.gap)
+            };
             if is_arr {
                 let parts: Vec<String> = items
                     .iter()
-                    .map(|i| match stringify_value(vm, i, seen) {
-                        Some(s) => s,
-                        // undefined/function/symbol -> null in arrays
-                        None => "null".to_string(),
+                    .enumerate()
+                    .map(|(i, item)| {
+                        // Apply replacer
+                        let val = apply_replacer(
+                            vm,
+                            ctx,
+                            &Value::String(Rc::from(i.to_string().as_str())),
+                            item,
+                        );
+                        let s = stringify_value(vm, &val, seen, &child_indent, ctx);
+                        let s = s.unwrap_or_else(|| "null".to_string());
+                        if ctx.gap.is_empty() {
+                            s
+                        } else {
+                            format!("{}{}", child_indent, s)
+                        }
                     })
                     .collect();
                 seen.pop();
-                Some(format!("[{}]", parts.join(",")))
+                if parts.is_empty() {
+                    Some("[]".into())
+                } else if ctx.gap.is_empty() {
+                    Some(format!("[{}]", parts.join(",")))
+                } else {
+                    Some(format!("[\n{}\n{}]", parts.join(",\n"), indent))
+                }
             } else {
-                let _ = proto;
                 let mut pairs = Vec::new();
-                for (k, d) in &props {
-                    if !d.enumerable {
-                        continue;
-                    }
-                    let key_str = match k {
-                        crate::value::PropertyKey::Str(s) => s.as_ref(),
-                        crate::value::PropertyKey::Symbol(_) => continue,
-                    };
-                    if let Some(vs) = stringify_value(vm, &d.value, seen) {
-                        pairs.push(format!("\"{}\":{}", key_str, vs));
+                let keys: Vec<(String, Value)> = if let Some(wl) = &ctx.whitelist {
+                    props
+                        .iter()
+                        .filter_map(|(k, d)| {
+                            let ks = match k {
+                                crate::value::PropertyKey::Str(s) => s.to_string(),
+                                _ => return None,
+                            };
+                            if wl.contains(&ks) && d.enumerable {
+                                Some((ks, d.value.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    props
+                        .iter()
+                        .filter_map(|(k, d)| {
+                            if !d.enumerable {
+                                return None;
+                            }
+                            match k {
+                                crate::value::PropertyKey::Str(s) => {
+                                    Some((s.to_string(), d.value.clone()))
+                                }
+                                _ => None,
+                            }
+                        })
+                        .collect()
+                };
+                for (key_str, val) in keys {
+                    let val =
+                        apply_replacer(vm, ctx, &Value::String(Rc::from(key_str.as_str())), &val);
+                    if let Some(vs) = stringify_value(vm, &val, seen, &child_indent, ctx) {
+                        if ctx.gap.is_empty() {
+                            pairs.push(format!("\"{}\":{}", key_str, vs));
+                        } else {
+                            pairs.push(format!("{}\"{}\": {}", child_indent, key_str, vs));
+                        }
                     }
                 }
                 seen.pop();
-                Some(format!("{{{}}}", pairs.join(",")))
+                if pairs.is_empty() {
+                    Some("{}".into())
+                } else if ctx.gap.is_empty() {
+                    Some(format!("{{{}}}", pairs.join(",")))
+                } else {
+                    Some(format!("{{\n{}\n{}}}", pairs.join(",\n"), indent))
+                }
             }
         }
     }
 }
+
+/// Apply a function replacer: replacer(key, value) -> new value.
+fn apply_replacer(vm: &mut Vm, ctx: &StringifyCtx, key: &Value, val: &Value) -> Value {
+    if let Some(rf) = &ctx.replacer_fn {
+        vm.call_function(rf, &[key.clone(), val.clone()], Some(val.clone()))
+            .unwrap_or_else(|_| val.clone())
+    } else {
+        val.clone()
+    }
+}
+
 fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let s = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         _ => return Ok(Value::Null),
     };
-    parse_json_value(vm, &mut s.chars().peekable())
+    let reviver = args.get(1).cloned();
+    let is_reviver_fn = if let Some(Value::Object(idx)) = &reviver {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    } else {
+        false
+    };
+    let parsed = parse_json_value(vm, &mut s.chars().peekable())?;
+    if is_reviver_fn {
+        if let Some(rf) = reviver {
+            return apply_reviver(vm, &rf, &Value::String(Rc::from("")), &parsed);
+        }
+    }
+    Ok(parsed)
+}
+
+/// Walk the parsed tree bottom-up, calling reviver(key, value) on each.
+fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> error::Result<Value> {
+    let walked = match val {
+        Value::Object(idx) => {
+            let (is_arr, items, props) = vm.heap.with_obj(idx.0, |o| match o {
+                HeapObj::Array(a) => (true, a.items.borrow().clone(), IndexMap::new()),
+                HeapObj::Object(o) => (false, Vec::new(), o.props.borrow().clone()),
+                _ => (false, Vec::new(), IndexMap::new()),
+            });
+            if is_arr {
+                let mut new_items = Vec::new();
+                for (i, item) in items.iter().enumerate() {
+                    let k = Value::String(Rc::from(i.to_string().as_str()));
+                    let w = apply_reviver(vm, reviver, &k, item)?;
+                    if !w.is_undefined() {
+                        new_items.push(w);
+                    }
+                }
+                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Array(
+                    crate::value::ArrayData {
+                        items: RefCell::new(new_items),
+                        props: RefCell::new(IndexMap::new()),
+                        proto: RefCell::new(Some(vm.array_proto.clone())),
+                    },
+                ))))
+            } else {
+                let mut new_props = IndexMap::new();
+                for (pk, d) in &props {
+                    if let crate::value::PropertyKey::Str(s) = pk {
+                        let k = Value::String(s.clone());
+                        let w = apply_reviver(vm, reviver, &k, &d.value)?;
+                        if !w.is_undefined() {
+                            let mut desc = data_prop(w);
+                            desc.enumerable = true;
+                            new_props.insert(pk.clone(), desc);
+                        }
+                    }
+                }
+                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(
+                    crate::value::ObjectData {
+                        props: RefCell::new(new_props),
+                        proto: RefCell::new(Some(vm.object_proto.clone())),
+                        extensible: Cell::new(true),
+                        class_name: None,
+                    },
+                ))))
+            }
+        }
+        _ => val.clone(),
+    };
+    // Call the reviver on this level.
+    let result = vm.call_function(
+        reviver,
+        &[key.clone(), walked.clone()],
+        Some(walked.clone()),
+    )?;
+    Ok(result)
 }
 fn parse_json_value(
     vm: &mut Vm,
