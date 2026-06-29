@@ -1122,7 +1122,7 @@ impl Parser {
             }
             TokenKind::BigInt(s) => {
                 self.advance();
-                let n = s.parse::<i128>().unwrap_or(0);
+                let n = num_bigint::BigInt::parse_bytes(s.as_bytes(), 10).unwrap_or_default();
                 Ok(Expr::BigInt(n))
             }
             TokenKind::String(s) => {
