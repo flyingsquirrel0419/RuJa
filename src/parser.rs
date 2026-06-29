@@ -1192,6 +1192,22 @@ impl Parser {
         self.advance(); // {
         let mut props = Vec::new();
         while !self.check(&TokenKind::RBrace) {
+            // Spread element: {...expr}
+            if self.check(&TokenKind::Spread) {
+                self.advance();
+                let e = self.parse_assign()?;
+                props.push(Property {
+                    key: PropertyKey::Spread(Box::new(e)),
+                    value: Expr::Undefined,
+                    computed: false,
+                    method: false,
+                    shorthand: false,
+                });
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                continue;
+            }
             let (key, computed) = match self.peek().clone() {
                 TokenKind::Ident(s) => {
                     self.advance();
@@ -1627,7 +1643,20 @@ impl Parser {
             TokenKind::LBrace => {
                 self.advance(); // {
                 let mut props: Vec<(PropertyKey, Pattern)> = Vec::new();
+                let mut rest: Option<Box<Pattern>> = None;
                 while !self.check(&TokenKind::RBrace) {
+                    if self.check(&TokenKind::Spread) {
+                        self.advance();
+                        let inner = self.parse_destructure_pattern()?;
+                        rest = Some(Box::new(inner));
+                        // rest must be last
+                        if !self.check(&TokenKind::RBrace) {
+                            return Err(error::Error::syntax(
+                                "rest element must be last in object pattern".to_string(),
+                            ));
+                        }
+                        break;
+                    }
                     let key: PropertyKey = match self.peek().clone() {
                         TokenKind::Ident(s) => {
                             self.advance();
@@ -1682,7 +1711,7 @@ impl Parser {
                     }
                 }
                 self.expect(&TokenKind::RBrace, "}")?;
-                Ok(Pattern::Object(props))
+                Ok(Pattern::Object(props, rest))
             }
             TokenKind::Ident(s) => {
                 self.advance();
