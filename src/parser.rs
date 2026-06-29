@@ -7,22 +7,22 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     last_arrow_params: Option<Vec<Arc<str>>>,
-   /// Parameter defaults collected by the most recent `parse_params` / arrow parse.
-   cur_param_defaults: Vec<Option<Expr>>,
-   /// Rest parameter name from the most recent `parse_params` / arrow parse.
-   cur_rest_param: Option<Arc<str>>,
+    /// Parameter defaults collected by the most recent `parse_params` / arrow parse.
+    cur_param_defaults: Vec<Option<Expr>>,
+    /// Rest parameter name from the most recent `parse_params` / arrow parse.
+    cur_rest_param: Option<Arc<str>>,
     /// Destructuring parameters from the most recent `parse_params`: each is
     /// (pattern, temp-name) to be bound from the positional temp arg in the
     /// body prelude.
     cur_param_destructure_decls: Vec<(Pattern, String)>,
-   /// Arrow-specific defaults/rest (carried alongside `last_arrow_params`).
-   arrow_defaults: Vec<Option<Expr>>,
-   arrow_rest: Option<Arc<str>>,
+    /// Arrow-specific defaults/rest (carried alongside `last_arrow_params`).
+    arrow_defaults: Vec<Option<Expr>>,
+    arrow_rest: Option<Arc<str>>,
     /// Arrow destructuring params: each entry is (pattern, temp-name) where the
     /// temp-name is the synthesized positional parameter that receives the
     /// argument; the body is rewritten to bind the pattern from that temp.
     arrow_destructure_decls: Vec<(Pattern, String)>,
-   /// Whether the current parse context is strict (inherited from an
+    /// Whether the current parse context is strict (inherited from an
     /// enclosing strict function/program). Drives directive inheritance.
     is_strict_context: bool,
     /// Source line of the first token of the statement currently being parsed
@@ -46,13 +46,13 @@ impl Parser {
             tokens,
             pos: 0,
             last_arrow_params: None,
-           cur_param_defaults: Vec::new(),
-           cur_rest_param: None,
+            cur_param_defaults: Vec::new(),
+            cur_rest_param: None,
             cur_param_destructure_decls: Vec::new(),
-           arrow_defaults: Vec::new(),
-           arrow_rest: None,
+            arrow_defaults: Vec::new(),
+            arrow_rest: None,
             arrow_destructure_decls: Vec::new(),
-           is_strict_context: false,
+            is_strict_context: false,
             stmt_start_line: 0,
             expr_depth: 0,
             stmt_depth: 0,
@@ -421,8 +421,6 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "}")?;
         Ok(body)
     }
-
-
 
     /// Take the destructuring-parameter declarations collected by the most
     /// recent `parse_params` and turn them into a prelude of `let <pat> =
@@ -1366,23 +1364,11 @@ impl Parser {
                 if !self.eat(&TokenKind::Comma) {
                     break;
                 }
-               continue;
-           }
-           // Async method: `async foo() {}` / `async *foo() {}` / async
-           // generator. Detect `async` followed by a property-name start.
-           let is_async_method = matches!(self.peek(), TokenKind::Ident(s) if s == "async")
-               && matches!(
-                   self.peek_at_tok(1).kind,
-                   TokenKind::Ident(_)
-                       | TokenKind::String(_)
-                       | TokenKind::Number(_)
-                       | TokenKind::LBracket
-                       | TokenKind::Star
-                       | TokenKind::LParen
-               )
-               && !matches!(self.peek_at_tok(1).kind, TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace | TokenKind::Assign);
-            // Also recognise the `async` keyword token as a method prefix.
-            let is_async_method = is_async_method || matches!(self.peek(), TokenKind::Async)
+                continue;
+            }
+            // Async method: `async foo() {}` / `async *foo() {}` / async
+            // generator. Detect `async` followed by a property-name start.
+            let is_async_method = matches!(self.peek(), TokenKind::Ident(s) if s == "async")
                 && matches!(
                     self.peek_at_tok(1).kind,
                     TokenKind::Ident(_)
@@ -1392,71 +1378,90 @@ impl Parser {
                         | TokenKind::Star
                         | TokenKind::LParen
                 )
-                && !matches!(self.peek_at_tok(1).kind, TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace | TokenKind::Assign);
+                && !matches!(
+                    self.peek_at_tok(1).kind,
+                    TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace | TokenKind::Assign
+                );
+            // Also recognise the `async` keyword token as a method prefix.
+            let is_async_method = is_async_method
+                || matches!(self.peek(), TokenKind::Async)
+                    && matches!(
+                        self.peek_at_tok(1).kind,
+                        TokenKind::Ident(_)
+                            | TokenKind::String(_)
+                            | TokenKind::Number(_)
+                            | TokenKind::LBracket
+                            | TokenKind::Star
+                            | TokenKind::LParen
+                    )
+                    && !matches!(
+                        self.peek_at_tok(1).kind,
+                        TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace | TokenKind::Assign
+                    );
             if is_async_method {
                 self.advance(); // consume `async`
             }
-           // Getter/setter: `get prop() {}` / `set prop(v) {}`
-           let (is_getter, is_setter) = match self.peek().clone() {
-               TokenKind::Ident(s)
-                   if (s == "get" || s == "set")
-                       && !matches!(
-                           self.peek_at_tok(1).kind,
-                           TokenKind::Colon
-                               | TokenKind::Comma
-                               | TokenKind::RBrace
-                               | TokenKind::LParen
-                               | TokenKind::Assign
-                       ) =>
-               {
-                   (s == "get", s == "set")
-               }
-               _ => (false, false),
-           };
-           if is_getter || is_setter {
-               self.advance(); // consume get/set
-           }
-           // Generator method: `*foo() {}` / async generator `async *foo()`.
-           let is_generator_method = self.eat(&TokenKind::Star);
-          let (key, computed) = match self.peek().clone() {
-              TokenKind::Ident(s) => {
-                  self.advance();
-                  (PropertyKey::Ident(Arc::from(s.as_str())), false)
-              }
-               other if other.as_keyword_str().is_some() => {
-                   let s = other.as_keyword_str().unwrap();
-                   self.advance();
-                   (PropertyKey::Ident(Arc::from(s)), false)
-               }
-              TokenKind::String(s) => {
-                  self.advance();
-                  (PropertyKey::String(Arc::from(s.as_str())), false)
-              }
-               TokenKind::Number(n) => {
-                   self.advance();
-                   (PropertyKey::Number(n), false)
-               }
-               TokenKind::LBracket => {
-                   self.advance();
-                   let e = self.parse_assign()?;
-                   self.expect(&TokenKind::RBracket, "]")?;
-                   // Computed key: the expression is evaluated at runtime, so even a
-                   // bare identifier `[key]` must become a Computed key (not the
-                   // constant Ident form used by shorthand `{x}`).
-                   let key = match e {
-                       Expr::String(s) => PropertyKey::String(s),
-                       Expr::Number(n) => PropertyKey::Number(n),
-                       other => PropertyKey::Computed(Box::new(other)),
-                   };
-                   (key, true)
-               }
-               other => {
-                   return Err(error::Error::syntax(format!(
-                       "Expected property key, got {:?}",
-                       other
-                   )))
-               }
-           };
+            // Getter/setter: `get prop() {}` / `set prop(v) {}`
+            let (is_getter, is_setter) = match self.peek().clone() {
+                TokenKind::Ident(s)
+                    if (s == "get" || s == "set")
+                        && !matches!(
+                            self.peek_at_tok(1).kind,
+                            TokenKind::Colon
+                                | TokenKind::Comma
+                                | TokenKind::RBrace
+                                | TokenKind::LParen
+                                | TokenKind::Assign
+                        ) =>
+                {
+                    (s == "get", s == "set")
+                }
+                _ => (false, false),
+            };
+            if is_getter || is_setter {
+                self.advance(); // consume get/set
+            }
+            // Generator method: `*foo() {}` / async generator `async *foo()`.
+            let is_generator_method = self.eat(&TokenKind::Star);
+            let (key, computed) = match self.peek().clone() {
+                TokenKind::Ident(s) => {
+                    self.advance();
+                    (PropertyKey::Ident(Arc::from(s.as_str())), false)
+                }
+                other if other.as_keyword_str().is_some() => {
+                    let s = other.as_keyword_str().unwrap();
+                    self.advance();
+                    (PropertyKey::Ident(Arc::from(s)), false)
+                }
+                TokenKind::String(s) => {
+                    self.advance();
+                    (PropertyKey::String(Arc::from(s.as_str())), false)
+                }
+                TokenKind::Number(n) => {
+                    self.advance();
+                    (PropertyKey::Number(n), false)
+                }
+                TokenKind::LBracket => {
+                    self.advance();
+                    let e = self.parse_assign()?;
+                    self.expect(&TokenKind::RBracket, "]")?;
+                    // Computed key: the expression is evaluated at runtime, so even a
+                    // bare identifier `[key]` must become a Computed key (not the
+                    // constant Ident form used by shorthand `{x}`).
+                    let key = match e {
+                        Expr::String(s) => PropertyKey::String(s),
+                        Expr::Number(n) => PropertyKey::Number(n),
+                        other => PropertyKey::Computed(Box::new(other)),
+                    };
+                    (key, true)
+                }
+                other => {
+                    return Err(error::Error::syntax(format!(
+                        "Expected property key, got {:?}",
+                        other
+                    )))
+                }
+            };
             if is_getter || is_setter {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
@@ -1491,38 +1496,38 @@ impl Parser {
                         PropKind::Set
                     },
                 });
-           } else if self.check(&TokenKind::LParen) {
-               // method shorthand or value
-               let params = self.parse_params()?;
-               let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-               let rest_param = self.cur_rest_param.take();
-               let mut body = self.parse_fn_body()?;
-               {
-                   let mut pre = self.take_dstr_prelude();
-                   pre.append(&mut body);
-                   body = pre;
-               }
-               let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
-               props.push(Property {
-                   key,
-                   value: Expr::Function(FunctionExpr {
-                       name: None,
-                       params,
-                       param_defaults,
-                       rest_param,
-                       body,
-                       is_arrow: false,
-                       is_async: is_async_method,
-                       is_generator: is_generator_method,
-                       param_decls: Vec::new(),
-                       is_strict,
-                   }),
-                   computed,
-                   method: true,
-                   shorthand: false,
-                   kind: PropKind::Method,
-               });
-           } else if !self.check(&TokenKind::Colon) && !computed {
+            } else if self.check(&TokenKind::LParen) {
+                // method shorthand or value
+                let params = self.parse_params()?;
+                let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+                let rest_param = self.cur_rest_param.take();
+                let mut body = self.parse_fn_body()?;
+                {
+                    let mut pre = self.take_dstr_prelude();
+                    pre.append(&mut body);
+                    body = pre;
+                }
+                let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+                props.push(Property {
+                    key,
+                    value: Expr::Function(FunctionExpr {
+                        name: None,
+                        params,
+                        param_defaults,
+                        rest_param,
+                        body,
+                        is_arrow: false,
+                        is_async: is_async_method,
+                        is_generator: is_generator_method,
+                        param_decls: Vec::new(),
+                        is_strict,
+                    }),
+                    computed,
+                    method: true,
+                    shorthand: false,
+                    kind: PropKind::Method,
+                });
+            } else if !self.check(&TokenKind::Colon) && !computed {
                 // A generator method without a body is malformed; if `*` was
                 // seen, this is a parse error.
                 if is_generator_method {
@@ -1530,14 +1535,14 @@ impl Parser {
                         "generator method requires a body".to_string(),
                     ));
                 }
-               // Shorthand property: `{x}` is equivalent to `{x: x}`.
-               let value = if let PropertyKey::Ident(s) = &key {
-                   Expr::Ident(s.clone())
-               } else {
-                   return Err(error::Error::syntax(
-                       "Shorthand property requires an identifier key".to_string(),
-                   ));
-               };
+                // Shorthand property: `{x}` is equivalent to `{x: x}`.
+                let value = if let PropertyKey::Ident(s) = &key {
+                    Expr::Ident(s.clone())
+                } else {
+                    return Err(error::Error::syntax(
+                        "Shorthand property requires an identifier key".to_string(),
+                    ));
+                };
                 props.push(Property {
                     key,
                     value,
@@ -1645,28 +1650,28 @@ impl Parser {
 
     /// After consuming `(`, try to parse arrow params followed by `) =>`.
     /// Returns true and sets `last_arrow_params` if it looks like an arrow function.
-   fn try_parse_arrow_params(&mut self) -> error::Result<bool> {
-       let save = self.pos;
-       let mut params = Vec::new();
-       let mut defaults: Vec<Option<Expr>> = Vec::new();
-       let mut rest: Option<Arc<str>> = None;
+    fn try_parse_arrow_params(&mut self) -> error::Result<bool> {
+        let save = self.pos;
+        let mut params = Vec::new();
+        let mut defaults: Vec<Option<Expr>> = Vec::new();
+        let mut rest: Option<Arc<str>> = None;
         let mut dstr_decls: Vec<(Pattern, String)> = Vec::new();
-       // empty params: () =>
-       if self.check(&TokenKind::RParen) {
-           self.advance();
-           if self.check(&TokenKind::Arrow) {
-               self.last_arrow_params = Some(params);
-               self.arrow_defaults = defaults;
-               self.arrow_rest = rest;
+        // empty params: () =>
+        if self.check(&TokenKind::RParen) {
+            self.advance();
+            if self.check(&TokenKind::Arrow) {
+                self.last_arrow_params = Some(params);
+                self.arrow_defaults = defaults;
+                self.arrow_rest = rest;
                 self.arrow_destructure_decls = dstr_decls;
-               return Ok(true);
-           }
-           self.pos = save;
-           return Ok(false);
-       }
-       loop {
-           if self.check(&TokenKind::Spread) {
-               self.advance();
+                return Ok(true);
+            }
+            self.pos = save;
+            return Ok(false);
+        }
+        loop {
+            if self.check(&TokenKind::Spread) {
+                self.advance();
                 // rest may itself be a destructuring pattern: `(...[a, b])`
                 if self.check(&TokenKind::LBracket) || self.check(&TokenKind::LBrace) {
                     let p = self.parse_destructure_pattern()?;
@@ -1675,79 +1680,79 @@ impl Parser {
                     dstr_decls.push((p, tmp));
                     break;
                 }
-               if let TokenKind::Ident(s) = self.advance() {
-                   rest = Some(Arc::from(s.as_str()));
-               } else {
-                   self.pos = save;
-                   return Ok(false);
-               }
-               break;
-           }
-           match self.peek().clone() {
-               TokenKind::Ident(s) => {
-                   self.advance();
-                   params.push(Arc::from(s.as_str()));
-                   let d = if self.eat(&TokenKind::Assign) {
-                       Some(self.parse_assign()?)
-                   } else {
-                       None
-                   };
-                   defaults.push(d);
-               }
-               TokenKind::LBracket | TokenKind::LBrace => {
-                   // Destructuring parameter: `([a, b]) =>` / `({x, y}) =>`.
-                   // Synthesize a positional temp param and remember the
-                   // pattern so the body can bind it: `let <pat> = __argN;`.
-                   // If the pattern fails to parse (e.g. `({a:1})` is an object
-                   // literal, not a binding pattern), rewind and treat this as
-                   // not-an-arrow so the caller parses a parenthesised expr.
-                   let saved = self.pos;
-                   let p = match self.parse_destructure_pattern() {
-                       Ok(p) => p,
-                       Err(_) => {
-                           self.pos = save;
-                           return Ok(false);
-                       }
-                   };
-                   let _ = saved;
-                   let tmp = format!("__arg{}", params.len());
-                   params.push(Arc::from(tmp.as_str()));
-                   defaults.push(None);
-                   // Optional default: `({a} = {}) =>`
-                   if self.eat(&TokenKind::Assign) {
-                       let _def = self.parse_assign()?;
-                   }
-                   dstr_decls.push((p, tmp));
-               }
-               _ => {
-                   self.pos = save;
-                   return Ok(false);
-               }
-           }
-           if self.check(&TokenKind::Comma) {
-               self.advance();
-               continue;
-           }
-           break;
-       }
-       if self.check(&TokenKind::RParen) {
-           self.advance();
-           if self.check(&TokenKind::Arrow) {
-               while defaults.len() < params.len() {
-                   defaults.push(None);
-               }
-               self.last_arrow_params = Some(params);
-               self.arrow_defaults = defaults;
-               self.arrow_rest = rest;
+                if let TokenKind::Ident(s) = self.advance() {
+                    rest = Some(Arc::from(s.as_str()));
+                } else {
+                    self.pos = save;
+                    return Ok(false);
+                }
+                break;
+            }
+            match self.peek().clone() {
+                TokenKind::Ident(s) => {
+                    self.advance();
+                    params.push(Arc::from(s.as_str()));
+                    let d = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    defaults.push(d);
+                }
+                TokenKind::LBracket | TokenKind::LBrace => {
+                    // Destructuring parameter: `([a, b]) =>` / `({x, y}) =>`.
+                    // Synthesize a positional temp param and remember the
+                    // pattern so the body can bind it: `let <pat> = __argN;`.
+                    // If the pattern fails to parse (e.g. `({a:1})` is an object
+                    // literal, not a binding pattern), rewind and treat this as
+                    // not-an-arrow so the caller parses a parenthesised expr.
+                    let saved = self.pos;
+                    let p = match self.parse_destructure_pattern() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            self.pos = save;
+                            return Ok(false);
+                        }
+                    };
+                    let _ = saved;
+                    let tmp = format!("__arg{}", params.len());
+                    params.push(Arc::from(tmp.as_str()));
+                    defaults.push(None);
+                    // Optional default: `({a} = {}) =>`
+                    if self.eat(&TokenKind::Assign) {
+                        let _def = self.parse_assign()?;
+                    }
+                    dstr_decls.push((p, tmp));
+                }
+                _ => {
+                    self.pos = save;
+                    return Ok(false);
+                }
+            }
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        if self.check(&TokenKind::RParen) {
+            self.advance();
+            if self.check(&TokenKind::Arrow) {
+                while defaults.len() < params.len() {
+                    defaults.push(None);
+                }
+                self.last_arrow_params = Some(params);
+                self.arrow_defaults = defaults;
+                self.arrow_rest = rest;
                 self.arrow_destructure_decls = dstr_decls;
-               return Ok(true);
-           }
-           self.pos = save;
-           return Ok(false);
-       }
-       self.pos = save;
-       Ok(false)
-   }
+                return Ok(true);
+            }
+            self.pos = save;
+            return Ok(false);
+        }
+        self.pos = save;
+        Ok(false)
+    }
 
     fn parse_arrow_body(&mut self, params: Vec<Arc<str>>) -> error::Result<Expr> {
         let param_defaults = std::mem::take(&mut self.arrow_defaults);
@@ -2060,22 +2065,22 @@ impl Parser {
                         }
                         break;
                     }
-                   let p = self.parse_destructure_pattern()?;
-                   // default value: `[x = 4]`
-                   let p = if self.eat(&TokenKind::Assign) {
-                       let d = self.parse_assign()?;
-                       Pattern::Assign(Box::new(p), d)
-                   } else {
-                       p
-                   };
-                   elems.push(p);
-                   if !self.eat(&TokenKind::Comma) {
-                       break;
-                   }
-               }
-               self.expect(&TokenKind::RBracket, "]")?;
-               Ok(Pattern::Array(elems))
-           }
+                    let p = self.parse_destructure_pattern()?;
+                    // default value: `[x = 4]`
+                    let p = if self.eat(&TokenKind::Assign) {
+                        let d = self.parse_assign()?;
+                        Pattern::Assign(Box::new(p), d)
+                    } else {
+                        p
+                    };
+                    elems.push(p);
+                    if !self.eat(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&TokenKind::RBracket, "]")?;
+                Ok(Pattern::Array(elems))
+            }
             TokenKind::LBrace => {
                 self.advance(); // {
                 let mut props: Vec<(PropertyKey, Pattern)> = Vec::new();

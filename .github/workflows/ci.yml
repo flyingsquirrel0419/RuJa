@@ -23,31 +23,31 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
- test262:
-   runs-on: ubuntu-latest
-   steps:
-     - uses: actions/checkout@v4
-     - uses: dtolnay/rust-toolchain@stable
-     - name: Build RuJa (release)
-       run: cargo build --release
-     - name: Checkout test262 (sparse)
-       run: |
-         git clone --depth 1 --filter=blob:none --sparse https://github.com/tc39/test262.git ~/test262
-         cd ~/test262
-         git sparse-checkout set harness test/language/expressions/arrow-function test/language/expressions/function test/language/expressions/object test/language/identifiers test/language/keywords test/language/types test/language/comments test/language/white-space test/language/punctuators
-     - name: Run test262 subset
-       run: |
-         TEST262=~/test262 python3 tools/test262_runner.py \
-           language/expressions/arrow-function \
-           language/expressions/function \
-           language/expressions/object \
-           language/identifiers \
-           language/keywords \
-           language/types \
-           language/comments \
-           language/white-space \
-           language/punctuators > test262_result.txt 2>&1
-         cat test262_result.txt
+  test262:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build RuJa (release)
+        run: cargo build --release
+      - name: Checkout test262 (sparse)
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/tc39/test262.git ~/test262
+          cd ~/test262
+          git sparse-checkout set harness test/language/expressions/arrow-function test/language/expressions/function test/language/expressions/object test/language/identifiers test/language/keywords test/language/types test/language/comments test/language/white-space test/language/punctuators
+      - name: Run test262 subset
+        run: |
+          TEST262=~/test262 python3 tools/test262_runner.py \
+            language/expressions/arrow-function \
+            language/expressions/function \
+            language/expressions/object \
+            language/identifiers \
+            language/keywords \
+            language/types \
+            language/comments \
+            language/white-space \
+            language/punctuators > test262_result.txt 2>&1
+          cat test262_result.txt
       - name: Publish pass rate to job summary
         if: always()
         run: |
