@@ -781,9 +781,8 @@ fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
     if let Value::Object(idx) = &obj {
         let sealed = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Object(od) = o {
-                let ext = od.extensible.get();
                 let all_noncfg = od.props.borrow().values().all(|d| !d.configurable);
-                ext && all_noncfg || (!ext && all_noncfg)
+                all_noncfg
             } else {
                 true
             }
