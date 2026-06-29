@@ -3668,17 +3668,43 @@ impl Vm {
 
     /// Build a heap iterator object that yields the values of `iterable`.
     pub fn make_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
-        // First, honor a user-defined `Symbol.iterator` method on objects.
-        // Built-in iterables (Array/String/Map/Set/Generator) define their own
-        // fast paths below, but a plain object with `[Symbol.iterator]` is a
-        // custom iterable: call the method and wrap the returned iterator
-        // object in a lazy IteratorData.
-        if let Value::Object(_) = iterable {
+        // Built-in iterables (Array/String/Map/Set/Generator) have fast paths
+        // below. Only plain objects honor a user-defined `Symbol.iterator`
+        // method, to avoid calling Map/Set's iterator method and getting a
+        // non-iterator array back.
+        // Built-in iterables (String/Map/Set/Generator) always use their fast
+        // paths. Arrays use the fast path UNLESS an own (overriding)
+        // Symbol.iterator was installed on the array or its prototype chain;
+        // in that case honor the custom iterator method. Plain objects honor
+        // a user-defined Symbol.iterator.
+        let (is_map, is_set, is_gen, is_arr) = match iterable {
+            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                (
+                    matches!(o, HeapObj::Map(_)),
+                    matches!(o, HeapObj::Set(_)),
+                    matches!(o, HeapObj::Generator(_) | HeapObj::LazyGenerator(_)),
+                    matches!(o, HeapObj::Array(_)),
+                )
+            }),
+            _ => (false, false, false, false),
+        };
+        let is_builtin_iterable =
+            matches!(iterable, Value::String(_)) || is_map || is_set || is_gen;
+        // For arrays, honor an overriding Symbol.iterator only if it is an own
+        // property of this array (not the inherited default, which RuJa does
+        // not install, so the fast path applies).
+        let arr_has_inherited_iterator = is_arr && {
             let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
-            if self.has_property_key(iterable, &sym_key) {
-                let iter_method = self.get_property_by_key(iterable, &sym_key)?;
-                let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
-                return Ok(self.new_lazy_iterator(iter_obj));
+            self.has_property_key(iterable, &sym_key)
+        };
+        if !is_builtin_iterable || arr_has_inherited_iterator {
+            if let Value::Object(_) = iterable {
+                let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
+                if self.has_property_key(iterable, &sym_key) {
+                    let iter_method = self.get_property_by_key(iterable, &sym_key)?;
+                    let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
+                    return Ok(self.new_lazy_iterator(iter_obj));
+                }
             }
         }
         let items: Vec<Value> = match iterable {
