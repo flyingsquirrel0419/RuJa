@@ -86,7 +86,7 @@ impl PartialEq for PropertyKey {
 impl Eq for PropertyKey {}
 
 use num_bigint::BigInt;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::Zero;
 
 /// A handle into the GC heap.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

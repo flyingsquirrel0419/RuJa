@@ -1819,11 +1819,13 @@ impl Parser {
             private_fields,
         })
     }
+    #[allow(dead_code)]
     fn parse_async_or_expr_stmt(&mut self) -> error::Result<Stmt> {
         let e = self.parse_expr()?;
         self.expect_semi()?;
         Ok(self.stmt(StmtNode::ExprStmt(e)))
     }
+    #[allow(dead_code)]
     fn parse_pattern(&mut self) -> error::Result<Pattern> {
         if let TokenKind::Ident(s) = self.peek().clone() {
             self.advance();

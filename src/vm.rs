@@ -6,13 +6,14 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use indexmap::IndexMap;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{Signed, Zero};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
+#[allow(dead_code)]
 pub struct Vm {
     pub(crate) heap: Heap,
     pub(crate) global: GcIdx,
@@ -131,6 +132,7 @@ pub enum ResumeKind {
 }
 
 /// Outcome of executing a single bytecode instruction.
+#[allow(dead_code)]
 enum Flow {
     /// Keep dispatching the next instruction.
     Continue,
@@ -2606,6 +2608,7 @@ impl Vm {
         }
     }
 
+    #[allow(dead_code)]
     fn num_bin<F: Fn(f64, f64) -> f64>(&mut self, f: F) -> error::Result<()> {
         let (a, b) = self.pop2();
         let av = self.to_number(&a)?;

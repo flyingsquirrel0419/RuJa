@@ -1,5 +1,4 @@
 #![allow(unreachable_patterns)]
-#![allow(dead_code)]
 pub mod ast;
 pub mod bytecode;
 pub mod compiler;

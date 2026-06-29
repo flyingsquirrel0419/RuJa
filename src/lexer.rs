@@ -777,6 +777,7 @@ impl<'a> Lexer<'a> {
         tok
     }
 
+    #[allow(dead_code)]
     fn read_template_continue(
         &mut self,
         line: usize,
