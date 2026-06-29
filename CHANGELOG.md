@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- **break/continue in try/finally**: `break`/`continue` inside a `try` block
+  now run the `finally` body before completing the transfer (single-level).
+- **Private class fields** (`#field = init`): isolated per-instance storage
+  via `GetPrivate`/`SetPrivate` opcodes; not enumerable or in `Object.keys`.
+- **Class static block parsing**: `static { ... }` is parsed (execution is
+  a known limitation).
 - **Sloppy-mode `this`**: plain function calls now bind `this` to `globalThis`
   in non-strict mode (strict mode stays `undefined`).
 - **`new C(...spread)`**: constructor calls with spread arguments via a new

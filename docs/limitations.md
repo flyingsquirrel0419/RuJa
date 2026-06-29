@@ -13,10 +13,11 @@
 - GC runs at safe points only (after a run settles, and throttled at frame
   boundaries), so very long-running tight loops can accumulate memory before a
   collection; there is no incremental/generational collector
-- `try/finally` partially suspends non-local transfers: `return` and `throw`
-  in `try`/`catch` are correctly suspended across `finally` (and a `return`
-  in `finally` overrides them), but `break`/`continue` inside `try`/`catch`
-  do not yet route through `finally`
+- `try/finally` non-local transfers: `return`/`throw`/`break`/`continue`
+  in `try`/`catch` divert through a single `finally`; nested `try/finally`
+  only runs the innermost finally for break/continue (outer finally is skipped)
+- `static { }` class initialization blocks are parsed but not executed
+  (the `this` binding in the class-definition context is not yet wired)
 - Wrapper objects (`new String(5)`) do not store the inner primitive; the
   prototype is correct and `typeof` is `"object"`, but `.valueOf()` is not
   implemented on wrapper objects

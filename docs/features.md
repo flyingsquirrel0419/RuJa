@@ -35,6 +35,9 @@
 - Getters/setters in object literals (`get x() {}` / `set x(v) {}`) and
   class methods (static and instance); inherited accessors bind `this` to
   the receiver, not the prototype that defines them
+- Private class fields (`#field = init`): isolated storage per instance,
+  not enumerable or accessible via `[]`/`for...in`/`Object.keys`
+- `break`/`continue` inside `try` diverts through `finally` (single-level)
 
 ## Async & generators
 
