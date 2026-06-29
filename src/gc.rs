@@ -3,114 +3,86 @@
 //! Heap objects are `HeapObj` (an enum) stored in cells. A `GcIdx` handle
 //! (index into the cell array) is how the VM references them. The collector
 //! traces from roots and sweeps unreachable cells.
+//!
+//! Threading model: cells, free_list, and counters are behind `Mutex`/`Cell`.
+//! Tracing is **worklist-based** (not recursive): we pop an index, lock the
+//! cells mutex only long enough to extract the object's child indices into the
+//! worklist, then release it before tracing the next item. This avoids
+//! re-locking the cells mutex while holding it (which would deadlock under
+//! `Mutex`), and keeps each lock scope tiny.
 
 use crate::value::HeapObj;
-use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 pub struct GcCell {
-    pub obj: RefCell<Option<HeapObj>>,
-    pub marked: Cell<bool>,
+    pub obj: Mutex<Option<HeapObj>>,
+    pub marked: AtomicBool,
 }
 
 pub struct Heap {
-    pub cells: RefCell<Vec<GcCell>>,
-    free_list: RefCell<Vec<usize>>,
-    alloc_since_gc: Cell<usize>,
-    gc_threshold: Cell<usize>,
+    pub cells: Mutex<Vec<GcCell>>,
+    free_list: Mutex<Vec<usize>>,
+    alloc_since_gc: AtomicUsize,
+    gc_threshold: AtomicUsize,
 }
 
-/// Marker passed during the trace phase.
-pub struct Marker<'a> {
-    heap: &'a Heap,
-    marked: &'a RefCell<Vec<bool>>,
-}
-
-impl<'a> Marker<'a> {
-    pub fn mark_cell(&mut self, idx: usize) {
-        let already = {
-            let m = self.marked.borrow();
-            idx >= m.len() || m[idx]
-        };
-        if already {
-            return;
-        }
-        self.marked.borrow_mut()[idx] = true;
-        // trace in place without cloning
-        let cells = self.heap.cells.borrow();
-        if let Some(cell) = cells.get(idx) {
-            let obj_ref = cell.obj.borrow();
-            if let Some(obj) = obj_ref.as_ref() {
-                trace_obj(obj, self);
-            }
-        }
-    }
-
-    pub fn mark_value(&mut self, v: &crate::value::Value) {
+/// Push reachable child indices of `obj` onto `worklist`. Called while NOT
+/// holding the cells mutex, so it may lock any object field freely. Ephemeron
+/// (WeakMap) values are pushed only when their key is already marked; the
+/// caller iterates to a fixed point so transitively-reachable values are
+/// eventually marked.
+pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
+    let push_value = |v: &crate::value::Value, w: &mut Vec<usize>| {
         if let crate::value::Value::Object(idx) = v {
-            self.mark_cell(idx.0);
+            w.push(idx.0);
         }
-    }
+    };
 
-    pub fn mark_idx(&mut self, idx: crate::value::GcIdx) {
-        self.mark_cell(idx.0);
-    }
-
-    pub fn mark_values(&mut self, vals: &[crate::value::Value]) {
-        for v in vals {
-            self.mark_value(v);
-        }
-    }
-}
-
-/// Trace a HeapObj's children. Free function to keep value.rs clean.
-pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
     if let HeapObj::Iterator(it) = obj {
-        for v in it.items.borrow().iter() {
-            marker.mark_value(v);
+        for v in it.items.lock().unwrap().iter() {
+            push_value(v, worklist);
         }
-        if let Some(lazy) = it.lazy_iter.borrow().as_ref() {
-            marker.mark_value(lazy);
+        if let Some(lazy) = it.lazy_iter.lock().unwrap().as_ref() {
+            push_value(lazy, worklist);
         }
         return;
     }
-    // Environment records and Iterators do not expose props()/proto()
-    // (those panic by design); trace them via their dedicated fields below
-    // before the generic props/proto walk below.
     if let HeapObj::Environment(e) = obj {
-        for (_, b) in e.vars.borrow().iter() {
-            marker.mark_value(&b.value.borrow());
+        for (_, b) in e.vars.lock().unwrap().iter() {
+            push_value(&b.value.lock().unwrap(), worklist);
         }
-        if let Some(p) = *e.parent.borrow() {
-            marker.mark_idx(p);
+        if let Some(p) = *e.parent.lock().unwrap() {
+            worklist.push(p.0);
         }
         return;
     }
     let props = obj.props();
-    for (_, desc) in props.borrow().iter() {
+    for (_, desc) in props.lock().unwrap().iter() {
         if !desc.is_accessor {
-            marker.mark_value(&desc.value);
+            push_value(&desc.value, worklist);
         } else {
             if let Some(g) = &desc.get {
-                marker.mark_value(g);
+                push_value(g, worklist);
             }
             if let Some(s) = &desc.set {
-                marker.mark_value(s);
+                push_value(s, worklist);
             }
         }
     }
-    if let Some(proto) = obj.proto().borrow().as_ref() {
-        marker.mark_value(proto);
+    if let Some(proto) = obj.proto().lock().unwrap().as_ref() {
+        push_value(proto, worklist);
     }
     match obj {
         HeapObj::Array(a) => {
-            for v in a.items.borrow().iter() {
-                marker.mark_value(v);
+            for v in a.items.lock().unwrap().iter() {
+                push_value(v, worklist);
             }
         }
         HeapObj::Function(f) => {
-            marker.mark_idx(f.closure);
-            if let Some(p) = f.prototype.borrow().as_ref() {
-                marker.mark_value(p);
+            worklist.push(f.closure.0);
+            if let Some(p) = f.prototype.lock().unwrap().as_ref() {
+                push_value(p, worklist);
             }
             if let crate::value::FunctionKind::Bound {
                 target,
@@ -118,83 +90,88 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
                 bound_args,
             } = &f.kind
             {
-                marker.mark_idx(*target);
-                marker.mark_value(this_val);
+                worklist.push(target.0);
+                push_value(this_val, worklist);
                 for a in bound_args {
-                    marker.mark_value(a);
+                    push_value(a, worklist);
                 }
             }
         }
         HeapObj::Environment(e) => {
-            for (_, b) in e.vars.borrow().iter() {
-                marker.mark_value(&b.value.borrow());
+            for (_, b) in e.vars.lock().unwrap().iter() {
+                push_value(&b.value.lock().unwrap(), worklist);
             }
-            if let Some(p) = *e.parent.borrow() {
-                marker.mark_idx(p);
+            if let Some(p) = *e.parent.lock().unwrap() {
+                worklist.push(p.0);
             }
         }
         HeapObj::Map(m) => {
-            for (k, v) in m.entries.borrow().iter() {
-                marker.mark_value(k);
-                marker.mark_value(v);
+            for (k, v) in m.entries.lock().unwrap().iter() {
+                push_value(k, worklist);
+                push_value(v, worklist);
             }
         }
         HeapObj::WeakMap(wm) => {
-            // Ephemeron semantics: a value is reachable only if its key is.
-            // Mark values conditionally — only when the key is already marked.
-            // Unmarked keys keep their values unmarked here; a second pass
-            // after the main trace marks values whose keys became reachable.
-            for (key_idx, v) in wm.entries.borrow().iter() {
-                let marked = {
-                    let m = marker.marked.borrow();
-                    *key_idx < m.len() && m[*key_idx]
-                };
-                if marked {
-                    marker.mark_value(v);
+            for (key_idx, v) in wm.entries.lock().unwrap().iter() {
+                if *key_idx < marked.len() && marked[*key_idx] {
+                    push_value(v, worklist);
                 }
             }
         }
-        HeapObj::WeakSet(_) => {
-            // Members are held weakly: do not mark them here.
-        }
+        HeapObj::WeakSet(_) => {}
         HeapObj::Set(s) => {
-            for v in s.items.borrow().iter() {
-                marker.mark_value(v);
+            for v in s.items.lock().unwrap().iter() {
+                push_value(v, worklist);
             }
         }
         HeapObj::Promise(p) => {
-            marker.mark_value(&p.result.borrow());
-            for h in p.handlers.borrow().iter() {
-                marker.mark_value(&h.on_fulfilled);
-                marker.mark_value(&h.on_rejected);
+            push_value(&p.result.lock().unwrap(), worklist);
+            for h in p.handlers.lock().unwrap().iter() {
+                push_value(&h.on_fulfilled, worklist);
+                push_value(&h.on_rejected, worklist);
             }
         }
         HeapObj::Generator(g) => {
-            marker.mark_idx(g.closure);
-            for v in g.state.borrow().iter() {
-                marker.mark_value(v);
+            worklist.push(g.closure.0);
+            for v in g.state.lock().unwrap().iter() {
+                push_value(v, worklist);
             }
         }
         HeapObj::LazyGenerator(g) => {
-            marker.mark_idx(g.closure);
-            marker.mark_value(&g.this_val.borrow());
-            for v in g.args.borrow().iter() {
-                marker.mark_value(v);
+            worklist.push(g.closure.0);
+            for v in g.stack.lock().unwrap().iter() {
+                push_value(v, worklist);
             }
-            for v in g.stack.borrow().iter() {
-                marker.mark_value(v);
+            for v in g.locals.lock().unwrap().iter() {
+                push_value(v, worklist);
             }
-            for v in g.locals.borrow().iter() {
-                marker.mark_value(v);
+            push_value(&g.resume_value.lock().unwrap(), worklist);
+            for v in g.args.lock().unwrap().iter() {
+                push_value(v, worklist);
             }
-            marker.mark_value(&g.resume_value.borrow());
+            push_value(&g.this_val.lock().unwrap(), worklist);
         }
         HeapObj::Iterator(it) => {
-            for v in it.items.borrow().iter() {
-                marker.mark_value(v);
+            for v in it.items.lock().unwrap().iter() {
+                push_value(v, worklist);
+            }
+            if let Some(lazy) = it.lazy_iter.lock().unwrap().as_ref() {
+                push_value(lazy, worklist);
             }
         }
-        HeapObj::Object(_) => {}
+        _ => {}
+    }
+}
+
+impl Heap {
+    /// Create an empty heap with the default GC threshold.
+    pub fn new() -> Self {
+        Heap {
+            cells: Mutex::new(Vec::new()),
+            free_list: Mutex::new(Vec::new()),
+            alloc_since_gc: AtomicUsize::new(0),
+            gc_threshold: AtomicUsize::new(1024),
+        }
     }
 }
 
@@ -205,98 +182,135 @@ impl Default for Heap {
 }
 
 impl Heap {
-    pub fn new() -> Self {
-        Heap {
-            cells: RefCell::new(Vec::new()),
-            free_list: RefCell::new(Vec::new()),
-            alloc_since_gc: Cell::new(0),
-            gc_threshold: Cell::new(1024),
-        }
-    }
-
     pub fn allocate(&self, obj: HeapObj) -> usize {
         let idx = {
-            let mut free = self.free_list.borrow_mut();
+            let mut free = self.free_list.lock().unwrap();
             if let Some(idx) = free.pop() {
-                let cells = self.cells.borrow_mut();
-                *cells[idx].obj.borrow_mut() = Some(obj);
-                cells[idx].marked.set(false);
+                let cells = self.cells.lock().unwrap();
+                *cells[idx].obj.lock().unwrap() = Some(obj);
+                cells[idx].marked.store(false, Ordering::Relaxed);
                 idx
             } else {
-                let mut cells = self.cells.borrow_mut();
+                let mut cells = self.cells.lock().unwrap();
                 let idx = cells.len();
                 cells.push(GcCell {
-                    obj: RefCell::new(Some(obj)),
-                    marked: Cell::new(false),
+                    obj: Mutex::new(Some(obj)),
+                    marked: AtomicBool::new(false),
                 });
                 idx
             }
         };
-        self.alloc_since_gc.set(self.alloc_since_gc.get() + 1);
+        self.alloc_since_gc.store(
+            self.alloc_since_gc.load(Ordering::Relaxed) + 1,
+            Ordering::Relaxed,
+        );
         idx
     }
 
     pub fn collect(&self, roots: &[usize]) {
-        let cells_len = self.cells.borrow().len();
-        let marked = RefCell::new(vec![false; cells_len]);
-        {
-            let mut marker = Marker {
-                heap: self,
-                marked: &marked,
-            };
-            for &root in roots {
-                marker.mark_cell(root);
+        let cells_len = self.cells.lock().unwrap().len();
+        let mut marked = vec![false; cells_len];
+        let mut worklist: Vec<usize> = roots.to_vec();
+        // Iterate the worklist to a fixed point. Ephemeron (WeakMap) values
+        // are only marked once their key is marked, so a value reachable only
+        // through a WeakMap may need several passes.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            // Drain the worklist, marking newly-reachable indices and
+            // collecting their children. The cells mutex is held only for the
+            // brief window of extracting an object's children.
+            while let Some(idx) = worklist.pop() {
+                if idx >= cells_len || marked[idx] {
+                    continue;
+                }
+                marked[idx] = true;
+                changed = true;
+                // Extract this object's children without holding the cells
+                // lock during the recursive trace.
+                let children: Vec<usize> = {
+                    let cells = self.cells.lock().unwrap();
+                    if let Some(cell) = cells.get(idx) {
+                        let obj_ref = cell.obj.lock().unwrap();
+                        if let Some(obj) = obj_ref.as_ref() {
+                            let mut w = Vec::new();
+                            trace_obj(obj, &marked, &mut w);
+                            w
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                };
+                worklist.extend(children);
             }
         }
-        let mut free = self.free_list.borrow_mut();
-        let m = marked.borrow();
-        let mut cells = self.cells.borrow_mut();
+        // Sweep: free unmarked cells.
+        let mut free = self.free_list.lock().unwrap();
+        let mut cells = self.cells.lock().unwrap();
         for (idx, cell) in cells.iter_mut().enumerate() {
-            if !m[idx] && cell.obj.borrow().is_some() {
-                *cell.obj.borrow_mut() = None;
+            if !marked[idx] && cell.obj.lock().unwrap().is_some() {
+                *cell.obj.lock().unwrap() = None;
                 free.push(idx);
             }
         }
-        // Sweep dead entries from WeakMap/WeakSet: a key that was not marked
-        // (i.e. collected above) must have its entry removed.
+        // Sweep dead entries from WeakMap/WeakSet.
         for cell in cells.iter() {
-            let obj_ref = cell.obj.borrow();
+            let obj_ref = cell.obj.lock().unwrap();
             if let Some(obj) = obj_ref.as_ref() {
                 match obj {
                     HeapObj::WeakMap(wm) => {
                         wm.entries
-                            .borrow_mut()
-                            .retain(|(key_idx, _)| *key_idx < m.len() && m[*key_idx]);
+                            .lock()
+                            .unwrap()
+                            .retain(|(k, _)| *k < marked.len() && marked[*k]);
                     }
                     HeapObj::WeakSet(ws) => {
                         ws.items
-                            .borrow_mut()
-                            .retain(|key_idx| *key_idx < m.len() && m[*key_idx]);
+                            .lock()
+                            .unwrap()
+                            .retain(|k| *k < marked.len() && marked[*k]);
                     }
                     _ => {}
                 }
             }
         }
-        self.alloc_since_gc.set(0);
+        self.alloc_since_gc.store(0, Ordering::Relaxed);
         let live = cells.len() - free.len();
-        self.gc_threshold.set((live * 2).max(1024));
+        self.gc_threshold
+            .store((live * 2).max(1024), Ordering::Relaxed);
     }
 
     pub fn maybe_collect(&self, roots: &[usize]) {
-        if self.alloc_since_gc.get() >= self.gc_threshold.get() {
+        if self.alloc_since_gc.load(Ordering::Relaxed) >= self.gc_threshold.load(Ordering::Relaxed)
+        {
             self.collect(roots);
         }
     }
 
     pub fn live_count(&self) -> usize {
-        self.cells.borrow().len() - self.free_list.borrow().len()
+        let cells = self.cells.lock().unwrap();
+        cells.len() - self.free_list.lock().unwrap().len()
     }
 
     pub fn with_obj<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {
-        let cells = self.cells.borrow();
-        let cell = &cells[idx];
-        let obj_ref = cell.obj.borrow();
-        let obj = obj_ref.as_ref().expect("use after free");
-        f(obj)
+        // Take the object out of the cell so the cells mutex can be released
+        // before running `f`. This prevents re-entrant locking of the cells
+        // mutex (e.g. when `f` allocates or triggers a GC) from deadlocking.
+        // The object is put back after `f` returns.
+        let obj = {
+            let cells = self.cells.lock().unwrap();
+            let cell = &cells[idx];
+            let mut slot = cell.obj.lock().unwrap();
+            slot.take().expect("use after free")
+        };
+        let result = f(&obj);
+        {
+            let cells = self.cells.lock().unwrap();
+            let cell = &cells[idx];
+            *cell.obj.lock().unwrap() = Some(obj);
+        }
+        result
     }
 }
