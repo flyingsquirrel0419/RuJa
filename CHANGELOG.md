@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Added
+- **Object spread** `{...a, y:2}` copies enumerable own properties via a new
+  `ObjSpread` opcode.
+- **Object rest destructuring** `{a, ...r} = obj` collects remaining own
+  enumerable properties via a new `ObjRest(n)` opcode; `Pattern::Object` now
+  carries an optional rest field.
+- **Getters/setters** in object literals (`get x() {}` / `set x(v) {}`) and
+  class methods (static + instance) via a new `DefineAccessor` opcode.
+  Inherited accessors bind `this` to the receiver (`get_property_rx`).
+- **`new.target`** meta-property via a new `NewTarget` opcode; `Construct`
+  sets `pending_new_target` on the pushed frame.
+- **`for(;;)`** with any combination of empty init/condition/update.
+- **Numeric separators** (`1_000`, `0xff_ff`, `0b1010_1010`, `3.14_15`).
+- **`globalThis`** routes property get/set to the global environment record;
+  rooted in `collect_roots` to survive GC.
+- **`__proto__`** accessor: get returns `[[Prototype]]`, set updates it.
+- **Object statics**: `getPrototypeOf`/`setPrototypeOf`,
+  `preventExtensions`/`isExtensible`, `seal`/`isSealed`/`isFrozen`,
+  `getOwnPropertyDescriptors`, `defineProperties`.
+- **Array**: `reduceRight`, `toReversed`, `toSorted`, `toSpliced`, `with`.
+- **String**: `codePointAt`, `concat`, `search`, `String.raw`,
+  `String.fromCodePoint`.
+- **Number**: `toPrecision`, `toExponential`.
+- **Math**: `imul`.
+- **`console.log`** now formats arrays as `[ 1, 2, 3 ]` and objects as
+  `{ a: 1 }` (Node.js inspect-style) instead of bare `toString`.
+
+### Fixed
+- **Labeled block break**: `lab:{r=1; break lab; r=2;}` previously returned
+  `2` because `StmtNode::Block` never received a labeled frame. Block now
+  takes the non-loop labeled-statement branch that pushes a break-only frame.
+- **`to_number` on objects** now runs `ToPrimitive` (valueOf then toString)
+  instead of returning `NaN`, so `+{valueOf(){return 7}}` yields `7` and
+  `1 + [1]` yields `11`.
+
+
 ## [0.2.1-alpha] - 2026-06-28
 
 ### Fixed

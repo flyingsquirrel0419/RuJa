@@ -13,9 +13,10 @@ A JavaScript engine written in Rust — **bytecode VM** + **mark-and-sweep GC**,
 with **zero external dependencies**.
 
 Runs a pragmatic ES5.1 subset plus selected ES2015+ features: classes,
-async/await, generators, Promises, destructuring, Symbols, Map/Set, regex,
-and more. JavaScript is compiled to a stack-based bytecode and executed on a
-custom VM with automatic memory management.
+async/await, generators, Promises, destructuring (incl. object rest/spread),
+getters/setters, Symbols, Map/Set, regex, and more. JavaScript is compiled to
+a stack-based bytecode and executed on a custom VM with automatic memory
+management.
 
 ```sh
 $ cargo run --release -- examples/fib.js
