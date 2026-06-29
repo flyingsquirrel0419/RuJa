@@ -158,6 +158,9 @@ pub struct FunctionExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Ident(Arc<str>),
+    /// An elision hole in an array pattern: `[a, , b]` consumes the element
+    /// at that index but binds nothing.
+    Hole,
     Array(Vec<Pattern>),
     Object(Vec<(PropertyKey, Pattern)>, Option<Box<Pattern>>),
     Assign(Box<Pattern>, Expr),

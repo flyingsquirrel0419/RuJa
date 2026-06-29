@@ -2072,8 +2072,9 @@ impl Parser {
                 while !self.check(&TokenKind::RBracket) {
                     if self.check(&TokenKind::Comma) {
                         self.advance();
-                        // hole: represent as Ident("_hole") is messy; use a default-only pattern skip.
-                        // For simplicity, push a hole as a Rest-less placeholder pattern.
+                        // Elision hole: `[a, , b]` consumes an element but
+                        // binds nothing, so the next element keeps its index.
+                        elems.push(Pattern::Hole);
                         continue;
                     }
                     if self.check(&TokenKind::Spread) {
