@@ -1386,7 +1386,18 @@ impl Parser {
 
     fn parse_new(&mut self) -> error::Result<Expr> {
         self.advance(); // new
-                        // parse the constructor (primary + member access, but NOT call parens)
+                        // new.target
+        if self.check(&TokenKind::Dot) {
+            // peek at the property name
+            if let TokenKind::Ident(s) = self.peek_at_tok(1).kind.clone() {
+                if s == "target" {
+                    self.advance(); // .
+                    self.advance(); // target
+                    return Ok(Expr::NewTarget);
+                }
+            }
+        }
+        // parse the constructor (primary + member access, but NOT call parens)
         let mut callee = self.parse_primary()?;
         // allow member access on the constructor: new Foo.Bar()
         while self.check(&TokenKind::Dot) {

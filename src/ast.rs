@@ -54,6 +54,7 @@ pub enum Expr {
         callee: Box<Expr>,
         args: Vec<Expr>,
     },
+    NewTarget,
     Member {
         object: Box<Expr>,
         property: Box<Expr>,

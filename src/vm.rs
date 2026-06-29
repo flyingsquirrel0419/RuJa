@@ -16,6 +16,8 @@ pub struct Vm {
     pub heap: Heap,
     pub global: GcIdx,
     pub global_this: Value,
+    /// `new.target` to set on the next pushed frame (used by `construct`).
+    pub pending_new_target: Option<Value>,
     pub stack: Vec<Value>,
     pub frames: Vec<CallFrame>,
     pub object_proto: Value,
@@ -61,6 +63,9 @@ pub struct CallFrame {
     pub env: GcIdx,
     pub catch_stack: Vec<usize>,
     pub this_val: Value,
+    /// `new.target` for this frame: the constructor function when invoked via
+    /// `new`, otherwise `undefined`.
+    pub new_target: Value,
     /// Per-frame generator run-state. Non-zero only on a generator's own frame,
     /// so a generator body that calls `next()` on *another* generator is fully
     /// isolated (each has its own frame with its own gen-state).
@@ -94,6 +99,7 @@ impl CallFrame {
             ip,
             locals,
             env,
+            new_target: Value::Undefined,
             catch_stack: Vec::new(),
             this_val,
             gen_mode: Cell::new(false),
@@ -157,6 +163,7 @@ impl Vm {
             heap,
             global,
             global_this: Value::Undefined,
+            pending_new_target: None,
             stack: Vec::new(),
             frames: Vec::new(),
             object_proto: Value::Undefined,
@@ -374,6 +381,12 @@ impl Vm {
         }
         self.frames
             .push(CallFrame::new(fdef.chunk.clone(), 0, locals, env, this_val));
+        // Apply `new.target` if this call was a Construct.
+        if let Some(nt) = self.pending_new_target.take() {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.new_target = nt;
+            }
+        }
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
         let result = self.interpret_to_depth(target_depth);
@@ -1761,6 +1774,14 @@ impl Vm {
                         });
                     }
                     self.stack.push(obj);
+                }
+                Op::NewTarget => {
+                    let nt = self
+                        .frames
+                        .last()
+                        .map(|f| f.new_target.clone())
+                        .unwrap_or(Value::Undefined);
+                    self.stack.push(nt);
                 }
                 Op::GetProp => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
@@ -3230,6 +3251,9 @@ impl Vm {
         if let Value::Object(idx) = &self.global_this {
             roots.push(idx.0);
         }
+        if let Some(Value::Object(idx)) = &self.pending_new_target {
+            roots.push(idx.0);
+        }
         for v in &self.stack {
             if let Value::Object(idx) = v {
                 roots.push(idx.0);
@@ -3862,6 +3886,7 @@ impl Vm {
             class_name: None,
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)));
+        self.pending_new_target = Some(constructor.clone());
         let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
         if matches!(result, Value::Object(_)) {
             Ok(result)
