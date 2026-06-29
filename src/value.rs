@@ -85,6 +85,9 @@ impl PartialEq for PropertyKey {
 
 impl Eq for PropertyKey {}
 
+use num_bigint::BigInt;
+use num_traits::{Signed, ToPrimitive, Zero};
+
 /// A handle into the GC heap.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GcIdx(pub usize);
@@ -96,7 +99,7 @@ pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
-    BigInt(i128),
+    BigInt(BigInt),
     String(Rc<str>),
     Object(GcIdx),
     Symbol(u32),
@@ -137,7 +140,7 @@ impl Value {
             Value::Undefined | Value::Null => false,
             Value::Bool(b) => *b,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
-            Value::BigInt(n) => *n != 0,
+            Value::BigInt(n) => !n.is_zero(),
             Value::String(s) => !s.is_empty(),
             Value::Object(_) | Value::Symbol(_) => true,
         }
@@ -209,6 +212,8 @@ pub enum HeapObj {
     Environment(EnvironmentData),
     Map(MapData),
     Set(SetData),
+    WeakMap(WeakMapData),
+    WeakSet(WeakSetData),
     Promise(PromiseData),
     Generator(GeneratorData),
     Iterator(IteratorData),
@@ -289,6 +294,26 @@ pub struct MapData {
 
 pub struct SetData {
     pub items: RefCell<Vec<Value>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: RefCell<Option<Value>>,
+}
+
+/// A WeakMap holds (object-key -> value) pairs where the key is held
+/// *weakly*: if the key is unreachable from anywhere except this WeakMap,
+/// the entry is dropped during GC. Values are held strongly (per spec the
+/// value is only reachable while the key is). Keys must be objects.
+pub struct WeakMapData {
+    /// (key heap idx, value) pairs. The key idx is not marked as a GC root,
+    /// so an unreachable key causes the entry to be swept.
+    pub entries: RefCell<Vec<(usize, Value)>>,
+    pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: RefCell<Option<Value>>,
+}
+
+/// A WeakSet holds object members weakly: an unreachable member is dropped
+/// during GC. Members must be objects.
+pub struct WeakSetData {
+    pub items: RefCell<Vec<usize>>,
     pub props: RefCell<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: RefCell<Option<Value>>,
 }
@@ -424,6 +449,8 @@ impl HeapObj {
             HeapObj::Function(f) => &f.props,
             HeapObj::Map(m) => &m.props,
             HeapObj::Set(s) => &s.props,
+            HeapObj::WeakMap(w) => &w.props,
+            HeapObj::WeakSet(ws) => &ws.props,
             HeapObj::Promise(p) => &p.props,
             HeapObj::Generator(g) => &g.props,
             HeapObj::LazyGenerator(g) => &g.props,
@@ -440,6 +467,8 @@ impl HeapObj {
             HeapObj::Function(f) => &f.proto,
             HeapObj::Map(m) => &m.proto,
             HeapObj::Set(s) => &s.proto,
+            HeapObj::WeakMap(w) => &w.proto,
+            HeapObj::WeakSet(ws) => &ws.proto,
             HeapObj::Promise(p) => &p.proto,
             HeapObj::Generator(g) => &g.proto,
             HeapObj::LazyGenerator(g) => &g.proto,
@@ -460,6 +489,8 @@ impl HeapObj {
             HeapObj::Function(_) => "Function",
             HeapObj::Map(_) => "Map",
             HeapObj::Set(_) => "Set",
+            HeapObj::WeakMap(_) => "WeakMap",
+            HeapObj::WeakSet(_) => "WeakSet",
             HeapObj::Promise(_) => "Promise",
             HeapObj::Generator(_) => "Generator",
             HeapObj::LazyGenerator(_) => "Generator",

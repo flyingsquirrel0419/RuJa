@@ -1,3 +1,4 @@
+use num_bigint::BigInt;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,7 +30,7 @@ pub struct ClassMethod {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
-    BigInt(i128),
+    BigInt(BigInt),
     String(Rc<str>),
     TemplateStr(Rc<str>),
     /// Tagged template: `tag`...`` — calls tag(strings, raw, ...exprs).

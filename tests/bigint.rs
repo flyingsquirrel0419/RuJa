@@ -12,25 +12,37 @@ fn bigint_literal_typeof() {
 
 #[test]
 fn bigint_add() {
-    assert_eq!(run("123n + 456n;"), Value::BigInt(579));
+    assert_eq!(
+        run("123n + 456n;"),
+        Value::BigInt(num_bigint::BigInt::from(579))
+    );
 }
 
 #[test]
 fn bigint_sub_mul_div_mod() {
-    assert_eq!(run("10n - 3n;"), Value::BigInt(7));
-    assert_eq!(run("6n * 7n;"), Value::BigInt(42));
-    assert_eq!(run("100n / 7n;"), Value::BigInt(14));
-    assert_eq!(run("100n % 7n;"), Value::BigInt(2));
+    assert_eq!(run("10n - 3n;"), Value::BigInt(num_bigint::BigInt::from(7)));
+    assert_eq!(run("6n * 7n;"), Value::BigInt(num_bigint::BigInt::from(42)));
+    assert_eq!(
+        run("100n / 7n;"),
+        Value::BigInt(num_bigint::BigInt::from(14))
+    );
+    assert_eq!(
+        run("100n % 7n;"),
+        Value::BigInt(num_bigint::BigInt::from(2))
+    );
 }
 
 #[test]
 fn bigint_pow() {
-    assert_eq!(run("2n ** 10n;"), Value::BigInt(1024));
+    assert_eq!(
+        run("2n ** 10n;"),
+        Value::BigInt(num_bigint::BigInt::from(1024))
+    );
 }
 
 #[test]
 fn bigint_neg() {
-    assert_eq!(run("-5n;"), Value::BigInt(-5));
+    assert_eq!(run("-5n;"), Value::BigInt(num_bigint::BigInt::from(-5)));
 }
 
 #[test]
@@ -56,9 +68,18 @@ fn bigint_compare() {
 
 #[test]
 fn bigint_constructor() {
-    assert_eq!(run("BigInt(123);"), Value::BigInt(123));
-    assert_eq!(run("BigInt('456');"), Value::BigInt(456));
-    assert_eq!(run("BigInt(true);"), Value::BigInt(1));
+    assert_eq!(
+        run("BigInt(123);"),
+        Value::BigInt(num_bigint::BigInt::from(123))
+    );
+    assert_eq!(
+        run("BigInt('456');"),
+        Value::BigInt(num_bigint::BigInt::from(456))
+    );
+    assert_eq!(
+        run("BigInt(true);"),
+        Value::BigInt(num_bigint::BigInt::from(1))
+    );
 }
 
 #[test]
@@ -88,7 +109,7 @@ fn bigint_large_exact() {
 
 #[test]
 fn bigint_hex_oct_bin_literals() {
-    assert_eq!(run("0xffn;"), Value::BigInt(255));
-    assert_eq!(run("0o17n;"), Value::BigInt(15));
-    assert_eq!(run("0b101n;"), Value::BigInt(5));
+    assert_eq!(run("0xffn;"), Value::BigInt(num_bigint::BigInt::from(255)));
+    assert_eq!(run("0o17n;"), Value::BigInt(num_bigint::BigInt::from(15)));
+    assert_eq!(run("0b101n;"), Value::BigInt(num_bigint::BigInt::from(5)));
 }

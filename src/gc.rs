@@ -139,6 +139,24 @@ pub fn trace_obj(obj: &HeapObj, marker: &mut Marker) {
                 marker.mark_value(v);
             }
         }
+        HeapObj::WeakMap(wm) => {
+            // Ephemeron semantics: a value is reachable only if its key is.
+            // Mark values conditionally — only when the key is already marked.
+            // Unmarked keys keep their values unmarked here; a second pass
+            // after the main trace marks values whose keys became reachable.
+            for (key_idx, v) in wm.entries.borrow().iter() {
+                let marked = {
+                    let m = marker.marked.borrow();
+                    *key_idx < m.len() && m[*key_idx]
+                };
+                if marked {
+                    marker.mark_value(v);
+                }
+            }
+        }
+        HeapObj::WeakSet(_) => {
+            // Members are held weakly: do not mark them here.
+        }
         HeapObj::Set(s) => {
             for v in s.items.borrow().iter() {
                 marker.mark_value(v);
@@ -237,6 +255,26 @@ impl Heap {
             if !m[idx] && cell.obj.borrow().is_some() {
                 *cell.obj.borrow_mut() = None;
                 free.push(idx);
+            }
+        }
+        // Sweep dead entries from WeakMap/WeakSet: a key that was not marked
+        // (i.e. collected above) must have its entry removed.
+        for cell in cells.iter() {
+            let obj_ref = cell.obj.borrow();
+            if let Some(obj) = obj_ref.as_ref() {
+                match obj {
+                    HeapObj::WeakMap(wm) => {
+                        wm.entries
+                            .borrow_mut()
+                            .retain(|(key_idx, _)| *key_idx < m.len() && m[*key_idx]);
+                    }
+                    HeapObj::WeakSet(ws) => {
+                        ws.items
+                            .borrow_mut()
+                            .retain(|key_idx| *key_idx < m.len() && m[*key_idx]);
+                    }
+                    _ => {}
+                }
             }
         }
         self.alloc_since_gc.set(0);

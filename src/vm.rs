@@ -6,6 +6,7 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use indexmap::IndexMap;
+use num_traits::{Signed, ToPrimitive, Zero};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -13,41 +14,41 @@ use std::rc::Rc;
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
 pub struct Vm {
-    pub heap: Heap,
-    pub global: GcIdx,
-    pub global_this: Value,
+    pub(crate) heap: Heap,
+    pub(crate) global: GcIdx,
+    pub(crate) global_this: Value,
     /// `new.target` to set on the next pushed frame (used by `construct`).
-    pub pending_new_target: Option<Value>,
-    pub stack: Vec<Value>,
-    pub frames: Vec<CallFrame>,
-    pub object_proto: Value,
-    pub array_proto: Value,
-    pub function_proto: Value,
-    pub string_proto: Value,
-    pub number_proto: Value,
-    pub bigint_proto: Value,
-    pub boolean_proto: Value,
-    pub error_proto: Value,
-    pub symbol_proto: Value,
-    pub promise_proto: Value,
-    pub iterator_proto: Value,
-    pub generator_proto: Value,
-    pub map_proto: Value,
-    pub set_proto: Value,
-    pub date_proto: Value,
-    pub microtask_queue: std::collections::VecDeque<Microtask>,
+    pub(crate) pending_new_target: Option<Value>,
+    pub(crate) stack: Vec<Value>,
+    pub(crate) frames: Vec<CallFrame>,
+    pub(crate) object_proto: Value,
+    pub(crate) array_proto: Value,
+    pub(crate) function_proto: Value,
+    pub(crate) string_proto: Value,
+    pub(crate) number_proto: Value,
+    pub(crate) bigint_proto: Value,
+    pub(crate) boolean_proto: Value,
+    pub(crate) error_proto: Value,
+    pub(crate) symbol_proto: Value,
+    pub(crate) promise_proto: Value,
+    pub(crate) iterator_proto: Value,
+    pub(crate) generator_proto: Value,
+    pub(crate) map_proto: Value,
+    pub(crate) set_proto: Value,
+    pub(crate) date_proto: Value,
+    pub(crate) microtask_queue: std::collections::VecDeque<Microtask>,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
-    pub gc_pins: Vec<usize>,
+    pub(crate) gc_pins: Vec<usize>,
     /// Collected yield values while running a generator function body (eager,
     /// legacy fallback path). Lazy generators use per-frame gen-state instead.
-    pub current_yields: Vec<Value>,
-    pub next_symbol_id: u32,
-    pub well_known_symbols: WellKnownSymbols,
-    pub global_names: HashMap<Rc<str>, usize>,
-    pub global_constants: Vec<Value>,
-    pub functions: Vec<Rc<crate::function::FunctionDef>>,
+    pub(crate) current_yields: Vec<Value>,
+    pub(crate) next_symbol_id: u32,
+    pub(crate) well_known_symbols: WellKnownSymbols,
+    pub(crate) global_names: HashMap<Rc<str>, usize>,
+    pub(crate) global_constants: Vec<Value>,
+    pub(crate) functions: Vec<Rc<crate::function::FunctionDef>>,
 }
 
 pub struct WellKnownSymbols {
@@ -1464,30 +1465,44 @@ impl Vm {
                     |a, b| Value::Number(a + b),
                     |a, b| Value::String(Rc::from(format!("{}{}", a, b).as_str())),
                 )?,
-                Op::Sub => self.num_bin_bigint(|a, b| a - b, |x, y| x.wrapping_sub(y))?,
-                Op::Mul => self.num_bin_bigint(|a, b| a * b, |x, y| x.wrapping_mul(y))?,
+                Op::Sub => self.num_bin_bigint(|a, b| a - b, |x, y| x - y)?,
+                Op::Mul => self.num_bin_bigint(|a, b| a * b, |x, y| x * y)?,
                 Op::Div => self.num_bin_bigint(
                     |a, b| a / b,
-                    |x, y| if y == 0 { 0 } else { x.wrapping_div(y) },
+                    |x, y| {
+                        if y.is_zero() {
+                            num_bigint::BigInt::from(0)
+                        } else {
+                            x / y
+                        }
+                    },
                 )?,
                 Op::Mod => self.num_bin_bigint(
                     |a, b| a % b,
-                    |x, y| if y == 0 { 0 } else { x.wrapping_rem(y) },
+                    |x, y| {
+                        if y.is_zero() {
+                            num_bigint::BigInt::from(0)
+                        } else {
+                            x % y
+                        }
+                    },
                 )?,
                 Op::Pow => self.num_bin_bigint(
                     |a, b| a.powf(b),
                     |x, y| {
-                        if y < 0 {
-                            0
+                        if y.is_negative() {
+                            num_bigint::BigInt::from(0)
                         } else {
-                            (0..y).fold(1i128, |acc, _| acc.wrapping_mul(x))
+                            // Use BigInt's own pow (exponent is a u64).
+                            let exp = num_traits::ToPrimitive::to_u32(&y).unwrap_or(0);
+                            x.pow(exp)
                         }
                     },
                 )?,
                 Op::Neg => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::BigInt(n) = v {
-                        self.stack.push(Value::BigInt(n.wrapping_neg()));
+                        self.stack.push(Value::BigInt(-n));
                     } else {
                         let n = self.to_number(&v)?;
                         self.stack.push(Value::Number(-n));
@@ -2608,9 +2623,11 @@ impl Vm {
     }
 
     /// Like `num_bin`, but if both operands are `BigInt`, keep the result a
-    /// `BigInt` (checked arithmetic; overflow wraps via wrapping_* to stay
-    /// defined, matching the engine's i128-backed BigInt semantics).
-    fn num_bin_bigint<F: Fn(f64, f64) -> f64, B: Fn(i128, i128) -> i128>(
+    /// `BigInt` (arbitrary precision via num-bigint).
+    fn num_bin_bigint<
+        F: Fn(f64, f64) -> f64,
+        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> num_bigint::BigInt,
+    >(
         &mut self,
         numf: F,
         bigf: B,
@@ -2618,7 +2635,7 @@ impl Vm {
         let (a, b) = self.pop2();
         match (&a, &b) {
             (Value::BigInt(x), Value::BigInt(y)) => {
-                self.stack.push(Value::BigInt(bigf(*x, *y)));
+                self.stack.push(Value::BigInt(bigf(x.clone(), y.clone())));
             }
             (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
                 // Mixing BigInt with non-bigint numbers is a TypeError per spec.
@@ -2644,7 +2661,7 @@ impl Vm {
         // BigInt + BigInt stays BigInt; mixing with other types is a TypeError.
         match (&a, &b) {
             (Value::BigInt(x), Value::BigInt(y)) => {
-                self.stack.push(Value::BigInt(x.wrapping_add(*y)));
+                self.stack.push(Value::BigInt(x + y));
                 return Ok(());
             }
             (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
@@ -2683,7 +2700,9 @@ impl Vm {
         let pb = self.to_primitive(&b)?;
         // BigInt vs BigInt: compare exactly without f64 rounding.
         if let (Value::BigInt(x), Value::BigInt(y)) = (&pa, &pb) {
-            self.stack.push(Value::Bool(f(*x as f64, *y as f64)));
+            let xf = num_traits::ToPrimitive::to_f64(x).unwrap_or(f64::NAN);
+            let yf = num_traits::ToPrimitive::to_f64(y).unwrap_or(f64::NAN);
+            self.stack.push(Value::Bool(f(xf, yf)));
             return Ok(());
         }
         if let (Value::String(sa), Value::String(sb)) = (&pa, &pb) {
@@ -2714,7 +2733,7 @@ impl Vm {
                 }
             }
             Value::Number(n) => *n,
-            Value::BigInt(n) => *n as f64,
+            Value::BigInt(n) => num_traits::ToPrimitive::to_f64(n).unwrap_or(f64::NAN),
             Value::String(s) => {
                 let t = s.trim();
                 if t.is_empty() {
@@ -3091,22 +3110,30 @@ impl Vm {
                 self.loose_eq(a, &bp)?
             }
             // BigInt vs Number: compare numerically.
-            (Value::BigInt(x), Value::Number(y)) => *x as f64 == *y,
-            (Value::Number(x), Value::BigInt(y)) => *x == *y as f64,
+            (Value::BigInt(x), Value::Number(y)) => {
+                num_traits::ToPrimitive::to_f64(x).unwrap_or(f64::NAN) == *y
+            }
+            (Value::Number(x), Value::BigInt(y)) => {
+                *x == num_traits::ToPrimitive::to_f64(y).unwrap_or(f64::NAN)
+            }
             // BigInt vs String: parse the string, then compare.
             (Value::BigInt(x), Value::String(s)) => {
-                s.trim().parse::<i128>().map(|v| v == *x).unwrap_or(false)
+                num_bigint::BigInt::parse_bytes(s.trim().as_bytes(), 10)
+                    .map(|v| v == *x)
+                    .unwrap_or(false)
             }
             (Value::String(s), Value::BigInt(y)) => {
-                s.trim().parse::<i128>().map(|v| v == *y).unwrap_or(false)
+                num_bigint::BigInt::parse_bytes(s.trim().as_bytes(), 10)
+                    .map(|v| v == *y)
+                    .unwrap_or(false)
             }
             // Bool coerced to number already handled above; but Bool vs BigInt:
             (Value::Bool(b), Value::BigInt(y)) => {
-                let an: i128 = if *b { 1 } else { 0 };
+                let an = num_bigint::BigInt::from(if *b { 1 } else { 0 });
                 an == *y
             }
             (Value::BigInt(x), Value::Bool(b)) => {
-                let bn: i128 = if *b { 1 } else { 0 };
+                let bn = num_bigint::BigInt::from(if *b { 1 } else { 0 });
                 *x == bn
             }
             _ => false,
@@ -3912,6 +3939,23 @@ impl Vm {
             props: RefCell::new(IndexMap::new()),
         };
         GcIdx(self.heap.allocate(HeapObj::Function(fdef)))
+    }
+
+    /// Define a global binding (visible to JS as a top-level variable).
+    /// This is the embedding API for exposing host values to script code.
+    pub fn define_global(&mut self, name: &str, value: Value) {
+        crate::environment::declare(
+            &self.heap,
+            self.global,
+            name,
+            value,
+            crate::value::BindingKind::Var,
+        );
+    }
+
+    /// Get a global binding by name, or `undefined` if not present.
+    pub fn get_global(&self, name: &str) -> Value {
+        crate::environment::get(&self.heap, self.global, name).unwrap_or(Value::Undefined)
     }
 
     /// Minimal stub for `Object(value)` coercion.

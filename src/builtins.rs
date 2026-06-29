@@ -2422,8 +2422,12 @@ fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
 fn global_bigint(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let arg = args.first().unwrap_or(&Value::Undefined);
     match arg {
-        Value::BigInt(n) => Ok(Value::BigInt(*n)),
-        Value::Bool(b) => Ok(Value::BigInt(if *b { 1 } else { 0 })),
+        Value::BigInt(n) => Ok(Value::BigInt(n.clone())),
+        Value::Bool(b) => Ok(Value::BigInt(num_bigint::BigInt::from(if *b {
+            1
+        } else {
+            0
+        }))),
         Value::Number(n) => {
             if n.is_nan() || n.is_infinite() || n.fract() != 0.0 {
                 Err(Error::range(format!(
@@ -2431,14 +2435,14 @@ fn global_bigint(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
                     crate::value::num_to_string(*n)
                 )))
             } else {
-                Ok(Value::BigInt(*n as i128))
+                Ok(Value::BigInt(num_bigint::BigInt::from(*n as i64)))
             }
         }
         Value::String(s) => {
             let t = s.trim();
-            t.parse::<i128>()
+            num_bigint::BigInt::parse_bytes(t.as_bytes(), 10)
                 .map(Value::BigInt)
-                .map_err(|_| Error::syntax(format!("Cannot convert {} to a BigInt", s)))
+                .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s)))
         }
         _ => Err(Error::syntax("Cannot convert to a BigInt".to_string())),
     }
@@ -2448,9 +2452,9 @@ fn global_bigint(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
 fn bigint_to_string(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let _ = args;
     let v = match this {
-        Some(Value::BigInt(n)) => n,
-        Some(_) => 0,
-        None => 0,
+        Some(Value::BigInt(n)) => n.clone(),
+        Some(_) => num_bigint::BigInt::from(0),
+        None => num_bigint::BigInt::from(0),
     };
     Ok(Value::String(Rc::from(v.to_string().as_str())))
 }
@@ -5169,6 +5173,192 @@ fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     }
     Ok(Value::Bool(false))
 }
+
+// --- WeakMap / WeakSet (true weak-reference semantics) ---
+
+fn weakmap_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    // The WeakMap prototype (with get/set/has/delete) is the constructor's
+    // own `.prototype` property. `construct` passes a fresh Object whose
+    // [[Prototype]] is that prototype as `this`; copy it so the returned
+    // WeakMap object inherits the methods.
+    let proto = match _this {
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| o.proto().borrow().clone()),
+        _ => Some(vm.object_proto.clone()),
+    };
+    let obj_idx = vm
+        .heap
+        .allocate(HeapObj::WeakMap(crate::value::WeakMapData {
+            entries: RefCell::new(Vec::new()),
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(proto),
+        }));
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn weakmap_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let val = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => {
+            return Err(Error::type_err(
+                "Invalid value used as weak map key".to_string(),
+            ))
+        }
+    };
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakMap(wm) = obj {
+                let mut entries = wm.entries.borrow_mut();
+                if let Some(slot) = entries.iter_mut().find(|(k, _)| *k == key_idx) {
+                    slot.1 = val;
+                } else {
+                    entries.push((key_idx, val));
+                }
+            }
+        });
+    }
+    Ok(this.unwrap_or(Value::Undefined))
+}
+
+fn weakmap_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => return Ok(Value::Undefined),
+    };
+    if let Some(Value::Object(idx)) = this {
+        return Ok(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakMap(wm) = obj {
+                wm.entries
+                    .borrow()
+                    .iter()
+                    .find(|(k, _)| *k == key_idx)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or(Value::Undefined)
+            } else {
+                Value::Undefined
+            }
+        }));
+    }
+    Ok(Value::Undefined)
+}
+
+fn weakmap_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => return Ok(Value::Bool(false)),
+    };
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakMap(wm) = obj {
+                wm.entries.borrow().iter().any(|(k, _)| *k == key_idx)
+            } else {
+                false
+            }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+
+fn weakmap_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => return Ok(Value::Bool(false)),
+    };
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakMap(wm) = obj {
+                let mut entries = wm.entries.borrow_mut();
+                let len = entries.len();
+                entries.retain(|(k, _)| *k != key_idx);
+                entries.len() != len
+            } else {
+                false
+            }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+
+fn weakset_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let proto = match _this {
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| o.proto().borrow().clone()),
+        _ => Some(vm.object_proto.clone()),
+    };
+    let obj_idx = vm
+        .heap
+        .allocate(HeapObj::WeakSet(crate::value::WeakSetData {
+            items: RefCell::new(Vec::new()),
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(proto),
+        }));
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn weakset_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => {
+            return Err(Error::type_err(
+                "Invalid value used in weak set".to_string(),
+            ))
+        }
+    };
+    if let Some(Value::Object(idx)) = this {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakSet(ws) = obj {
+                let mut items = ws.items.borrow_mut();
+                if !items.contains(&key_idx) {
+                    items.push(key_idx);
+                }
+            }
+        });
+    }
+    Ok(this.unwrap_or(Value::Undefined))
+}
+
+fn weakset_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => return Ok(Value::Bool(false)),
+    };
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakSet(ws) = obj {
+                ws.items.borrow().contains(&key_idx)
+            } else {
+                false
+            }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
+
+fn weakset_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let key = args.first().cloned().unwrap_or(Value::Undefined);
+    let key_idx = match &key {
+        Value::Object(i) => i.0,
+        _ => return Ok(Value::Bool(false)),
+    };
+    if let Some(Value::Object(idx)) = this {
+        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::WeakSet(ws) = obj {
+                let mut items = ws.items.borrow_mut();
+                let len = items.len();
+                items.retain(|k| *k != key_idx);
+                items.len() != len
+            } else {
+                false
+            }
+        })));
+    }
+    Ok(Value::Bool(false))
+}
 fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
@@ -6093,18 +6283,17 @@ pub fn setup_collections(vm: &mut Vm) {
             );
         });
     }
-    // WeakMap / WeakSet (strong-ref implementation: API-compatible but
-    // entries are not actually weakly held; they survive until explicitly
-    // deleted).
+    // WeakMap / WeakSet: true weak-reference semantics. Keys are object
+    // heap indices held weakly; GC sweeps entries whose key was collected.
     let (weakmap_ctor, weakmap_proto) = make_builtin_constructor_with(
         vm,
         "WeakMap",
-        map_constructor,
+        weakmap_constructor,
         &[
-            ("get", map_get, 1),
-            ("set", map_set, 2),
-            ("has", map_has, 1),
-            ("delete", map_delete, 1),
+            ("get", weakmap_get, 1),
+            ("set", weakmap_set, 2),
+            ("has", weakmap_has, 1),
+            ("delete", weakmap_delete, 1),
         ],
     );
     define_global(vm, "WeakMap", Value::Object(weakmap_ctor));
@@ -6112,11 +6301,11 @@ pub fn setup_collections(vm: &mut Vm) {
     let (weakset_ctor, weakset_proto) = make_builtin_constructor_with(
         vm,
         "WeakSet",
-        set_constructor,
+        weakset_constructor,
         &[
-            ("add", set_add, 1),
-            ("has", set_has, 1),
-            ("delete", set_delete, 1),
+            ("add", weakset_add, 1),
+            ("has", weakset_has, 1),
+            ("delete", weakset_delete, 1),
         ],
     );
     define_global(vm, "WeakSet", Value::Object(weakset_ctor));
