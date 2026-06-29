@@ -24,6 +24,13 @@ pub enum Expr {
     Number(f64),
     String(Rc<str>),
     TemplateStr(Rc<str>),
+    /// Tagged template: `tag`...`` — calls tag(strings, raw, ...exprs).
+    TaggedTemplate {
+        tag: Box<Expr>,
+        quasis: Vec<Rc<str>>,
+        raw: Vec<Rc<str>>,
+        exprs: Vec<Expr>,
+    },
     TemplateInterp {
         quasis: Vec<Rc<str>>,
         exprs: Vec<Expr>,

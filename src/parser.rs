@@ -917,7 +917,7 @@ impl Parser {
     fn parse_call(&mut self) -> error::Result<Expr> {
         let mut e = self.parse_primary()?;
         loop {
-            match self.peek() {
+            match self.peek().clone() {
                 TokenKind::Dot => {
                     self.advance();
                     let name = self.read_property_name()?;
@@ -985,6 +985,13 @@ impl Parser {
                         args,
                         optional: false,
                     };
+                }
+                TokenKind::TemplateString(s) => {
+                    // Tagged template: tag`str${expr}str`
+                    self.advance(); // consume the TemplateString token
+                    let tag = e;
+                    let quasi0: Rc<str> = Rc::from(s.as_str());
+                    e = self.parse_tagged_template(tag, quasi0)?;
                 }
                 _ => break,
             }
@@ -1163,6 +1170,51 @@ impl Parser {
             }
         }
         Ok(Expr::TemplateInterp { quasis, exprs })
+    }
+
+    /// Parse a tagged template after the tag expression and first quasi.
+    fn parse_tagged_template(&mut self, tag: Expr, first: Rc<str>) -> error::Result<Expr> {
+        let mut quasis: Vec<Rc<str>> = vec![first.clone()];
+        // raw quasis: same as cooked for now (lexer already decoded escapes).
+        let mut raw: Vec<Rc<str>> = vec![first];
+        let mut exprs: Vec<Expr> = Vec::new();
+        if !self.check(&TokenKind::TemplateExprStart) {
+            // No interpolation.
+            return Ok(Expr::TaggedTemplate {
+                tag: Box::new(tag),
+                quasis,
+                raw,
+                exprs,
+            });
+        }
+        loop {
+            self.expect(&TokenKind::TemplateExprStart, "${")?;
+            let e = self.parse_expr()?;
+            self.expect(&TokenKind::TemplateExprEnd, "}")?;
+            exprs.push(e);
+            match self.advance() {
+                TokenKind::TemplateString(s) => {
+                    let q: Rc<str> = Rc::from(s.as_str());
+                    quasis.push(q.clone());
+                    raw.push(q);
+                }
+                other => {
+                    return Err(error::Error::syntax(format!(
+                        "Expected template string, got {:?}",
+                        other
+                    )))
+                }
+            }
+            if !self.check(&TokenKind::TemplateExprStart) {
+                break;
+            }
+        }
+        Ok(Expr::TaggedTemplate {
+            tag: Box::new(tag),
+            quasis,
+            raw,
+            exprs,
+        })
     }
 
     fn parse_array(&mut self) -> error::Result<Expr> {
