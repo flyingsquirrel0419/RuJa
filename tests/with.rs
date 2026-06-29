@@ -132,9 +132,10 @@ fn with_unqualified_call_this_is_object() {
 
 #[test]
 fn with_this_does_not_leak_to_outer_call() {
-    // A plain unqualified call outside the with-block must keep `this` as
-    // undefined; the with-rebinding must not leak past the block. Inside the
-    // block the call rebinds to `o`, outside it stays undefined.
+    // A plain unqualified call outside the with-block keeps `this` as the
+    // global object in sloppy mode; the with-rebinding must not leak past
+    // the block. Inside the block the call rebinds to `o`, outside it is
+    // the global object.
     let src = r#"
         let o = { tag: "with-obj", f: function() { return this.tag; } };
         function g() { return (this === undefined) ? "none" : "leaked"; }
@@ -143,19 +144,20 @@ fn with_this_does_not_leak_to_outer_call() {
         let outside = g();
         inside + "|" + outside;
     "#;
-    assert_eq!(run(src), Value::String(Rc::from("with-obj|none")));
+    assert_eq!(run(src), Value::String(Rc::from("with-obj|leaked")));
 }
 
 #[test]
 fn with_this_not_set_when_name_not_on_object() {
-    // If the called name is NOT a property of the with object, `this` stays
-    // undefined (the function is resolved lexically, not via the with object).
+    // If the called name is NOT a property of the with object, `this` is the
+    // global object in sloppy mode (the function is resolved lexically, not
+    // via the with object).
     let src = r#"
-        function g() { return this; }
+        function g() { return this === globalThis; }
         let o = { x: 1 };
         let r;
         with (o) {
-            r = g() === undefined;
+            r = g();
         }
         r;
     "#;
