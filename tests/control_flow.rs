@@ -97,6 +97,31 @@ fn finally_executes_after_catch() {
         Value::Number(11.0)
     );
 }
+#[test]
+fn break_in_try_runs_outer_finally() {
+    let src = "let r=[];for(let i=0;i<5;i++){try{if(i===2)break;r.push(i);}finally{r.push('f'+i);}}r.join(',');";
+    assert_eq!(run(src), Value::String(Rc::from("0,f0,1,f1,f2")));
+}
+#[test]
+fn continue_in_try_runs_finally() {
+    let src = "let r=[];for(let i=0;i<4;i++){try{if(i===1)continue;r.push(i);}finally{r.push('f'+i);}}r.join(',');";
+    assert_eq!(run(src), Value::String(Rc::from("0,f0,f1,2,f2,3,f3")));
+}
+#[test]
+fn nested_finally_break_runs_both() {
+    let src = "let r=[];for(let i=0;i<3;i++){try{try{if(i===1)break;r.push('i'+i);}finally{r.push('if'+i);}}finally{r.push('of'+i);}}r.join(',');";
+    assert_eq!(run(src), Value::String(Rc::from("i0,if0,of0,if1,of1")));
+}
+#[test]
+fn return_through_nested_finally() {
+    let src = "let f=function(){try{try{return 42;}finally{}}finally{}};f();";
+    assert_eq!(run(src), Value::Number(42.0));
+}
+#[test]
+fn throw_runs_inner_finally_before_catch() {
+    let src = "let r=[];try{try{throw 1;}finally{r.push('if');}}catch(e){r.push('c');}finally{r.push('of');}r.join(',');";
+    assert_eq!(run(src), Value::String(Rc::from("if,c,of")));
+}
 
 // --- operators ---
 

@@ -349,7 +349,11 @@ fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
         let first = &args[0];
         match first {
             Value::Undefined | Value::Null => {}
-            Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
+            Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Symbol(_)
+            | Value::BigInt(_) => {
                 return vm.to_object(first);
             }
             Value::Object(_) => return Ok(first.clone()),
@@ -368,9 +372,11 @@ fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
             let new_idx = vm.new_object();
             Ok(Value::Object(new_idx))
         }
-        Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Symbol(_) => {
-            vm.to_object(first)
-        }
+        Value::Bool(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Symbol(_)
+        | Value::BigInt(_) => vm.to_object(first),
         Value::Object(_) => Ok(first.clone()),
     }
 }
@@ -1546,6 +1552,7 @@ fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error::Result<Str
         Value::Null => Ok("null".to_string()),
         Value::Bool(b) => Ok(b.to_string()),
         Value::Number(n) => Ok(crate::value::num_to_string(*n)),
+        Value::BigInt(n) => Ok(format!("{}n", n)),
         Value::String(s) => {
             if depth == 0 {
                 Ok(s.to_string())
@@ -1756,6 +1763,7 @@ fn stringify_value(
         } else {
             crate::value::num_to_string(n)
         }),
+        Value::BigInt(n) => Some(n.to_string()),
         Value::String(s) => Some(format!(
             "\"{}\"",
             s.replace('\\', "\\\\")
@@ -2407,6 +2415,44 @@ fn global_is_nan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
 fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(n.is_finite()))
+}
+
+/// `BigInt(x)`: convert a number, string, or boolean to a BigInt. Throws
+/// RangeError for non-integral numbers and SyntaxError for unparseable strings.
+fn global_bigint(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let arg = args.first().unwrap_or(&Value::Undefined);
+    match arg {
+        Value::BigInt(n) => Ok(Value::BigInt(*n)),
+        Value::Bool(b) => Ok(Value::BigInt(if *b { 1 } else { 0 })),
+        Value::Number(n) => {
+            if n.is_nan() || n.is_infinite() || n.fract() != 0.0 {
+                Err(Error::range(format!(
+                    "The number {} cannot be converted to a BigInt because it is not an integer",
+                    crate::value::num_to_string(*n)
+                )))
+            } else {
+                Ok(Value::BigInt(*n as i128))
+            }
+        }
+        Value::String(s) => {
+            let t = s.trim();
+            t.parse::<i128>()
+                .map(Value::BigInt)
+                .map_err(|_| Error::syntax(format!("Cannot convert {} to a BigInt", s)))
+        }
+        _ => Err(Error::syntax("Cannot convert to a BigInt".to_string())),
+    }
+}
+
+/// `BigInt.prototype.toString()`: returns the decimal string of the BigInt.
+fn bigint_to_string(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let _ = args;
+    let v = match this {
+        Some(Value::BigInt(n)) => n,
+        Some(_) => 0,
+        None => 0,
+    };
+    Ok(Value::String(Rc::from(v.to_string().as_str())))
 }
 
 /// `eval(x)`: if `x` is not a string, return it as-is. Otherwise parse and
@@ -4901,6 +4947,42 @@ pub fn setup_full(vm: &mut Vm) {
     define_global(vm, "NaN", Value::Number(f64::NAN));
     define_global(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global(vm, "undefined", Value::Undefined);
+    // BigInt constructor (function form only; no prototype methods yet).
+    let bigint_idx = vm.new_native_function("BigInt", global_bigint, 1);
+    define_global(vm, "BigInt", Value::Object(bigint_idx));
+    // BigInt prototype with minimal members.
+    {
+        let bp_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+            props: RefCell::new(IndexMap::new()),
+            proto: RefCell::new(Some(vm.object_proto.clone())),
+            extensible: Cell::new(true),
+            class_name: Some(Rc::from("BigInt")),
+            private_fields: RefCell::new(std::collections::HashMap::new()),
+        }));
+        let bproto = Value::Object(GcIdx(bp_idx));
+        vm.bigint_proto = bproto.clone();
+        {
+            let bi = bigint_idx;
+            vm.heap.with_obj(bi.0, |obj| {
+                if let HeapObj::Function(f) = obj {
+                    *f.prototype.borrow_mut() = Some(bproto.clone());
+                }
+            });
+            let to_str = vm.new_native_function("toString", bigint_to_string, 0);
+            if let Value::Object(pi) = bproto {
+                vm.heap.with_obj(pi.0, |obj| {
+                    obj.props().borrow_mut().insert(
+                        crate::value::PropertyKey::from("toString"),
+                        crate::value::PropertyDescriptor::data(Value::Object(to_str)),
+                    );
+                    obj.props().borrow_mut().insert(
+                        crate::value::PropertyKey::from("valueOf"),
+                        crate::value::PropertyDescriptor::data(Value::Object(to_str)),
+                    );
+                });
+            }
+        }
+    }
     // globalThis: an object whose property accesses route to the global
     // environment record. Marked via class_name so VM get/set can detect it.
     let globalthis_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {

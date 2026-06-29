@@ -100,7 +100,12 @@ impl<'a> Lexer<'a> {
             }
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
             let s: String = s.chars().filter(|&c| c != '_').collect();
-            return TokenKind::Number(i64::from_str_radix(&s[2..], 16).unwrap_or(0) as f64);
+            let v = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
+            if self.peek() == Some(b'n') {
+                self.advance();
+                return TokenKind::BigInt(v.to_string());
+            }
+            return TokenKind::Number(v as f64);
         }
         if self.peek() == Some(b'0')
             && (self.peek_at(1) == Some(b'o') || self.peek_at(1) == Some(b'O'))
@@ -116,7 +121,12 @@ impl<'a> Lexer<'a> {
             }
             let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
             let s: String = s.chars().filter(|&c| c != '_').collect();
-            return TokenKind::Number(i64::from_str_radix(&s, 8).unwrap_or(0) as f64);
+            let v = i64::from_str_radix(&s, 8).unwrap_or(0);
+            if self.peek() == Some(b'n') {
+                self.advance();
+                return TokenKind::BigInt(v.to_string());
+            }
+            return TokenKind::Number(v as f64);
         }
         if self.peek() == Some(b'0')
             && (self.peek_at(1) == Some(b'b') || self.peek_at(1) == Some(b'B'))
@@ -132,7 +142,12 @@ impl<'a> Lexer<'a> {
             }
             let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
             let s: String = s.chars().filter(|&c| c != '_').collect();
-            return TokenKind::Number(i64::from_str_radix(&s, 2).unwrap_or(0) as f64);
+            let v = i64::from_str_radix(&s, 2).unwrap_or(0);
+            if self.peek() == Some(b'n') {
+                self.advance();
+                return TokenKind::BigInt(v.to_string());
+            }
+            return TokenKind::Number(v as f64);
         }
         while let Some(c) = self.peek() {
             if c.is_ascii_digit()
@@ -151,6 +166,11 @@ impl<'a> Lexer<'a> {
         }
         let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
         let s: String = s.chars().filter(|&c| c != '_').collect();
+        // BigInt literal: integer digits followed by `n` (e.g. 123n, 0xffn).
+        if self.peek() == Some(b'n') {
+            self.advance();
+            return TokenKind::BigInt(s);
+        }
         TokenKind::Number(s.parse::<f64>().unwrap_or(f64::NAN))
     }
 
@@ -624,6 +644,7 @@ impl<'a> Lexer<'a> {
             &kind,
             TokenKind::Ident(_)
                 | TokenKind::Number(_)
+                | TokenKind::BigInt(_)
                 | TokenKind::String(_)
                 | TokenKind::TemplateString(_)
                 | TokenKind::True

@@ -23,11 +23,13 @@ pub struct ClassMethod {
     pub is_static: bool,
     pub is_constructor: bool,
     pub kind: PropKind,
+    pub is_private: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
+    BigInt(i128),
     String(Rc<str>),
     TemplateStr(Rc<str>),
     /// Tagged template: `tag`...`` — calls tag(strings, raw, ...exprs).

@@ -1120,6 +1120,11 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Number(n))
             }
+            TokenKind::BigInt(s) => {
+                self.advance();
+                let n = s.parse::<i128>().unwrap_or(0);
+                Ok(Expr::BigInt(n))
+            }
             TokenKind::String(s) => {
                 self.advance();
                 Ok(Expr::String(Rc::from(s.as_str())))
@@ -1722,7 +1727,29 @@ impl Parser {
             }
             let is_static = self.eat(&TokenKind::Static);
             // Private field declaration: #name = init  or  #name;
+            // Private method: #name(params) { body }  (also static #name() {})
             if let TokenKind::PrivateName(name) = self.peek().clone() {
+                // Peek ahead: if next is `(`, this is a private method.
+                let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
+                if is_private_method {
+                    self.advance(); // consume #name
+                    let params = self.parse_params()?;
+                    let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+                    let rest_param = self.cur_rest_param.take();
+                    let body = self.parse_fn_body()?;
+                    methods.push(ClassMethod {
+                        name: Rc::from(name.as_str()),
+                        params,
+                        param_defaults,
+                        rest_param,
+                        body,
+                        is_static,
+                        is_constructor: false,
+                        kind: crate::ast::PropKind::Method,
+                        is_private: true,
+                    });
+                    continue;
+                }
                 self.advance();
                 let init = if self.eat(&TokenKind::Assign) {
                     Some(Box::new(self.parse_assign()?))
@@ -1780,6 +1807,7 @@ impl Parser {
                 } else {
                     crate::ast::PropKind::Method
                 },
+                is_private: false,
             });
         }
         self.expect(&TokenKind::RBrace, "}")?;

@@ -25,6 +25,7 @@ pub struct Vm {
     pub function_proto: Value,
     pub string_proto: Value,
     pub number_proto: Value,
+    pub bigint_proto: Value,
     pub boolean_proto: Value,
     pub error_proto: Value,
     pub symbol_proto: Value,
@@ -62,7 +63,9 @@ pub struct CallFrame {
     pub ip: usize,
     pub locals: Vec<Value>,
     pub env: GcIdx,
-    pub catch_stack: Vec<usize>,
+    pub catch_stack: Vec<(usize, u32)>,
+    /// Monotonic push counter for ordering catch vs finally guards by depth.
+    pub guard_seq: Cell<u32>,
     pub this_val: Value,
     /// `new.target` for this frame: the constructor function when invoked via
     /// `new`, otherwise `undefined`.
@@ -90,7 +93,7 @@ pub struct CallFrame {
     /// Stack of finally-target-ips for nested active `try/finally`. A
     /// non-local transfer (return/break/continue/throw) that hits an active
     /// finally diverts to the finally target after recording its completion.
-    pub finally_stack: Vec<usize>,
+    pub finally_stack: Vec<(usize, u32)>,
 }
 
 impl CallFrame {
@@ -102,6 +105,7 @@ impl CallFrame {
             env,
             new_target: Value::Undefined,
             catch_stack: Vec::new(),
+            guard_seq: Cell::new(0),
             this_val,
             gen_mode: Cell::new(false),
             gen_yield: Cell::new(None),
@@ -172,6 +176,7 @@ impl Vm {
             function_proto: Value::Undefined,
             string_proto: Value::Undefined,
             number_proto: Value::Undefined,
+            bigint_proto: Value::Undefined,
             boolean_proto: Value::Undefined,
             error_proto: Value::Undefined,
             symbol_proto: Value::Undefined,
@@ -674,7 +679,7 @@ impl Vm {
                     let handler = self
                         .frames
                         .last()
-                        .and_then(|f| f.catch_stack.last().copied());
+                        .and_then(|f| f.catch_stack.last().map(|(ip, _)| *ip));
                     match handler {
                         Some(handler) => {
                             let thrown = match e.thrown_value.clone() {
@@ -1459,15 +1464,34 @@ impl Vm {
                     |a, b| Value::Number(a + b),
                     |a, b| Value::String(Rc::from(format!("{}{}", a, b).as_str())),
                 )?,
-                Op::Sub => self.num_bin(|a, b| a - b)?,
-                Op::Mul => self.num_bin(|a, b| a * b)?,
-                Op::Div => self.num_bin(|a, b| a / b)?,
-                Op::Mod => self.num_bin(|a, b| a % b)?,
-                Op::Pow => self.num_bin(|a, b| a.powf(b))?,
+                Op::Sub => self.num_bin_bigint(|a, b| a - b, |x, y| x.wrapping_sub(y))?,
+                Op::Mul => self.num_bin_bigint(|a, b| a * b, |x, y| x.wrapping_mul(y))?,
+                Op::Div => self.num_bin_bigint(
+                    |a, b| a / b,
+                    |x, y| if y == 0 { 0 } else { x.wrapping_div(y) },
+                )?,
+                Op::Mod => self.num_bin_bigint(
+                    |a, b| a % b,
+                    |x, y| if y == 0 { 0 } else { x.wrapping_rem(y) },
+                )?,
+                Op::Pow => self.num_bin_bigint(
+                    |a, b| a.powf(b),
+                    |x, y| {
+                        if y < 0 {
+                            0
+                        } else {
+                            (0..y).fold(1i128, |acc, _| acc.wrapping_mul(x))
+                        }
+                    },
+                )?,
                 Op::Neg => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    let n = self.to_number(&v)?;
-                    self.stack.push(Value::Number(-n));
+                    if let Value::BigInt(n) = v {
+                        self.stack.push(Value::BigInt(n.wrapping_neg()));
+                    } else {
+                        let n = self.to_number(&v)?;
+                        self.stack.push(Value::Number(-n));
+                    }
                 }
                 Op::Not => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1583,10 +1607,9 @@ impl Vm {
                     // target, popping the finally entry so the finally body's
                     // own transfers aren't re-intercepted by this finally.
                     if let Some(frame) = self.frames.last_mut() {
-                        if let Some(&target) = frame.finally_stack.last() {
+                        if let Some(&(target, _)) = frame.finally_stack.last() {
                             frame.finally_completion_tag.set(1);
                             *frame.finally_completion_val.borrow_mut() = v;
-                            frame.finally_stack.pop();
                             frame.ip = target;
                             continue;
                         }
@@ -1881,16 +1904,29 @@ impl Vm {
                     // the finally guard (i.e. try/finally without catch, or a
                     // throw escaping from a catch body that a finally guards).
                     if let Some(frame) = self.frames.last_mut() {
-                        let has_catch = !frame.catch_stack.is_empty();
-                        let divert_to_finally = !has_catch && frame.finally_stack.last().is_some();
+                        // A throw must pass through any finally that is *more
+                        // deeply nested* than the nearest catch. Compare the
+                        // finally's entry ip against the catch handler ip: a
+                        // finally pushed after (greater ip) its enclosing catch
+                        // guard sits inside it, so the throw diverts there first.
+                        // Divert to finally iff it was pushed after (deeper
+                        // than) the nearest catch guard. Uses push sequence
+                        // numbers so nesting order is tracked correctly even
+                        // when finally/catch ips are interleaved.
+                        let divert_to_finally =
+                            match (frame.finally_stack.last(), frame.catch_stack.last()) {
+                                (Some(&(_, _)), None) => true,
+                                (Some(&(_, fseq)), Some(&(_, cseq))) => fseq > cseq,
+                                _ => false,
+                            };
                         if divert_to_finally {
-                            let target = frame.finally_stack.last().copied().unwrap();
+                            let target = frame.finally_stack.last().unwrap().0;
                             frame.finally_completion_tag.set(4);
                             *frame.finally_completion_val.borrow_mut() = v;
                             frame.ip = target;
                             continue;
                         }
-                        if let Some(handler) = frame.catch_stack.pop() {
+                        if let Some((handler, _)) = frame.catch_stack.pop() {
                             frame.ip = handler;
                             self.stack.push(v);
                             continue;
@@ -1899,15 +1935,22 @@ impl Vm {
                     return Err(Error::thrown(v, &self.heap));
                 }
                 Op::PushTry(handler) => {
-                    self.frames.last_mut().unwrap().catch_stack.push(handler);
+                    let f = self.frames.last_mut().unwrap();
+                    let seq = f.guard_seq.get() + 1;
+                    f.guard_seq.set(seq);
+                    f.catch_stack.push((handler, seq));
                 }
                 Op::PopTry => {
-                    self.frames.last_mut().unwrap().catch_stack.pop();
+                    let f = self.frames.last_mut().unwrap();
+                    f.catch_stack.pop();
                 }
                 Op::PushFinally(target) => {
                     // Begin guarding try/catch with a finally: record the
                     // finally entry so non-local transfers divert to it.
-                    self.frames.last_mut().unwrap().finally_stack.push(target);
+                    let f = self.frames.last_mut().unwrap();
+                    let seq = f.guard_seq.get() + 1;
+                    f.guard_seq.set(seq);
+                    f.finally_stack.push((target, seq));
                 }
                 Op::PopFinally => {
                     // The guarded region completed normally; drop the finally
@@ -1934,7 +1977,7 @@ impl Vm {
                     continue;
                 }
                 Op::CallThis(arg_count) => {
-                    // stack: [this, fn, args...]
+                    // stack: [..., this, fn, args...]
                     let mut args = Vec::with_capacity(arg_count);
                     for _ in 0..arg_count {
                         args.push(self.stack.pop().unwrap_or(Value::Undefined));
@@ -1992,6 +2035,39 @@ impl Vm {
                     }
                     self.stack.push(value);
                 }
+                Op::CallPrivateMethod(name_idx, arg_count) => {
+                    // stack: [..., obj, args...]
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let name = {
+                        let frame = self.frames.last().unwrap();
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let method = if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Object(od) = o {
+                                od.private_fields
+                                    .borrow()
+                                    .get(name.as_str())
+                                    .cloned()
+                                    .unwrap_or(Value::Undefined)
+                            } else {
+                                Value::Undefined
+                            }
+                        })
+                    } else {
+                        Value::Undefined
+                    };
+                    let result = self.call_function(&method, &args, Some(obj))?;
+                    self.stack.push(result);
+                }
                 Op::PopFinallyRethrow => {
                     // The finally body has run. Re-raise the pending
                     // completion (return/break/continue/throw) that diverted
@@ -2012,9 +2088,15 @@ impl Vm {
                         0 => {} // normal: continue
                         1 => {
                             // return
-                            {
-                                let frame = self.frames.last_mut().unwrap();
-                                frame.finally_stack.pop();
+                            // If an outer finally still guards this scope,
+                            // divert the return through it before unwinding.
+                            if let Some(frame) = self.frames.last_mut() {
+                                if let Some(&(outer, _)) = frame.finally_stack.last() {
+                                    frame.finally_completion_tag.set(1);
+                                    *frame.finally_completion_val.borrow_mut() = val.clone();
+                                    frame.ip = outer;
+                                    continue;
+                                }
                             }
                             // Re-run the return semantics now that no finally
                             // guards it.
@@ -2032,9 +2114,27 @@ impl Vm {
                         4 => {
                             // throw
                             let frame = self.frames.last_mut().unwrap();
-                            frame.finally_stack.pop();
+                            // If an outer finally still guards this scope,
+                            // divert the throw through it first.
+                            // Divert only if the outer finally is more deeply
+                            // nested than the nearest catch (per spec, a throw
+                            // is caught by the innermost matching handler, but
+                            // must still run any finally nested inside it).
+                            let divert_to_outer_finally =
+                                match (frame.finally_stack.last(), frame.catch_stack.last()) {
+                                    (Some(&(_, _)), None) => true,
+                                    (Some(&(_, fseq)), Some(&(_, cseq))) => fseq > cseq,
+                                    _ => false,
+                                };
+                            if divert_to_outer_finally {
+                                let outer = frame.finally_stack.last().unwrap().0;
+                                frame.finally_completion_tag.set(4);
+                                *frame.finally_completion_val.borrow_mut() = val.clone();
+                                frame.ip = outer;
+                                continue;
+                            }
                             // If an outer try catches, route there; else propagate.
-                            if let Some(handler) = frame.catch_stack.last().copied() {
+                            if let Some(&(handler, _)) = frame.catch_stack.last() {
                                 frame.catch_stack.pop();
                                 frame.ip = handler;
                                 self.stack.push(val);
@@ -2047,7 +2147,14 @@ impl Vm {
                         // recorded as the loop's break/continue ip.
                         2 | 3 => {
                             let frame = self.frames.last_mut().unwrap();
-                            frame.finally_stack.pop();
+                            // If an outer finally still guards this scope,
+                            // divert the break/continue through it first.
+                            if let Some(&(outer, _)) = frame.finally_stack.last() {
+                                frame.finally_completion_tag.set(tag);
+                                *frame.finally_completion_val.borrow_mut() = val.clone();
+                                frame.ip = outer;
+                                continue;
+                            }
                             let target = match val {
                                 Value::Number(n) => n as usize,
                                 _ => usize::MAX,
@@ -2500,12 +2607,53 @@ impl Vm {
         Ok(())
     }
 
+    /// Like `num_bin`, but if both operands are `BigInt`, keep the result a
+    /// `BigInt` (checked arithmetic; overflow wraps via wrapping_* to stay
+    /// defined, matching the engine's i128-backed BigInt semantics).
+    fn num_bin_bigint<F: Fn(f64, f64) -> f64, B: Fn(i128, i128) -> i128>(
+        &mut self,
+        numf: F,
+        bigf: B,
+    ) -> error::Result<()> {
+        let (a, b) = self.pop2();
+        match (&a, &b) {
+            (Value::BigInt(x), Value::BigInt(y)) => {
+                self.stack.push(Value::BigInt(bigf(*x, *y)));
+            }
+            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+                // Mixing BigInt with non-bigint numbers is a TypeError per spec.
+                return Err(Error::type_err(
+                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
+                ));
+            }
+            _ => {
+                let av = self.to_number(&a)?;
+                let bv = self.to_number(&b)?;
+                self.stack.push(Value::Number(numf(av, bv)));
+            }
+        }
+        Ok(())
+    }
+
     fn bin_op<F: Fn(f64, f64) -> Value, G: Fn(&str, &str) -> Value>(
         &mut self,
         numf: F,
         _strf: G,
     ) -> error::Result<()> {
         let (a, b) = self.pop2();
+        // BigInt + BigInt stays BigInt; mixing with other types is a TypeError.
+        match (&a, &b) {
+            (Value::BigInt(x), Value::BigInt(y)) => {
+                self.stack.push(Value::BigInt(x.wrapping_add(*y)));
+                return Ok(());
+            }
+            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+                return Err(Error::type_err(
+                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
+                ));
+            }
+            _ => {}
+        }
         // string concatenation
         let ap = self.to_primitive(&a)?;
         let bp = self.to_primitive(&b)?;
@@ -2533,6 +2681,11 @@ impl Vm {
         let (a, b) = self.pop2();
         let pa = self.to_primitive(&a)?;
         let pb = self.to_primitive(&b)?;
+        // BigInt vs BigInt: compare exactly without f64 rounding.
+        if let (Value::BigInt(x), Value::BigInt(y)) = (&pa, &pb) {
+            self.stack.push(Value::Bool(f(*x as f64, *y as f64)));
+            return Ok(());
+        }
         if let (Value::String(sa), Value::String(sb)) = (&pa, &pb) {
             self.stack.push(Value::Bool(sf(sa, sb)));
         } else {
@@ -2561,6 +2714,7 @@ impl Vm {
                 }
             }
             Value::Number(n) => *n,
+            Value::BigInt(n) => *n as f64,
             Value::String(s) => {
                 let t = s.trim();
                 if t.is_empty() {
@@ -2590,6 +2744,7 @@ impl Vm {
             Value::Bool(b) => Rc::from(b.to_string().as_str()),
             Value::Number(n) => Rc::from(crate::value::num_to_string(*n).as_str()),
             Value::String(s) => s.clone(),
+            Value::BigInt(n) => Rc::from(n.to_string().as_str()),
             Value::Object(idx) => {
                 let is_array = self
                     .heap
@@ -2899,6 +3054,7 @@ impl Vm {
             (Value::String(x), Value::String(y)) => x == y,
             (Value::Object(x), Value::Object(y)) => x == y,
             (Value::Symbol(x), Value::Symbol(y)) => x == y,
+            (Value::BigInt(x), Value::BigInt(y)) => x == y,
             _ => false,
         }
     }
@@ -2934,6 +3090,25 @@ impl Vm {
                 let bp = self.to_primitive(b)?;
                 self.loose_eq(a, &bp)?
             }
+            // BigInt vs Number: compare numerically.
+            (Value::BigInt(x), Value::Number(y)) => *x as f64 == *y,
+            (Value::Number(x), Value::BigInt(y)) => *x == *y as f64,
+            // BigInt vs String: parse the string, then compare.
+            (Value::BigInt(x), Value::String(s)) => {
+                s.trim().parse::<i128>().map(|v| v == *x).unwrap_or(false)
+            }
+            (Value::String(s), Value::BigInt(y)) => {
+                s.trim().parse::<i128>().map(|v| v == *y).unwrap_or(false)
+            }
+            // Bool coerced to number already handled above; but Bool vs BigInt:
+            (Value::Bool(b), Value::BigInt(y)) => {
+                let an: i128 = if *b { 1 } else { 0 };
+                an == *y
+            }
+            (Value::BigInt(x), Value::Bool(b)) => {
+                let bn: i128 = if *b { 1 } else { 0 };
+                *x == bn
+            }
             _ => false,
         })
     }
@@ -2957,6 +3132,7 @@ impl Vm {
                 self.get_proto_property(obj, key)
             }
             Value::Number(_) => self.get_proto_property(obj, key),
+            Value::BigInt(_) => self.get_proto_property(obj, key),
             Value::Bool(_) => self.get_proto_property(obj, key),
             Value::Symbol(_) => self.get_proto_property(obj, key),
             Value::Undefined | Value::Null => Err(Error::type_err(format!(
@@ -3124,6 +3300,7 @@ impl Vm {
         let proto = match obj {
             Value::String(_) => self.string_proto.clone(),
             Value::Number(_) => self.number_proto.clone(),
+            Value::BigInt(_) => self.bigint_proto.clone(),
             Value::Bool(_) => self.boolean_proto.clone(),
             Value::Symbol(_) => self.symbol_proto.clone(),
             _ => return Ok(Value::Undefined),
@@ -3412,6 +3589,7 @@ impl Vm {
             &self.function_proto,
             &self.string_proto,
             &self.number_proto,
+            &self.bigint_proto,
             &self.boolean_proto,
             &self.error_proto,
             &self.symbol_proto,

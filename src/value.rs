@@ -96,6 +96,7 @@ pub enum Value {
     Null,
     Bool(bool),
     Number(f64),
+    BigInt(i128),
     String(Rc<str>),
     Object(GcIdx),
     Symbol(u32),
@@ -136,6 +137,7 @@ impl Value {
             Value::Undefined | Value::Null => false,
             Value::Bool(b) => *b,
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
+            Value::BigInt(n) => *n != 0,
             Value::String(s) => !s.is_empty(),
             Value::Object(_) | Value::Symbol(_) => true,
         }
@@ -147,6 +149,7 @@ impl Value {
             Value::Null => "object",
             Value::Bool(_) => "boolean",
             Value::Number(_) => "number",
+            Value::BigInt(_) => "bigint",
             Value::String(_) => "string",
             Value::Object(_) => "object",
             Value::Symbol(_) => "symbol",
@@ -161,6 +164,7 @@ impl PartialEq for Value {
             (Value::Null, Value::Null) => true,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::BigInt(a), Value::BigInt(b)) => a == b,
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Object(a), Value::Object(b)) => a == b,
             (Value::Symbol(a), Value::Symbol(b)) => a == b,
@@ -174,6 +178,7 @@ pub fn value_to_debug_string(v: &Value) -> String {
     match v {
         Value::String(s) => s.to_string(),
         Value::Number(n) => num_to_string(*n),
+        Value::BigInt(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Undefined => "undefined".to_string(),
         Value::Null => "null".to_string(),
@@ -189,6 +194,7 @@ impl fmt::Debug for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{:?}", s),
+            Value::BigInt(n) => write!(f, "{}n", n),
             Value::Object(_) => write!(f, "[object]"),
             Value::Symbol(_) => write!(f, "[symbol]"),
         }
@@ -340,7 +346,7 @@ pub struct LazyGeneratorData {
     /// Local variables slot table.
     pub locals: RefCell<Vec<Value>>,
     /// Saved try/catch handler stack (so catches resume across yields).
-    pub catch_stack: RefCell<Vec<usize>>,
+    pub catch_stack: RefCell<Vec<(usize, u32)>>,
     /// True once the body has begun executing.
     pub started: Cell<bool>,
     /// True once the body has run to completion (return / fall-off end).
