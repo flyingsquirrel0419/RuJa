@@ -6315,6 +6315,18 @@ pub fn setup_collections(vm: &mut Vm) {
                 PropertyKey::from("asyncIterator"),
                 data_prop(Value::Symbol(vm.well_known_symbols.async_iterator)),
             );
+            obj.props().lock().unwrap().insert(
+                PropertyKey::from("toPrimitive"),
+                data_prop(Value::Symbol(vm.well_known_symbols.to_primitive)),
+            );
+            obj.props().lock().unwrap().insert(
+                PropertyKey::from("hasInstance"),
+                data_prop(Value::Symbol(vm.well_known_symbols.has_instance)),
+            );
+            obj.props().lock().unwrap().insert(
+                PropertyKey::from("toStringTag"),
+                data_prop(Value::Symbol(vm.well_known_symbols.to_string_tag)),
+            );
         });
     }
     // Symbol.prototype: a plain Object with a toString method. Symbol is a
