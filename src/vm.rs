@@ -766,6 +766,14 @@ impl Vm {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     return Ok(v);
                 }
+                Op::ToString => {
+                    // Template-literal interpolation: ToPrimitive(string)
+                    // then ToString.
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let prim = self.to_primitive_hint(&v, true)?;
+                    let s = self.to_string(&prim)?;
+                    self.stack.push(Value::String(s));
+                }
                 Op::Const(idx) => {
                     let v = {
                         let frame = self.frames.last().unwrap();
