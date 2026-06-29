@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- **test262 harness**: the runner now loads the real test262 harness files
+  (`assert.js`, `sta.js`, and per-test `includes:` like `propertyHelper.js`,
+  `compareArray.js`) instead of a hand-rolled stub. This makes pass/fail
+  accurate (the stub was too lenient, e.g. `-0` vs `+0`). Pass rate is now
+  measured against the real conformance assertions: 20.1% (was 28.3% under
+  the lenient stub — the drop is correctness, not regression).
+- **`Function.prototype.toString`**: returns `function name() { [native code] }`
+  for native functions and `function name() { ... }` for interpreted ones.
+  This fixes function-to-primitive coercion (`fn + 1`) which previously threw
+  because the function had no `toString`.
 - **Boxed primitives store their value**: `new Number(5)`, `new Boolean(true)`,
   `new String("x")`, and `Object(x)` now keep the wrapped primitive on the
   object, so `.valueOf()` returns it and `ToPrimitive` resolves to it
