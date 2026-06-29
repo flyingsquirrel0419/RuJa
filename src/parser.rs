@@ -1485,11 +1485,15 @@ impl Parser {
                     pre.append(&mut body);
                     body = pre;
                 }
+                let accessor_name = Self::prop_key_name(&key).map(|n| {
+                    let prefix = if is_getter { "get " } else { "set " };
+                    Arc::from(format!("{}{}", prefix, n).as_str())
+                });
                 let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
-                        name: None,
+                        name: accessor_name,
                         params,
                         param_defaults,
                         rest_param,
@@ -1521,10 +1525,11 @@ impl Parser {
                     body = pre;
                 }
                 let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+                let method_name = Self::prop_key_name(&key);
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
-                        name: None,
+                        name: method_name,
                         params,
                         param_defaults,
                         rest_param,
@@ -1837,6 +1842,18 @@ impl Parser {
                 // Arrow with expression body has no directive prologue; inherit.
                 is_strict: self.is_strict_context,
             }))
+        }
+    }
+
+    /// Derive a function name from an object-literal property key, for the
+    /// `name` own-property of concise methods / accessors. Computed keys have
+    /// no static name, so they return None (matching the spec's "" case only
+    /// approximately; a true computed name is set at runtime, which we don't do).
+    fn prop_key_name(key: &PropertyKey) -> Option<Arc<str>> {
+        match key {
+            PropertyKey::Ident(s) | PropertyKey::String(s) => Some(s.clone()),
+            PropertyKey::Number(n) => Some(Arc::from(crate::value::num_to_string(*n).as_str())),
+            _ => None,
         }
     }
 
