@@ -194,6 +194,7 @@ pub enum Op {
 
     // Closures
     MakeClosure(usize), // function index, captures current env
+    NewTarget,          // push the current frame's new.target (ctor or undefined)
     MakeClass(usize),   // class definition index in function table
 
     // Iteration

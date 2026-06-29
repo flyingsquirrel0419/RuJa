@@ -2047,6 +2047,9 @@ impl Compiler {
                     }
                 }
             }
+            Expr::NewTarget => {
+                self.chunk.emit(Op::NewTarget, self.current_line);
+            }
             Expr::New { callee, args } => {
                 self.compile_expr(callee)?;
                 for a in args {
