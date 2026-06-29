@@ -21,9 +21,9 @@
   type }` metadata so a test that expects a `SyntaxError`/`TypeError`
   passes when RuJa raises the matching error; tests run via a temp file
   instead of `-e` argv so long sources and non-ASCII survive intact.
-- **test262 subset pass rate**: raised from ~20% to ~57% on a
-  representative `language/` subset (arrow-function 35%→53%, function
-  16%→40%, object 26%→44%, identifiers 28%→59%).
+- **test262 subset pass rate**: raised from ~20% to ~67% on a
+  representative `language/` subset (arrow-function 35%→69%, function
+  16%→57%, object 26%→69%, identifiers 28%→59%).
 - **test262 harness**: the runner now loads the real test262 harness files
   (`assert.js`, `sta.js`, and per-test `includes:` like `propertyHelper.js`,
   `compareArray.js`) instead of a hand-rolled stub. This makes pass/fail

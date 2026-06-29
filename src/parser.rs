@@ -14,14 +14,14 @@ pub struct Parser {
     /// Destructuring parameters from the most recent `parse_params`: each is
     /// (pattern, temp-name) to be bound from the positional temp arg in the
     /// body prelude.
-    cur_param_destructure_decls: Vec<(Pattern, String)>,
+    cur_param_destructure_decls: Vec<(Pattern, String, Option<Expr>)>,
     /// Arrow-specific defaults/rest (carried alongside `last_arrow_params`).
     arrow_defaults: Vec<Option<Expr>>,
     arrow_rest: Option<Arc<str>>,
     /// Arrow destructuring params: each entry is (pattern, temp-name) where the
     /// temp-name is the synthesized positional parameter that receives the
     /// argument; the body is rewritten to bind the pattern from that temp.
-    arrow_destructure_decls: Vec<(Pattern, String)>,
+    arrow_destructure_decls: Vec<(Pattern, String, Option<Expr>)>,
     /// Whether the current parse context is strict (inherited from an
     /// enclosing strict function/program). Drives directive inheritance.
     is_strict_context: bool,
@@ -364,7 +364,7 @@ impl Parser {
                     let p = self.parse_destructure_pattern()?;
                     let tmp = format!("__arg{}", params.len());
                     self.cur_rest_param = Some(Arc::from(tmp.as_str()));
-                    self.cur_param_destructure_decls.push((p, tmp));
+                    self.cur_param_destructure_decls.push((p, tmp, None));
                     break;
                 }
                 if let TokenKind::Ident(s) = self.advance() {
@@ -393,10 +393,12 @@ impl Parser {
                     let tmp = format!("__arg{}", params.len());
                     params.push(Arc::from(tmp.as_str()));
                     self.cur_param_defaults.push(None);
-                    if self.eat(&TokenKind::Assign) {
-                        let _def = self.parse_assign()?;
-                    }
-                    self.cur_param_destructure_decls.push((p, tmp));
+                    let default = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    self.cur_param_destructure_decls.push((p, tmp, default));
                 }
                 _ => return Err(error::Error::syntax("Expected parameter name".to_string())),
             }
@@ -429,13 +431,24 @@ impl Parser {
         let dstr_decls = std::mem::take(&mut self.cur_param_destructure_decls);
         dstr_decls
             .into_iter()
-            .map(|(pattern, tmp)| Stmt {
-                line: 0,
-                node: StmtNode::Destructure {
-                    kind: VarKind::Let,
-                    pattern,
-                    init: Some(Expr::Ident(Arc::from(tmp.as_str()))),
-                },
+            .map(|(pattern, tmp, default)| {
+                // If the destructuring parameter had a default, the binding
+                // source is `__argN === undefined ? <default> : __argN`. We
+                // encode that by wrapping the pattern's default into the
+                // pattern via Pattern::Assign, which the compiler already
+                // lowers as "use default when the source value is undefined".
+                let pattern = match default {
+                    Some(d) => Pattern::Assign(Box::new(pattern), d),
+                    None => pattern,
+                };
+                Stmt {
+                    line: 0,
+                    node: StmtNode::Destructure {
+                        kind: VarKind::Let,
+                        pattern,
+                        init: Some(Expr::Ident(Arc::from(tmp.as_str()))),
+                    },
+                }
             })
             .collect()
     }
@@ -1655,7 +1668,7 @@ impl Parser {
         let mut params = Vec::new();
         let mut defaults: Vec<Option<Expr>> = Vec::new();
         let mut rest: Option<Arc<str>> = None;
-        let mut dstr_decls: Vec<(Pattern, String)> = Vec::new();
+        let mut dstr_decls: Vec<(Pattern, String, Option<Expr>)> = Vec::new();
         // empty params: () =>
         if self.check(&TokenKind::RParen) {
             self.advance();
@@ -1677,7 +1690,7 @@ impl Parser {
                     let p = self.parse_destructure_pattern()?;
                     let tmp = format!("__arg{}", params.len());
                     rest = Some(Arc::from(tmp.as_str()));
-                    dstr_decls.push((p, tmp));
+                    dstr_decls.push((p, tmp, None));
                     break;
                 }
                 if let TokenKind::Ident(s) = self.advance() {
@@ -1719,10 +1732,12 @@ impl Parser {
                     params.push(Arc::from(tmp.as_str()));
                     defaults.push(None);
                     // Optional default: `({a} = {}) =>`
-                    if self.eat(&TokenKind::Assign) {
-                        let _def = self.parse_assign()?;
-                    }
-                    dstr_decls.push((p, tmp));
+                    let default = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    dstr_decls.push((p, tmp, default));
                 }
                 _ => {
                     self.pos = save;
@@ -1760,15 +1775,23 @@ impl Parser {
         let dstr_decls = std::mem::take(&mut self.arrow_destructure_decls);
         // Synthesize `let <pattern> = __argN;` prelude statements that bind
         // each destructuring parameter from its positional temp argument.
+        // A parameter default wraps the pattern so the compiler applies it
+        // when the source value is undefined.
         let prelude: Vec<Stmt> = dstr_decls
             .into_iter()
-            .map(|(pattern, tmp)| Stmt {
-                line: 0,
-                node: StmtNode::Destructure {
-                    kind: VarKind::Let,
-                    pattern,
-                    init: Some(Expr::Ident(Arc::from(tmp.as_str()))),
-                },
+            .map(|(pattern, tmp, default)| {
+                let pattern = match default {
+                    Some(d) => Pattern::Assign(Box::new(pattern), d),
+                    None => pattern,
+                };
+                Stmt {
+                    line: 0,
+                    node: StmtNode::Destructure {
+                        kind: VarKind::Let,
+                        pattern,
+                        init: Some(Expr::Ident(Arc::from(tmp.as_str()))),
+                    },
+                }
             })
             .collect();
         // arrow body: expression or block

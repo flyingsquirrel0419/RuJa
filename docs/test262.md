@@ -48,10 +48,10 @@ summary matches what is below.
 | keywords          | 25   | 24   | 1    | 96.0%    |
 | types             | 113  | 80   | 33   | 70.8%    |
 | comments          | 23   | 17   | 6    | 73.9%    |
-| expressions/arrow-function | 343 | 183 | 160 | 53.4% |
-| expressions/function        | 264 | 105 | 159 | 39.8% |
-| expressions/object          | 722 | 415 | 307 | 57.5% |
-| **subset total**  | 1834 | 1041 | 793 | ~56.7% |
+| expressions/arrow-function | 343 | 237 | 106 | 69.1% |
+| expressions/function        | 264 | 150 | 114 | 56.8% |
+| expressions/object          | 715 | 491 | 224 | 68.7% |
+| **subset total**  | 1827 | 1226 | 611 | ~67.1% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
