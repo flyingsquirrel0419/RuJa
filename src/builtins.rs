@@ -33,53 +33,6 @@ fn data_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
-fn read_only(value: Value) -> PropertyDescriptor {
-    PropertyDescriptor {
-        value,
-        writable: false,
-        enumerable: false,
-        configurable: false,
-        get: None,
-        set: None,
-        is_accessor: false,
-    }
-}
-
-fn method_prop(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<str>, Value) {
-    let idx = vm.new_native_function(name, func, length);
-    (Rc::from(name), Value::Object(idx))
-}
-
-fn bound_method(vm: &mut Vm, name: &str, func: NativeFn, length: usize) -> (Rc<str>, Value) {
-    method_prop(vm, name, func, length)
-}
-
-fn new_plain_object(heap: &Heap, proto: Option<Value>) -> GcIdx {
-    let obj = HeapObj::Object(ObjectData {
-        props: RefCell::new(IndexMap::new()),
-        proto: RefCell::new(proto),
-        extensible: Cell::new(true),
-        class_name: Some(Rc::from("Object")),
-        private_fields: RefCell::new(std::collections::HashMap::new()),
-    });
-    GcIdx(heap.allocate(obj))
-}
-
-fn new_object_with_props(heap: &Heap, proto: Option<Value>, props: Vec<(&str, Value)>) -> GcIdx {
-    let mut map: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
-    for (k, v) in props {
-        map.insert(PropertyKey::from(k), data_prop(v));
-    }
-    let obj = HeapObj::Object(ObjectData {
-        props: RefCell::new(map),
-        proto: RefCell::new(proto),
-        extensible: Cell::new(true),
-        class_name: Some(Rc::from("Object")),
-        private_fields: RefCell::new(std::collections::HashMap::new()),
-    });
-    GcIdx(heap.allocate(obj))
-}
-
 fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Rc<str>, Value)]) {
     if let Value::Object(idx) = proto {
         vm.heap.with_obj(idx.0, |obj| {
@@ -288,53 +241,8 @@ fn define_global(vm: &mut Vm, name: &str, value: Value) {
     env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
 }
 
-fn define_global_property(vm: &mut Vm, name: &str, value: Value) {
-    env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
-}
-
 fn get_arg(args: &[Value], idx: usize) -> Value {
     args.get(idx).cloned().unwrap_or(Value::Undefined)
-}
-
-fn to_index(len: usize, value: &Value, vm: &mut Vm) -> error::Result<usize> {
-    let n = vm.to_number(value)?;
-    if n.is_nan() {
-        return Ok(0);
-    }
-    if n.is_infinite() || n > len as f64 {
-        return Ok(len);
-    }
-    if n < 0.0 {
-        return Ok(0);
-    }
-    Ok(n as usize)
-}
-
-fn to_relative_index(len: usize, value: &Value, vm: &mut Vm) -> error::Result<usize> {
-    let n = vm.to_number(value)?;
-    if n.is_nan() {
-        return Ok(0);
-    }
-    let idx = n as isize;
-    if idx < 0 {
-        Ok((len as isize + idx).max(0) as usize)
-    } else {
-        Ok(idx as usize)
-    }
-}
-
-fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
-    let n = vm.to_number(value)?;
-    if n.is_nan() || n <= 0.0 {
-        return Ok(0);
-    }
-    if n.is_infinite() {
-        return Ok(usize::MAX);
-    }
-    if n > usize::MAX as f64 {
-        return Ok(usize::MAX);
-    }
-    Ok(n as usize)
 }
 
 // ---------------------------------------------------------------------------
@@ -585,34 +493,6 @@ fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         }
     }
     Ok(target)
-}
-
-fn object_is_prototype_of(
-    vm: &mut Vm,
-    args: &[Value],
-    this: Option<Value>,
-) -> error::Result<Value> {
-    let proto_val = this.unwrap_or(Value::Undefined);
-    let candidate = args.first().cloned().unwrap_or(Value::Undefined);
-    if proto_val.is_nullish() || candidate.is_nullish() {
-        return Ok(Value::Bool(false));
-    }
-    if let (Value::Object(pidx), Value::Object(cidx)) = (&proto_val, &candidate) {
-        let mut cur = *cidx;
-        loop {
-            let proto = vm.heap.with_obj(cur.0, |obj| obj.proto().borrow().clone());
-            match proto {
-                Some(Value::Object(next)) => {
-                    if next == *pidx {
-                        return Ok(Value::Bool(true));
-                    }
-                    cur = next;
-                }
-                _ => return Ok(Value::Bool(false)),
-            }
-        }
-    }
-    Ok(Value::Bool(false))
 }
 
 fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -1394,10 +1274,6 @@ fn math_fround(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Number(n as f32 as f64))
 }
-fn math_trunc2(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    math_unary(f64::trunc, vm, args)
-}
-
 fn math_sin(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     math_unary(f64::sin, vm, args)
 }

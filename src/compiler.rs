@@ -7,6 +7,7 @@ use crate::value::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+#[allow(dead_code)]
 pub struct Compiler {
     chunk: Chunk,
     scopes: Vec<Scope>,
@@ -33,6 +34,7 @@ pub struct Compiler {
     current_line: usize,
 }
 
+#[allow(dead_code)]
 struct Scope {
     /// name -> (slot, kind)
     bindings: HashMap<String, (usize, VarKind)>,
@@ -50,6 +52,7 @@ struct Scope {
 
 /// A step in the access path used while compiling destructuring patterns.
 #[derive(Clone)]
+#[allow(dead_code)]
 enum PathStep {
     Index(usize),
     Prop(Rc<str>),
@@ -200,6 +203,7 @@ impl Compiler {
 
     /// Emit PopScope/PopWithEnv ops to unwind scopes opened since `loop_depth`,
     /// so `break`/`continue` don't leak `with` or block scopes past the loop.
+    #[allow(dead_code)]
     fn emit_scope_unwind(&mut self, loop_depth: usize) {
         for i in (loop_depth..self.scopes.len()).rev() {
             if self.scopes[i].is_with {
@@ -225,6 +229,7 @@ impl Compiler {
 
     /// Like `begin_loop` but tags the loop with a label so `break label` /
     /// `continue label` can target it.
+    #[allow(dead_code)]
     fn begin_labeled_loop(&mut self, continue_target: usize, label: Rc<str>) {
         self.loop_stack
             .push((continue_target, Vec::new(), Vec::new(), Some(label)));
@@ -248,6 +253,7 @@ impl Compiler {
         !self.finally_stack.is_empty()
     }
 
+    #[allow(dead_code)]
     fn record_divert(&mut self, divert_ip: usize) {
         if let Some(frame) = self.finally_stack.last_mut() {
             frame.push(divert_ip);
@@ -1517,6 +1523,7 @@ impl Compiler {
     }
 
     /// Bind a rest pattern: build an array from temp[i..] (i relative to current path end).
+    #[allow(dead_code)]
     fn bind_rest(
         &mut self,
         inner: &Pattern,
