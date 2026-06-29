@@ -2117,6 +2117,59 @@ fn parse_json_num(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
     }
     Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
 }
+fn now_ms() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let ts = if args.is_empty() {
+        now_ms()
+    } else if args.len() == 1 {
+        vm.to_number(&args[0])?
+    } else {
+        // Approximate: use the first numeric arg as a timestamp.
+        vm.to_number(&args[0])?
+    };
+    if let Some(Value::Object(idx)) = &this {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(o) = o {
+                o.props
+                    .borrow_mut()
+                    .insert(PropertyKey::from("__time__"), data_prop(Value::Number(ts)));
+            }
+        });
+        Ok(this.unwrap())
+    } else {
+        Ok(Value::String(Rc::from(format!("{}", ts as i64).as_str())))
+    }
+}
+fn date_get_time(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = &this {
+        let ts = vm.heap.with_obj(idx.0, |o| {
+            o.props()
+                .borrow()
+                .get(&PropertyKey::from("__time__"))
+                .map(|d| d.value.clone())
+        });
+        if let Some(Value::Number(n)) = ts {
+            return Ok(Value::Number(n));
+        }
+    }
+    Ok(Value::Number(f64::NAN))
+}
+fn date_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = &this {
+        let _ = idx;
+    }
+    Ok(Value::String(Rc::from("Date")))
+}
+fn date_now(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Number(now_ms()))
+}
+
 fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let key = match args.get(1) {
@@ -4621,6 +4674,26 @@ pub fn setup_full(vm: &mut Vm) {
     // Reflect
     let reflect = build_reflect(vm);
     define_global(vm, "Reflect", reflect);
+    // Date (minimal: now() and constructor returning a timestamp wrapper)
+    let (date_ctor, date_proto) = make_builtin_constructor_with(
+        vm,
+        "Date",
+        date_constructor,
+        &[
+            ("getTime", date_get_time, 0),
+            ("toString", date_to_string, 0),
+        ],
+    );
+    vm.date_proto = Value::Object(date_proto);
+    define_global(vm, "Date", Value::Object(date_ctor));
+    let now_fn = vm.new_native_function("now", date_now, 0);
+    if let Value::Object(dc) = Value::Object(date_ctor) {
+        vm.heap.with_obj(dc.0, |obj| {
+            obj.props()
+                .borrow_mut()
+                .insert(PropertyKey::from("now"), data_prop(Value::Object(now_fn)));
+        });
+    }
     // Array
     let (array_ctor, array_proto) = make_builtin_constructor_with(
         vm,
