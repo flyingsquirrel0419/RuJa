@@ -473,23 +473,11 @@ fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Resu
 
 fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut vals = Vec::new();
-    if let Value::Object(idx) = &obj {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Array(a) = o {
-                vals.extend(a.items.lock().unwrap().clone());
-            }
-            if let HeapObj::Map(m) = o {
-                for (_, v) in m.entries.lock().unwrap().iter() {
-                    vals.push(v.clone());
-                }
-            }
-            for (_k, desc) in o.props().lock().unwrap().iter() {
-                if desc.enumerable {
-                    vals.push(desc.value.clone());
-                }
-            }
-        });
+    // Use the same ordered key list as Object.keys so values line up with keys.
+    let keys = own_string_keys(vm, &obj);
+    let mut vals = Vec::with_capacity(keys.len());
+    for k in &keys {
+        vals.push(vm.get_property(&obj, k)?);
     }
     let arr = HeapObj::Array(ArrayData {
         items: Mutex::new(vals),
@@ -1565,6 +1553,16 @@ fn build_console(vm: &mut Vm) -> Value {
 // =========================================================================
 // JSON
 // =========================================================================
+/// Returns the numeric array index if `s` is a canonical decimal integer in
+/// [0, 2^32-1) (no leading zeros), else None. Used to order keys like Object.keys.
+fn json_array_index(s: &str) -> Option<u32> {
+    if s.is_empty() || (s.len() > 1 && s.starts_with('0')) || !s.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    s.parse::<u32>().ok().filter(|n| (*n as u64) < (1u64 << 32))
+}
+
 fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let v = args.first().unwrap_or(&Value::Undefined).clone();
     let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -1759,7 +1757,7 @@ fn stringify_value(
                 }
             } else {
                 let mut pairs = Vec::new();
-                let keys: Vec<(String, Value)> = if let Some(wl) = &ctx.whitelist {
+                let mut keys: Vec<(String, Value)> = if let Some(wl) = &ctx.whitelist {
                     props
                         .iter()
                         .filter_map(|(k, d)| {
@@ -1790,6 +1788,16 @@ fn stringify_value(
                         })
                         .collect()
                 };
+                // ES enumeration order: array-index keys ascending, then the
+                // rest in insertion order (props preserves insertion order).
+                keys.sort_by(
+                    |(a, _), (b, _)| match (json_array_index(a), json_array_index(b)) {
+                        (Some(x), Some(y)) => x.cmp(&y),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => std::cmp::Ordering::Equal,
+                    },
+                );
                 for (key_str, val) in keys {
                     let val =
                         apply_replacer(vm, ctx, &Value::String(Arc::from(key_str.as_str())), &val);
