@@ -1016,6 +1016,7 @@ impl Compiler {
                 }
                 self.end_loop(end);
             }
+            #[allow(unreachable_patterns)]
             _ => {}
         }
         Ok(())
@@ -1507,13 +1508,6 @@ impl Compiler {
                     .emit(Op::StoreEnvName(name_idx), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
-            Expr::Array(_) => {
-                // nested array pattern as a direct element (rare); stash and recurse
-                self.load_path(temp_idx, path);
-                let t2 = self.intern("#d2");
-                self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                self.compile_assign_pattern(target, t2, &[])?;
-            }
             _ => {
                 // Non-pattern element (e.g. a hole `[,`): just discard.
                 self.load_path(temp_idx, path);
@@ -1818,6 +1812,7 @@ impl Compiler {
                                     self.chunk.emit(Op::DeleteProp, self.current_line);
                                 }
                             }
+                            #[allow(unreachable_patterns)]
                             _ => {
                                 // delete of a variable or other expression always succeeds.
                                 self.compile_expr(e)?;
@@ -1826,6 +1821,7 @@ impl Compiler {
                             }
                         }
                     }
+                    #[allow(unreachable_patterns)]
                     _ => {
                         self.compile_expr(e)?;
                     }

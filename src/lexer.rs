@@ -867,13 +867,6 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 TokenKind::Ident(String::from("\\"))
             }
-            Some(b'\\') => {
-                // A backslash that is not a valid identifier escape here is a
-                // stray character; consume it so the lexer does not loop and
-                // surface it as a parse error token.
-                self.advance();
-                TokenKind::Ident(String::from("\\"))
-            }
             Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') => {
                 return self.next_token();
             }

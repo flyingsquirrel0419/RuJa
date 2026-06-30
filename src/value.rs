@@ -177,6 +177,19 @@ impl PartialEq for Value {
     }
 }
 
+impl Value {
+    /// SameValueZero comparison (used by Map/Set keys, Array.includes): like
+    /// `==` except NaN equals NaN and -0 equals +0.
+    pub fn same_value_zero(&self, other: &Value) -> bool {
+        if let (Value::Number(a), Value::Number(b)) = (self, other) {
+            // NaN matches NaN; everything else compares by value (so -0 == +0).
+            a.is_nan() && b.is_nan() || a == b
+        } else {
+            self == other
+        }
+    }
+}
+
 /// Quick string conversion for argument handling (not spec-compliant ToString).
 pub fn value_to_debug_string(v: &Value) -> String {
     match v {
