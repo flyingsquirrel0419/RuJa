@@ -12,7 +12,18 @@ use crate::value::{
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::IndexMap;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
+
+/// Compile a regex pattern applying ES flags: `i` (case-insensitive),
+/// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
+/// the regex engine here and are handled by the caller.
+fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
+    let mut b = RegexBuilder::new(source);
+    b.case_insensitive(flags.contains('i'));
+    b.multi_line(flags.contains('m'));
+    b.dot_matches_new_line(flags.contains('s'));
+    b.build()
+}
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -4030,16 +4041,23 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     };
     // If the separator is a RegExp, split on regex matches.
     if let Some(Value::Object(idx)) = args.first() {
-        let source = vm.heap.with_obj(idx.0, |o| {
-            o.props()
-                .lock()
-                .unwrap()
+        let (source, flags) = vm.heap.with_obj(idx.0, |o| {
+            let p = o.props().lock().unwrap();
+            let src = p
                 .get(&crate::value::PropertyKey::from("source"))
-                .map(|d| d.value.clone())
+                .map(|d| d.value.clone());
+            let flg = p
+                .get(&crate::value::PropertyKey::from("flags"))
+                .map(|d| d.value.clone());
+            (src, flg)
         });
-        if let Some(Value::String(source)) = source {
-            let re =
-                Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        if let (Some(Value::String(source)), flags_val) = (source, flags) {
+            let flags_str = match flags_val {
+                Some(Value::String(f)) => f.to_string(),
+                _ => String::new(),
+            };
+            let re = compile_regex(&source, &flags_str)
+                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
             let mut parts: Vec<String> = Vec::new();
             let mut last_end = 0;
             for m in re.find_iter(&s) {
@@ -4097,23 +4115,24 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     };
     // If the search value is a RegExp, use regex replacement.
     if let Some(Value::Object(idx)) = args.first() {
-        let source = vm.heap.with_obj(idx.0, |o| {
-            o.props()
-                .lock()
-                .unwrap()
+        let (source, flags) = vm.heap.with_obj(idx.0, |o| {
+            let p = o.props().lock().unwrap();
+            let src = p
                 .get(&crate::value::PropertyKey::from("source"))
-                .map(|d| d.value.clone())
+                .map(|d| d.value.clone());
+            let flg = p
+                .get(&crate::value::PropertyKey::from("flags"))
+                .map(|d| d.value.clone());
+            (src, flg)
         });
-        if let Some(Value::String(source)) = source {
-            let global = vm.heap.with_obj(idx.0, |o| {
-                o.props()
-                    .lock()
-                    .unwrap()
-                    .get(&crate::value::PropertyKey::from("global"))
-                    .map(|d| d.value.clone())
-            }) == Some(Value::Bool(true));
-            let re =
-                Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        if let (Some(Value::String(source)), flags_val) = (source, flags) {
+            let flags_str = match flags_val {
+                Some(Value::String(f)) => f.to_string(),
+                _ => String::new(),
+            };
+            let global = flags_str.contains('g');
+            let re = compile_regex(&source, &flags_str)
+                .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
@@ -4270,9 +4289,13 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
                 (src, flg)
             });
             if let Some(Value::String(source)) = source {
-                let re = Regex::new(&source)
+                let flags_str = match &flags {
+                    Value::String(f) => f.to_string(),
+                    _ => String::new(),
+                };
+                let re = compile_regex(&source, &flags_str)
                     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-                let global = matches!(&flags, Value::String(ref f) if f.contains('g'));
+                let global = flags_str.contains('g');
                 if global {
                     // Collect all matches (full-match substrings).
                     let items: Vec<Value> = re
@@ -5995,7 +6018,9 @@ fn regexp_test(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         Some(v) => vm.to_string(v)?.to_string(),
         None => String::new(),
     };
-    let re = Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let flags = read_regexp_flags(vm, &this).unwrap_or_default();
+    let re = compile_regex(&source, &flags)
+        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     Ok(Value::Bool(re.is_match(&input)))
 }
 
@@ -6006,8 +6031,9 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         Some(v) => vm.to_string(v)?.to_string(),
         None => String::new(),
     };
-    let re = Regex::new(&source).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
+    let re = compile_regex(&source, &flags)
+        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
     // Read lastIndex (a number property; default 0).
