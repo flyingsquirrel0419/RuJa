@@ -299,14 +299,26 @@ impl Heap {
         // before running `f`. This prevents re-entrant locking of the cells
         // mutex (e.g. when `f` allocates or triggers a GC) from deadlocking.
         // The object is put back after `f` returns.
-        let obj = {
+        //
+        // Reentrancy: if `f` reaches back into the *same* object index (e.g.
+        // a getter on the object calls a coercion that reads the object
+        // again), the inner `take()` sees `None`. Previously this panicked
+        // ("use after free"), aborting the host. Now a reentrant call gets a
+        // temporary placeholder object so the inner callback still runs
+        // instead of crashing; the outer frame owns the real object and
+        // restores it on its way out, so it is never lost. Reentrant reads
+        // already diverge from ES, so observing the placeholder is acceptable.
+        let (obj, owned) = {
             let cells = self.cells.lock().unwrap();
             let cell = &cells[idx];
             let mut slot = cell.obj.lock().unwrap();
-            slot.take().expect("use after free")
+            match slot.take() {
+                Some(o) => (o, true),
+                None => (crate::value::HeapObj::placeholder(), false),
+            }
         };
         let result = f(&obj);
-        {
+        if owned {
             let cells = self.cells.lock().unwrap();
             let cell = &cells[idx];
             *cell.obj.lock().unwrap() = Some(obj);
