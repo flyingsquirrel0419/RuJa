@@ -1630,7 +1630,14 @@ impl Vm {
                 Op::BitXor => self.int_bin(|a, b| a ^ b)?,
                 Op::Shl => self.int_bin(|a, b| a << (b as u32 & 31))?,
                 Op::Shr => self.int_bin(|a, b| a >> (b as u32 & 31))?,
-                Op::Ushr => self.int_bin(|a, b| ((a as u32) >> (b as u32 & 31)) as i32)?,
+                Op::Ushr => {
+                    // Unsigned right shift: result is a uint32 promoted to Number,
+                    // so -1 >>> 0 === 4294967295 (not -1).
+                    let (a, b) = self.pop2();
+                    let av = self.to_number(&a)? as i32 as u32;
+                    let bv = self.to_number(&b)? as i32 as u32;
+                    self.stack.push(Value::Number((av >> (bv & 31)) as f64));
+                }
                 Op::Jump(target) => {
                     self.frames.last_mut().unwrap().ip = target;
                 }
