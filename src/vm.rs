@@ -3477,7 +3477,7 @@ impl Vm {
                     .with_obj(idx.0, |o| o.proto().lock().unwrap().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
-                        return self.get_property_rx(&proto, key, obj.clone());
+                        return self.get_property_rx(&proto, key, obj.clone(), 0);
                     }
                 }
                 Ok(Value::Undefined)
@@ -3489,7 +3489,18 @@ impl Vm {
 
     /// Like `get_property` but tracks the receiver (the original object the
     /// property access started from) so inherited accessors bind `this` to it.
-    fn get_property_rx(&mut self, obj: &Value, key: &str, receiver: Value) -> error::Result<Value> {
+    fn get_property_rx(
+        &mut self,
+        obj: &Value,
+        key: &str,
+        receiver: Value,
+        depth: usize,
+    ) -> error::Result<Value> {
+        // Bound recursion so a prototype cycle (which __proto__ assignment
+        // should already reject) cannot overflow the native stack.
+        if depth > 4096 {
+            return Ok(Value::Undefined);
+        }
         match obj {
             Value::Object(idx) => {
                 let pkey = crate::value::PropertyKey::from(key);
@@ -3549,7 +3560,7 @@ impl Vm {
                     .with_obj(idx.0, |o| o.proto().lock().unwrap().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
-                        return self.get_property_rx(&proto, key, receiver);
+                        return self.get_property_rx(&proto, key, receiver, depth + 1);
                     }
                 }
                 Ok(Value::Undefined)
@@ -3610,11 +3621,26 @@ impl Vm {
                 if key == "__proto__" {
                     match &value {
                         Value::Object(_) | Value::Null => {
+                            // Reject prototype cycles: setting __proto__ to
+                            // an object whose chain already contains this
+                            // object would create a cycle, which later made
+                            // property reads overflow the native stack and
+                            // abort the process. ES throws TypeError here.
                             let proto = if value.is_null() {
                                 None
                             } else {
                                 Some(value.clone())
                             };
+                            if let Value::Object(target) = &value {
+                                if self.proto_chain_contains(target.0, idx.0) {
+                                    if self.current_strict() {
+                                        return Err(Error::type_err(
+                                            "Cyclic __proto__ value".to_string(),
+                                        ));
+                                    }
+                                    return Ok(());
+                                }
+                            }
                             self.heap.with_obj(idx.0, |o| {
                                 *o.proto().lock().unwrap() = proto;
                             });
@@ -3716,6 +3742,27 @@ impl Vm {
             .last()
             .map(|f| f.chunk.is_strict)
             .unwrap_or(false)
+    }
+
+    /// Does the prototype chain starting at `start` contain an object with
+    /// heap index `target`? Used to reject cyclic `__proto__` assignments.
+    /// Bounded by a depth cap so a pre-existing (should-be-impossible) cycle
+    /// cannot hang the engine.
+    fn proto_chain_contains(&self, start: usize, target: usize) -> bool {
+        let mut cur = start;
+        for _ in 0..4096 {
+            if cur == target {
+                return true;
+            }
+            let next = self
+                .heap
+                .with_obj(cur, |o| o.proto().lock().unwrap().clone());
+            match next {
+                Some(Value::Object(p)) => cur = p.0,
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// Walk the prototype chain starting at `idx` looking for an accessor

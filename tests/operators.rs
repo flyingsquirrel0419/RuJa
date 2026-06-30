@@ -341,3 +341,30 @@ fn bitwise_normal_unchanged() {
     assert_eq!(run("5 & 3"), Value::Number(1.0));
     assert_eq!(run("5 ^ 1"), Value::Number(4.0));
 }
+
+// --- prototype cycle DoS guard ---
+
+#[test]
+fn proto_cycle_strict_throws() {
+    // Setting __proto__ to create a cycle must throw in strict mode
+    // (was a stack-overflow crash before the fix).
+    let res = common::run_err("\"use strict\"; var a={}; var b=Object.create(a); a.__proto__=b;");
+    assert!(
+        res.contains("Cyclic __proto__"),
+        "expected TypeError, got: {}",
+        res
+    );
+}
+
+#[test]
+fn proto_cycle_sloppy_is_noop_and_safe() {
+    // In sloppy mode it is silently ignored; subsequent reads must not crash.
+    let v = run("var a={}; var b=Object.create(a); a.__proto__=b; a.x");
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn normal_proto_set_still_works() {
+    let v = run("var a={}; a.__proto__={x:1}; a.x");
+    assert_eq!(v, Value::Number(1.0));
+}
