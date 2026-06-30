@@ -1,11 +1,13 @@
 # Known limitations
 
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
-- No execution fuel / interrupt mechanism: a tight `while(true){}` runs
-  forever and blocks the host process. Unlike goja (`vm.Interrupt`) or Boa,
-  RuJa has no built-in way to bound or interrupt untrusted code; embedders
-  must run it in a separately killable process. This is a blocker for the
-  "run untrusted scripts" embedding use case.
+- Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
+  bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
+  *not* catchable by user `try/catch`, so untrusted code cannot swallow it).
+  But a single long native call (e.g. a pathological regex, or a native
+  function that loops in Rust) is not subdivided, and there is no true
+  async interrupt / `vm.Interrupt()` like goja. To hard-bound untrusted
+  code, also run RuJa in a separately killable process.
 - Map/Set are backed by a `Vec`, so `get`/`has`/`set` are O(n) linear scans
   (keyed by SameValueZero). Correct but slow for large collections; no
   hash table yet. `WeakMap`/`WeakSet` use the same structure (entries are

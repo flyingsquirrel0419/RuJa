@@ -4,9 +4,10 @@
 
 ### Added
 - **Execution fuel / interrupt**: `Vm::set_fuel(Some(n))` bounds execution
-  to ~n opcodes; exhaustion throws `RangeError("fuel exhausted")`. `None`
-  (default) is unbounded. Cooperative, checked before each opcode — a
-  coarse but real way to run untrusted code without it blocking forever.
+  to ~n opcodes; exhaustion throws `RangeError("fuel exhausted")` that is
+  **not catchable** by user `try/catch` (a host-level abort), so untrusted
+  code cannot swallow it and keep looping. `None` (default) is unbounded.
+  Cooperative, checked before each opcode.
 - `Map`/`Set`/`Array.includes` keys now compare by **SameValueZero**
   (`NaN === NaN`, `-0 === +0`), so `new Map().set(NaN,1).get(NaN)` returns 1.
 

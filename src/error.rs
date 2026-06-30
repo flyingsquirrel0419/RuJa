@@ -22,9 +22,20 @@ pub enum ErrorKind {
     Uri,
     User,
     Internal,
+    /// Execution-fuel exhaustion: a host-level abort that is NOT catchable by
+    /// user `try/catch`, so untrusted code cannot swallow it and keep running.
+    Fuel,
 }
 
 impl Error {
+    /// Whether a thrown error can be caught by a JS `try/catch`. Most errors
+    /// (TypeError, user-thrown, ...) are catchable; a fuel exhaustion is a
+    /// host-level abort that must propagate out so untrusted code cannot
+    /// swallow it and keep running.
+    pub fn catchable(&self) -> bool {
+        !matches!(self.kind, ErrorKind::Fuel)
+    }
+
     /// Return a copy of this error with the source line attached, unless a
     /// line is already set (the first occurrence wins).
     pub fn with_line(&self, line: Option<usize>) -> Arc<Error> {
@@ -71,6 +82,16 @@ impl Error {
     pub fn range(msg: impl Into<String>) -> Arc<Error> {
         Arc::new(Error {
             kind: ErrorKind::Range,
+            message: msg.into(),
+            stack: Vec::new(),
+            thrown_value: None,
+            line: None,
+        })
+    }
+    /// A non-catchable fuel-exhaustion abort (displayed as RangeError).
+    pub fn fuel(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
+            kind: ErrorKind::Fuel,
             message: msg.into(),
             stack: Vec::new(),
             thrown_value: None,
@@ -136,6 +157,7 @@ impl fmt::Display for Error {
             ErrorKind::Uri => "URIError",
             ErrorKind::User => "Error",
             ErrorKind::Internal => "InternalError",
+            ErrorKind::Fuel => "RangeError",
         };
         if let Some(line) = self.line {
             write!(f, "{}: {} (at line {})", name, self.message, line)

@@ -287,8 +287,11 @@ impl Heap {
     }
 
     pub fn live_count(&self) -> usize {
+        // Lock order must match `allocate` (free_list before cells) to avoid a
+        // lock-order inversion deadlock if both are ever held concurrently.
+        let free = self.free_list.lock().unwrap();
         let cells = self.cells.lock().unwrap();
-        cells.len() - self.free_list.lock().unwrap().len()
+        cells.len() - free.len()
     }
 
     pub fn with_obj<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {
