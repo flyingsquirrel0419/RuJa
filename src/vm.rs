@@ -2782,6 +2782,41 @@ impl Vm {
 
     // ---- type conversions ----
 
+    /// StringNumericLiteral -> Number (ES ToNumber applied to a string).
+    /// Handles leading/trailing whitespace, `Infinity`/`-Infinity`, and the
+    /// `0x`/`0b`/`0o` integer-literal prefixes; anything else is a decimal
+    /// float, or NaN if it does not parse.
+    fn string_to_number(s: &str) -> f64 {
+        let t = s.trim();
+        if t.is_empty() {
+            return 0.0;
+        }
+        if t == "Infinity" || t == "+Infinity" {
+            return f64::INFINITY;
+        }
+        if t == "-Infinity" {
+            return f64::NEG_INFINITY;
+        }
+        // Hex/binary/octal integer literals (no sign, no fraction).
+        let (radix, digits) = if let Some(d) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))
+        {
+            (16, d)
+        } else if let Some(d) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+            (2, d)
+        } else if let Some(d) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
+            (8, d)
+        } else {
+            return t.parse::<f64>().unwrap_or(f64::NAN);
+        };
+        if digits.is_empty() {
+            return f64::NAN;
+        }
+        match u64::from_str_radix(digits, radix) {
+            Ok(n) => n as f64,
+            Err(_) => f64::NAN,
+        }
+    }
+
     pub fn to_number(&mut self, v: &Value) -> error::Result<f64> {
         Ok(match v {
             Value::Undefined => f64::NAN,
@@ -2795,14 +2830,7 @@ impl Vm {
             }
             Value::Number(n) => *n,
             Value::BigInt(n) => num_traits::ToPrimitive::to_f64(n).unwrap_or(f64::NAN),
-            Value::String(s) => {
-                let t = s.trim();
-                if t.is_empty() {
-                    0.0
-                } else {
-                    t.parse::<f64>().unwrap_or(f64::NAN)
-                }
-            }
+            Value::String(s) => Self::string_to_number(s),
             Value::Object(_) => {
                 // Per ES ToNumber on objects: run ToPrimitive(number hint)
                 // (valueOf then toString), then convert the primitive result.
