@@ -2935,23 +2935,101 @@ fn sort_with_cb(vm: &mut Vm, items: &mut [Value], cmp: &Option<Value>) -> error:
             });
         }
         Some(cmp_fn) => {
-            let n = items.len();
-            for i in 1..n {
-                let mut j = i;
-                while j > 0 {
-                    let a = items[j - 1].clone();
-                    let b = items[j].clone();
-                    let r = vm.call_function(cmp_fn, &[a.clone(), b.clone()], None)?;
-                    let ord = vm.to_number(&r)?;
-                    if ord > 0.0 {
-                        items.swap(j - 1, j);
-                        j -= 1;
-                    } else {
-                        break;
+            // Stable O(n log n) merge sort. The previous O(n^2) bubble sort
+            // made sorting 10k random elements with a comparator take ~30s (a
+            // trivial DoS). A hand-rolled merge sort is used instead of
+            // `slice::sort_by` because the ES comparator may have side
+            // effects (mutating VM state during `call_function`), which
+            // defeats pdqsort's purity assumptions and degrades it to O(n^2).
+            // Merge sort compares each pair at most once per merge level and
+            // stays O(n log n) regardless. NaN / non-number results are
+            // treated as 0 (equal), matching ES SortCompare; the first thrown
+            // error is captured and propagated after sorting settles.
+            let err: std::cell::Cell<Option<Arc<crate::error::Error>>> = std::cell::Cell::new(None);
+            let mut compare = |vm: &mut Vm, a: &Value, b: &Value| -> std::cmp::Ordering {
+                // If a comparator call already threw, short-circuit: restore
+                // the captured error (Cell::take cleared it) and return Equal
+                // so the sort settles quickly without more VM calls.
+                if let Some(e) = err.take() {
+                    err.set(Some(e));
+                    return std::cmp::Ordering::Equal;
+                }
+                match vm.call_function(cmp_fn, &[a.clone(), b.clone()], None) {
+                    Ok(r) => match vm.to_number(&r) {
+                        Ok(ord) => {
+                            if ord.is_nan() {
+                                std::cmp::Ordering::Equal
+                            } else if ord < 0.0 {
+                                std::cmp::Ordering::Less
+                            } else if ord > 0.0 {
+                                std::cmp::Ordering::Greater
+                            } else {
+                                std::cmp::Ordering::Equal
+                            }
+                        }
+                        Err(_) => std::cmp::Ordering::Equal,
+                    },
+                    Err(e) => {
+                        err.set(Some(e));
+                        std::cmp::Ordering::Equal
                     }
                 }
+            };
+            merge_sort(vm, items, &mut compare)?;
+            if let Some(e) = err.into_inner() {
+                return Err(e);
             }
         }
+    }
+    Ok(())
+}
+
+/// In-place stable merge sort. `compare` may mutate the VM (ES comparators
+/// can have side effects); unlike `slice::sort_by`, this never degrades to
+/// O(n^2) on an inconsistent/side-effecting comparator because each pair is
+/// compared at most once along a given merge path.
+fn merge_sort<F>(vm: &mut Vm, items: &mut [Value], compare: &mut F) -> error::Result<()>
+where
+    F: FnMut(&mut Vm, &Value, &Value) -> std::cmp::Ordering,
+{
+    let n = items.len();
+    if n < 2 {
+        return Ok(());
+    }
+    // Bottom-up merge sort with a scratch buffer.
+    let mut buf: Vec<Value> = Vec::with_capacity(n);
+    let mut width = 1;
+    while width < n {
+        let mut i = 0;
+        while i < n {
+            let left = i;
+            let mid = (i + width).min(n);
+            let right = (i + 2 * width).min(n);
+            // Merge [left, mid) and [mid, right) into buf, then copy back.
+            let mut a = left;
+            let mut b = mid;
+            buf.clear();
+            while a < mid && b < right {
+                if compare(vm, &items[a], &items[b]) == std::cmp::Ordering::Greater {
+                    buf.push(items[b].clone());
+                    b += 1;
+                } else {
+                    buf.push(items[a].clone());
+                    a += 1;
+                }
+            }
+            while a < mid {
+                buf.push(items[a].clone());
+                a += 1;
+            }
+            while b < right {
+                buf.push(items[b].clone());
+                b += 1;
+            }
+            items[left..right].clone_from_slice(&buf);
+            i += 2 * width;
+        }
+        width *= 2;
     }
     Ok(())
 }
@@ -3305,29 +3383,12 @@ fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
                 });
             }
             Some(cmp_fn) => {
-                let n = items.len();
-                // Simple O(n^2) insertion sort to call back into JS comparator.
-                for i in 1..n {
-                    let mut j = i;
-                    while j > 0 {
-                        let a = items[j - 1].clone();
-                        let b = items[j].clone();
-                        let r = vm.call_function(&cmp_fn, &[a.clone(), b.clone()], None)?;
-                        // Use the raw f64 sign so a comparator return value in
-                        // (0, 1) (e.g. `3.1 - 2.3 == 0.8`) is still treated as
-                        // "greater than zero". Casting to i64 truncates 0.8 to
-                        // 0, which silently breaks sorts of non-integer
-                        // doubles. NaN (from a bad comparator) is treated as 0
-                        // (equal) per the spec's "comparison is inconsistent".
-                        let ord = vm.to_number(&r)?;
-                        if ord > 0.0 {
-                            items.swap(j - 1, j);
-                            j -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
+                // Delegate to the O(n log n) merge sort in `sort_with_cb`,
+                // which also handles NaN comparator results and thrown errors
+                // per ES SortCompare. (The previous inline O(n^2) insertion
+                // sort made `a.sort(cmp)` on 10k elements take ~30s.)
+                let cmp_arg = Some(cmp_fn);
+                sort_with_cb(vm, &mut items, &cmp_arg)?;
             }
         }
         vm.heap.with_obj(idx.0, |obj| {

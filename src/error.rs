@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::value::Value;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Error {
     pub kind: ErrorKind,
     pub message: String,
