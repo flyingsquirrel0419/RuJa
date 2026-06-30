@@ -442,10 +442,15 @@ impl<'a> Lexer<'a> {
                 if !ok {
                     // Valid escape but not an id char (e.g. `\u007B` -> `{`):
                     // consume the escape so the lexer advances, then end the
-                    // identifier here. If nothing was consumed yet this yields
-                    // an empty identifier, surfaced as a parse error upstream.
+                    // identifier here. If this was the first (start) char,
+                    // e.g. `\u200D` (ZWJ) is not a valid IdentifierStart, so
+                    // the whole token is a SyntaxError rather than an empty
+                    // identifier.
                     for _ in 0..len {
                         self.advance();
+                    }
+                    if first {
+                        return TokenKind::LexError("invalid identifier start".to_string());
                     }
                     break;
                 }
