@@ -5718,7 +5718,10 @@ fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
                 }
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Set(s) = o {
-                        s.items.lock().unwrap().push(v);
+                        let mut items = s.items.lock().unwrap();
+                        if !items.iter().any(|i| i == &v) {
+                            items.push(v);
+                        }
                     }
                 });
             }
