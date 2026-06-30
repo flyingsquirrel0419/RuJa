@@ -12,6 +12,10 @@ use crate::value::{
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::IndexMap;
+use num_bigint::{BigInt, BigUint};
+use num_integer::Integer;
+use num_rational::Ratio;
+use num_traits::{Signed, ToPrimitive, Zero};
 use regex::{Regex, RegexBuilder};
 
 /// Compile a regex pattern applying ES flags: `i` (case-insensitive),
@@ -5029,50 +5033,168 @@ fn format_i64_radix(n: i64, radix: u32) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-/// Format an f64 in a non-decimal radix (2..=36), converting both the
-/// integer and fractional parts. Mirrors ES Number.prototype.toString(radix)
-/// for finite non-integers.
-fn format_f64_radix(n: f64, radix: u32) -> String {
-    if n == 0.0 {
+/// Convert an f64 to its exact rational value. Assumes finite input.
+fn f64_to_exact_ratio(v: f64) -> Ratio<BigInt> {
+    let bits = v.to_bits();
+    let mant = bits & 0xfffffffffffff;
+    let exp_biased = ((bits >> 52) & 0x7ff) as i32;
+    let mant_int = if exp_biased == 0 {
+        BigInt::from(mant)
+    } else {
+        BigInt::from((1u64 << 52) | mant)
+    };
+    let true_exp = if exp_biased == 0 {
+        1 - 1023
+    } else {
+        exp_biased - 1023
+    };
+    let shift = 52 - true_exp;
+    if shift >= 0 {
+        Ratio::new(mant_int, BigInt::from(1u32) << (shift as u32))
+    } else {
+        Ratio::new(mant_int << ((-shift) as u32), BigInt::from(1))
+    }
+}
+
+/// Half the distance between `vabs` and the next representable f64.
+fn half_ulp(vabs: f64) -> Ratio<BigInt> {
+    let bits = vabs.to_bits();
+    let exp_biased = ((bits >> 52) & 0x7ff) as i32;
+    if exp_biased == 0 {
+        Ratio::new(BigInt::from(1), BigInt::from(1u32) << 1075u32)
+    } else {
+        let true_exp = exp_biased - 1023;
+        let shift = true_exp - 53;
+        if shift >= 0 {
+            Ratio::new(BigInt::from(1u32) << (shift as u32), BigInt::from(1))
+        } else {
+            Ratio::new(BigInt::from(1), BigInt::from(1u32) << ((-shift) as u32))
+        }
+    }
+}
+
+/// Format a non-negative `BigUint` in the requested radix.
+fn biguint_to_radix(mut n: BigUint, radix: u32) -> String {
+    if n.is_zero() {
         return "0".to_string();
     }
     let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    let r = BigUint::from(radix);
+    while n > BigUint::zero() {
+        let (q, rem) = n.div_rem(&r);
+        n = q;
+        out.push(digits[*rem.to_u32_digits().first().unwrap_or(&0) as usize]);
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap()
+}
+
+/// Format an f64 in a non-decimal radix (2..=36) with the shortest
+/// round-trip-precise representation. Mirrors ES Number.prototype.toString(radix).
+fn format_f64_radix(n: f64, radix: u32) -> String {
+    if n.is_nan() {
+        return "NaN".to_string();
+    }
+    if n.is_infinite() {
+        return if n < 0.0 {
+            "-Infinity".to_string()
+        } else {
+            "Infinity".to_string()
+        };
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
     let neg = n < 0.0;
-    let n = n.abs();
-    let int_part = n.trunc();
-    let mut frac = n - int_part;
-    // Integer part.
-    let mut s = if int_part == 0.0 {
-        "0".to_string()
-    } else {
-        let mut ii = int_part as u64;
-        let mut buf = Vec::new();
-        while ii > 0 {
-            buf.push(digits[(ii % radix as u64) as usize]);
-            ii /= radix as u64;
-        }
-        buf.reverse();
-        String::from_utf8(buf).unwrap_or_default()
-    };
-    // Fractional part: emit up to 52 digits (f64 mantissa width), trimming
-    // is unnecessary because ES spec produces the shortest representation
-    // and we approximate with a fixed precision that is exact for f64.
-    if frac > 0.0 {
-        s.push('.');
-        let mut count = 0;
-        while frac > 0.0 && count < 52 {
-            frac *= radix as f64;
-            let d = frac.trunc() as u32;
-            s.push(char::from(digits[(d as usize) % digits.len()]));
-            frac -= d as f64;
-            count += 1;
+    let vabs = n.abs();
+    let exact = f64_to_exact_ratio(vabs);
+    let int_part = exact.floor().to_integer();
+
+    let mut residual = &exact - Ratio::from_integer(int_part.clone());
+    if residual.is_zero() {
+        let s = biguint_to_radix(int_part.abs().to_biguint().unwrap(), radix);
+        return if neg { format!("-{}", s) } else { s };
+    }
+
+    let base = BigInt::from(radix);
+    let mut pow = BigInt::from(1);
+    let mut m = BigInt::from(0);
+    let half = half_ulp(vabs);
+
+    for k in 1..=4096usize {
+        residual *= Ratio::from_integer(base.clone());
+        let d: BigInt = residual.floor().to_integer();
+        residual -= Ratio::from_integer(d.clone());
+        m = &m * &base + &d;
+        pow *= &base;
+
+        let candidate_down = Ratio::new(&int_part * &pow + &m, pow.clone());
+        let up_numer: BigInt = &int_part * &pow + &m + 1;
+        let candidate_up = Ratio::new(up_numer, pow.clone());
+
+        let diff_down = (&candidate_down - &exact).abs();
+        let diff_up = (&candidate_up - &exact).abs();
+
+        let ok_down =
+            diff_down < half || (diff_down == half && candidate_down.to_f64() == Some(vabs));
+        let ok_up = diff_up < half || (diff_up == half && candidate_up.to_f64() == Some(vabs));
+
+        if ok_down || ok_up {
+            let m_final = if ok_down && ok_up {
+                if diff_up < diff_down {
+                    m.clone() + 1
+                } else if diff_down < diff_up {
+                    m.clone()
+                } else {
+                    // Tie on a representable boundary: choose the value whose
+                    // last digit is even in the target radix.
+                    let down_digit: i32 = (&m % &base).to_i32().unwrap_or(0);
+                    if down_digit % 2 == 0 {
+                        m.clone()
+                    } else {
+                        m.clone() + 1
+                    }
+                }
+            } else if ok_up {
+                m.clone() + 1
+            } else {
+                m.clone()
+            };
+
+            if m_final == pow {
+                let next_int: BigInt = &int_part + 1;
+                let s = biguint_to_radix(next_int.abs().to_biguint().unwrap(), radix);
+                return if neg { format!("-{}", s) } else { s };
+            }
+
+            // Trim trailing zeros to obtain the shortest representation.
+            let mut trimmed_m = m_final.clone();
+            let mut trimmed_pow = pow.clone();
+            let mut trimmed_k = k;
+            while (&trimmed_m % &base).is_zero() && trimmed_k > 0 {
+                trimmed_m /= &base;
+                trimmed_pow /= &base;
+                trimmed_k -= 1;
+            }
+
+            let total = &int_part * &trimmed_pow + &trimmed_m;
+            let (int_q, frac_r) = total.div_rem(&trimmed_pow);
+            let mut int_s = biguint_to_radix(int_q.abs().to_biguint().unwrap(), radix);
+            if neg {
+                int_s.insert(0, '-');
+            }
+            if frac_r.is_zero() {
+                return int_s;
+            }
+            let frac_s = biguint_to_radix(frac_r.abs().to_biguint().unwrap(), radix);
+            let frac_padded = format!("{:0>width$}", frac_s, width = trimmed_k);
+            return format!("{}.{}", int_s, frac_padded);
         }
     }
-    if neg {
-        format!("-{}", s)
-    } else {
-        s
-    }
+
+    // Fallback (should rarely happen): fall back to a fixed number of digits.
+    format!("{}", n)
 }
 
 fn boolean_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
