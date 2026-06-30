@@ -3,6 +3,26 @@
 ## [Unreleased]
 
 ### Added
+- **Execution fuel / interrupt**: `Vm::set_fuel(Some(n))` bounds execution
+  to ~n opcodes; exhaustion throws `RangeError("fuel exhausted")`. `None`
+  (default) is unbounded. Cooperative, checked before each opcode — a
+  coarse but real way to run untrusted code without it blocking forever.
+- `Map`/`Set`/`Array.includes` keys now compare by **SameValueZero**
+  (`NaN === NaN`, `-0 === +0`), so `new Map().set(NaN,1).get(NaN)` returns 1.
+
+### Fixed
+- `gc::live_count` now locks `free_list` before `cells` to match
+  `allocate()`, removing a lock-order inversion deadlock.
+- GC alloc counter uses `fetch_add` instead of a racy load+store.
+- Removed the global `#![allow(unreachable_patterns)]`; a duplicate lexer
+  arm and a shadowed bool/bigint loose-eq arm were real dead code and are
+  gone, remaining intentional fallbacks carry a local `#[allow]`.
+
+### Changed
+- Documented that `pub` internal modules are not a semver-stable API
+  (embed against the re-exports), Map/Set are O(n) `Vec`-backed, and
+  `with_obj` is non-reentrant on the same index. test262 numbers clarified
+  as a curated subset, not full conformance.
 - **Unicode identifiers & escapes**: `IdentifierStart`/`IdentifierContinue`
   now accept Unicode letters and the `\uXXXX` / `\u{XXXX}` escape forms
   inside identifiers (`\u{63}ase` parses as `case`; `café`/`π`/CJK names

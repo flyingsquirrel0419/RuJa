@@ -42,19 +42,22 @@ summary matches what is below.
 
 | Suite            | Ran  | Pass | Fail | Pass rate |
 |------------------|------|------|------|----------|
-| identifiers      | 266  | 158  | 108  | 59.4%    |
-| punctuators       | 11   | 10   | 1    | 90.9%    |
+| identifiers      | 266  | 159  | 107  | 59.8%    |
+| punctuators       | 11   | 11   | 0    | 100.0%   |
 | white-space       | 67   | 49   | 18   | 73.1%    |
 | keywords          | 25   | 24   | 1    | 96.0%    |
 | types             | 113  | 80   | 33   | 70.8%    |
 | comments          | 23   | 17   | 6    | 73.9%    |
-| expressions/arrow-function | 343 | 237 | 106 | 69.1% |
-| expressions/function        | 264 | 150 | 114 | 56.8% |
-| expressions/object          | 715 | 491 | 224 | 68.7% |
-| **subset total**  | 1827 | 1226 | 611 | ~67.1% |
+| expressions/arrow-function | 343 | 245 | 98  | 71.4%    |
+| expressions/function        | 264 | 159 | 105 | 60.2%    |
+| expressions/object          | 722 | 506 | 216 | 70.1%    |
+| **subset total**  | 1834 | 1250 | 584 | ~68.2%    |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
-for the current commit.)
+for the current commit. This is a **curated subset**, not full test262:
+`built-ins/`, `language/statements/` and the rest of `language/expressions/`
+are not all exercised, so the true full-suite pass rate is lower and not
+claimed. RuJa does not assert ES conformance; this only tracks regressions.)
 
 ## What was fixed to get here
 

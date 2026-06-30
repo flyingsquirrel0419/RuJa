@@ -84,6 +84,17 @@ fn main() {
 > concurrent shared access needs external sync (e.g. `Mutex<Vm>`).
 > See [Limitations](docs/limitations.md).
 
+Bound untrusted code with an execution-fuel budget:
+
+```rust
+let mut vm = Vm::new();
+vm.set_fuel(Some(1_000_000));      // ~1M opcodes before a RangeError
+let _ = vm.run("while(true){}");    // returns Err("fuel exhausted")
+vm.set_fuel(None);                  // unbounded again
+```
+The check is cooperative (before each opcode), not preemption - a single
+long native call is not subdivided. See [Limitations](docs/limitations.md).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) — pipeline, GC, and module layout

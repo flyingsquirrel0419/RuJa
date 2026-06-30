@@ -51,6 +51,12 @@ pub struct Vm {
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
+    /// Optional execution fuel: when set, each dispatched opcode decrements
+    /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
+    /// unbounded (the default). Embedders call `set_fuel` to bound untrusted
+    /// code. Coarse and non-preemptive: a single native call (e.g. a long
+    /// regex) is not subdivided.
+    pub(crate) fuel: Option<i64>,
 }
 
 pub struct WellKnownSymbols {
@@ -204,9 +210,24 @@ impl Vm {
             global_names: HashMap::new(),
             global_constants: Vec::new(),
             functions: Vec::new(),
+            fuel: None,
         };
         crate::builtins::setup_full(&mut vm);
         vm
+    }
+
+    /// Set an execution-fuel budget. While set, each dispatched opcode
+    /// decrements the budget; reaching zero throws a `RangeError("fuel
+    /// exhausted")`. Pass `None` to disable the limit (the default). The
+    /// budget persists across `run` calls, so an embedder can refill it
+    /// between ticks. Coarse and cooperative, not preemption.
+    pub fn set_fuel(&mut self, fuel: Option<i64>) {
+        self.fuel = fuel;
+    }
+
+    /// Remaining fuel, or `None` if unbounded.
+    pub fn fuel_remaining(&self) -> Option<i64> {
+        self.fuel
     }
 
     /// Run a source string and return the value of the last top-level expression.
@@ -743,6 +764,14 @@ impl Vm {
 
     fn interpret_inner_raw(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
         loop {
+            // Execution fuel: bound untrusted code. Checked before each
+            // opcode so a tight loop cannot run forever. None = unbounded.
+            if let Some(f) = self.fuel.as_mut() {
+                if *f <= 0 {
+                    return Err(Error::range("fuel exhausted".to_string()));
+                }
+                *f -= 1;
+            }
             // Generator `throw(e)` resume: if the current frame has a pending
             // forced throw (set by resume_generator on a Throw resume), raise
             // it now at the suspended `yield` point. This lets the generator
