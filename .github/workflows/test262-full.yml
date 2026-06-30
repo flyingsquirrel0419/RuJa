@@ -1,0 +1,58 @@
+# Standalone full test262 conformance run.
+# This is separate from ci.yml because it clones the entire test262 repository
+# and can take a long time.
+
+name: test262-full
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test262-full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build RuJa (release)
+        run: cargo build --release
+      - name: Checkout full test262
+        run: git clone --depth 1 https://github.com/tc39/test262.git ~/test262
+      - name: Run full test262
+        timeout-minutes: 60
+        run: |
+          dirs=$(ls ~/test262/test | tr '\n' ' ')
+          TEST262=~/test262 python3 tools/test262_runner.py $dirs > test262_full_result.txt 2>&1
+          cat test262_full_result.txt
+      - name: Publish full pass rate to job summary
+        if: always()
+        run: |
+          rate=$(grep '^RATE=' test262_full_result.txt | sed 's/RATE=//;s/ .*//')
+          pass=$(grep '^RATE=' test262_full_result.txt | sed 's/.*PASS=//;s/ .*//')
+          fail=$(grep '^RATE=' test262_full_result.txt | sed 's/.*FAIL=//;s/ .*//')
+          total=$(grep '^RATE=' test262_full_result.txt | sed 's/.*TOTAL=//;s/ .*//')
+          {
+            echo "## test262 conformance (full)"
+            echo ""
+            echo "**Pass rate: ${rate}%** - ${pass} passed, ${fail} failed, ${total} total"
+            echo "(full test262; unsupported-feature tests are skipped)"
+            echo ""
+            echo "<details><summary>Full breakdown</summary>"
+            echo ""
+            echo '```'
+            cat test262_full_result.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } >> $GITHUB_STEP_SUMMARY
+      - name: Upload test262 full result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test262-full-result
+          path: test262_full_result.txt
