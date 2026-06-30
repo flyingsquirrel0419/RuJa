@@ -1217,12 +1217,16 @@ fn math_ceil(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
     math_unary(f64::ceil, vm, args)
 }
 fn math_round(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    // ES Math.round: round half towards +Infinity (equivalent to floor(x + 0.5)
-    // for finite x), so Math.round(-0.5) === 0, Math.round(0.5) === 1.
+    // ES Math.round: round half towards +Infinity. For a finite x, this is
+    // floor(x + 0.5), with one spec quirk: when x is greater than 0 but less
+    // than 0.5 the result is +0, and when x is -0.5 (exactly) the result is
+    // -0 (not +0). floor(-0.5 + 0.5) = floor(0) = +0, so handle -0.5 specially.
     math_unary(
         |n| {
             if n.is_nan() || n.is_infinite() {
                 n
+            } else if n == -0.5 {
+                -0.0
             } else {
                 (n + 0.5).floor()
             }
