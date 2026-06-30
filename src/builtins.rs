@@ -945,6 +945,19 @@ fn object_define_property(
         let mut has_writable = false;
         let mut has_get = false;
         let mut has_set = false;
+        // ToPropertyDescriptor: the descriptor must be an Object, else a
+
+        // TypeError. Without this, Object.defineProperty(o, "x", true)
+
+        // silently succeeded instead of throwing (diverging from V8/Node).
+
+        if !matches!(desc, Value::Object(_)) {
+            return Err(Error::type_err(format!(
+                "Property description must be an object: {}",
+                crate::value::value_to_debug_string(&desc)
+            )));
+        }
+
         if let Value::Object(_) = desc {
             // Presence of each field is determined by an OWN property on the
             // descriptor object, mirroring ToPropertyDescriptor: a missing

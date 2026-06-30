@@ -368,3 +368,24 @@ fn normal_proto_set_still_works() {
     let v = run("var a={}; a.__proto__={x:1}; a.x");
     assert_eq!(v, Value::Number(1.0));
 }
+
+// --- Object.defineProperty descriptor validation ---
+
+#[test]
+fn define_property_non_object_descriptor_throws() {
+    let res = common::run_err("Object.defineProperty({}, 'x', true);");
+    assert!(
+        res.contains("must be an object"),
+        "expected TypeError, got: {}",
+        res
+    );
+    // Non-object primitives too.
+    let res = common::run_err("Object.defineProperty({}, 'x', 42);");
+    assert!(res.contains("must be an object"), "got: {}", res);
+}
+
+#[test]
+fn define_property_object_descriptor_works() {
+    let v = run("var o={}; Object.defineProperty(o,'x',{value:7,writable:true}); o.x");
+    assert_eq!(v, Value::Number(7.0));
+}
