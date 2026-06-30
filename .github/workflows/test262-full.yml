@@ -1,6 +1,6 @@
-# Standalone full test262 conformance run.
-# This is separate from ci.yml because it clones the entire test262 repository
-# and can take a long time.
+# Full test262 conformance run split into parallel jobs by directory.
+# Each runner processes one top-level test262 directory (or language subdir),
+# so the full suite finishes much faster than a single sequential run.
 
 name: test262-full
 
@@ -14,45 +14,136 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test262-full:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Build RuJa (release)
         run: cargo build --release
+      - name: Upload RuJa binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/ruja
+
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.dirs.outputs.dirs }}
+    steps:
       - name: Checkout full test262
         run: git clone --depth 1 https://github.com/tc39/test262.git ~/test262
-      - name: Run full test262
-        timeout-minutes: 60
+      - name: Build directory matrix
+        id: dirs
         run: |
-          dirs=$(ls ~/test262/test | tr '\n' ' ')
-          TEST262=~/test262 python3 tools/test262_runner.py $dirs > test262_full_result.txt 2>&1
-          cat test262_full_result.txt
-      - name: Publish full pass rate to job summary
+          dirs=$(cd ~/test262/test && {
+            find . -maxdepth 1 -mindepth 1 -type d
+            find ./language -maxdepth 1 -mindepth 1 -type d 2>/dev/null || true
+          } | sed 's|^\./||' | grep -v '^harness$' | sort -u | jq -R . | jq -s -c .)
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          echo "matrix directories: $dirs"
+
+  test262-full:
+    needs: [build, setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJson(needs.setup.outputs.dirs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download RuJa binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ruja-release
+          path: target/release/
+      - name: Make RuJa executable
+        run: chmod +x target/release/ruja
+      - name: Checkout full test262
+        run: git clone --depth 1 https://github.com/tc39/test262.git ~/test262
+      - name: Run test262 /${{ matrix.dir }}
+        run: |
+          DIR="${{ matrix.dir }}"
+          SAFE_DIR="${DIR//\//_}"
+          TEST262=~/test262 python3 tools/test262_runner.py "$DIR" > "test262_${SAFE_DIR}_result.txt" 2>&1
+          cat "test262_${SAFE_DIR}_result.txt"
+      - name: Publish /${{ matrix.dir }} pass rate
         if: always()
         run: |
-          rate=$(grep '^RATE=' test262_full_result.txt | sed 's/RATE=//;s/ .*//')
-          pass=$(grep '^RATE=' test262_full_result.txt | sed 's/.*PASS=//;s/ .*//')
-          fail=$(grep '^RATE=' test262_full_result.txt | sed 's/.*FAIL=//;s/ .*//')
-          total=$(grep '^RATE=' test262_full_result.txt | sed 's/.*TOTAL=//;s/ .*//')
+          DIR="${{ matrix.dir }}"
+          SAFE_DIR="${DIR//\//_}"
+          FILE="test262_${SAFE_DIR}_result.txt"
+          rate=$(grep '^RATE=' "$FILE" | sed 's/RATE=//;s/ .*//')
+          pass=$(grep '^RATE=' "$FILE" | sed 's/.*PASS=//;s/ .*//')
+          fail=$(grep '^RATE=' "$FILE" | sed 's/.*FAIL=//;s/ .*//')
+          total=$(grep '^RATE=' "$FILE" | sed 's/.*TOTAL=//;s/ .*//')
           {
-            echo "## test262 conformance (full)"
+            echo "## test262 /${{ matrix.dir }}"
             echo ""
             echo "**Pass rate: ${rate}%** - ${pass} passed, ${fail} failed, ${total} total"
-            echo "(full test262; unsupported-feature tests are skipped)"
+            echo "(unsupported-feature tests are skipped)"
             echo ""
-            echo "<details><summary>Full breakdown</summary>"
+            echo "<details><summary>Full breakdown for /${{ matrix.dir }}</summary>"
             echo ""
             echo '```'
-            cat test262_full_result.txt
+            cat "$FILE"
             echo '```'
             echo ""
             echo "</details>"
-          } >> $GITHUB_STEP_SUMMARY
-      - name: Upload test262 full result
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload /${{ matrix.dir }} result
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test262-full-result
-          path: test262_full_result.txt
+          name: test262-${{ strategy.job-index }}-result
+          path: test262_*_result.txt
+
+  summary:
+    needs: test262-full
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all test262 results
+        uses: actions/download-artifact@v4
+        with:
+          path: test262-results
+          pattern: test262-*-result
+      - name: Aggregate and publish
+        run: |
+          total_pass=0
+          total_fail=0
+          total_skip=0
+          total_total=0
+          for f in test262-results/test262-*-result/*_result.txt; do
+            [ -f "$f" ] || continue
+            pass=$(grep '^RATE=' "$f" | sed 's/.*PASS=//;s/ .*//')
+            fail=$(grep '^RATE=' "$f" | sed 's/.*FAIL=//;s/ .*//')
+            skip=$(grep '^RATE=' "$f" | sed 's/.*SKIP=//;s/ .*//')
+            total=$(grep '^RATE=' "$f" | sed 's/.*TOTAL=//;s/ .*//')
+            total_pass=$((total_pass + ${pass:-0}))
+            total_fail=$((total_fail + ${fail:-0}))
+            total_skip=$((total_skip + ${skip:-0}))
+            total_total=$((total_total + ${total:-0}))
+          done
+          ran=$((total_pass + total_fail))
+          if [ "$ran" -gt 0 ]; then
+            rate=$(awk "BEGIN { printf \"%.1f\", $total_pass * 100 / $ran }")
+          else
+            rate=0.0
+          fi
+          {
+            echo "## test262 conformance (full, aggregate)"
+            echo ""
+            echo "**Pass rate: ${rate}%** - ${total_pass} passed, ${total_fail} failed, ${total_skip} skipped, ${total_total} total"
+            echo ""
+            echo '```'
+            echo "Total tests: ${total_total}"
+            echo "Actually run:  ${ran}"
+            echo "Passed:        ${total_pass}"
+            echo "Failed:        ${total_fail}"
+            echo "Skipped:       ${total_skip}"
+            echo "Pass rate:     ${rate}%"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
