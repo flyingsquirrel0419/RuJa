@@ -450,3 +450,25 @@ fn sort_default_is_string_compare() {
     let v = run("var a=[10,2,1,30]; a.sort(); a.join(',')");
     assert_eq!(v, Value::String(std::sync::Arc::from("1,10,2,30")));
 }
+
+// --- Date TimeValue range (Invalid Date) ---
+
+#[test]
+fn date_out_of_range_is_invalid() {
+    // ES TimeValue must be within +/-8.64e15 ms; beyond is an Invalid Date.
+    let v = run("new Date(1e20).getTime()");
+    assert!(matches!(v, Value::Number(n) if n.is_nan()), "got {:?}", v);
+    let v = run("new Date(8.64e15 + 1).getTime()");
+    assert!(matches!(v, Value::Number(n) if n.is_nan()), "got {:?}", v);
+    // Infinity is also invalid.
+    let v = run("new Date(Infinity).getTime()");
+    assert!(matches!(v, Value::Number(n) if n.is_nan()), "got {:?}", v);
+}
+
+#[test]
+fn date_in_range_works() {
+    let v = run("new Date(0).getTime()");
+    assert_eq!(v, Value::Number(0.0));
+    let v = run("Number.isFinite(new Date().getTime())");
+    assert_eq!(v, Value::Bool(true));
+}
