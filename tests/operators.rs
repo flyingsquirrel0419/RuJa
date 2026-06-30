@@ -313,3 +313,31 @@ fn optional_method_chain_present() {
         Value::String(Arc::from("hi"))
     );
 }
+
+// --- ToInt32 / ToUint32 conformance (Rust `as i32` saturates; spec needs modular reduction) ---
+
+#[test]
+fn toint32_large_values_wrap() {
+    // 2**31 is exactly -2147483648 as int32, not saturated to INT32_MAX.
+    assert_eq!(run("(2**31) | 0"), Value::Number(-2147483648.0));
+    // 2**32 wraps to 0.
+    assert_eq!(run("(2**32) | 0"), Value::Number(0.0));
+    assert_eq!(run("(2**33) | 0"), Value::Number(0.0));
+    // 2**32 - 1 wraps to -1.
+    assert_eq!(run("4294967295 | 0"), Value::Number(-1.0));
+}
+
+#[test]
+fn touint32_negatives() {
+    assert_eq!(run("-1 >>> 0"), Value::Number(4294967295.0));
+    assert_eq!(run("-5 >>> 0"), Value::Number(4294967291.0));
+}
+
+#[test]
+fn bitwise_normal_unchanged() {
+    assert_eq!(run("~5"), Value::Number(-6.0));
+    assert_eq!(run("5 | 2"), Value::Number(7.0));
+    assert_eq!(run("1 << 31"), Value::Number(-2147483648.0));
+    assert_eq!(run("5 & 3"), Value::Number(1.0));
+    assert_eq!(run("5 ^ 1"), Value::Number(4.0));
+}
