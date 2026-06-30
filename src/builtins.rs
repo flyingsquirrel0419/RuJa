@@ -2162,6 +2162,15 @@ fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
         // Approximate: use the first numeric arg as a timestamp.
         vm.to_number(&args[0])?
     };
+    // ES TimeValue: a finite time value must be within +/-8.64e15 ms of the
+    // epoch; anything else is an Invalid Date (NaN). Without this, `new
+    // Date(1e20).getTime()` returned the raw number instead of NaN.
+    const MAX_TIME_VALUE: f64 = 8.64e15;
+    let ts = if ts.is_nan() || ts.is_infinite() || ts.abs() > MAX_TIME_VALUE {
+        f64::NAN
+    } else {
+        ts
+    };
     if let Some(Value::Object(idx)) = &this {
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Object(o) = o {
@@ -2663,6 +2672,10 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     let map_fn = args.get(1).cloned();
     // Array-like or iterable
     let mut items: Vec<Value> = Vec::new();
+    // Cap total materialized elements so an infinite or huge iterable (e.g.
+    // a generator that yields forever) cannot OOM the host. Matches the
+    // engine's dense-array model.
+    const MAX_ARRAY_FROM_LEN: usize = 1 << 22; // 4,194,304
     if let Value::Object(idx) = &src_val {
         let (is_arr, arr_items, len) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
@@ -2693,7 +2706,6 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
             // like `{length: 2**26}` from forcing a multi-second / multi-GB
             // materialization (a trivial DoS). Node tolerates large lengths
             // but RuJa materializes densely, so we bound it.
-            const MAX_ARRAY_FROM_LEN: usize = 1 << 22; // 4,194,304
             if len > MAX_ARRAY_FROM_LEN {
                 return Err(Error::range("Invalid array length"));
             }
@@ -2708,6 +2720,15 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
             items.push(Value::String(Arc::from(ch.to_string().as_str())));
         }
     }
+    finish_array_from(vm, items, map_fn)
+}
+
+/// Apply an optional map function and box the items into an Array.
+fn finish_array_from(
+    vm: &mut Vm,
+    mut items: Vec<Value>,
+    map_fn: Option<Value>,
+) -> error::Result<Value> {
     if let Some(mfn) = map_fn {
         let mut mapped = Vec::new();
         for (i, v) in items.iter().enumerate() {
