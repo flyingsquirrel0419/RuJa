@@ -342,3 +342,25 @@ fn split_nan_limit_returns_empty() {
     let v = run(r#""a,b,c".split(",", "x").length"#);
     assert_eq!(v, Value::Number(0.0));
 }
+
+// --- String.prototype.charAt range conformance ---
+
+#[test]
+fn char_at_negative_returns_empty() {
+    let v = run(r#""abc".charAt(-1)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("")));
+}
+
+#[test]
+fn char_at_out_of_range_returns_empty() {
+    let v = run(r#""abc".charAt(5)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("")));
+}
+
+#[test]
+fn char_at_in_range_works() {
+    let v = run(r#""abc".charAt(0)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("a")));
+    let v = run(r#""abc".charAt()"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("a")));
+}
