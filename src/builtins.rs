@@ -2676,7 +2676,14 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
         if is_arr {
             items = arr_items;
         } else {
-            // array-like: read index 0..len
+            // array-like: read index 0..len. Cap to prevent untrusted input
+            // like `{length: 2**26}` from forcing a multi-second / multi-GB
+            // materialization (a trivial DoS). Node tolerates large lengths
+            // but RuJa materializes densely, so we bound it.
+            const MAX_ARRAY_FROM_LEN: usize = 1 << 22; // 4,194,304
+            if len > MAX_ARRAY_FROM_LEN {
+                return Err(Error::range("Invalid array length"));
+            }
             for i in 0..len {
                 let key = i.to_string();
                 let v = vm.get_property(&src_val, &key)?;
@@ -4710,10 +4717,19 @@ fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
             "-Infinity"
         })));
     }
-    let digits = match args.first() {
-        Some(v) => vm.to_number(v)? as usize,
-        None => 0,
+    // ES: fractionDigits must be an integer in 0..=100, else RangeError.
+    // Without this, toFixed(-1) silently returned "1" and toFixed(200)
+    // produced a 201-digit string, both diverging from V8/Node.
+    let d = match args.first() {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
     };
+    if d.is_nan() || d < 0.0 || d.fract() != 0.0 || d > 100.0 {
+        return Err(Error::range(
+            "toFixed() digits argument must be between 0 and 100",
+        ));
+    }
+    let digits = d as usize;
     Ok(Value::String(Arc::from(format!("{:.*}", digits, n))))
 }
 fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -4734,7 +4750,14 @@ fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
     }
     match args.first() {
         Some(v) if !v.is_undefined() => {
-            let p = vm.to_number(v)? as usize;
+            // ES: precision must be an integer in 1..=100, else RangeError.
+            let pf = vm.to_number(v)?;
+            if pf.is_nan() || pf < 1.0 || pf.fract() != 0.0 || pf > 100.0 {
+                return Err(Error::range(
+                    "toPrecision() argument must be between 1 and 100",
+                ));
+            }
+            let p = pf as usize;
             if p == 0 {
                 return Ok(Value::String(Arc::from("0")));
             }

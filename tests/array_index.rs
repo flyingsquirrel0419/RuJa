@@ -221,3 +221,65 @@ fn json_stringify_deep_nesting_does_not_crash() {
         other => panic!("expected string, got {:?}", other),
     }
 }
+
+// --- Pass 3 guards ---
+
+/// `Array.from({length: 2**26})` used to materialize 64M dense slots and
+/// hang/OOM the engine; it must now throw a RangeError quickly.
+#[test]
+fn array_from_huge_length_throws() {
+    let res = common::run_err("Array.from({length: 67108864})");
+    assert!(
+        res.contains("Invalid array length"),
+        "expected RangeError, got: {}",
+        res
+    );
+}
+
+/// Normal `Array.from` of an array-like still works.
+#[test]
+fn array_from_small_length_works() {
+    let v = run("Array.from({length: 3}).length");
+    assert_eq!(v, Value::Number(3.0));
+    let v = run(r#"Array.from("ab").join("-")"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("a-b")));
+}
+
+// --- toFixed / toPrecision range conformance ---
+
+#[test]
+fn to_fixed_out_of_range_throws() {
+    let res = common::run_err("(1).toFixed(200)");
+    assert!(res.contains("between 0 and 100"), "got: {}", res);
+    let res = common::run_err("(1).toFixed(-1)");
+    assert!(res.contains("between 0 and 100"), "got: {}", res);
+    let res = common::run_err("(1).toFixed(101)");
+    assert!(res.contains("between 0 and 100"), "got: {}", res);
+}
+
+#[test]
+fn to_fixed_normal_works() {
+    let v = run("(1.1).toFixed(2)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.10")));
+    let v = run("(1).toFixed(0)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1")));
+}
+
+#[test]
+fn to_precision_out_of_range_throws() {
+    let res = common::run_err("(1).toPrecision(101)");
+    assert!(res.contains("between 1 and 100"), "got: {}", res);
+    let res = common::run_err("(1).toPrecision(-1)");
+    assert!(res.contains("between 1 and 100"), "got: {}", res);
+    let res = common::run_err("(1).toPrecision(0)");
+    assert!(res.contains("between 1 and 100"), "got: {}", res);
+}
+
+#[test]
+fn to_precision_normal_works() {
+    let v = run("(1.1).toPrecision(3)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.10")));
+    // No argument -> toString-like.
+    let v = run("(1.1).toPrecision()");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.1")));
+}
