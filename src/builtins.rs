@@ -3941,36 +3941,41 @@ fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
 }
 fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let i = args
-        .first()
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as usize)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-    Ok(crate::value::utf16_get(&s, i)
+    // ES: position is ToInteger(position); NaN -> 0, but a negative or
+    // out-of-range index yields NaN. Rust's `as usize` saturates negatives
+    // to 0, which made "abc".charCodeAt(-1) wrongly return 97.
+    let pos = match args.first() {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if pos.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let i = pos.trunc() as i64;
+    if i < 0 || (i as usize) >= crate::value::utf16_len(&s) {
+        return Ok(Value::Number(f64::NAN));
+    }
+    Ok(crate::value::utf16_get(&s, i as usize)
         .map(|unit| Value::Number(unit as f64))
         .unwrap_or(Value::Number(f64::NAN)))
 }
 fn str_code_point_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let i = args
-        .first()
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as usize)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-    let len = crate::value::utf16_len(&s);
-    if i >= len {
+    let pos = match args.first() {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if pos.is_nan() {
         return Ok(Value::Undefined);
     }
+    let i = pos.trunc() as i64;
+    let len = crate::value::utf16_len(&s) as i64;
+    if i < 0 || i >= len {
+        return Ok(Value::Undefined);
+    }
+    let i = i as usize;
     let unit = crate::value::utf16_get(&s, i).unwrap_or(0) as u32;
     if (0xD800..=0xDBFF).contains(&unit) {
         // High surrogate; combine with next unit.

@@ -283,3 +283,36 @@ fn to_precision_normal_works() {
     let v = run("(1.1).toPrecision()");
     assert_eq!(v, Value::String(std::sync::Arc::from("1.1")));
 }
+
+// --- charCodeAt / codePointAt range conformance ---
+
+#[test]
+fn char_code_at_out_of_range_is_nan() {
+    let v = run(r#""abc".charCodeAt(-1)"#);
+    assert!(matches!(v, Value::Number(n) if n.is_nan()), "got {:?}", v);
+    let v = run(r#""abc".charCodeAt(5)"#);
+    assert!(matches!(v, Value::Number(n) if n.is_nan()), "got {:?}", v);
+}
+
+#[test]
+fn char_code_at_in_range_works() {
+    let v = run(r#""abc".charCodeAt(0)"#);
+    assert_eq!(v, Value::Number(97.0));
+    // Missing argument defaults to index 0.
+    let v = run(r#""abc".charCodeAt()"#);
+    assert_eq!(v, Value::Number(97.0));
+}
+
+#[test]
+fn code_point_at_out_of_range_is_undefined() {
+    let v = run(r#""abc".codePointAt(-1)"#);
+    assert_eq!(v, Value::Undefined);
+    let v = run(r#""abc".codePointAt(5)"#);
+    assert_eq!(v, Value::Undefined);
+}
+
+#[test]
+fn code_point_at_surrogate_pair() {
+    let v = run("String.fromCodePoint(0x1F600).codePointAt(0)");
+    assert_eq!(v, Value::Number(128512.0));
+}
