@@ -4015,19 +4015,22 @@ fn str_val(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
 }
 fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let i = args
-        .first()
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as usize)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-    // Operate on UTF-16 code units: charAt returns a 1-unit string (a
-    // surrogate half for supplementary characters, like real JS).
-    match crate::value::utf16_get(&s, i) {
+    // ES: position is ToInteger; negatives and out-of-range yield "".
+    // Rust's `as usize` saturates negatives to 0, so "abc".charAt(-1)
+    // returned "a" instead of "".
+    let pos = match args.first() {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if pos.is_nan() {
+        return Ok(Value::String(Arc::from("")));
+    }
+    let i = pos.trunc() as i64;
+    if i < 0 || (i as usize) >= crate::value::utf16_len(&s) {
+        return Ok(Value::String(Arc::from("")));
+    }
+    match crate::value::utf16_get(&s, i as usize) {
         Some(unit) => Ok(Value::String(Arc::from(
             String::from_utf16_lossy(&[unit]).as_str(),
         ))),
