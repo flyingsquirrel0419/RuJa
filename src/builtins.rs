@@ -2326,13 +2326,72 @@ fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
         Err(_) => Ok(Value::Number(f64::NAN)),
     }
 }
-fn global_parse_float(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+fn global_parse_float(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    // Parse the longest prefix matching the StrDecimalLiteral grammar:
+    // optional sign, digits, optional `.` digits, optional exponent. Anything
+    // after that prefix is ignored (NaN only if no valid prefix exists).
     let s = match args.first() {
         Some(Value::String(s)) => s.trim().to_string(),
-        Some(v) => vm.to_string(v)?.to_string(),
+        Some(v) => _vm.to_string(v)?.to_string(),
         None => return Ok(Value::Number(f64::NAN)),
     };
-    Ok(Value::Number(s.parse().unwrap_or(f64::NAN)))
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
+    let digits_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    let mut have_int = i > digits_start;
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        let frac_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        // `3.` is a valid prefix; a lone `.` with no digits anywhere is not.
+        have_int = have_int || i > frac_start;
+    }
+    if !have_int {
+        // Empty input or sign-only: not a valid number.
+        if bytes.is_empty() {
+            return Ok(Value::Number(f64::NAN));
+        }
+        // Check for `Infinity`/`+Infinity`/`-Infinity` prefix.
+        let rest = &s[if bytes[0] == b'+' || bytes[0] == b'-' {
+            1
+        } else {
+            0
+        }..];
+        if rest.starts_with("Infinity") {
+            let val = if bytes.first() == Some(&b'-') {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
+            return Ok(Value::Number(val));
+        }
+        return Ok(Value::Number(f64::NAN));
+    }
+    if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
+        let mut j = i + 1;
+        if j < bytes.len() && (bytes[j] == b'+' || bytes[j] == b'-') {
+            j += 1;
+        }
+        let exp_start = j;
+        while j < bytes.len() && bytes[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j > exp_start {
+            i = j;
+        }
+    }
+    if i == 0 {
+        return Ok(Value::Number(f64::NAN));
+    }
+    Ok(Value::Number(s[..i].parse().unwrap_or(f64::NAN)))
 }
 fn global_is_nan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
