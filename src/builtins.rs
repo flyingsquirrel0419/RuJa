@@ -4111,9 +4111,17 @@ fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
 }
 fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
+    // ES split limit: NaN -> 0 (empty result); a negative or non-finite
+    // value is treated as unbounded (matching V8/Node, where -1 yields all
+    // parts). `n as usize` saturated negatives to 0, wrongly producing [].
     let limit = match args.get(1) {
         Some(Value::Undefined) | None => usize::MAX,
-        Some(v) => vm.to_number(v).map(|n| n as usize).unwrap_or(usize::MAX),
+        Some(v) => match vm.to_number(v) {
+            Ok(n) if n.is_nan() => 0,
+            Ok(n) if n < 0.0 || n.is_infinite() => usize::MAX,
+            Ok(n) => n.trunc() as usize,
+            Err(_) => usize::MAX,
+        },
     };
     // If the separator is a RegExp, split on regex matches.
     if let Some(Value::Object(idx)) = args.first() {

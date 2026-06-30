@@ -316,3 +316,29 @@ fn code_point_at_surrogate_pair() {
     let v = run("String.fromCodePoint(0x1F600).codePointAt(0)");
     assert_eq!(v, Value::Number(128512.0));
 }
+
+// --- String.prototype.split limit semantics ---
+
+#[test]
+fn split_negative_limit_returns_all() {
+    let v = run(r#""a,b,c".split(",", -1).join("|")"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("a|b|c")));
+}
+
+#[test]
+fn split_zero_limit_returns_empty() {
+    let v = run(r#""a,b,c".split(",", 0).length"#);
+    assert_eq!(v, Value::Number(0.0));
+}
+
+#[test]
+fn split_fractional_limit_truncates() {
+    let v = run(r#""a,b,c".split(",", 1.5).length"#);
+    assert_eq!(v, Value::Number(1.0));
+}
+
+#[test]
+fn split_nan_limit_returns_empty() {
+    let v = run(r#""a,b,c".split(",", "x").length"#);
+    assert_eq!(v, Value::Number(0.0));
+}
