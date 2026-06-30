@@ -14,6 +14,29 @@ use std::sync::Mutex;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
+/// ES `ToInt32`: convert an f64 to a 32-bit signed integer using the spec's
+/// modular reduction. Rust's `as i32` saturates large values to `i32::MAX`,
+/// which broke `(2**31) | 0` (got `2147483647` instead of `-2147483648`)
+/// and `(2**32) | 0` (got `2147483647` instead of `0`).
+fn to_int32(n: f64) -> i32 {
+    to_uint32(n) as i32
+}
+
+/// ES `ToUint32`: convert an f64 to a 32-bit unsigned integer via the spec's
+/// modular reduction. `as u32` would saturate, so `(-1) >>> 0` and large
+/// values were wrong.
+fn to_uint32(n: f64) -> u32 {
+    if !n.is_finite() || n.is_nan() {
+        return 0;
+    }
+    // Truncate toward zero first.
+    let int = n.trunc();
+    // Reduce mod 2^32 using euclidean remainder (always non-negative),
+    // which gives the correct uint32 for negatives: -1 -> 4294967295.
+    let m = int.rem_euclid(4294967296.0);
+    m as u32
+}
+
 #[allow(dead_code)]
 pub struct Vm {
     pub(crate) heap: Heap,
@@ -1580,7 +1603,7 @@ impl Vm {
                 }
                 Op::BitNot => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    let n = self.to_number(&v)? as i32;
+                    let n = to_int32(self.to_number(&v)?);
                     self.stack.push(Value::Number(!n as f64));
                 }
                 Op::Eq => {
@@ -1664,8 +1687,8 @@ impl Vm {
                     // Unsigned right shift: result is a uint32 promoted to Number,
                     // so -1 >>> 0 === 4294967295 (not -1).
                     let (a, b) = self.pop2();
-                    let av = self.to_number(&a)? as i32 as u32;
-                    let bv = self.to_number(&b)? as i32 as u32;
+                    let av = to_uint32(self.to_number(&a)?);
+                    let bv = to_uint32(self.to_number(&b)?);
                     self.stack.push(Value::Number((av >> (bv & 31)) as f64));
                 }
                 Op::Jump(target) => {
@@ -2706,8 +2729,8 @@ impl Vm {
 
     fn int_bin<F: Fn(i32, i32) -> i32>(&mut self, f: F) -> error::Result<()> {
         let (a, b) = self.pop2();
-        let av = self.to_number(&a)? as i32;
-        let bv = self.to_number(&b)? as i32;
+        let av = to_int32(self.to_number(&a)?);
+        let bv = to_int32(self.to_number(&b)?);
         self.stack.push(Value::Number(f(av, bv) as f64));
         Ok(())
     }
