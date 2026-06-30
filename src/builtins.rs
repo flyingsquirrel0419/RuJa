@@ -4679,7 +4679,8 @@ fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
                         result
                     }
                 } else {
-                    format!("{}e{}", mantissa, exp)
+                    let sign = if exp >= 0 { "+" } else { "" };
+                    format!("{}e{}{}", mantissa, sign, exp)
                 }
             } else {
                 s
@@ -4744,13 +4745,12 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
             "toString() radix must be between 2 and 36".to_string(),
         ));
     }
-    if n.fract() == 0.0 {
+    if n.fract() == 0.0 && n.abs() <= i64::MAX as f64 {
         let i = n as i64;
-        if i >= 0 {
-            return Ok(Value::String(Arc::from(
-                format_i64_radix(i, radix).as_str(),
-            )));
-        }
+        let prefix = if i < 0 { "-" } else { "" };
+        return Ok(Value::String(Arc::from(
+            format!("{}{}", prefix, format_i64_radix(i.abs(), radix).as_str()).as_str(),
+        )));
     }
     Ok(Value::String(Arc::from(
         crate::value::num_to_string(n).as_str(),
