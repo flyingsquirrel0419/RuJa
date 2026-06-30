@@ -1643,7 +1643,7 @@ fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
         whitelist,
         replacer_fn,
     };
-    match stringify_value(vm, &v, &mut Vec::new(), "", &mut ctx) {
+    match stringify_value(vm, &v, &mut Vec::new(), "", &mut ctx, 0) {
         Some(s) => Ok(Value::String(Arc::from(s.as_str()))),
         None => Ok(Value::Undefined),
     }
@@ -1658,6 +1658,15 @@ struct StringifyCtx {
 /// Detect whether `v` (transitively) contains a cycle through object/array
 /// references. Strings, numbers, and other primitives are never cyclic.
 fn has_json_cycle(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> bool {
+    has_json_cycle_depth(vm, v, seen, 0)
+}
+
+fn has_json_cycle_depth(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>, depth: usize) -> bool {
+    // Guard the recursion so deep (but acyclic) input cannot overflow the
+    // native stack before stringify_value's own depth cap is reached.
+    if depth > 256 {
+        return false;
+    }
     let idx = match v {
         Value::Object(idx) => idx.0,
         _ => return false,
@@ -1679,7 +1688,9 @@ fn has_json_cycle(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> bool {
             .collect(),
         _ => Vec::new(),
     });
-    let result = children.iter().any(|c| has_json_cycle(vm, c, seen));
+    let result = children
+        .iter()
+        .any(|c| has_json_cycle_depth(vm, c, seen, depth + 1));
     seen.pop();
     result
 }
@@ -1689,7 +1700,13 @@ fn stringify_value(
     seen: &mut Vec<usize>,
     indent: &str,
     ctx: &mut StringifyCtx,
+    depth: usize,
 ) -> Option<String> {
+    // Guard against deeply-nested user values overflowing the native stack.
+    const MAX_STRINGIFY_DEPTH: usize = 256;
+    if depth > MAX_STRINGIFY_DEPTH {
+        return None;
+    }
     // (Top-level replacer application is handled by callers; this function
     //  applies the replacer per-property via apply_replacer.)
     match v.clone() {
@@ -1743,7 +1760,7 @@ fn stringify_value(
                             &Value::String(Arc::from(i.to_string().as_str())),
                             item,
                         );
-                        let s = stringify_value(vm, &val, seen, &child_indent, ctx);
+                        let s = stringify_value(vm, &val, seen, &child_indent, ctx, depth + 1);
                         let s = s.unwrap_or_else(|| "null".to_string());
                         if ctx.gap.is_empty() {
                             s
@@ -1806,7 +1823,8 @@ fn stringify_value(
                 for (key_str, val) in keys {
                     let val =
                         apply_replacer(vm, ctx, &Value::String(Arc::from(key_str.as_str())), &val);
-                    if let Some(vs) = stringify_value(vm, &val, seen, &child_indent, ctx) {
+                    if let Some(vs) = stringify_value(vm, &val, seen, &child_indent, ctx, depth + 1)
+                    {
                         if ctx.gap.is_empty() {
                             pairs.push(format!("\"{}\":{}", key_str, vs));
                         } else {
@@ -1848,17 +1866,29 @@ fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     } else {
         false
     };
-    let parsed = parse_json_value(vm, &mut s.chars().peekable())?;
+    let parsed = parse_json_value(vm, &mut s.chars().peekable(), 0)?;
     if is_reviver_fn {
         if let Some(rf) = reviver {
-            return apply_reviver(vm, &rf, &Value::String(Arc::from("")), &parsed);
+            return apply_reviver(vm, &rf, &Value::String(Arc::from("")), &parsed, 0);
         }
     }
     Ok(parsed)
 }
 
 /// Walk the parsed tree bottom-up, calling reviver(key, value) on each.
-fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> error::Result<Value> {
+fn apply_reviver(
+    vm: &mut Vm,
+    reviver: &Value,
+    key: &Value,
+    val: &Value,
+    depth: usize,
+) -> error::Result<Value> {
+    // The parse step already caps nesting, but guard defensively.
+    if depth > 256 {
+        return Err(Error::syntax(
+            "Maximum JSON nesting depth exceeded".to_string(),
+        ));
+    }
     let walked = match val {
         Value::Object(idx) => {
             let (is_arr, items, props) = vm.heap.with_obj(idx.0, |o| match o {
@@ -1870,7 +1900,7 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
                 let mut new_items = Vec::new();
                 for (i, item) in items.iter().enumerate() {
                     let k = Value::String(Arc::from(i.to_string().as_str()));
-                    let w = apply_reviver(vm, reviver, &k, item)?;
+                    let w = apply_reviver(vm, reviver, &k, item, depth + 1)?;
                     if !w.is_undefined() {
                         new_items.push(w);
                     }
@@ -1888,7 +1918,7 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
                 for (pk, d) in &props {
                     if let crate::value::PropertyKey::Str(s) = pk {
                         let k = Value::String(s.clone());
-                        let w = apply_reviver(vm, reviver, &k, &d.value)?;
+                        let w = apply_reviver(vm, reviver, &k, &d.value, depth + 1)?;
                         if !w.is_undefined() {
                             let mut desc = data_prop(w);
                             desc.enumerable = true;
@@ -1921,7 +1951,18 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
 fn parse_json_value(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
+    depth: usize,
 ) -> error::Result<Value> {
+    // Guard against pathological nesting that would overflow the native
+    // stack: `JSON.parse("[".repeat(100000)+...]")` used to abort the host.
+    // Node tolerates deep nesting on its larger stack; we cap recursion and
+    // surface a SyntaxError instead of crashing.
+    const MAX_JSON_DEPTH: usize = 256;
+    if depth > MAX_JSON_DEPTH {
+        return Err(Error::syntax(
+            "Maximum JSON nesting depth exceeded".to_string(),
+        ));
+    }
     while let Some(&c) = chars.peek() {
         if c.is_whitespace() {
             chars.next();
@@ -1932,11 +1973,11 @@ fn parse_json_value(
     match chars.peek() {
         Some(&'{') => {
             chars.next();
-            parse_json_obj(vm, chars)
+            parse_json_obj(vm, chars, depth)
         }
         Some(&'[') => {
             chars.next();
-            parse_json_arr(vm, chars)
+            parse_json_arr(vm, chars, depth)
         }
         Some(&'"') => {
             chars.next();
@@ -1961,6 +2002,7 @@ fn parse_json_value(
 fn parse_json_obj(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
+    depth: usize,
 ) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     loop {
@@ -1992,7 +2034,7 @@ fn parse_json_obj(
             }
         }
         chars.next();
-        let val = parse_json_value(vm, chars)?;
+        let val = parse_json_value(vm, chars, depth + 1)?;
         // JSON-parsed properties are enumerable (data_prop is non-enumerable for builtins).
         let mut desc = data_prop(val);
         desc.enumerable = true;
@@ -2022,6 +2064,7 @@ fn parse_json_obj(
 fn parse_json_arr(
     vm: &mut Vm,
     chars: &mut std::iter::Peekable<std::str::Chars>,
+    depth: usize,
 ) -> error::Result<Value> {
     let mut items = Vec::new();
     loop {
@@ -2036,7 +2079,7 @@ fn parse_json_arr(
             chars.next();
             break;
         }
-        items.push(parse_json_value(vm, chars)?);
+        items.push(parse_json_value(vm, chars, depth + 1)?);
         while let Some(&c) = chars.peek() {
             if c.is_whitespace() || c == ',' {
                 chars.next();
@@ -4283,19 +4326,29 @@ fn str_ends_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     ))
 }
 fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let n = args
-        .first()
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as usize)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-    Ok(Value::String(Arc::from(
-        str_val(vm, &this)?.repeat(n).as_str(),
-    )))
+    // ES String.prototype.repeat: count must be a non-negative integer; a
+    // negative, non-integer, Infinity, or too-large count throws RangeError.
+    // Without this guard, `"x".repeat(Infinity)` panicked the engine with a
+    // capacity overflow, and `"x".repeat(-1)` silently produced "" instead of
+    // throwing. Cap the result length to keep untrusted code from OOM-allocating.
+    let s = str_val(vm, &this)?;
+    let count = match args.first() {
+        Some(Value::Number(n)) => *n,
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    if count.is_nan() || count < 0.0 || count.is_infinite() {
+        return Err(Error::range("Invalid count value"));
+    }
+    if count.fract() != 0.0 {
+        return Err(Error::range("Invalid count value"));
+    }
+    const MAX_REPEAT_LEN: usize = 1 << 28; // 256 MiB
+    let slen = crate::value::utf16_len(&s);
+    if slen > 0 && (count as usize) > MAX_REPEAT_LEN / slen {
+        return Err(Error::range("Invalid count value"));
+    }
+    Ok(Value::String(Arc::from(s.repeat(count as usize).as_str())))
 }
 
 fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -4378,10 +4431,21 @@ fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 
 fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
+    // targetLength uses ToLength semantics: negatives clamp to 0, but a
+    // non-finite or absurdly large length must throw RangeError (Node throws
+    // "Invalid string length"). Without this guard, `"x".padStart(Infinity)`
+    // hung the engine in an unbounded fill loop.
     let target = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
-    } as usize;
+    };
+    if target.is_nan() || target < 0.0 {
+        return Ok(Value::String(Arc::from(s.as_str())));
+    }
+    if target.is_infinite() || target > (1u64 << 28) as f64 {
+        return Err(Error::range("Invalid string length"));
+    }
+    let target = target as usize;
     let pad = match args.get(1) {
         Some(Value::String(p)) => p.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
@@ -4412,7 +4476,14 @@ fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     let target = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
-    } as usize;
+    };
+    if target.is_nan() || target < 0.0 {
+        return Ok(Value::String(Arc::from(s.as_str())));
+    }
+    if target.is_infinite() || target > (1u64 << 28) as f64 {
+        return Err(Error::range("Invalid string length"));
+    }
+    let target = target as usize;
     let pad = match args.get(1) {
         Some(Value::String(p)) => p.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
