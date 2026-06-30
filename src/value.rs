@@ -527,6 +527,7 @@ pub fn num_to_string(n: f64) -> String {
         return "-Infinity".to_string();
     }
     if n == 0.0 {
+        // ES ToString: both +0 and -0 stringify to "0".
         return "0".to_string();
     }
     // ECMAScript uses exponential notation outside [1e-6, 1e21).
@@ -572,9 +573,10 @@ fn format_exponential(n: f64, _abs: f64) -> String {
     let (sign, digits) = if let Some(d) = exp_str.strip_prefix('-') {
         ("-", d)
     } else if let Some(d) = exp_str.strip_prefix('+') {
-        ("+", d)
+        // ES exponent notation omits the leading '+' on positive exponents.
+        ("", d)
     } else {
-        ("+", exp_str)
+        ("", exp_str)
     };
     let digits = digits.trim_start_matches('0');
     // A mantissa of "" (e.g. input rendered "0...e..") or digits of "" must
