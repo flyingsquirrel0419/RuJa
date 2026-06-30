@@ -17,4 +17,7 @@ pub struct FunctionDef {
     pub is_arrow: bool,
     pub is_async: bool,
     pub is_generator: bool,
+    /// ES function `length`: number of params before the first default or
+    /// the rest parameter.
+    pub length: usize,
 }

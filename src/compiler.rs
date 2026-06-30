@@ -840,6 +840,7 @@ impl Compiler {
                     is_arrow: f.is_arrow,
                     is_async: f.is_async,
                     is_generator: f.is_generator,
+                    length: Self::fn_length(f),
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -1075,6 +1076,20 @@ impl Compiler {
         self.chunk.emit(Op::Pop, self.current_line);
         self.pop_scope();
         Ok(())
+    }
+
+    /// ES function `length`: number of parameters before the first default
+    /// or the rest parameter.
+    pub fn fn_length(f: &FunctionExpr) -> usize {
+        if f.rest_param.is_some() {
+            return f.params.len();
+        }
+        for (i, d) in f.param_defaults.iter().enumerate() {
+            if d.is_some() {
+                return i;
+            }
+        }
+        f.params.len()
     }
 
     pub fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
@@ -2359,6 +2374,7 @@ impl Compiler {
                     is_arrow: f.is_arrow,
                     is_async: f.is_async,
                     is_generator: f.is_generator,
+                    length: Self::fn_length(f),
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2492,6 +2508,7 @@ impl Compiler {
                     is_arrow: false,
                     is_async: false,
                     is_generator: false,
+                    length: Self::fn_length(&ctor_fn),
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2586,6 +2603,7 @@ impl Compiler {
                         is_arrow: false,
                         is_async: false,
                         is_generator: false,
+                        length: Self::fn_length(&m_fn),
                     };
                     self.funcs.push(Arc::new(mdef));
                     let is_accessor = matches!(
@@ -2689,6 +2707,7 @@ impl Compiler {
                         is_arrow: false,
                         is_async: false,
                         is_generator: false,
+                        length: 0,
                     };
                     self.funcs.push(Arc::new(sbdef));
                     // stack: [ctor]. Dup ctor for `this`, then MakeClosure.
