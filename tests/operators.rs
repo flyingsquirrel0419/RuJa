@@ -472,3 +472,31 @@ fn date_in_range_works() {
     let v = run("Number.isFinite(new Date().getTime())");
     assert_eq!(v, Value::Bool(true));
 }
+
+// --- Number.prototype.toString(radix) fractional conversion ---
+
+#[test]
+fn to_string_radix_fractional() {
+    let v = run("(1.5).toString(2)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.1")));
+    let v = run("(255.5).toString(16)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("ff.8")));
+    let v = run("(-1.5).toString(2)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("-1.1")));
+}
+
+#[test]
+fn to_string_radix_integer_unchanged() {
+    let v = run("(255).toString(16)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("ff")));
+    let v = run("(0).toString(2)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("0")));
+}
+
+#[test]
+fn to_string_radix_invalid_throws() {
+    let res = common::run_err("(5).toString(1)");
+    assert!(res.contains("between 2 and 36"), "got: {}", res);
+    let res = common::run_err("(5).toString(37)");
+    assert!(res.contains("between 2 and 36"), "got: {}", res);
+}

@@ -4965,8 +4965,10 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
             format!("{}{}", prefix, format_i64_radix(i.abs(), radix).as_str()).as_str(),
         )));
     }
+    // Non-integer: convert integer and fractional parts in the given radix.
+    // Without this, (1.5).toString(2) returned "1.5" instead of "1.1".
     Ok(Value::String(Arc::from(
-        crate::value::num_to_string(n).as_str(),
+        format_f64_radix(n, radix).as_str(),
     )))
 }
 fn format_i64_radix(n: i64, radix: u32) -> String {
@@ -4982,6 +4984,52 @@ fn format_i64_radix(n: i64, radix: u32) -> String {
     }
     out.reverse();
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// Format an f64 in a non-decimal radix (2..=36), converting both the
+/// integer and fractional parts. Mirrors ES Number.prototype.toString(radix)
+/// for finite non-integers.
+fn format_f64_radix(n: f64, radix: u32) -> String {
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let neg = n < 0.0;
+    let n = n.abs();
+    let int_part = n.trunc();
+    let mut frac = n - int_part;
+    // Integer part.
+    let mut s = if int_part == 0.0 {
+        "0".to_string()
+    } else {
+        let mut ii = int_part as u64;
+        let mut buf = Vec::new();
+        while ii > 0 {
+            buf.push(digits[(ii % radix as u64) as usize]);
+            ii /= radix as u64;
+        }
+        buf.reverse();
+        String::from_utf8(buf).unwrap_or_default()
+    };
+    // Fractional part: emit up to 52 digits (f64 mantissa width), trimming
+    // is unnecessary because ES spec produces the shortest representation
+    // and we approximate with a fixed precision that is exact for f64.
+    if frac > 0.0 {
+        s.push('.');
+        let mut count = 0;
+        while frac > 0.0 && count < 52 {
+            frac *= radix as f64;
+            let d = frac.trunc() as u32;
+            s.push(char::from(digits[(d as usize) % digits.len()]));
+            frac -= d as f64;
+            count += 1;
+        }
+    }
+    if neg {
+        format!("-{}", s)
+    } else {
+        s
+    }
 }
 
 fn boolean_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
