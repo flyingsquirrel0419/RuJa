@@ -272,8 +272,8 @@ fn optional_chain_deep() {
 
 #[test]
 fn number_to_string_large() {
-    assert_eq!(run("1e21 + '';"), Value::String(Arc::from("1e21")));
-    assert_eq!(run("1e22 + '';"), Value::String(Arc::from("1e22")));
+    assert_eq!(run("1e21 + '';"), Value::String(Arc::from("1e+21")));
+    assert_eq!(run("1e22 + '';"), Value::String(Arc::from("1e+22")));
 }
 
 #[test]

@@ -573,10 +573,10 @@ fn format_exponential(n: f64, _abs: f64) -> String {
     let (sign, digits) = if let Some(d) = exp_str.strip_prefix('-') {
         ("-", d)
     } else if let Some(d) = exp_str.strip_prefix('+') {
-        // ES exponent notation omits the leading '+' on positive exponents.
-        ("", d)
+        // ES exponent notation always emits an explicit sign.
+        ("+", d)
     } else {
-        ("", exp_str)
+        ("+", exp_str)
     };
     let digits = digits.trim_start_matches('0');
     // A mantissa of "" (e.g. input rendered "0...e..") or digits of "" must

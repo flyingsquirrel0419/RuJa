@@ -83,9 +83,9 @@ fn num_to_string_no_zero_padding_in_exponent() {
 }
 
 #[test]
-fn num_to_string_large_exponential_omits_plus_sign() {
-    assert_eq!(num_str("1e21"), "1e21");
-    assert_eq!(num_str("6.022e23"), "6.022e23");
+fn num_to_string_large_exponential_has_explicit_sign() {
+    assert_eq!(num_str("1e+21"), "1e+21");
+    assert_eq!(num_str("6.022e+23"), "6.022e+23");
 }
 
 #[test]
