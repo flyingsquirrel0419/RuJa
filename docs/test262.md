@@ -50,8 +50,8 @@ summary matches what is below.
 | comments          | 23   | 17   | 6    | 73.9%    |
 | expressions/arrow-function | 343 | 245 | 98  | 71.4%    |
 | expressions/function        | 264 | 159 | 105 | 60.2%    |
-| expressions/object          | 722 | 506 | 216 | 70.1%    |
-| **subset total**  | 1834 | 1250 | 584 | ~68.2%    |
+| expressions/object          | 946 | 506 | 440 | 53.5%    |
+| **subset total**  | 2058 | 1250 | 808 | ~60.8%    |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit. This is a **curated subset**, not full test262:
