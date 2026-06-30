@@ -14,6 +14,21 @@ mod common;
 use common::run;
 use ruja::Value;
 
+/// Run `src` on a worker thread with a large stack. Needed for tests that
+/// exercise deep recursion, because the default test-thread stack is small.
+fn run_big_stack(src: &str) -> ruja::Value {
+    use std::thread;
+    let src = src.to_string();
+    let worker = thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let mut vm = ruja::Vm::new();
+            vm.run(&src).expect("evaluation errored")
+        })
+        .expect("failed to spawn worker");
+    worker.join().expect("worker panicked")
+}
+
 /// `a[0x80000000]` used to OOM-kill the process by materializing ~2B slots.
 /// Now it must store sparsely: `length` is 2^31+1 and the value is readable.
 #[test]
@@ -90,4 +105,119 @@ fn invalid_array_length_throws() {
         "expected RangeError, got: {}",
         res
     );
+}
+
+// --- DoS guards added in the second pass ---
+
+/// `"x".repeat(Infinity)` used to panic the engine with capacity overflow.
+#[test]
+fn repeat_infinity_throws_not_panic() {
+    let res = common::run_err(r#"try { "x".repeat(Infinity); } catch(e){ throw e; }"#);
+    assert!(
+        res.contains("Invalid count value"),
+        "expected RangeError, got: {}",
+        res
+    );
+}
+
+/// Negative repeat count must throw, not silently yield "".
+#[test]
+fn repeat_negative_throws() {
+    let res = common::run_err(r#"try { "x".repeat(-1); } catch(e){ throw e; }"#);
+    assert!(
+        res.contains("Invalid count value"),
+        "expected RangeError, got: {}",
+        res
+    );
+}
+
+/// Fractional repeat count must throw.
+#[test]
+fn repeat_fractional_throws() {
+    let res = common::run_err(r#"try { "x".repeat(2.5); } catch(e){ throw e; }"#);
+    assert!(
+        res.contains("Invalid count value"),
+        "expected RangeError, got: {}",
+        res
+    );
+}
+
+/// Sanity that normal repeat still works.
+#[test]
+fn repeat_normal_works() {
+    let v = run(r#""abc".repeat(3)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("abcabcabc")));
+}
+
+/// `"x".padStart(Infinity, "ab")` used to hang the engine.
+#[test]
+fn padstart_infinity_throws_not_hang() {
+    let res = common::run_err(r#"try { "x".padStart(Infinity, "ab"); } catch(e){ throw e; }"#);
+    assert!(
+        res.contains("Invalid string length"),
+        "expected RangeError, got: {}",
+        res
+    );
+}
+
+#[test]
+fn padend_infinity_throws_not_hang() {
+    let res = common::run_err(r#"try { "x".padEnd(Infinity, "ab"); } catch(e){ throw e; }"#);
+    assert!(
+        res.contains("Invalid string length"),
+        "expected RangeError, got: {}",
+        res
+    );
+}
+
+/// Negative pad length clamps to 0 (returns the original string).
+#[test]
+fn padstart_negative_clamps() {
+    let v = run(r#""x".padStart(-1)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("x")));
+}
+
+#[test]
+fn padstart_normal_works() {
+    let v = run(r#""x".padStart(5, "ab")"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("ababx")));
+}
+
+/// `JSON.parse` of deeply nested input used to overflow the native
+/// stack and abort the process; it must now throw instead of crashing.
+/// A return value of "ok" means it was caught as a SyntaxError.
+#[test]
+fn json_parse_deep_nesting_throws_not_crash() {
+    // 5000 levels far exceed the depth cap, so JSON.parse must throw on a
+    // large stack instead of aborting with a stack overflow.
+    let src = format!(
+        "var s='['.repeat({0})+']'.repeat({0});         (function(){{ try {{ JSON.parse(s); return 'no-throw'; }} catch(e) {{ return 'ok'; }} }})()",
+        5000
+    );
+    let v = run_big_stack(&src);
+    assert_eq!(v, Value::String(std::sync::Arc::from("ok")), "got {:?}", v);
+}
+
+/// Reasonable nesting (under the cap) still parses fine.
+#[test]
+fn json_parse_normal_nesting_works() {
+    let v = run(r#"JSON.parse('[[1,2],{"a":3}]')"#);
+    assert!(matches!(v, Value::Object(_)), "got {:?}", v);
+}
+
+/// `JSON.stringify` of a deeply nested user-built structure must not
+/// overflow the native stack.
+#[test]
+fn json_stringify_deep_nesting_does_not_crash() {
+    let v = run_big_stack(
+        "var a=[]; for(var i=0;i<5000;i++){a=[a];} (function(){ try { JSON.stringify(a); return 'ok'; } catch(e){ return 'caught'; } })()",
+    );
+    match v {
+        Value::String(ref s) => assert!(
+            s.as_ref() == "ok" || s.as_ref() == "caught",
+            "expected ok or caught, got {:?}",
+            v
+        ),
+        other => panic!("expected string, got {:?}", other),
+    }
 }
