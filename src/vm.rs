@@ -724,6 +724,7 @@ impl Vm {
                         .last()
                         .and_then(|f| f.catch_stack.last().map(|(ip, _)| *ip));
                     match handler {
+                        _ if !e.catchable() => return Err(e),
                         Some(handler) => {
                             let thrown = match e.thrown_value.clone() {
                                 Some(v) => v,
@@ -768,7 +769,7 @@ impl Vm {
             // opcode so a tight loop cannot run forever. None = unbounded.
             if let Some(f) = self.fuel.as_mut() {
                 if *f <= 0 {
-                    return Err(Error::range("fuel exhausted".to_string()));
+                    return Err(Error::fuel("fuel exhausted".to_string()));
                 }
                 *f -= 1;
             }
