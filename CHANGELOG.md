@@ -11,6 +11,48 @@
 - `Map`/`Set`/`Array.includes` keys now compare by **SameValueZero**
   (`NaN === NaN`, `-0 === +0`), so `new Map().set(NaN,1).get(NaN)` returns 1.
 
+### Security
+- **Array-index DoS (OOM)**: `a[0x80000000]` used to materialize ~2B dense
+  slots and OOM-kill the host. Now only `0..2^32-1` are array indices (ES
+  spec); valid indices beyond the dense cap are stored sparsely, so
+  `a[0x80000000]` returns the value and advances `length` without holes.
+- **`String.prototype.repeat` panic**: `repeat(Infinity)` panicked with
+  a capacity overflow; `repeat(-1)` returned `""`. Now validates the count
+  (non-negative integer, 256 MiB result cap) and throws `RangeError`.
+- **`padStart`/`padEnd` hang**: `padStart(Infinity)` hung the engine in an
+  unbounded fill loop. Now clamps negatives to 0 and throws `RangeError`
+  on `Infinity`/absurd lengths.
+- **`JSON.parse` / `JSON.stringify` stack overflow**: deeply nested input
+  (e.g. `"[" * 100000`) aborted the process via native-stack overflow in
+  `parse_json_value` / `stringify_value` / `has_json_cycle`. All three now
+  take a depth parameter capped at 256 and throw/return instead of crashing.
+- **`Array.from` DoS**: `Array.from({length: 2**26})` materialized 64M dense
+  slots and hung. Now capped at 4M with a `RangeError`.
+- **Prototype-cycle DoS**: `a.__proto__=b` (where b's chain contained a)
+  created a cycle; a later property read overflowed the native stack and
+  aborted the process. Cyclic `__proto__` assignments now throw `TypeError`
+  in strict mode / no-op in sloppy mode, and `get_property_rx` carries a
+  depth cap as a backstop.
+
+### Fixed (conformance)
+- **`ToInt32`/`ToUint32`**: bitwise ops coerced with Rust's `as i32`/`as
+  u32`, which saturate large values to `INT32_MAX`/`UINT32_MAX`. Now uses
+  modular reduction (`(2**31)|0` -> `-2147483648`, `(2**32)|0` -> `0`).
+- **`charCodeAt`/`codePointAt`**: negative/out-of-range indices returned
+  the index-0 value instead of `NaN`/`undefined` (Rust `as usize` saturates
+  negatives to 0). Now uses `ToInteger` with explicit range checks.
+- **`String.prototype.split` limit**: negatives returned `[]` instead of
+  all parts; `NaN` returned all parts instead of `[]`. Now `NaN` -> 0,
+  negative/infinite -> unbounded, otherwise trunc toward zero.
+- **`Number.prototype.toFixed`**: `toFixed(-1)` returned `"1"`, `toFixed(200)`
+  produced a 201-digit string. Now validates `0..=100` and throws
+  `RangeError`, matching V8/Node.
+- **`Number.prototype.toPrecision`**: `toPrecision(0/-1/101)` produced wrong
+  output instead of `RangeError`. Now validates `1..=100`.
+- **`Object.defineProperty`**: a non-object descriptor (e.g. `true`) was
+  silently accepted. Now throws `TypeError` per `ToPropertyDescriptor`.
+
+
 ### Fixed
 - `gc::live_count` now locks `free_list` before `cells` to match
   `allocate()`, removing a lock-order inversion deadlock.
