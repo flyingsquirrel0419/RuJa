@@ -389,3 +389,64 @@ fn define_property_object_descriptor_works() {
     let v = run("var o={}; Object.defineProperty(o,'x',{value:7,writable:true}); o.x");
     assert_eq!(v, Value::Number(7.0));
 }
+
+// --- Array.prototype.sort DoS guard (was O(n^2)) ---
+
+/// Sorting with a comparator must be O(n log n), not O(n^2). Before the fix,
+/// sorting ~1000 elements called the comparator ~250k times (quadratic).
+/// Here we assert the comparison count stays well under the quadratic bound.
+#[test]
+fn sort_comparator_is_not_quadratic() {
+    use std::thread;
+    let src = r#"
+        var a = [];
+        for (var i = 0; i < 1000; i++) a.push(Math.random());
+        var c = 0;
+        a.sort(function (x, y) { c++; return x - y; });
+        c
+    "#;
+    let src = src.to_string();
+    let worker = thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let mut vm = ruja::Vm::new();
+            match vm.run(&src) {
+                Ok(ruja::Value::Number(n)) => n,
+                Ok(v) => panic!("expected number, got {:?}", v),
+                Err(e) => panic!("evaluation errored: {}", e),
+            }
+        })
+        .expect("failed to spawn worker");
+    let count = worker.join().expect("worker panicked");
+    // O(n^2) would be ~500k; O(n log n) is ~10k. Allow generous slack.
+    assert!(
+        count < 30_000.0,
+        "sort called comparator {} times (expected O(n log n), got O(n^2))",
+        count
+    );
+}
+
+#[test]
+fn sort_comparator_correctness() {
+    let v = run("var a=[3,1,4,1,5,9,2,6]; a.sort(function(x,y){return x-y}); a.join(',')");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1,1,2,3,4,5,6,9")));
+}
+
+#[test]
+fn sort_throwing_comparator_propagates() {
+    let res = common::run_err("[3,1,2].sort(function(){ throw new Error('boom'); });");
+    assert!(res.contains("boom"), "got: {}", res);
+}
+
+#[test]
+fn sort_nan_comparator_keeps_order() {
+    // NaN comparator result is treated as 0 (equal): elements stay put.
+    let v = run("var a=[3,1,2]; a.sort(function(){return NaN}); a.join(',')");
+    assert_eq!(v, Value::String(std::sync::Arc::from("3,1,2")));
+}
+
+#[test]
+fn sort_default_is_string_compare() {
+    let v = run("var a=[10,2,1,30]; a.sort(); a.join(',')");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1,10,2,30")));
+}
