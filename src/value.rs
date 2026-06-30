@@ -93,6 +93,50 @@ use num_traits::Zero;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GcIdx(pub usize);
 
+/// Maximum number of dense (backing-store) elements an array will hold.
+/// Indices at or above this threshold are stored as named properties
+/// instead of being materialized as `undefined` holes, which prevents a
+/// single assignment like `a[0x80000000]` from forcing the engine to
+/// allocate billions of slots (a trivial DoS). ES allows arrays to be
+/// sparse, so this is spec-compatible.
+pub const MAX_DENSE_ARRAY_LEN: usize = 1 << 20; // 1,048,576
+
+/// ES spec "array index": an integer `i` such that `0 <= i < 2^32 - 1`.
+/// `2^32 - 1` (0xffffffff) and any value at or beyond it is *not* an array
+/// index and must be treated as a named string property. Returns the
+/// canonical index when the string is a valid array index, else `None`.
+///
+/// This rejects non-canonical forms such as `"01"`, `"-1"`, `"1.5"`,
+/// `"0xffffffff"` (== 2^32-1, not an array index), `"4294967296"` (>= 2^32),
+/// and leading/trailing whitespace.
+pub fn parse_array_index(key: &str) -> Option<usize> {
+    // A canonical array-index string is a non-empty decimal run of digits
+    // with no sign, no leading zero (unless it is exactly "0"), and no
+    // surrounding whitespace. `str::parse::<u64>` accepts "  1  " and "+1",
+    // so we validate the shape ourselves.
+    if key.is_empty() {
+        return None;
+    }
+    let bytes = key.as_bytes();
+    if bytes[0].is_ascii_digit() {
+        if bytes.len() > 1 && bytes[0] == b'0' {
+            // "0" is canonical; "07", "0x1", "00" are not.
+            return None;
+        }
+        if !bytes.iter().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        // u64 is enough: any value >= 2^32 is rejected below.
+        let n: u64 = key.parse().ok()?;
+        // Strictly less than 2^32 - 1. Values equal to 2^32 - 1 are properties.
+        if n < (1u64 << 32) - 1 {
+            // SAFETY: n < 2^32 - 1 < usize::MAX on all supported platforms.
+            return Some(n as usize);
+        }
+    }
+    None
+}
+
 /// The value type used throughout the engine.
 #[derive(Clone)]
 pub enum Value {
@@ -253,6 +297,11 @@ pub struct ArrayData {
     pub items: Mutex<Vec<Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    /// Largest array index currently stored as a named property rather
+    /// than in the dense `items` backing store (see `MAX_DENSE_ARRAY_LEN`).
+    /// `None` when no such out-of-band index exists, so `length` equals
+    /// `items.len()`. Kept in sync only by `set_array_index`.
+    pub sparse_max: Mutex<Option<usize>>,
 }
 
 pub struct FunctionData {

@@ -444,6 +444,7 @@ fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> Value {
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Value::Object(GcIdx(vm.heap.allocate(arr)))
 }
@@ -461,6 +462,7 @@ fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> Value {
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Value::Object(GcIdx(vm.heap.allocate(arr)))
 }
@@ -483,6 +485,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         items: Mutex::new(vals),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
@@ -497,6 +500,7 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
             items: Mutex::new(vec![Value::String(k.clone()), v]),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.array_proto.clone())),
+            sparse_max: Mutex::new(None),
         });
         pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair))));
     }
@@ -504,6 +508,7 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
         items: Mutex::new(pairs),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
@@ -1875,6 +1880,7 @@ fn apply_reviver(vm: &mut Vm, reviver: &Value, key: &Value, val: &Value) -> erro
                         items: Mutex::new(new_items),
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(vm.array_proto.clone())),
+                        sparse_max: Mutex::new(None),
                     },
                 ))))
             } else {
@@ -2047,6 +2053,7 @@ fn parse_json_arr(
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
 }
@@ -2747,6 +2754,7 @@ fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
             items: Mutex::new(result),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.array_proto.clone())),
+            sparse_max: Mutex::new(None),
         });
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
     }
@@ -2781,6 +2789,7 @@ fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
             items: Mutex::new(result),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.array_proto.clone())),
+            sparse_max: Mutex::new(None),
         });
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
     }
@@ -2828,6 +2837,7 @@ fn make_array(vm: &mut Vm, items: Vec<Value>) -> Value {
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     }));
     Value::Object(GcIdx(idx))
 }
@@ -3145,6 +3155,7 @@ fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             items: Mutex::new(sliced),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.array_proto.clone())),
+            sparse_max: Mutex::new(None),
         });
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
     }
@@ -3184,6 +3195,7 @@ fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
@@ -3639,6 +3651,7 @@ fn array_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
@@ -4086,6 +4099,7 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
                 items: Mutex::new(items),
                 props: Mutex::new(IndexMap::new()),
                 proto: Mutex::new(Some(vm.array_proto.clone())),
+                sparse_max: Mutex::new(None),
             });
             return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
         }
@@ -4104,6 +4118,7 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
         items: Mutex::new(items),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
