@@ -200,10 +200,7 @@ impl Heap {
                 idx
             }
         };
-        self.alloc_since_gc.store(
-            self.alloc_since_gc.load(Ordering::Relaxed) + 1,
-            Ordering::Relaxed,
-        );
+        self.alloc_since_gc.fetch_add(1, Ordering::Relaxed);
         idx
     }
 

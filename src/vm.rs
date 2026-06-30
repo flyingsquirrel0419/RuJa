@@ -3284,15 +3284,6 @@ impl Vm {
                     .map(|v| v == *y)
                     .unwrap_or(false)
             }
-            // Bool coerced to number already handled above; but Bool vs BigInt:
-            (Value::Bool(b), Value::BigInt(y)) => {
-                let an = num_bigint::BigInt::from(if *b { 1 } else { 0 });
-                an == *y
-            }
-            (Value::BigInt(x), Value::Bool(b)) => {
-                let bn = num_bigint::BigInt::from(if *b { 1 } else { 0 });
-                *x == bn
-            }
             _ => false,
         })
     }
@@ -3427,6 +3418,7 @@ impl Vm {
                 }
                 Ok(Value::Undefined)
             }
+            #[allow(unreachable_patterns)]
             _ => Ok(Value::Undefined),
         }
     }

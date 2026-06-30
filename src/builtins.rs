@@ -3088,12 +3088,7 @@ fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
         let start = from_index_arg(vm, args, 1, len)?;
         // includes uses SameValueZero: NaN matches NaN (unlike indexOf's ===).
         for (_i, v) in items.iter().enumerate().skip(start) {
-            let matched = if let (Value::Number(x), Value::Number(y)) = (v, &target) {
-                x.is_nan() && y.is_nan() || x == y
-            } else {
-                v == &target
-            };
-            if matched {
+            if v.same_value_zero(&target) {
                 return Ok(Value::Bool(true));
             }
         }
@@ -5197,7 +5192,7 @@ fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
                 let mut entries = m.entries.lock().unwrap();
-                if let Some(slot) = entries.iter_mut().find(|(k, _)| k == &key) {
+                if let Some(slot) = entries.iter_mut().find(|(k, _)| k.same_value_zero(&key)) {
                     slot.1 = val;
                 } else {
                     entries.push((key, val));
@@ -5216,7 +5211,7 @@ fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
                     .lock()
                     .unwrap()
                     .iter()
-                    .find(|(k, _)| k == &key)
+                    .find(|(k, _)| k.same_value_zero(&key))
                     .map(|(_, v)| v.clone())
                     .unwrap_or(Value::Undefined)
             } else {
@@ -5231,7 +5226,11 @@ fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().unwrap().iter().any(|(k, _)| k == &key)
+                m.entries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(k, _)| k.same_value_zero(&key))
             } else {
                 false
             }
@@ -5607,7 +5606,7 @@ fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
                 let mut items = s.items.lock().unwrap();
-                if !items.iter().any(|i| i == &val) {
+                if !items.iter().any(|i| i.same_value_zero(&val)) {
                     items.push(val);
                 }
             }
@@ -5620,7 +5619,11 @@ fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                s.items.lock().unwrap().iter().any(|i| i == &val)
+                s.items
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|i| i.same_value_zero(&val))
             } else {
                 false
             }
@@ -5720,7 +5723,7 @@ fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Set(s) = o {
                         let mut items = s.items.lock().unwrap();
-                        if !items.iter().any(|i| i == &v) {
+                        if !items.iter().any(|i| i.same_value_zero(&v)) {
                             items.push(v);
                         }
                     }
