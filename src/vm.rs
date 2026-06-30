@@ -1754,6 +1754,7 @@ impl Vm {
                         items: Mutex::new(items),
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(self.array_proto.clone())),
+                        sparse_max: Mutex::new(None),
                     });
                     let idx = self.heap.allocate(obj);
                     self.stack.push(Value::Object(GcIdx(idx)));
@@ -2484,6 +2485,7 @@ impl Vm {
                         items: Mutex::new(items),
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(self.array_proto.clone())),
+                        sparse_max: Mutex::new(None),
                     });
                     self.stack
                         .push(Value::Object(GcIdx(self.heap.allocate(arr))));
@@ -3385,11 +3387,20 @@ impl Vm {
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
                         if key == "length" {
-                            return Ok::<Value, Error>(Value::Number(
-                                a.items.lock().unwrap().len() as f64,
-                            ));
+                            let len = a.items.lock().unwrap().len();
+                            let sparse = a.sparse_max.lock().unwrap().unwrap_or(0);
+                            return Ok::<Value, Error>(Value::Number(len.max(sparse) as f64));
                         }
-                        if let Ok(i) = key.parse::<usize>() {
+                        if let Some(i) = crate::value::parse_array_index(key) {
+                            // Indices beyond the dense cap are stored as named
+                            // properties (sparse array); read them from there.
+                            if i >= crate::value::MAX_DENSE_ARRAY_LEN {
+                                let pkey = crate::value::PropertyKey::from_string(key.to_string());
+                                if let Some(d) = a.props.lock().unwrap().get(&pkey) {
+                                    return Ok(d.value.clone());
+                                }
+                                return Ok(Value::Undefined);
+                            }
                             let items = a.items.lock().unwrap();
                             return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
                         }
@@ -3478,9 +3489,18 @@ impl Vm {
                 let val = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
                         if key == "length" {
-                            return Some(Value::Number(a.items.lock().unwrap().len() as f64));
+                            let len = a.items.lock().unwrap().len();
+                            let sparse = a.sparse_max.lock().unwrap().unwrap_or(0);
+                            return Some(Value::Number(len.max(sparse) as f64));
                         }
-                        if let Ok(i) = key.parse::<usize>() {
+                        if let Some(i) = crate::value::parse_array_index(key) {
+                            if i >= crate::value::MAX_DENSE_ARRAY_LEN {
+                                let pkey = crate::value::PropertyKey::from_string(key.to_string());
+                                if let Some(d) = a.props.lock().unwrap().get(&pkey) {
+                                    return Some(d.value.clone());
+                                }
+                                return Some(Value::Undefined);
+                            }
                             return Some(
                                 a.items
                                     .lock()
@@ -3608,7 +3628,7 @@ impl Vm {
                 }
                 let array_index = self.heap.with_obj(idx.0, |o| {
                     if matches!(o, HeapObj::Array(_)) {
-                        key.parse::<usize>().ok()
+                        crate::value::parse_array_index(key)
                     } else {
                         None
                     }
@@ -3709,6 +3729,29 @@ impl Vm {
     /// Set an integer-indexed element of an array, extending with
     /// `undefined` holes as needed.
     fn set_array_index(&mut self, idx: usize, i: usize, value: Value) -> error::Result<()> {
+        // Spec allows arrays to be sparse. To keep untrusted code from
+        // forcing a huge dense allocation (`a[0x80000000]` used to OOM-kill
+        // the host with ~2B slots), indices at or beyond the dense cap are
+        // stored as named string properties while `length` is advanced to
+        // cover them. Reads of the holes between return `undefined`, exactly
+        // as a real sparse array does.
+        if i >= crate::value::MAX_DENSE_ARRAY_LEN {
+            self.heap.with_obj(idx, |o| {
+                if let HeapObj::Array(a) = o {
+                    let pkey = crate::value::PropertyKey::from_string(i.to_string());
+                    a.props
+                        .lock()
+                        .unwrap()
+                        .insert(pkey, crate::value::PropertyDescriptor::data(value));
+                    let mut sm = a.sparse_max.lock().unwrap();
+                    if sm.is_none_or(|cur| i >= cur) {
+                        // length must cover index i, i.e. i+1.
+                        *sm = Some(i + 1);
+                    }
+                }
+            });
+            return Ok(());
+        }
         self.heap.with_obj(idx, |o| {
             if let HeapObj::Array(a) = o {
                 let mut items = a.items.lock().unwrap();
@@ -3753,13 +3796,46 @@ impl Vm {
         };
         self.heap.with_obj(idx, |o| {
             if let HeapObj::Array(a) = o {
+                let cap = crate::value::MAX_DENSE_ARRAY_LEN;
                 let mut items = a.items.lock().unwrap();
-                if new_len < items.len() {
-                    items.truncate(new_len);
-                } else {
-                    while items.len() < new_len {
-                        items.push(Value::Undefined);
+                // Drop any sparse properties whose index is >= new_len, and
+                // recompute sparse_max so length stays consistent.
+                {
+                    let mut props = a.props.lock().unwrap();
+                    let mut to_remove = Vec::new();
+                    for k in props.keys() {
+                        if let crate::value::PropertyKey::Str(s) = k {
+                            if let Some(i) = crate::value::parse_array_index(s) {
+                                if i >= new_len {
+                                    to_remove.push(k.clone());
+                                }
+                            }
+                        }
                     }
+                    for k in to_remove {
+                        props.shift_remove(&k);
+                    }
+                }
+                if new_len <= cap {
+                    // Fits in the dense backing store.
+                    if new_len < items.len() {
+                        items.truncate(new_len);
+                    } else {
+                        while items.len() < new_len {
+                            items.push(Value::Undefined);
+                        }
+                    }
+                    drop(items);
+                    *a.sparse_max.lock().unwrap() = None;
+                } else {
+                    // Beyond the dense cap: keep the dense store capped,
+                    // advance length via sparse_max, and do NOT allocate
+                    // millions of holes.
+                    if items.len() > cap {
+                        items.truncate(cap);
+                    }
+                    drop(items);
+                    *a.sparse_max.lock().unwrap() = Some(new_len);
                 }
             }
         });
@@ -4299,6 +4375,7 @@ impl Vm {
                         items: Mutex::new(rest),
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(self.array_proto.clone())),
+                        sparse_max: Mutex::new(None),
                     });
                     env::declare(
                         &self.heap,
@@ -4322,6 +4399,7 @@ impl Vm {
                     items: Mutex::new(args.to_vec()),
                     props: Mutex::new(IndexMap::new()),
                     proto: Mutex::new(Some(self.array_proto.clone())),
+                    sparse_max: Mutex::new(None),
                 });
                 env::declare(
                     &self.heap,
@@ -4566,6 +4644,7 @@ impl Vm {
                                 items: Mutex::new(vec![k, v]),
                                 props: Mutex::new(IndexMap::new()),
                                 proto: Mutex::new(Some(array_proto.clone())),
+                                sparse_max: Mutex::new(None),
                             });
                             Value::Object(GcIdx(self.heap.allocate(pair)))
                         })
