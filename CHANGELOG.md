@@ -33,8 +33,23 @@
   aborted the process. Cyclic `__proto__` assignments now throw `TypeError`
   in strict mode / no-op in sloppy mode, and `get_property_rx` carries a
   depth cap as a backstop.
+- **`Array.prototype.sort` DoS (O(n^2))**: `a.sort(cmp)` used an inline
+  O(n^2) insertion sort; sorting 10k random elements took ~30s and called
+  the comparator ~250k times. Now uses a stable merge sort (O(n log n));
+  comparator calls dropped to ~9k for 1k elements. NaN/non-number
+  comparator results are treated as 0 (equal); thrown errors propagate.
 
 ### Fixed (conformance)
+- **`Date` TimeValue range**: `new Date(1e20).getTime()` returned the raw
+  number instead of `NaN`. ES TimeValue must be within +/-8.64e15 ms;
+  out-of-range/NaN/Infinity are now Invalid Date, matching V8/Node.
+- **`Number.prototype.toString(radix)` fractional**: `(1.5).toString(2)`
+  returned `"1.5"` instead of `"1.1"`. Now converts both the integer and
+  fractional parts in the requested radix (common cases match V8/Node;
+  minimal shortest-round-trip representation is still longer).
+- **`String.prototype.charAt` range**: `charAt(-1)` returned `"a"` instead
+  of `""` (Rust `as usize` saturates negatives to 0). Now uses `ToInteger`
+  with an explicit range check, matching V8/Node.
 - **`ToInt32`/`ToUint32`**: bitwise ops coerced with Rust's `as i32`/`as
   u32`, which saturate large values to `INT32_MAX`/`UINT32_MAX`. Now uses
   modular reduction (`(2**31)|0` -> `-2147483648`, `(2**32)|0` -> `0`).
