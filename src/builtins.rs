@@ -4466,6 +4466,35 @@ fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     Ok(Value::String(Arc::from(result.as_str())))
 }
 
+fn str_substr(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let len = crate::value::utf16_len(&s) as f64;
+    let mut start = match args.first() {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let length = match args.get(1) {
+        Some(v) => vm.to_number(v)?,
+        None => f64::INFINITY,
+    };
+    // Negative start counts from the end (legacy behavior).
+    if start < 0.0 {
+        start = (len + start).max(0.0);
+    }
+    if start > len {
+        start = len;
+    }
+    let end = if length.is_nan() || length < 0.0 {
+        start
+    } else {
+        (start + length).min(len)
+    };
+    let start = start as usize;
+    let end = end as usize;
+    let result = crate::value::utf16_slice(&s, start, end);
+    Ok(Value::String(Arc::from(result.as_str())))
+}
+
 fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     // Build from UTF-16 code units. Unlike char::from_u32, this handles
     // surrogate pairs and lone surrogates correctly (each arg is one code
@@ -4851,6 +4880,7 @@ pub fn setup_full(vm: &mut Vm) {
             ("trimEnd", str_trim_end, 0),
             ("replaceAll", str_replace_all, 2),
             ("substring", str_substring, 2),
+            ("substr", str_substr, 2),
             ("codePointAt", str_code_point_at, 1),
             ("concat", str_concat, 1),
             ("search", str_search, 1),
