@@ -3405,7 +3405,7 @@ impl Vm {
                                 return Ok(Value::Number(*length as f64));
                             }
                             if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                                return Ok(Value::Number(func.params.len() as f64));
+                                return Ok(Value::Number(func.length as f64));
                             }
                         }
                     }
