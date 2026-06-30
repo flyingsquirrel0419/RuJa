@@ -755,8 +755,31 @@ impl Parser {
             _ => return Ok(left),
         };
         self.advance();
-        let right = self.parse_assign()?;
+        let mut right = self.parse_assign()?;
+        // SetFunctionName for `obj.prop = <anon function>` / `obj[prop] = ...`.
+        if matches!(op, AssignOp::Assign) {
+            if let Some(key_name) = Self::assign_target_name(&left) {
+                Self::name_function_from_ident(&mut right, &key_name);
+            }
+        }
         Ok(Expr::Assign(op, Box::new(left), Box::new(right)))
+    }
+
+    /// Extract the property name for SetFunctionName from an assignment
+    /// target: `o.p` -> Some("p"), `o[computed]` -> None, identifier -> None.
+    fn assign_target_name(target: &Expr) -> Option<Arc<str>> {
+        match target {
+            Expr::Member {
+                property,
+                computed: false,
+                ..
+            } => match property.as_ref() {
+                Expr::Ident(s) => Some(s.clone()),
+                Expr::String(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn parse_ternary(&mut self) -> error::Result<Expr> {
