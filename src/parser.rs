@@ -606,7 +606,9 @@ impl Parser {
                 }
             };
             let init = if self.eat(&TokenKind::Assign) {
-                Some(self.parse_assign()?)
+                let mut e = self.parse_assign()?;
+                Self::name_function_from_ident(&mut e, &name);
+                Some(e)
             } else {
                 None
             };
@@ -1584,7 +1586,21 @@ impl Parser {
                 });
             } else {
                 self.expect(&TokenKind::Colon, ":")?;
-                let value = self.parse_assign()?;
+                let mut value = self.parse_assign()?;
+                // SetFunctionName: assigning a function/arrow to a property
+                // sets its `name` to the property key (when the function has
+                // no explicit name). Computed keys use "".
+                if !computed {
+                    if let Expr::Function(f) = &mut value {
+                        if f.name.is_none() {
+                            f.name = Self::prop_key_name(&key);
+                        }
+                    } else if let Expr::Arrow(f) = &mut value {
+                        if f.name.is_none() {
+                            f.name = Self::prop_key_name(&key);
+                        }
+                    }
+                }
                 props.push(Property {
                     key,
                     value,
@@ -1867,6 +1883,16 @@ impl Parser {
             PropertyKey::Ident(s) | PropertyKey::String(s) => Some(s.clone()),
             PropertyKey::Number(n) => Some(Arc::from(crate::value::num_to_string(*n).as_str())),
             _ => None,
+        }
+    }
+
+    /// SetFunctionName for `var x = <function>`: if `value` is an anonymous
+    /// function/arrow and `name` is a plain identifier, set its `name` to it.
+    fn name_function_from_ident(value: &mut Expr, name: &Arc<str>) {
+        match value {
+            Expr::Function(f) if f.name.is_none() => f.name = Some(name.clone()),
+            Expr::Arrow(f) if f.name.is_none() => f.name = Some(name.clone()),
+            _ => {}
         }
     }
 
