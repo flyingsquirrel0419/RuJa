@@ -364,3 +364,86 @@ fn char_at_in_range_works() {
     let v = run(r#""abc".charAt()"#);
     assert_eq!(v, Value::String(std::sync::Arc::from("a")));
 }
+
+// --- GC with_obj reentrancy safety + Array.from iterable ---
+
+/// A self-referential getter used to crash ("use after free") because
+/// `with_obj` took the object out of its cell and a reentrant read found
+/// it empty. Now it must not panic (it may diverge or throw, but not abort).
+#[test]
+fn reentrant_with_obj_does_not_panic() {
+    // Use a big stack since the getter recurses before any stack guard.
+    use std::thread;
+    let src = r#"
+        var o = { get x() { return o.x; } };
+        (function () {
+            try { o.x; return 'no-throw'; }
+            catch (e) { return 'caught'; }
+        })()
+    "#;
+    let src = src.to_string();
+    let worker = thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let mut vm = ruja::Vm::new();
+            vm.run(&src).expect("evaluation errored")
+        })
+        .expect("failed to spawn worker");
+    let v = worker
+        .join()
+        .expect("worker panicked (use-after-free regression)");
+    match v {
+        ruja::Value::String(ref s) => assert!(
+            s.as_ref() == "no-throw" || s.as_ref() == "caught",
+            "got {:?}",
+            v
+        ),
+        other => panic!("expected string, got {:?}", other),
+    }
+}
+
+/// `Array.from` must drain iterables (generators, sets, user iterables).
+/// Previously it returned [] for generators (Symbol.iterator is inherited,
+/// not an own prop) and for any iterable that triggered GC the iterator was
+/// collected mid-loop.
+#[test]
+fn array_from_drains_iterables() {
+    let v = run("function*g(){yield 1;yield 2;yield 3} Array.from(g()).join(',')");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1,2,3")));
+    let v = run("Array.from(new Set([1,2,2,3])).join(',')");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1,2,3")));
+    let v = run(
+        r#"var o={}; o[Symbol.iterator]=function(){var i=0;return {next:function(){if(i++>=3)return{done:true};return{value:i,done:false}}}}; Array.from(o).join(',') "#,
+    );
+    assert_eq!(v, Value::String(std::sync::Arc::from("1,2,3")));
+}
+
+/// A large generator must be fully drained (no GC truncation at ~593).
+#[test]
+fn array_from_large_generator_not_truncated() {
+    use std::thread;
+    let src = "function*g(){for(var i=0;i<5000;i++)yield i} Array.from(g()).length";
+    let src = src.to_string();
+    let worker = thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let mut vm = ruja::Vm::new();
+            vm.run(&src).expect("evaluation errored")
+        })
+        .expect("failed to spawn worker");
+    let v = worker.join().expect("worker panicked");
+    assert_eq!(v, Value::Number(5000.0));
+}
+
+/// An infinite iterable must hit the cap and throw instead of hanging/OOMing.
+#[test]
+fn array_from_infinite_iterable_capped() {
+    let res = common::run_err(
+        r#"var o={}; o[Symbol.iterator]=function(){return {next:function(){return{value:1,done:false}}}}; Array.from(o);"#,
+    );
+    assert!(
+        res.contains("Invalid array length"),
+        "expected RangeError, got: {}",
+        res
+    );
+}

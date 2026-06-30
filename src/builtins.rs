@@ -2675,8 +2675,48 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     // Cap total materialized elements so an infinite or huge iterable (e.g.
     // a generator that yields forever) cannot OOM the host. Matches the
     // engine's dense-array model.
-    const MAX_ARRAY_FROM_LEN: usize = 1 << 22; // 4,194,304
+    // Cap total materialized elements so an infinite or huge iterable (e.g.
+    // a generator that yields forever) cannot OOM the host. 65k keeps an
+    // infinite iterable from running for many seconds before the cap trips.
+    const MAX_ARRAY_FROM_LEN: usize = 1 << 16; // 65,536
     if let Value::Object(idx) = &src_val {
+        // Iterable protocol first: if the object has a Symbol.iterator
+        // (generators, sets, maps, user iterables), drain it. This was
+        // missing before, so `Array.from(gen())` returned [] instead of the
+        // elements. Capped so an infinite iterable cannot OOM the host.
+        let has_iter = vm.heap.with_obj(idx.0, |o| {
+            matches!(
+                o,
+                HeapObj::Generator(_)
+                    | HeapObj::LazyGenerator(_)
+                    | HeapObj::Map(_)
+                    | HeapObj::Set(_)
+            )
+        }) || {
+            let pkey = crate::value::PropertyKey::Symbol(vm.well_known_symbols.iterator);
+            vm.has_property_key(&src_val, &pkey)
+        };
+        if has_iter {
+            let iter = vm.make_iterator(&src_val)?;
+            // The iterator must survive any GC triggered by `iterator_next`
+            // (which allocates result objects). Without pinning, the iterator
+            // was collected mid-loop, so an infinite iterable stopped at ~593
+            // elements instead of running to the cap.
+            let pin = vm.pin(&iter);
+            loop {
+                if items.len() >= MAX_ARRAY_FROM_LEN {
+                    vm.unpin(pin);
+                    return Err(Error::range("Invalid array length"));
+                }
+                let (v, done) = vm.iterator_next(&iter)?;
+                if done {
+                    break;
+                }
+                items.push(v);
+            }
+            vm.unpin(pin);
+            return finish_array_from(vm, items, map_fn);
+        }
         let (is_arr, arr_items, len) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
                 (true, a.items.lock().unwrap().clone(), 0)

@@ -508,6 +508,22 @@ impl HeapObj {
         matches!(self, HeapObj::Function(_))
     }
 
+    /// A temporary empty object used as a placeholder when `Heap::with_obj`
+    /// is reentered on the same index. Reentrant reads already diverge from
+    /// ES; this keeps them from panicking ("use after free") instead of
+    /// returning the real (temporarily-borrowed) value. The outer `with_obj`
+    /// frame restores the real object, so the placeholder is never persisted.
+    pub fn placeholder() -> HeapObj {
+        HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(None),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        })
+    }
+
     /// Common props accessor for any object kind.
     pub fn props(&self) -> &Mutex<IndexMap<PropertyKey, PropertyDescriptor>> {
         match self {
