@@ -1,6 +1,7 @@
 # Full test262 conformance run split into parallel jobs by directory.
-# Each runner processes one top-level test262 directory (or language subdir),
-# so the full suite finishes much faster than a single sequential run.
+# Each runner processes one immediate child directory of test262/test,
+# but language/ is expanded to its own subdirectories so the top-level
+# language directory is not also re-run in full.
 
 name: test262-full
 
@@ -37,10 +38,12 @@ jobs:
       - name: Build directory matrix
         id: dirs
         run: |
+          # Enumerate test262/test children. language/ is expanded into its
+          # subdirectories; do not also include language/ itself.
           dirs=$(cd ~/test262/test && {
-            find . -maxdepth 1 -mindepth 1 -type d
-            find ./language -maxdepth 1 -mindepth 1 -type d 2>/dev/null || true
-          } | sed 's|^\./||' | grep -v '^harness$' | sort -u | jq -R . | jq -s -c .)
+            find . -maxdepth 1 -mindepth 1 -type d | sed 's|^\./||' | grep -vx 'harness\|language'
+            find ./language -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's|^\./||'
+          } | sort -u | jq -R . | jq -s -c .)
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
           echo "matrix directories: $dirs"
 
