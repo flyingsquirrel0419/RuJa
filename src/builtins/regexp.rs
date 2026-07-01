@@ -117,7 +117,8 @@ pub(crate) fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     } else {
         0
     };
-    if start > input.len() {
+    let utf16_len = crate::value::utf16_len(&input);
+    if start > utf16_len {
         if let Some(Value::Object(idx)) = &this {
             vm.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Object(obj) = o {
@@ -130,13 +131,13 @@ pub(crate) fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
         }
         return Ok(Value::Null);
     }
-    let region = &input[start..];
+    let region = crate::value::utf16_slice(&input, start, utf16_len);
     // For sticky, match must start exactly at `start`; for global, find from start.
     let m = if sticky {
-        re.captures_at(region, 0)
+        re.captures_at(&region, 0)
             .filter(|c| c.get(0).map(|mch| mch.start() == 0).unwrap_or(false))
     } else {
-        re.captures(region)
+        re.captures(&region)
     };
     match m {
         Some(caps) => {
@@ -148,7 +149,7 @@ pub(crate) fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
                 })
                 .collect();
             if global || sticky {
-                let match_end = start + caps.get(0).map(|mch| mch.end()).unwrap_or(0);
+                let match_end = start + crate::value::utf16_len(caps.get(0).map(|mch| mch.as_str()).unwrap_or(""));
                 if let Some(Value::Object(idx)) = &this {
                     vm.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Object(obj) = o {
