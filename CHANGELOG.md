@@ -22,6 +22,9 @@
   throughout the engine. `parking_lot::lock()` is panic-free, removing ~200
   latent `lock().unwrap()` panic paths (the remaining unwraps are on `Option`/
   `Result`/`Vec` operations, not on mutex acquisition).
+- **cargo-fuzz target**: Added `fuzz/fuzz_targets/fuzz_target_1.rs` exercising the
+  public `Vm::run` API with fuel-capped execution. Initial 30-second run completed
+  over 50,000 iterations without triggering a panic.
 
 ### Documentation
 - Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
