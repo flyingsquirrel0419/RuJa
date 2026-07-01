@@ -1,17 +1,20 @@
 # test262 conformance
 
-RuJa runs a subset of the [test262](https://github.com/tc39/test262)
-conformance suite via `tools/test262_runner.py`. The runner uses the **real
-test262 harness** (`sta.js`, `assert.js`, and per-test `includes:` such as
-`propertyHelper.js` and `compareArray.js`) rather than a hand-rolled stub,
-so tests relying on `verifyProperty`, `compareArray`, etc. are exercised
-correctly. It also parses `negative:` metadata so a test that expects a
-`SyntaxError`/`TypeError` (parse or runtime phase) passes when RuJa raises
-the matching error.
+RuJa runs the [test262](https://github.com/tc39/test262) conformance suite
+via `tools/test262_runner.py`. The runner uses the **real test262 harness**
+(`sta.js`, `assert.js`, and per-test `includes:` such as `propertyHelper.js`
+and `compareArray.js`) rather than a hand-rolled stub, so tests relying on
+`verifyProperty`, `compareArray`, etc. are exercised correctly. It also
+parses `negative:` metadata so a test that expects a `SyntaxError`/
+`TypeError` (parse or runtime phase) passes when RuJa raises the matching
+error. The full suite is run in CI via a parallel matrix workflow
+(`.github/workflows/test262-full.yml`); `intl402` and `staging` are
+excluded.
 
 Tests requiring unsupported features (modules, TypedArrays, Atomics, Intl,
-etc.) are skipped via the runner's `SKIP_FEATURES` set; async-function and
-module tests are also skipped.
+class, async/generators, Symbol, Proxy/Reflect, Map/Set, etc.) are skipped
+via the runner's expanded `SKIP_FEATURES` set; async-function and module
+tests are also skipped.
 
 ## Running
 
@@ -33,12 +36,12 @@ For failure-bucket analysis with error samples, use the sibling analyzer:
 python3 tools/test262_analyze.py language/expressions/arrow-function
 ```
 
-## Current results
+## CI subset results
 
 Measured on a representative subset of `language/` (arrow-function,
 function, object, identifiers, keywords, types, comments, white-space,
-punctuators). The subset is what the CI job runs, so the number in the job
-summary matches what is below.
+punctuators). The subset is what the `ci.yml` job runs, so the number in
+the job summary matches what is below.
 
 | Suite            | Ran  | Pass | Fail | Pass rate |
 |------------------|------|------|------|----------|
@@ -54,10 +57,26 @@ summary matches what is below.
 | **subset total**  | 2058 | 1250 | 808 | ~60.8%    |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
-for the current commit. This is a **curated subset**, not full test262:
-`built-ins/`, `language/statements/` and the rest of `language/expressions/`
-are not all exercised, so the true full-suite pass rate is lower and not
-claimed. RuJa does not assert ES conformance; this only tracks regressions.)
+for the current commit.)
+
+## Full-suite results (CI)
+
+The `test262-full` CI workflow runs the entire test262 tree (excluding
+`intl402`/`staging`) in parallel. Baseline from the first full run:
+
+| Metric | Count |
+|--------|-------|
+| Total tests | 76,397 |
+| Actually run | 60,178 |
+| Pass | 19,987 |
+| Fail | 40,191 |
+| Skip | 15,481 |
+| **Pass rate (of run)** | **33.2%** |
+
+Longest jobs: `language/expressions` (~22 min), `language/statements`
+(~25 min). Numbers move as bugs are fixed; the CI job summary is the
+source of truth for the current commit. RuJa does not assert ES
+conformance; this only tracks regressions.
 
 ## What was fixed to get here
 

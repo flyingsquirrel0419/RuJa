@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0-alpha] - 2026-07-01
+
 ### Added
 - **Execution fuel / interrupt**: `Vm::set_fuel(Some(n))` bounds execution
   to ~n opcodes; exhaustion throws `RangeError("fuel exhausted")` that is
@@ -10,6 +12,12 @@
   Cooperative, checked before each opcode.
 - `Map`/`Set`/`Array.includes` keys now compare by **SameValueZero**
   (`NaN === NaN`, `-0 === +0`), so `new Map().set(NaN,1).get(NaN)` returns 1.
+
+- **Full test262 CI**: `.github/workflows/test262-full.yml` runs the entire
+  test262 suite across directory-split parallel jobs and aggregates results
+  into the GitHub Actions summary. `intl402`/`staging` are excluded;
+  unsupported-feature tests are skipped via an expanded `SKIP_FEATURES` set.
+  Baseline: 76,397 tests, 60,178 run, 19,987 pass (33.2%).
 
 ### Security
 - **Array-index DoS (OOM)**: `a[0x80000000]` used to materialize ~2B dense
