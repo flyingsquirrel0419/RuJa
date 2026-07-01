@@ -10,7 +10,7 @@ use num_traits::{Signed, Zero};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
@@ -400,10 +400,9 @@ impl Vm {
             if let HeapObj::Environment(e) = o {
                 e.vars
                     .lock()
-                    .unwrap()
                     .iter()
                     .filter(|(name, _)| var_names.contains(&**name))
-                    .map(|(name, b)| (name.clone(), b.value.lock().unwrap().clone()))
+                    .map(|(name, b)| (name.clone(), b.value.lock().clone()))
                     .collect()
             } else {
                 Vec::new()
@@ -500,13 +499,13 @@ impl Vm {
             if let HeapObj::LazyGenerator(g) = o {
                 (
                     g.fdef.clone(),
-                    *g.env.lock().unwrap(),
-                    g.this_val.lock().unwrap().clone(),
-                    g.args.lock().unwrap().clone(),
+                    *g.env.lock(),
+                    g.this_val.lock().clone(),
+                    g.args.lock().clone(),
                     g.ip.load(Ordering::Relaxed),
-                    g.locals.lock().unwrap().clone(),
-                    g.stack.lock().unwrap().clone(),
-                    g.catch_stack.lock().unwrap().clone(),
+                    g.locals.lock().clone(),
+                    g.stack.lock().clone(),
+                    g.catch_stack.lock().clone(),
                     g.started.load(Ordering::Relaxed),
                     g.done.load(Ordering::Relaxed),
                 )
@@ -582,13 +581,13 @@ impl Vm {
         let target_depth = self.frames.len() - 1;
         {
             let frame = &self.frames[target_depth];
-            *frame.gen_resume_value.lock().unwrap() = resume_val.clone();
+            *frame.gen_resume_value.lock() = resume_val.clone();
             frame.gen_mode.store(true, Ordering::Relaxed);
             frame.gen_suspended.store(false, Ordering::Relaxed);
-            *frame.gen_yield.lock().unwrap() = None;
+            *frame.gen_yield.lock() = None;
             // `throw(e)`: arrange for the next dispatch to raise `e`.
             if let ResumeKind::Throw(e) = &kind {
-                *frame.force_throw.lock().unwrap() = Some(e.clone());
+                *frame.force_throw.lock() = Some(e.clone());
             }
         }
 
@@ -597,7 +596,7 @@ impl Vm {
         // Clear the resume value on the frame so a subsequent resume (or a
         // GC pass between resumes) does not observe a stale value.
         if self.frames.len() > target_depth {
-            *self.frames[target_depth].gen_resume_value.lock().unwrap() = Value::Undefined;
+            *self.frames[target_depth].gen_resume_value.lock() = Value::Undefined;
         }
 
         // Reclaim the generator's (possibly modified) operand stack and restore
@@ -637,7 +636,6 @@ impl Vm {
             let yielded = self.frames[target_depth]
                 .gen_yield
                 .lock()
-                .unwrap()
                 .take()
                 .unwrap_or(Value::Undefined);
             // Pop the generator frame and save its state for the next resume.
@@ -650,10 +648,10 @@ impl Vm {
             self.heap.with_obj(g_idx.0, |o| {
                 if let HeapObj::LazyGenerator(g) = o {
                     g.ip.store(frame.ip, Ordering::Relaxed);
-                    *g.env.lock().unwrap() = frame.env;
-                    *g.locals.lock().unwrap() = frame.locals;
-                    *g.stack.lock().unwrap() = saved_stack;
-                    *g.catch_stack.lock().unwrap() = frame.catch_stack;
+                    *g.env.lock() = frame.env;
+                    *g.locals.lock() = frame.locals;
+                    *g.stack.lock() = saved_stack;
+                    *g.catch_stack.lock() = frame.catch_stack;
                     g.started.store(true, Ordering::Relaxed);
                 }
             });
@@ -699,7 +697,6 @@ impl Vm {
             Some(Value::Object(ci)) => self.heap.with_obj(ci.0, |o| {
                 o.props()
                     .lock()
-                    .unwrap()
                     .get(&crate::value::PropertyKey::from("prototype"))
                     .map(|d| d.value.clone())
             }),
@@ -810,7 +807,7 @@ impl Vm {
             if let Some(exc) = self
                 .frames
                 .last()
-                .and_then(|f| f.force_throw.lock().unwrap().take())
+                .and_then(|f| f.force_throw.lock().take())
             {
                 return Err(Error::thrown(exc, &self.heap));
             }
@@ -1317,7 +1314,7 @@ impl Vm {
                     // `this`; clearing here prevents leftover values from leaking
                     // into a later, unrelated call.
                     if let Some(f) = self.frames.last() {
-                        *f.pending_with_this.lock().unwrap() = None;
+                        *f.pending_with_this.lock() = None;
                     }
                     let name = {
                         let frame = self.frames.last().unwrap();
@@ -1360,8 +1357,7 @@ impl Vm {
                                 .last_mut()
                                 .unwrap()
                                 .pending_with_this
-                                .lock()
-                                .unwrap() = Some(with_obj);
+                                .lock() = Some(with_obj);
                         }
                         self.stack.push(v);
                     } else {
@@ -1477,7 +1473,7 @@ impl Vm {
                     let parent = self.frames.last().and_then(|f| {
                         self.heap.with_obj(f.env.0, |o| {
                             if let HeapObj::Environment(e) = o {
-                                *e.parent.lock().unwrap()
+                                *e.parent.lock()
                             } else {
                                 None
                             }
@@ -1497,7 +1493,7 @@ impl Vm {
                     let parent = self.frames.last().and_then(|f| {
                         self.heap.with_obj(f.env.0, |o| {
                             if let HeapObj::Environment(e) = o {
-                                *e.parent.lock().unwrap()
+                                *e.parent.lock()
                             } else {
                                 None
                             }
@@ -1529,7 +1525,7 @@ impl Vm {
                     let parent = self.frames.last().and_then(|f| {
                         self.heap.with_obj(f.env.0, |o| {
                             if let HeapObj::Environment(e) = o {
-                                *e.parent.lock().unwrap()
+                                *e.parent.lock()
                             } else {
                                 None
                             }
@@ -1654,7 +1650,6 @@ impl Vm {
                             if let HeapObj::Function(f) = o {
                                 f.prototype
                                     .lock()
-                                    .unwrap()
                                     .clone()
                                     .unwrap_or(Value::Undefined)
                             } else {
@@ -1674,7 +1669,6 @@ impl Vm {
                         cur = self.heap.with_obj(oi.0, |o| {
                             o.proto()
                                 .lock()
-                                .unwrap()
                                 .clone()
                                 .unwrap_or(Value::Undefined)
                         });
@@ -1734,7 +1728,7 @@ impl Vm {
                     if let Some(frame) = self.frames.last_mut() {
                         if let Some(&(target, _)) = frame.finally_stack.last() {
                             frame.finally_completion_tag.store(1, Ordering::Relaxed);
-                            *frame.finally_completion_val.lock().unwrap() = v;
+                            *frame.finally_completion_val.lock() = v;
                             frame.ip = target;
                             continue;
                         }
@@ -1796,7 +1790,7 @@ impl Vm {
                     if let Value::Object(idx) = &arr {
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {
-                                a.items.lock().unwrap().push(value.clone());
+                                a.items.lock().push(value.clone());
                             }
                         });
                     }
@@ -1816,7 +1810,7 @@ impl Vm {
                             }
                             self.heap.with_obj(arr_idx.0, |o| {
                                 if let HeapObj::Array(a) = o {
-                                    a.items.lock().unwrap().push(v.clone());
+                                    a.items.lock().push(v.clone());
                                 }
                             });
                         }
@@ -1833,11 +1827,11 @@ impl Vm {
                         let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
                             let mut out = Vec::new();
                             if let HeapObj::Array(a) = o {
-                                for (i, v) in a.items.lock().unwrap().iter().enumerate() {
+                                for (i, v) in a.items.lock().iter().enumerate() {
                                     out.push((Arc::from(i.to_string().as_str()), v.clone()));
                                 }
                             }
-                            for (k, desc) in o.props().lock().unwrap().iter() {
+                            for (k, desc) in o.props().lock().iter() {
                                 if desc.enumerable {
                                     if let crate::value::PropertyKey::Str(s) = k {
                                         out.push((s.clone(), Value::Undefined));
@@ -1868,7 +1862,7 @@ impl Vm {
                     if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&new_obj, &src) {
                         let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
                             let mut out = Vec::new();
-                            for (k, desc) in o.props().lock().unwrap().iter() {
+                            for (k, desc) in o.props().lock().iter() {
                                 if desc.enumerable {
                                     if let crate::value::PropertyKey::Str(s) = k {
                                         out.push((s.clone(), Value::Undefined));
@@ -1906,7 +1900,7 @@ impl Vm {
                         };
                         self.heap.with_obj(idx.0, |o| {
                             let props = o.props();
-                            let mut props = props.lock().unwrap();
+                            let mut props = props.lock();
                             let entry = props.entry(pkey).or_insert_with(|| {
                                 crate::value::PropertyDescriptor {
                                     value: Value::Undefined,
@@ -1982,7 +1976,6 @@ impl Vm {
                         let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
                             o.props()
                                 .lock()
-                                .unwrap()
                                 .get(&pkey)
                                 .map_or((false, true), |d| (true, d.configurable))
                         });
@@ -1995,7 +1988,7 @@ impl Vm {
                             Value::Bool(false)
                         } else if exists {
                             self.heap.with_obj(idx.0, |o| {
-                                o.props().lock().unwrap().shift_remove(&pkey);
+                                o.props().lock().shift_remove(&pkey);
                             });
                             Value::Bool(true)
                         } else {
@@ -2014,7 +2007,7 @@ impl Vm {
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
-                            *o.proto().lock().unwrap() = Some(proto);
+                            *o.proto().lock() = Some(proto);
                         });
                     }
                 }
@@ -2058,7 +2051,7 @@ impl Vm {
                                     )
                                 })?;
                             frame.finally_completion_tag.store(4, Ordering::Relaxed);
-                            *frame.finally_completion_val.lock().unwrap() = v;
+                            *frame.finally_completion_val.lock() = v;
                             frame.ip = target;
                             continue;
                         }
@@ -2098,7 +2091,7 @@ impl Vm {
                     let resume_ip = ip + 1;
                     let f = self.frames.last_mut().unwrap();
                     f.finally_completion_tag.store(2, Ordering::Relaxed);
-                    *f.finally_completion_val.lock().unwrap() = Value::Number(resume_ip as f64);
+                    *f.finally_completion_val.lock() = Value::Number(resume_ip as f64);
                     f.ip = finally_start;
                     continue;
                 }
@@ -2108,7 +2101,7 @@ impl Vm {
                     // and divert to the finally body.
                     let f = self.frames.last_mut().unwrap();
                     f.finally_completion_tag.store(3, Ordering::Relaxed);
-                    *f.finally_completion_val.lock().unwrap() = Value::Number(cont as f64);
+                    *f.finally_completion_val.lock() = Value::Number(cont as f64);
                     f.ip = finally_start;
                     continue;
                 }
@@ -2138,7 +2131,6 @@ impl Vm {
                             if let HeapObj::Object(od) = o {
                                 od.private_fields
                                     .lock()
-                                    .unwrap()
                                     .get(name.as_str())
                                     .cloned()
                                     .unwrap_or(Value::Undefined)
@@ -2166,7 +2158,6 @@ impl Vm {
                             if let HeapObj::Object(od) = o {
                                 od.private_fields
                                     .lock()
-                                    .unwrap()
                                     .insert(Arc::from(name.as_str()), value.clone());
                             }
                         });
@@ -2193,7 +2184,6 @@ impl Vm {
                             if let HeapObj::Object(od) = o {
                                 od.private_fields
                                     .lock()
-                                    .unwrap()
                                     .get(name.as_str())
                                     .cloned()
                                     .unwrap_or(Value::Undefined)
@@ -2215,13 +2205,13 @@ impl Vm {
                         let f = self.frames.last().unwrap();
                         (
                             f.finally_completion_tag.load(Ordering::Relaxed),
-                            f.finally_completion_val.lock().unwrap().clone(),
+                            f.finally_completion_val.lock().clone(),
                         )
                     };
                     {
                         let f = self.frames.last_mut().unwrap();
                         f.finally_completion_tag.store(0, Ordering::Relaxed);
-                        *f.finally_completion_val.lock().unwrap() = Value::Undefined;
+                        *f.finally_completion_val.lock() = Value::Undefined;
                     }
                     match tag {
                         0 => {} // normal: continue
@@ -2232,7 +2222,7 @@ impl Vm {
                             if let Some(frame) = self.frames.last_mut() {
                                 if let Some(&(outer, _)) = frame.finally_stack.last() {
                                     frame.finally_completion_tag.store(1, Ordering::Relaxed);
-                                    *frame.finally_completion_val.lock().unwrap() = val.clone();
+                                    *frame.finally_completion_val.lock() = val.clone();
                                     frame.ip = outer;
                                     continue;
                                 }
@@ -2276,7 +2266,7 @@ impl Vm {
                                         )
                                     })?;
                                 frame.finally_completion_tag.store(4, Ordering::Relaxed);
-                                *frame.finally_completion_val.lock().unwrap() = val.clone();
+                                *frame.finally_completion_val.lock() = val.clone();
                                 frame.ip = outer;
                                 continue;
                             }
@@ -2298,7 +2288,7 @@ impl Vm {
                             // divert the break/continue through it first.
                             if let Some(&(outer, _)) = frame.finally_stack.last() {
                                 frame.finally_completion_tag.store(tag, Ordering::Relaxed);
-                                *frame.finally_completion_val.lock().unwrap() = val.clone();
+                                *frame.finally_completion_val.lock() = val.clone();
                                 frame.ip = outer;
                                 continue;
                             }
@@ -2334,7 +2324,7 @@ impl Vm {
                         .unwrap_or(false);
                     if in_gen {
                         let frame = self.frames.last().unwrap();
-                        *frame.gen_yield.lock().unwrap() = Some(v);
+                        *frame.gen_yield.lock() = Some(v);
                         frame.gen_suspended.store(true, Ordering::Relaxed);
                         return Ok(Value::Undefined);
                     } else {
@@ -2565,7 +2555,7 @@ impl Vm {
         let with_this = self
             .frames
             .last()
-            .map(|f| f.pending_with_this.lock().unwrap().take())
+            .map(|f| f.pending_with_this.lock().take())
             .unwrap_or(None);
         let this = with_this.or(Some(Value::Undefined));
         let result = self.call_function(&callee, &args, this)?;
@@ -2617,7 +2607,7 @@ impl Vm {
         if let Value::Object(idx) = &args_arr {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
-                    args = a.items.lock().unwrap().clone();
+                    args = a.items.lock().clone();
                 }
             });
         }
@@ -2646,7 +2636,7 @@ impl Vm {
         let args = if let Value::Object(idx) = &args_arr {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
-                    a.items.lock().unwrap().clone()
+                    a.items.lock().clone()
                 } else {
                     Vec::new()
                 }
@@ -2671,7 +2661,7 @@ impl Vm {
                 self.run_microtasks()?;
                 let (state, result) = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Promise(p) = o {
-                        (*p.state.lock().unwrap(), p.result.lock().unwrap().clone())
+                        (*p.state.lock(), p.result.lock().clone())
                     } else {
                         (PromiseStatus::Fulfilled, Value::Undefined)
                     }
@@ -2731,7 +2721,6 @@ impl Vm {
                     desc.enumerable = false;
                     obj.props()
                         .lock()
-                        .unwrap()
                         .insert(crate::value::PropertyKey::from("constructor"), desc);
                 });
             }
@@ -2946,7 +2935,7 @@ impl Vm {
                     // join items outside the borrow
                     let items = self.heap.with_obj(idx.0, |obj| {
                         if let HeapObj::Array(a) = obj {
-                            a.items.lock().unwrap().clone()
+                            a.items.lock().clone()
                         } else {
                             Vec::new()
                         }
@@ -3052,7 +3041,7 @@ impl Vm {
                     if let Value::Object(idx) = v {
                         let prim = self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Object(od) = o {
-                                od.primitive.lock().unwrap().clone()
+                                od.primitive.lock().clone()
                             } else {
                                 None
                             }
@@ -3149,7 +3138,6 @@ impl Vm {
                     self.heap.with_obj(idx.0, |o| {
                         o.props()
                             .lock()
-                            .unwrap()
                             .insert(pkey, crate::value::PropertyDescriptor::data(value.clone()));
                     });
                     Ok(())
@@ -3183,8 +3171,8 @@ impl Vm {
             depth += 1;
             let (found, proto) = self.heap.with_obj(idx.0, |o| {
                 let props = o.props();
-                let v = props.lock().unwrap().get(key).map(|d| d.value.clone());
-                let proto = o.proto().lock().unwrap().clone();
+                let v = props.lock().get(key).map(|d| d.value.clone());
+                let proto = o.proto().lock().clone();
                 (v, proto)
             });
             if let Some(v) = found {
@@ -3211,8 +3199,8 @@ impl Vm {
             depth += 1;
             let (has, proto) = self.heap.with_obj(idx.0, |o| {
                 (
-                    o.props().lock().unwrap().contains_key(key),
-                    o.proto().lock().unwrap().clone(),
+                    o.props().lock().contains_key(key),
+                    o.proto().lock().clone(),
                 )
             });
             if has {
@@ -3244,7 +3232,7 @@ impl Vm {
             Value::Object(idx) => {
                 let (is_arr, len) = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
-                        (true, a.items.lock().unwrap().len())
+                        (true, a.items.lock().len())
                     } else {
                         (false, 0)
                     }
@@ -3275,11 +3263,11 @@ impl Vm {
                         return true;
                     }
                     if let Ok(i) = name.parse::<usize>() {
-                        return i < a.items.lock().unwrap().len();
+                        return i < a.items.lock().len();
                     }
                     // array extra props live in props()
                 }
-                o.props().lock().unwrap().contains_key(&pkey)
+                o.props().lock().contains_key(&pkey)
             }),
             Value::String(st) => {
                 let len = crate::value::utf16_len(st);
@@ -3401,7 +3389,7 @@ impl Vm {
                 // `with_obj` borrow, so we look it up first.
                 let pkey = crate::value::PropertyKey::from(key);
                 if let Some(getter) = self.heap.with_obj(idx.0, |o| {
-                    o.props().lock().unwrap().get(&pkey).and_then(|d| {
+                    o.props().lock().get(&pkey).and_then(|d| {
                         if d.is_accessor {
                             d.get.clone()
                         } else {
@@ -3417,7 +3405,7 @@ impl Vm {
                 // __proto__ getter returns the object's [[Prototype]].
                 if key == "__proto__" {
                     return Ok(self.heap.with_obj(idx.0, |o| {
-                        o.proto().lock().unwrap().clone().unwrap_or(Value::Null)
+                        o.proto().lock().clone().unwrap_or(Value::Null)
                     }));
                 }
                 // globalThis routes property reads to the global environment.
@@ -3433,8 +3421,8 @@ impl Vm {
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
                         if key == "length" {
-                            let len = a.items.lock().unwrap().len();
-                            let sparse = a.sparse_max.lock().unwrap().unwrap_or(0);
+                            let len = a.items.lock().len();
+                            let sparse = a.sparse_max.lock().unwrap_or(0);
                             return Ok::<Value, Error>(Value::Number(len.max(sparse) as f64));
                         }
                         if let Some(i) = crate::value::parse_array_index(key) {
@@ -3442,33 +3430,33 @@ impl Vm {
                             // properties (sparse array); read them from there.
                             if i >= crate::value::MAX_DENSE_ARRAY_LEN {
                                 let pkey = crate::value::PropertyKey::from_string(key.to_string());
-                                if let Some(d) = a.props.lock().unwrap().get(&pkey) {
+                                if let Some(d) = a.props.lock().get(&pkey) {
                                     return Ok(d.value.clone());
                                 }
                                 return Ok(Value::Undefined);
                             }
-                            let items = a.items.lock().unwrap();
+                            let items = a.items.lock();
                             return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
                         }
                     }
                     if let HeapObj::Map(m) = o {
                         if key == "size" {
-                            return Ok(Value::Number(m.entries.lock().unwrap().len() as f64));
+                            return Ok(Value::Number(m.entries.lock().len() as f64));
                         }
                     }
                     if let HeapObj::Set(s) = o {
                         if key == "size" {
-                            return Ok(Value::Number(s.items.lock().unwrap().len() as f64));
+                            return Ok(Value::Number(s.items.lock().len() as f64));
                         }
                     }
                     let props = o.props();
-                    if let Some(desc) = props.lock().unwrap().get(&pkey) {
+                    if let Some(desc) = props.lock().get(&pkey) {
                         return Ok(desc.value.clone());
                     }
                     // function-specific: .prototype lives in a dedicated field
                     if let HeapObj::Function(f) = o {
                         if key == "prototype" {
-                            if let Some(p) = f.prototype.lock().unwrap().as_ref() {
+                            if let Some(p) = f.prototype.lock().as_ref() {
                                 return Ok(p.clone());
                             }
                         }
@@ -3497,7 +3485,7 @@ impl Vm {
                 // getters inherited from a prototype bind `this` to the receiver.
                 let p = self
                     .heap
-                    .with_obj(idx.0, |o| o.proto().lock().unwrap().clone());
+                    .with_obj(idx.0, |o| o.proto().lock().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
                         return self.get_property_rx(&proto, key, obj.clone(), 0);
@@ -3529,7 +3517,7 @@ impl Vm {
                 let pkey = crate::value::PropertyKey::from(key);
                 // Own accessor on this object?
                 if let Some(getter) = self.heap.with_obj(idx.0, |o| {
-                    o.props().lock().unwrap().get(&pkey).and_then(|d| {
+                    o.props().lock().get(&pkey).and_then(|d| {
                         if d.is_accessor {
                             d.get.clone()
                         } else {
@@ -3546,14 +3534,14 @@ impl Vm {
                 let val = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
                         if key == "length" {
-                            let len = a.items.lock().unwrap().len();
-                            let sparse = a.sparse_max.lock().unwrap().unwrap_or(0);
+                            let len = a.items.lock().len();
+                            let sparse = a.sparse_max.lock().unwrap_or(0);
                             return Some(Value::Number(len.max(sparse) as f64));
                         }
                         if let Some(i) = crate::value::parse_array_index(key) {
                             if i >= crate::value::MAX_DENSE_ARRAY_LEN {
                                 let pkey = crate::value::PropertyKey::from_string(key.to_string());
-                                if let Some(d) = a.props.lock().unwrap().get(&pkey) {
+                                if let Some(d) = a.props.lock().get(&pkey) {
                                     return Some(d.value.clone());
                                 }
                                 return Some(Value::Undefined);
@@ -3561,7 +3549,6 @@ impl Vm {
                             return Some(
                                 a.items
                                     .lock()
-                                    .unwrap()
                                     .get(i)
                                     .cloned()
                                     .unwrap_or(Value::Undefined),
@@ -3570,7 +3557,6 @@ impl Vm {
                     }
                     o.props()
                         .lock()
-                        .unwrap()
                         .get(&pkey)
                         .map(|d| d.value.clone())
                 });
@@ -3580,7 +3566,7 @@ impl Vm {
                 // Walk up.
                 let p = self
                     .heap
-                    .with_obj(idx.0, |o| o.proto().lock().unwrap().clone());
+                    .with_obj(idx.0, |o| o.proto().lock().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
                         return self.get_property_rx(&proto, key, receiver, depth + 1);
@@ -3614,7 +3600,6 @@ impl Vm {
             let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
                 o.props()
                     .lock()
-                    .unwrap()
                     .get(&pkey)
                     .map_or((false, true), |d| (true, d.configurable))
             });
@@ -3622,7 +3607,7 @@ impl Vm {
                 return Ok(false);
             }
             self.heap.with_obj(idx.0, |o| {
-                o.props().lock().unwrap().shift_remove(&pkey);
+                o.props().lock().shift_remove(&pkey);
             });
         }
         Ok(true)
@@ -3665,7 +3650,7 @@ impl Vm {
                                 }
                             }
                             self.heap.with_obj(idx.0, |o| {
-                                *o.proto().lock().unwrap() = proto;
+                                *o.proto().lock() = proto;
                             });
                             return Ok(());
                         }
@@ -3723,7 +3708,6 @@ impl Vm {
                 let non_writable_own = self.heap.with_obj(idx.0, |o| {
                     o.props()
                         .lock()
-                        .unwrap()
                         .get(&pkey)
                         .is_some_and(|d| !d.is_accessor && !d.writable)
                 });
@@ -3741,7 +3725,7 @@ impl Vm {
                 // 3. Define/overwrite an own writable data property.
                 self.heap.with_obj(idx.0, |o| {
                     let props = o.props();
-                    let mut props = props.lock().unwrap();
+                    let mut props = props.lock();
                     if let Some(existing) = props.get_mut(&pkey) {
                         existing.value = value;
                     } else {
@@ -3779,7 +3763,7 @@ impl Vm {
             }
             let next = self
                 .heap
-                .with_obj(cur, |o| o.proto().lock().unwrap().clone());
+                .with_obj(cur, |o| o.proto().lock().clone());
             match next {
                 Some(Value::Object(p)) => cur = p.0,
                 _ => return false,
@@ -3798,14 +3782,14 @@ impl Vm {
             depth += 1;
             let (found, proto) = self.heap.with_obj(idx.0, |o| {
                 let props = o.props();
-                let setter = props.lock().unwrap().get(key).and_then(|d| {
+                let setter = props.lock().get(key).and_then(|d| {
                     if d.is_accessor {
                         d.set.clone()
                     } else {
                         None
                     }
                 });
-                let proto = o.proto().lock().unwrap().clone();
+                let proto = o.proto().lock().clone();
                 (setter, proto)
             });
             if let Some(s) = found {
@@ -3834,9 +3818,8 @@ impl Vm {
                     let pkey = crate::value::PropertyKey::from_string(i.to_string());
                     a.props
                         .lock()
-                        .unwrap()
                         .insert(pkey, crate::value::PropertyDescriptor::data(value));
-                    let mut sm = a.sparse_max.lock().unwrap();
+                    let mut sm = a.sparse_max.lock();
                     if sm.is_none_or(|cur| i >= cur) {
                         // length must cover index i, i.e. i+1.
                         *sm = Some(i + 1);
@@ -3847,7 +3830,7 @@ impl Vm {
         }
         self.heap.with_obj(idx, |o| {
             if let HeapObj::Array(a) = o {
-                let mut items = a.items.lock().unwrap();
+                let mut items = a.items.lock();
                 while items.len() <= i {
                     items.push(Value::Undefined);
                 }
@@ -3890,11 +3873,11 @@ impl Vm {
         self.heap.with_obj(idx, |o| {
             if let HeapObj::Array(a) = o {
                 let cap = crate::value::MAX_DENSE_ARRAY_LEN;
-                let mut items = a.items.lock().unwrap();
+                let mut items = a.items.lock();
                 // Drop any sparse properties whose index is >= new_len, and
                 // recompute sparse_max so length stays consistent.
                 {
-                    let mut props = a.props.lock().unwrap();
+                    let mut props = a.props.lock();
                     let mut to_remove = Vec::new();
                     for k in props.keys() {
                         if let crate::value::PropertyKey::Str(s) = k {
@@ -3919,7 +3902,7 @@ impl Vm {
                         }
                     }
                     drop(items);
-                    *a.sparse_max.lock().unwrap() = None;
+                    *a.sparse_max.lock() = None;
                 } else {
                     // Beyond the dense cap: keep the dense store capped,
                     // advance length via sparse_max, and do NOT allocate
@@ -3928,7 +3911,7 @@ impl Vm {
                         items.truncate(cap);
                     }
                     drop(items);
-                    *a.sparse_max.lock().unwrap() = Some(new_len);
+                    *a.sparse_max.lock() = Some(new_len);
                 }
             }
         });
@@ -3963,15 +3946,15 @@ impl Vm {
             // (resume value sent via next(obj), and the yielded value before
             // it is moved into the LazyGenerator). Root them so a GC during
             // resume_generator does not collect them.
-            if let Value::Object(idx) = &*f.gen_resume_value.lock().unwrap() {
+            if let Value::Object(idx) = &*f.gen_resume_value.lock() {
                 roots.push(idx.0);
             }
             // gen_yield is Mutex<Option<Value>>; peek without consuming via take+set.
-            let y = f.gen_yield.lock().unwrap().take();
+            let y = f.gen_yield.lock().take();
             if let Some(Value::Object(idx)) = &y {
                 roots.push(idx.0);
             }
-            *f.gen_yield.lock().unwrap() = y;
+            *f.gen_yield.lock() = y;
         }
         for proto in [
             &self.object_proto,
@@ -4093,12 +4076,12 @@ impl Vm {
     pub fn promise_resolve(&mut self, promise_idx: usize, value: Value) {
         let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {
             if let HeapObj::Promise(p) = o {
-                if *p.state.lock().unwrap() != PromiseStatus::Pending {
+                if *p.state.lock() != PromiseStatus::Pending {
                     return Vec::new();
                 }
-                *p.state.lock().unwrap() = PromiseStatus::Fulfilled;
-                *p.result.lock().unwrap() = value.clone();
-                p.handlers.lock().unwrap().drain(..).collect()
+                *p.state.lock() = PromiseStatus::Fulfilled;
+                *p.result.lock() = value.clone();
+                p.handlers.lock().drain(..).collect()
             } else {
                 Vec::new()
             }
@@ -4117,12 +4100,12 @@ impl Vm {
     pub fn promise_reject(&mut self, promise_idx: usize, reason: Value) {
         let handlers: Vec<crate::value::PromiseHandler> = self.heap.with_obj(promise_idx, |o| {
             if let HeapObj::Promise(p) = o {
-                if *p.state.lock().unwrap() != PromiseStatus::Pending {
+                if *p.state.lock() != PromiseStatus::Pending {
                     return Vec::new();
                 }
-                *p.state.lock().unwrap() = PromiseStatus::Rejected;
-                *p.result.lock().unwrap() = reason.clone();
-                p.handlers.lock().unwrap().drain(..).collect()
+                *p.state.lock() = PromiseStatus::Rejected;
+                *p.result.lock() = reason.clone();
+                p.handlers.lock().drain(..).collect()
             } else {
                 Vec::new()
             }
@@ -4173,7 +4156,7 @@ impl Vm {
     ) -> error::Result<()> {
         let (state, result) = self.heap.with_obj(promise.0, |o| {
             if let HeapObj::Promise(p) = o {
-                (*p.state.lock().unwrap(), p.result.lock().unwrap().clone())
+                (*p.state.lock(), p.result.lock().clone())
             } else {
                 (PromiseStatus::Fulfilled, Value::Undefined)
             }
@@ -4223,7 +4206,6 @@ impl Vm {
                                 if let HeapObj::Promise(p) = o {
                                     p.handlers
                                         .lock()
-                                        .unwrap()
                                         .push(crate::value::PromiseHandler {
                                             on_fulfilled: Value::Undefined,
                                             on_rejected: Value::Undefined,
@@ -4238,8 +4220,8 @@ impl Vm {
                             let (settled, state) = self.heap.with_obj(ret_idx.0, |o| {
                                 if let HeapObj::Promise(p) = o {
                                     (
-                                        *p.state.lock().unwrap() != PromiseStatus::Pending,
-                                        *p.state.lock().unwrap(),
+                                        *p.state.lock() != PromiseStatus::Pending,
+                                        *p.state.lock(),
                                     )
                                 } else {
                                     (false, PromiseStatus::Pending)
@@ -4299,7 +4281,7 @@ impl Vm {
         if let Value::Object(idx) = obj {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Object(od) = o {
-                    *od.primitive.lock().unwrap() = Some(prim);
+                    *od.primitive.lock() = Some(prim);
                 }
             });
         }
@@ -4621,7 +4603,6 @@ impl Vm {
             if let HeapObj::Function(f) = obj {
                 f.prototype
                     .lock()
-                    .unwrap()
                     .clone()
                     .unwrap_or(self.object_proto.clone())
             } else {
@@ -4712,7 +4693,7 @@ impl Vm {
                 } else if is_array {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
-                            a.items.lock().unwrap().clone()
+                            a.items.lock().clone()
                         } else {
                             Vec::new()
                         }
@@ -4724,7 +4705,7 @@ impl Vm {
                     // would panic on RefCell reborrow).
                     let pairs: Vec<(Value, Value)> = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Map(m) = o {
-                            m.entries.lock().unwrap().iter().cloned().collect()
+                            m.entries.lock().iter().cloned().collect()
                         } else {
                             Vec::new()
                         }
@@ -4745,7 +4726,7 @@ impl Vm {
                 } else if is_set {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Set(s) = o {
-                            s.items.lock().unwrap().clone()
+                            s.items.lock().clone()
                         } else {
                             Vec::new()
                         }
@@ -4794,25 +4775,25 @@ impl Vm {
             let (own, proto) = self.heap.with_obj(idx.0, |o| {
                 let mut own = Vec::new();
                 if let HeapObj::Array(a) = o {
-                    for i in 0..a.items.lock().unwrap().len() {
+                    for i in 0..a.items.lock().len() {
                         own.push(Value::String(Arc::from(i.to_string().as_str())));
                     }
                 }
                 if let HeapObj::Map(m) = o {
-                    for (k, _) in m.entries.lock().unwrap().iter() {
+                    for (k, _) in m.entries.lock().iter() {
                         if let Value::String(s) = k {
                             own.push(Value::String(s.clone()));
                         }
                     }
                 }
-                for (k, desc) in o.props().lock().unwrap().iter() {
+                for (k, desc) in o.props().lock().iter() {
                     if desc.enumerable {
                         if let crate::value::PropertyKey::Str(s) = k {
                             own.push(Value::String(s.clone()));
                         }
                     }
                 }
-                (own, o.proto().lock().unwrap().clone())
+                (own, o.proto().lock().clone())
             });
             for k in own {
                 if !keys.contains(&k) {
@@ -4882,8 +4863,8 @@ impl Vm {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(it) = o {
                     (
-                        it.lazy_iter.lock().unwrap().is_some(),
-                        it.generator.lock().unwrap().is_some(),
+                        it.lazy_iter.lock().is_some(),
+                        it.generator.lock().is_some(),
                         it.done.load(Ordering::Relaxed),
                     )
                 } else {
@@ -4905,7 +4886,7 @@ impl Vm {
                 },
                 |o| {
                     if let HeapObj::Iterator(it) = o {
-                        it.generator.lock().unwrap().clone()
+                        it.generator.lock().clone()
                     } else {
                         None
                     }
@@ -4937,7 +4918,7 @@ impl Vm {
                 },
                 |o| {
                     if let HeapObj::Iterator(it) = o {
-                        it.lazy_iter.lock().unwrap().clone()
+                        it.lazy_iter.lock().clone()
                     } else {
                         None
                     }
@@ -4969,7 +4950,7 @@ impl Vm {
             };
             self.heap.with_obj(idx, |o| {
                 if let HeapObj::Iterator(it) = o {
-                    let items = it.items.lock().unwrap();
+                    let items = it.items.lock();
                     let i = it.index.load(Ordering::Relaxed);
                     if i < items.len() {
                         let v = items[i].clone();
@@ -4995,7 +4976,7 @@ impl Vm {
         let lazy_or_gen = if let Value::Object(idx) = it {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(i) = o {
-                    i.lazy_iter.lock().unwrap().is_some() || i.generator.lock().unwrap().is_some()
+                    i.lazy_iter.lock().is_some() || i.generator.lock().is_some()
                 } else {
                     false
                 }
@@ -5011,9 +4992,8 @@ impl Vm {
                     if let HeapObj::Iterator(i) = o {
                         i.lazy_iter
                             .lock()
-                            .unwrap()
                             .clone()
-                            .or_else(|| i.generator.lock().unwrap().clone())
+                            .or_else(|| i.generator.lock().clone())
                     } else {
                         None
                     }
@@ -5059,7 +5039,7 @@ impl Vm {
                 self.run_microtasks()?;
                 let (state, result) = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Promise(p) = o {
-                        (*p.state.lock().unwrap(), p.result.lock().unwrap().clone())
+                        (*p.state.lock(), p.result.lock().clone())
                     } else {
                         (PromiseStatus::Fulfilled, Value::Undefined)
                     }
@@ -5077,7 +5057,7 @@ impl Vm {
         if let Value::Object(idx) = it {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(it) = o {
-                    return it.index.load(Ordering::Relaxed) >= it.items.lock().unwrap().len();
+                    return it.index.load(Ordering::Relaxed) >= it.items.lock().len();
                 }
                 false
             })

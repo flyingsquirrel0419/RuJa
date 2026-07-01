@@ -13,7 +13,7 @@
 
 use crate::value::HeapObj;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 pub struct GcCell {
     pub obj: Mutex<Option<HeapObj>>,
@@ -40,25 +40,25 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
     };
 
     if let HeapObj::Iterator(it) = obj {
-        for v in it.items.lock().unwrap().iter() {
+        for v in it.items.lock().iter() {
             push_value(v, worklist);
         }
-        if let Some(lazy) = it.lazy_iter.lock().unwrap().as_ref() {
+        if let Some(lazy) = it.lazy_iter.lock().as_ref() {
             push_value(lazy, worklist);
         }
         return;
     }
     if let HeapObj::Environment(e) = obj {
-        for (_, b) in e.vars.lock().unwrap().iter() {
-            push_value(&b.value.lock().unwrap(), worklist);
+        for (_, b) in e.vars.lock().iter() {
+            push_value(&b.value.lock(), worklist);
         }
-        if let Some(p) = *e.parent.lock().unwrap() {
+        if let Some(p) = *e.parent.lock() {
             worklist.push(p.0);
         }
         return;
     }
     let props = obj.props();
-    for (_, desc) in props.lock().unwrap().iter() {
+    for (_, desc) in props.lock().iter() {
         if !desc.is_accessor {
             push_value(&desc.value, worklist);
         } else {
@@ -70,18 +70,18 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
         }
     }
-    if let Some(proto) = obj.proto().lock().unwrap().as_ref() {
+    if let Some(proto) = obj.proto().lock().as_ref() {
         push_value(proto, worklist);
     }
     match obj {
         HeapObj::Array(a) => {
-            for v in a.items.lock().unwrap().iter() {
+            for v in a.items.lock().iter() {
                 push_value(v, worklist);
             }
         }
         HeapObj::Function(f) => {
             worklist.push(f.closure.0);
-            if let Some(p) = f.prototype.lock().unwrap().as_ref() {
+            if let Some(p) = f.prototype.lock().as_ref() {
                 push_value(p, worklist);
             }
             if let crate::value::FunctionKind::Bound {
@@ -98,21 +98,21 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
         }
         HeapObj::Environment(e) => {
-            for (_, b) in e.vars.lock().unwrap().iter() {
-                push_value(&b.value.lock().unwrap(), worklist);
+            for (_, b) in e.vars.lock().iter() {
+                push_value(&b.value.lock(), worklist);
             }
-            if let Some(p) = *e.parent.lock().unwrap() {
+            if let Some(p) = *e.parent.lock() {
                 worklist.push(p.0);
             }
         }
         HeapObj::Map(m) => {
-            for (k, v) in m.entries.lock().unwrap().iter() {
+            for (k, v) in m.entries.lock().iter() {
                 push_value(k, worklist);
                 push_value(v, worklist);
             }
         }
         HeapObj::WeakMap(wm) => {
-            for (key_idx, v) in wm.entries.lock().unwrap().iter() {
+            for (key_idx, v) in wm.entries.lock().iter() {
                 if *key_idx < marked.len() && marked[*key_idx] {
                     push_value(v, worklist);
                 }
@@ -120,42 +120,42 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         HeapObj::WeakSet(_) => {}
         HeapObj::Set(s) => {
-            for v in s.items.lock().unwrap().iter() {
+            for v in s.items.lock().iter() {
                 push_value(v, worklist);
             }
         }
         HeapObj::Promise(p) => {
-            push_value(&p.result.lock().unwrap(), worklist);
-            for h in p.handlers.lock().unwrap().iter() {
+            push_value(&p.result.lock(), worklist);
+            for h in p.handlers.lock().iter() {
                 push_value(&h.on_fulfilled, worklist);
                 push_value(&h.on_rejected, worklist);
             }
         }
         HeapObj::Generator(g) => {
             worklist.push(g.closure.0);
-            for v in g.state.lock().unwrap().iter() {
+            for v in g.state.lock().iter() {
                 push_value(v, worklist);
             }
         }
         HeapObj::LazyGenerator(g) => {
             worklist.push(g.closure.0);
-            for v in g.stack.lock().unwrap().iter() {
+            for v in g.stack.lock().iter() {
                 push_value(v, worklist);
             }
-            for v in g.locals.lock().unwrap().iter() {
+            for v in g.locals.lock().iter() {
                 push_value(v, worklist);
             }
-            push_value(&g.resume_value.lock().unwrap(), worklist);
-            for v in g.args.lock().unwrap().iter() {
+            push_value(&g.resume_value.lock(), worklist);
+            for v in g.args.lock().iter() {
                 push_value(v, worklist);
             }
-            push_value(&g.this_val.lock().unwrap(), worklist);
+            push_value(&g.this_val.lock(), worklist);
         }
         HeapObj::Iterator(it) => {
-            for v in it.items.lock().unwrap().iter() {
+            for v in it.items.lock().iter() {
                 push_value(v, worklist);
             }
-            if let Some(lazy) = it.lazy_iter.lock().unwrap().as_ref() {
+            if let Some(lazy) = it.lazy_iter.lock().as_ref() {
                 push_value(lazy, worklist);
             }
         }
@@ -184,14 +184,14 @@ impl Default for Heap {
 impl Heap {
     pub fn allocate(&self, obj: HeapObj) -> usize {
         let idx = {
-            let mut free = self.free_list.lock().unwrap();
+            let mut free = self.free_list.lock();
             if let Some(idx) = free.pop() {
-                let cells = self.cells.lock().unwrap();
-                *cells[idx].obj.lock().unwrap() = Some(obj);
+                let cells = self.cells.lock();
+                *cells[idx].obj.lock() = Some(obj);
                 cells[idx].marked.store(false, Ordering::Relaxed);
                 idx
             } else {
-                let mut cells = self.cells.lock().unwrap();
+                let mut cells = self.cells.lock();
                 let idx = cells.len();
                 cells.push(GcCell {
                     obj: Mutex::new(Some(obj)),
@@ -205,7 +205,7 @@ impl Heap {
     }
 
     pub fn collect(&self, roots: &[usize]) {
-        let cells_len = self.cells.lock().unwrap().len();
+        let cells_len = self.cells.lock().len();
         let mut marked = vec![false; cells_len];
         let mut worklist: Vec<usize> = roots.to_vec();
         // Iterate the worklist to a fixed point. Ephemeron (WeakMap) values
@@ -226,9 +226,9 @@ impl Heap {
                 // Extract this object's children without holding the cells
                 // lock during the recursive trace.
                 let children: Vec<usize> = {
-                    let cells = self.cells.lock().unwrap();
+                    let cells = self.cells.lock();
                     if let Some(cell) = cells.get(idx) {
-                        let obj_ref = cell.obj.lock().unwrap();
+                        let obj_ref = cell.obj.lock();
                         if let Some(obj) = obj_ref.as_ref() {
                             let mut w = Vec::new();
                             trace_obj(obj, &marked, &mut w);
@@ -244,29 +244,27 @@ impl Heap {
             }
         }
         // Sweep: free unmarked cells.
-        let mut free = self.free_list.lock().unwrap();
-        let mut cells = self.cells.lock().unwrap();
+        let mut free = self.free_list.lock();
+        let mut cells = self.cells.lock();
         for (idx, cell) in cells.iter_mut().enumerate() {
-            if !marked[idx] && cell.obj.lock().unwrap().is_some() {
-                *cell.obj.lock().unwrap() = None;
+            if !marked[idx] && cell.obj.lock().is_some() {
+                *cell.obj.lock() = None;
                 free.push(idx);
             }
         }
         // Sweep dead entries from WeakMap/WeakSet.
         for cell in cells.iter() {
-            let obj_ref = cell.obj.lock().unwrap();
+            let obj_ref = cell.obj.lock();
             if let Some(obj) = obj_ref.as_ref() {
                 match obj {
                     HeapObj::WeakMap(wm) => {
                         wm.entries
                             .lock()
-                            .unwrap()
                             .retain(|(k, _)| *k < marked.len() && marked[*k]);
                     }
                     HeapObj::WeakSet(ws) => {
                         ws.items
                             .lock()
-                            .unwrap()
                             .retain(|k| *k < marked.len() && marked[*k]);
                     }
                     _ => {}
@@ -289,8 +287,8 @@ impl Heap {
     pub fn live_count(&self) -> usize {
         // Lock order must match `allocate` (free_list before cells) to avoid a
         // lock-order inversion deadlock if both are ever held concurrently.
-        let free = self.free_list.lock().unwrap();
-        let cells = self.cells.lock().unwrap();
+        let free = self.free_list.lock();
+        let cells = self.cells.lock();
         cells.len() - free.len()
     }
 
@@ -309,9 +307,9 @@ impl Heap {
         // restores it on its way out, so it is never lost. Reentrant reads
         // already diverge from ES, so observing the placeholder is acceptable.
         let (obj, owned) = {
-            let cells = self.cells.lock().unwrap();
+            let cells = self.cells.lock();
             let cell = &cells[idx];
-            let mut slot = cell.obj.lock().unwrap();
+            let mut slot = cell.obj.lock();
             match slot.take() {
                 Some(o) => (o, true),
                 None => (crate::value::HeapObj::placeholder(), false),
@@ -319,9 +317,9 @@ impl Heap {
         };
         let result = f(&obj);
         if owned {
-            let cells = self.cells.lock().unwrap();
+            let cells = self.cells.lock();
             let cell = &cells[idx];
-            *cell.obj.lock().unwrap() = Some(obj);
+            *cell.obj.lock() = Some(obj);
         }
         result
     }

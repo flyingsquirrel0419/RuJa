@@ -18,6 +18,10 @@
   paths in throw/finally diversion to `ok_or_else` propagation. The remaining
   `frames.last().unwrap()` calls are loop-invariant and will be hardened during
   the `vm.rs` module split.
+- **Lock poisoning panic**: Replaced `std::sync::Mutex` with `parking_lot::Mutex`
+  throughout the engine. `parking_lot::lock()` is panic-free, removing ~200
+  latent `lock().unwrap()` panic paths (the remaining unwraps are on `Option`/
+  `Result`/`Vec` operations, not on mutex acquisition).
 
 ### Documentation
 - Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
