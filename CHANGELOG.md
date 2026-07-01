@@ -14,6 +14,12 @@
 - Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
   `src/vm.rs` and `src/builtins.rs`, reachability policy, and remaining work.
 
+### Security / Hardening
+- **Direct `args[idx]` indexing**: Replaced the remaining direct `args[0]`/`args[1]`
+  accesses in `src/builtins.rs` with safe `get()`/`first()` fallbacks. All call sites
+  were already guarded by length checks, but the new form removes any latent panic
+  path if a builtin is invoked with fewer arguments through meta-programming.
+
 ## [0.3.0-alpha] - 2026-07-01
 
 ### Added

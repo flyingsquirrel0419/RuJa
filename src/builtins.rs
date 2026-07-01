@@ -275,7 +275,7 @@ fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
         if args.is_empty() {
             return Ok(Value::Object(idx));
         }
-        let first = &args[0];
+        let first = args.first().unwrap_or(&Value::Undefined);
         match first {
             Value::Undefined | Value::Null => {}
             Value::Bool(_)
@@ -295,7 +295,7 @@ fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
         let new_idx = vm.new_object();
         return Ok(Value::Object(new_idx));
     }
-    let first = &args[0];
+    let first = args.first().unwrap_or(&Value::Undefined);
     match first {
         Value::Undefined | Value::Null => {
             let new_idx = vm.new_object();
@@ -2161,10 +2161,10 @@ fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
     let ts = if args.is_empty() {
         now_ms()
     } else if args.len() == 1 {
-        vm.to_number(&args[0])?
+        vm.to_number(args.first().unwrap_or(&Value::Undefined))?
     } else {
         // Approximate: use the first numeric arg as a timestamp.
-        vm.to_number(&args[0])?
+        vm.to_number(args.first().unwrap_or(&Value::Undefined))?
     };
     // ES TimeValue: a finite time value must be within +/-8.64e15 ms of the
     // epoch; anything else is an Invalid Date (NaN). Without this, `new
@@ -2569,7 +2569,7 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
     let (params_src, body_src) = if args.is_empty() {
         (String::new(), String::new())
     } else if args.len() == 1 {
-        (String::new(), vm.to_string(&args[0])?.to_string())
+        (String::new(), vm.to_string(args.first().unwrap_or(&Value::Undefined))?.to_string())
     } else {
         let body = vm.to_string(&args[args.len() - 1])?.to_string();
         let params = args[..args.len() - 1]
@@ -2934,7 +2934,7 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
             }
         });
         let (mut acc, start) = if args.len() >= 2 {
-            (args[1].clone(), 0)
+            (args.get(1).cloned().unwrap_or(Value::Undefined), 0)
         } else {
             (items.first().cloned().unwrap_or(Value::Undefined), 1)
         };
@@ -3111,7 +3111,7 @@ fn array_reduce_right(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
         });
         let len = items.len();
         let (mut acc, start) = if args.len() >= 2 {
-            (args[1].clone(), len)
+            (args.get(1).cloned().unwrap_or(Value::Undefined), len)
         } else {
             (
                 items.last().cloned().unwrap_or(Value::Undefined),
