@@ -31,9 +31,8 @@ practice.
 
 ## Remaining known categories
 
-- `args[0]` / `args[1]` direct indexing in a handful of builtins. Most are guarded
-  by `args.is_empty()` checks or by the calling convention (`this` is always
-  supplied), but each should be reviewed individually.
+- ~~`args[0]` / `args[1]` direct indexing in a handful of builtins.~~ Converted to
+  `args.first().unwrap_or(&Value::Undefined)` / `args.get(1).cloned().unwrap_or(Value::Undefined)`.
 - `Mutex::lock().unwrap()` project-wide. Current policy: acceptable as an
   invariant, with the understanding that no user input should be able to cause
   a panic that could poison a lock.
