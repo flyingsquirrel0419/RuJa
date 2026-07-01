@@ -5087,7 +5087,7 @@ fn biguint_to_radix(mut n: BigUint, radix: u32) -> String {
         out.push(digits[*rem.to_u32_digits().first().unwrap_or(&0) as usize]);
     }
     out.reverse();
-    String::from_utf8(out).unwrap()
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// Format an f64 in a non-decimal radix (2..=36) with the shortest

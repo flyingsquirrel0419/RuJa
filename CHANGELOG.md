@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Security / Hardening
+- **Generator resume panic**: `resume_generator` used `frames.pop().expect(...)`, which
+  would abort the process if a generator frame was missing. Converted to an
+  internal `Error` so the VM reports a catchable runtime error instead of panicking.
+- **Number radix formatting panic**: `biguint_to_radix` used `String::from_utf8(...).unwrap()`
+  on an ASCII-only digit buffer. Replaced with `unwrap_or_default()` to remove the
+  unconditional panic path.
+
+### Documentation
+- Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
+  `src/vm.rs` and `src/builtins.rs`, reachability policy, and remaining work.
+
 ## [0.3.0-alpha] - 2026-07-01
 
 ### Added
