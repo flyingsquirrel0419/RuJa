@@ -276,7 +276,12 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     let sep = args.first().map(crate::value::value_to_debug_string);
     let parts: Vec<String> = match sep {
         None => vec![s],
-        Some(sep) if sep.is_empty() => s.chars().take(limit).map(|c| c.to_string()).collect(),
+        Some(sep) if sep.is_empty() => {
+            let units: Vec<u16> = s.encode_utf16().collect();
+            units.iter().take(limit).map(|&u| {
+                String::from_utf16_lossy(&[u])
+            }).collect()
+        },
         Some(sep) => s.split(&sep).take(limit).map(|p| p.to_string()).collect(),
     };
     let items: Vec<Value> = parts
@@ -416,20 +421,10 @@ pub(crate) fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
         .first()
         .map(crate::value::value_to_debug_string)
         .unwrap_or_default();
-    let len = s.chars().count();
+    let len = crate::value::utf16_len(&s);
     let start = from_index_arg(vm, args, 1, len)?;
-    let mut byte_off = 0;
-    for _ in 0..start {
-        byte_off += s[byte_off..]
-            .chars()
-            .next()
-            .map(|c| c.len_utf8())
-            .unwrap_or(0);
-        if byte_off >= s.len() {
-            break;
-        }
-    }
-    Ok(Value::Bool(s[byte_off..].contains(n.as_str())))
+    let tail = crate::value::utf16_slice(&s, start, len);
+    Ok(Value::Bool(tail.contains(n.as_str())))
 }
 pub(crate) fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     Ok(Value::Bool(
@@ -668,9 +663,10 @@ pub(crate) fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) 
     };
     if from.is_empty() {
         let mut out = String::new();
-        for ch in s.chars() {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        for &u in &units {
             out.push_str(&to);
-            out.push(ch);
+            out.push_str(&String::from_utf16_lossy(&[u]));
         }
         out.push_str(&to);
         return Ok(Value::String(Arc::from(out.as_str())));
