@@ -5,7 +5,7 @@
 //! and reclaims the rest, including reference cycles.
 
 use crate::ast::FunctionExpr;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use parking_lot::Mutex;
 
@@ -234,6 +234,42 @@ impl Value {
     }
 }
 
+/// Wrapper around `Value` that implements `Hash` + `Eq` using SameValueZero
+/// semantics (NaN == NaN, -0 == +0). Used as the key type for `IndexMap` in
+/// Map/Set so lookups are O(1) instead of O(n) linear scans.
+#[derive(Clone)]
+pub struct MapKey(pub Value);
+
+impl std::hash::Hash for MapKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            Value::Undefined => 0u8.hash(state),
+            Value::Null => 1u8.hash(state),
+            Value::Bool(b) => { 2u8.hash(state); b.hash(state); }
+            Value::Number(n) => {
+                3u8.hash(state);
+                if n.is_nan() {
+                    0u64.hash(state);
+                } else {
+                    n.to_bits().hash(state);
+                }
+            }
+            Value::BigInt(n) => { 4u8.hash(state); n.hash(state); }
+            Value::String(s) => { 5u8.hash(state); s.hash(state); }
+            Value::Object(idx) => { 6u8.hash(state); idx.0.hash(state); }
+            Value::Symbol(id) => { 7u8.hash(state); id.hash(state); }
+        }
+    }
+}
+
+impl PartialEq for MapKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.same_value_zero(&other.0)
+    }
+}
+
+impl Eq for MapKey {}
+
 /// Quick string conversion for argument handling (not spec-compliant ToString).
 pub fn value_to_debug_string(v: &Value) -> String {
     match v {
@@ -354,13 +390,13 @@ pub enum BindingKind {
 }
 
 pub struct MapData {
-    pub entries: Mutex<Vec<(Value, Value)>>,
+    pub entries: Mutex<IndexMap<MapKey, Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }
 
 pub struct SetData {
-    pub items: Mutex<Vec<Value>>,
+    pub items: Mutex<IndexSet<MapKey>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }
