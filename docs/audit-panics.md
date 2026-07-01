@@ -45,7 +45,8 @@ practice.
   dispatching opcodes; they will be converted to defensive `ok_or_else` during
   the `vm.rs` module split.
 - **File size**: `src/builtins.rs` was split into `src/builtins/{mod,math,json,global,array,string,collections,regexp,function}.rs`.
-  The `vm.rs` split is still pending.
+  `src/vm.rs` was split into `src/vm/{mod,ops}.rs`, with the main opcode dispatch
+  loop moved to `ops.rs`.
 
 ## Verification
 
