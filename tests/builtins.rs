@@ -334,6 +334,8 @@ fn number_constants_and_radix() {
     );
     assert_eq!(run("Number.EPSILON > 0;"), Value::Bool(true));
     assert_eq!(run("(255).toString(16);"), Value::String(Arc::from("ff")));
+    assert_eq!(run("(4096).toString(16);"), Value::String(Arc::from("1000")));
+    assert_eq!(run("(0).toString(36);"), Value::String(Arc::from("0")));
     assert_eq!(
         run("(3.14159).toFixed(2);"),
         Value::String(Arc::from("3.14"))

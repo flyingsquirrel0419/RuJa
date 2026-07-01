@@ -641,7 +641,9 @@ impl Vm {
                 .take()
                 .unwrap_or(Value::Undefined);
             // Pop the generator frame and save its state for the next resume.
-            let frame = self.frames.pop().expect("generator frame present");
+            let frame = self.frames.pop().ok_or_else(|| {
+                crate::error::Error::internal("generator frame missing during resume")
+            })?;
             // The generator's leftover operands are its private stack.
             let saved_stack = gen_stack;
 
