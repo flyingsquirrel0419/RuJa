@@ -7,7 +7,7 @@
 use crate::ast::FunctionExpr;
 use indexmap::IndexMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use std::fmt;
 use std::sync::Arc;

@@ -5,7 +5,7 @@ use crate::value::{BindingKind, GcIdx, HeapObj, Value};
 use indexmap::IndexMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
     let child = new_env(heap, Some(env), false);
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            let vars = e.vars.lock().unwrap();
+            let vars = e.vars.lock();
             let cloned: Vec<(Arc<str>, crate::value::Binding)> = vars
                 .iter()
                 .filter(|(_, b)| b.kind != BindingKind::Var)
@@ -41,7 +41,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
                     (
                         k.clone(),
                         crate::value::Binding {
-                            value: Mutex::new(b.value.lock().unwrap().clone()),
+                            value: Mutex::new(b.value.lock().clone()),
                             kind: b.kind,
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
@@ -54,7 +54,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
             heap.with_obj(child.0, |cobj| {
                 if let HeapObj::Environment(ce) = cobj {
                     for (k, b) in cloned {
-                        ce.vars.lock().unwrap().insert(k, b);
+                        ce.vars.lock().insert(k, b);
                     }
                 }
             });
@@ -72,7 +72,7 @@ pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Arc<str>]) -> GcIdx {
     let child = new_env(heap, Some(env), false);
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            let vars = e.vars.lock().unwrap();
+            let vars = e.vars.lock();
             let cloned: Vec<(Arc<str>, crate::value::Binding)> = vars
                 .iter()
                 .filter(|(k, _)| names.iter().any(|n| n.as_ref() == k.as_ref()))
@@ -80,7 +80,7 @@ pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Arc<str>]) -> GcIdx {
                     (
                         k.clone(),
                         crate::value::Binding {
-                            value: Mutex::new(b.value.lock().unwrap().clone()),
+                            value: Mutex::new(b.value.lock().clone()),
                             kind: b.kind,
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
@@ -93,7 +93,7 @@ pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Arc<str>]) -> GcIdx {
             heap.with_obj(child.0, |cobj| {
                 if let HeapObj::Environment(ce) = cobj {
                     for (k, b) in cloned {
-                        ce.vars.lock().unwrap().insert(k, b);
+                        ce.vars.lock().insert(k, b);
                     }
                 }
             });
@@ -121,7 +121,7 @@ pub fn new_with_env(heap: &Heap, parent: GcIdx, object: crate::value::Value) -> 
 pub fn has_lexical_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            if let Some(b) = e.vars.lock().unwrap().get(name) {
+            if let Some(b) = e.vars.lock().get(name) {
                 return b.kind != BindingKind::Var;
             }
         }
@@ -132,7 +132,7 @@ pub fn has_lexical_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
 pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingKind) {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            e.vars.lock().unwrap().insert(
+            e.vars.lock().insert(
                 Arc::from(name),
                 crate::value::Binding {
                     value: Mutex::new(value.clone()),
@@ -149,7 +149,7 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
 pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            e.vars.lock().unwrap().insert(
+            e.vars.lock().insert(
                 Arc::from(name),
                 crate::value::Binding {
                     value: Mutex::new(Value::Undefined),
@@ -171,8 +171,8 @@ pub fn with_objects(heap: &Heap, env: GcIdx) -> Vec<Value> {
         let (obj, parent) = heap.with_obj(e_idx.0, |o| {
             if let HeapObj::Environment(e) = o {
                 (
-                    e.with_object.lock().unwrap().clone(),
-                    *e.parent.lock().unwrap(),
+                    e.with_object.lock().clone(),
+                    *e.parent.lock(),
                 )
             } else {
                 (None, None)
@@ -191,13 +191,13 @@ pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Option<Value>,
     while let Some(e_idx) = cur {
         let (val, in_tdz, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
+                if let Some(b) = e.vars.lock().get(name) {
                     if !b.initialized.load(Ordering::Relaxed) {
                         return (None, true, None);
                     }
-                    return (Some(b.value.lock().unwrap().clone()), false, None);
+                    return (Some(b.value.lock().clone()), false, None);
                 }
-                return (None, false, *e.parent.lock().unwrap());
+                return (None, false, *e.parent.lock());
             }
             (None, false, None)
         });
@@ -218,12 +218,12 @@ pub fn initialize(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
     while let Some(e_idx) = cur {
         let (found, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
-                    *b.value.lock().unwrap() = value.clone();
+                if let Some(b) = e.vars.lock().get(name) {
+                    *b.value.lock() = value.clone();
                     b.initialized.store(true, Ordering::Relaxed);
                     return (true, None);
                 }
-                return (false, *e.parent.lock().unwrap());
+                return (false, *e.parent.lock());
             }
             (false, None)
         });
@@ -241,8 +241,8 @@ pub fn initialize(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
 pub fn initialize_local(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            if let Some(b) = e.vars.lock().unwrap().get(name) {
-                *b.value.lock().unwrap() = value;
+            if let Some(b) = e.vars.lock().get(name) {
+                *b.value.lock() = value;
                 b.initialized.store(true, Ordering::Relaxed);
                 return true;
             }
@@ -256,7 +256,7 @@ pub fn initialize_local(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bo
 pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingKind) {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            e.vars.lock().unwrap().insert(
+            e.vars.lock().insert(
                 Arc::from(name),
                 crate::value::Binding {
                     value: Mutex::new(value),
@@ -272,10 +272,10 @@ pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
     while let Some(e_idx) = cur {
         let (val, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
-                    return (Some(b.value.lock().unwrap().clone()), None);
+                if let Some(b) = e.vars.lock().get(name) {
+                    return (Some(b.value.lock().clone()), None);
                 }
-                return (None, *e.parent.lock().unwrap());
+                return (None, *e.parent.lock());
             }
             (None, None)
         });
@@ -292,10 +292,10 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
     while let Some(e_idx) = cur {
         let (found, is_const, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
+                if let Some(b) = e.vars.lock().get(name) {
                     return (true, b.kind == BindingKind::Const, None);
                 }
-                return (false, false, *e.parent.lock().unwrap());
+                return (false, false, *e.parent.lock());
             }
             (false, false, None)
         });
@@ -305,8 +305,8 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
             }
             heap.with_obj(e_idx.0, |obj| {
                 if let HeapObj::Environment(e) = obj {
-                    if let Some(b) = e.vars.lock().unwrap().get(name) {
-                        *b.value.lock().unwrap() = value.clone();
+                    if let Some(b) = e.vars.lock().get(name) {
+                        *b.value.lock() = value.clone();
                     }
                 }
             });
@@ -332,17 +332,17 @@ pub fn set_checked(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutc
     while let Some(e_idx) = cur {
         let (outcome, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
+                if let Some(b) = e.vars.lock().get(name) {
                     if !b.initialized.load(Ordering::Relaxed) {
                         return (SetOutcome::Tdz, None);
                     }
                     if b.kind == BindingKind::Const {
                         return (SetOutcome::Const, None);
                     }
-                    *b.value.lock().unwrap() = value.clone();
+                    *b.value.lock() = value.clone();
                     return (SetOutcome::Set, None);
                 }
-                return (SetOutcome::NotFound, *e.parent.lock().unwrap());
+                return (SetOutcome::NotFound, *e.parent.lock());
             }
             (SetOutcome::NotFound, None)
         });
@@ -360,10 +360,10 @@ pub fn is_const(heap: &Heap, env: GcIdx, name: &str) -> bool {
     while let Some(e_idx) = cur {
         let (is_c, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
+                if let Some(b) = e.vars.lock().get(name) {
                     return (b.kind == BindingKind::Const, None);
                 }
-                return (false, *e.parent.lock().unwrap());
+                return (false, *e.parent.lock());
             }
             (false, None)
         });
@@ -381,8 +381,8 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
         let (found, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
                 return (
-                    e.vars.lock().unwrap().contains_key(name),
-                    *e.parent.lock().unwrap(),
+                    e.vars.lock().contains_key(name),
+                    *e.parent.lock(),
                 );
             }
             (false, None)
@@ -400,7 +400,7 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     // Check existence first (drop the borrow) before mutating.
     let exists = heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            e.vars.lock().unwrap().contains_key(name)
+            e.vars.lock().contains_key(name)
         } else {
             false
         }
@@ -408,12 +408,12 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     let _ = exists;
     heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
-            if e.vars.lock().unwrap().contains_key(name) {
-                if let Some(b) = e.vars.lock().unwrap().get(name) {
-                    *b.value.lock().unwrap() = value;
+            if e.vars.lock().contains_key(name) {
+                if let Some(b) = e.vars.lock().get(name) {
+                    *b.value.lock() = value;
                 }
             } else {
-                e.vars.lock().unwrap().insert(
+                e.vars.lock().insert(
                     Arc::from(name),
                     crate::value::Binding {
                         value: Mutex::new(value),
@@ -434,7 +434,7 @@ pub fn function_scope_root(heap: &Heap, env: GcIdx) -> GcIdx {
                 if e.is_function_scope {
                     return None;
                 }
-                return *e.parent.lock().unwrap();
+                return *e.parent.lock();
             }
             None
         });

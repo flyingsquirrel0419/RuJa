@@ -33,9 +33,11 @@ practice.
 
 - ~~`args[0]` / `args[1]` direct indexing in a handful of builtins.~~ Converted to
   `args.first().unwrap_or(&Value::Undefined)` / `args.get(1).cloned().unwrap_or(Value::Undefined)`.
-- `Mutex::lock().unwrap()` project-wide. Current policy: acceptable as an
-  invariant, with the understanding that no user input should be able to cause
-  a panic that could poison a lock.
+- ~~`Mutex::lock().unwrap()` project-wide.~~ Switched from `std::sync::Mutex` to
+  `parking_lot::Mutex`; `parking_lot::lock()` is panic-free, so the ~200 lock
+  `.unwrap()` calls are gone. The remaining `.unwrap()` in the engine are
+  `Option`/`Result`/`Vec` operations on data that should be guarded by script-level
+  checks (e.g. `String::from_utf8`, `parse`, `stack.pop()` with defaults).
 - `frames.last().unwrap()` and similar VM invariants in `src/vm.rs`. The most
   dangerous invariant failure (an empty frame stack at the top of the interpret
   loop) is now caught and returns `Error::internal`. The remaining `.unwrap()`

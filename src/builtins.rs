@@ -29,7 +29,7 @@ fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
     b.build()
 }
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use std::sync::Arc;
 
@@ -56,7 +56,6 @@ fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Arc<str>, Value)]) {
             for (name, func) in methods {
                 props
                     .lock()
-                    .unwrap()
                     .insert(PropertyKey::from(name.clone()), data_prop(func.clone()));
             }
         });
@@ -106,12 +105,11 @@ fn object_to_string(
                 let name = obj.class_name();
                 if name == "Object" {
                     // check constructor name via prototype
-                    if let Some(Value::Object(pidx)) = obj.proto().lock().unwrap().as_ref().cloned()
+                    if let Some(Value::Object(pidx)) = obj.proto().lock().as_ref().cloned()
                     {
                         let constructor = vm.heap.with_obj(pidx.0, |p| {
                             p.props()
                                 .lock()
-                                .unwrap()
                                 .get(&crate::value::PropertyKey::from("constructor"))
                                 .map(|d| d.value.clone())
                         });
@@ -183,22 +181,22 @@ fn make_builtin_constructor(
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     // constructor.prototype
     vm.heap.with_obj(ctor_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("prototype"),
             data_prop(Value::Object(proto_idx)),
         );
     });
     // prototype.constructor
     vm.heap.with_obj(proto_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
         );
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("name"),
             data_prop(Value::String(Arc::from(name))),
         );
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("message"),
             data_prop(Value::String(Arc::from(""))),
         );
@@ -235,21 +233,21 @@ fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) {
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("prototype"),
             data_prop(Value::Object(proto_idx)),
         );
     });
     vm.heap.with_obj(proto_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
         );
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("name"),
             data_prop(Value::String(Arc::from(name))),
         );
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("message"),
             data_prop(Value::String(Arc::from(""))),
         );
@@ -334,7 +332,6 @@ fn object_has_own_property(
             let has = vm.heap.with_obj(idx.0, |obj| {
                 obj.props()
                     .lock()
-                    .unwrap()
                     .contains_key(&crate::value::PropertyKey::from(key.as_str()))
                     || {
                         if let HeapObj::Array(a) = obj {
@@ -342,7 +339,7 @@ fn object_has_own_property(
                                 return true;
                             }
                             if let Ok(i) = key.parse::<usize>() {
-                                return i < a.items.lock().unwrap().len();
+                                return i < a.items.lock().len();
                             }
                         }
                         false
@@ -376,7 +373,7 @@ fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
     if let Some(Value::Object(idx)) = &this {
         let prim = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Object(od) = o {
-                od.primitive.lock().unwrap().clone()
+                od.primitive.lock().clone()
             } else {
                 None
             }
@@ -395,12 +392,12 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
     if let Value::Object(idx) = obj {
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                for i in 0..a.items.lock().unwrap().len() {
+                for i in 0..a.items.lock().len() {
                     keys.push(Arc::from(i.to_string().as_str()));
                 }
             }
             if let HeapObj::Map(m) = o {
-                for (k, _) in m.entries.lock().unwrap().iter() {
+                for (k, _) in m.entries.lock().iter() {
                     if let Value::String(s) = k {
                         keys.push(s.clone());
                     }
@@ -411,7 +408,7 @@ fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
             // keys in insertion order.
             let mut index_keys: Vec<u32> = Vec::new();
             let mut other_keys: Vec<Arc<str>> = Vec::new();
-            for (k, desc) in o.props().lock().unwrap().iter() {
+            for (k, desc) in o.props().lock().iter() {
                 if !desc.enumerable {
                     continue;
                 }
@@ -561,7 +558,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
     if let Value::Object(arr_idx) = &entries {
         let pairs: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -571,7 +568,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
             if let Value::Object(pi) = pair {
                 let (k, v) = vm.heap.with_obj(pi.0, |o| {
                     if let HeapObj::Array(a) = o {
-                        let it = a.items.lock().unwrap();
+                        let it = a.items.lock();
                         (
                             it.first().cloned().unwrap_or(Value::Undefined),
                             it.get(1).cloned().unwrap_or(Value::Undefined),
@@ -587,7 +584,7 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
                         // Own enumerable data property (data_prop is
                         // non-enumerable, which would hide it from
                         // Object.keys / JSON.stringify).
-                        obj.props.lock().unwrap().insert(
+                        obj.props.lock().insert(
                             PropertyKey::from(key_str.as_str()),
                             PropertyDescriptor {
                                 value: v,
@@ -632,7 +629,7 @@ fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
         return Ok(vm.heap.with_obj(idx.0, |o| {
-            o.proto().lock().unwrap().clone().unwrap_or(Value::Null)
+            o.proto().lock().clone().unwrap_or(Value::Null)
         }));
     }
     Ok(Value::Null)
@@ -652,7 +649,7 @@ fn object_set_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
             ));
         };
         vm.heap.with_obj(idx.0, |o| {
-            *o.proto().lock().unwrap() = p;
+            *o.proto().lock() = p;
         });
     }
     Ok(obj)
@@ -695,7 +692,7 @@ fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Object(od) = o {
                 od.extensible.store(false, Ordering::Relaxed);
-                for d in od.props.lock().unwrap().values_mut() {
+                for d in od.props.lock().values_mut() {
                     d.configurable = false;
                 }
             }
@@ -709,7 +706,7 @@ fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
     if let Value::Object(idx) = &obj {
         let sealed = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Object(od) = o {
-                let all_noncfg = od.props.lock().unwrap().values().all(|d| !d.configurable);
+                let all_noncfg = od.props.lock().values().all(|d| !d.configurable);
                 all_noncfg
             } else {
                 true
@@ -729,7 +726,6 @@ fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
                 let all_frozen = od
                     .props
                     .lock()
-                    .unwrap()
                     .values()
                     .all(|d| !d.configurable && !d.writable && !d.is_accessor);
                 !ext && all_frozen
@@ -764,7 +760,7 @@ fn object_get_own_property_descriptors(
                 let pkey = crate::value::PropertyKey::from(k.as_ref());
                 let d = vm
                     .heap
-                    .with_obj(idx.0, |o| o.props().lock().unwrap().get(&pkey).cloned())?;
+                    .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned())?;
                 Some((k.to_string(), d))
             })
             .collect();
@@ -805,7 +801,7 @@ fn object_get_own_property_descriptors(
             );
             vm.heap.with_obj(desc_obj, |o| {
                 if let HeapObj::Object(od) = o {
-                    *od.props.lock().unwrap() = dp;
+                    *od.props.lock() = dp;
                 }
             });
             p.insert(
@@ -815,7 +811,7 @@ fn object_get_own_property_descriptors(
         }
         vm.heap.with_obj(result_idx, |o| {
             if let HeapObj::Object(od) = o {
-                *od.props.lock().unwrap() = p;
+                *od.props.lock() = p;
             }
         });
     }
@@ -861,7 +857,6 @@ fn object_get_own_property_descriptor(
         let desc = vm.heap.with_obj(idx.0, |o| {
             o.props()
                 .lock()
-                .unwrap()
                 .get(&crate::value::PropertyKey::from(key.as_str()))
                 .cloned()
         });
@@ -901,7 +896,7 @@ fn object_get_own_property_descriptor(
             );
             vm.heap.with_obj(desc_obj, |o| {
                 if let HeapObj::Object(od) = o {
-                    *od.props.lock().unwrap() = p;
+                    *od.props.lock() = p;
                 }
             });
             return Ok(Value::Object(GcIdx(desc_obj)));
@@ -916,7 +911,7 @@ fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Object(o) = obj {
                 o.extensible.store(false, Ordering::Relaxed);
-                for d in o.props.lock().unwrap().values_mut() {
+                for d in o.props.lock().values_mut() {
                     d.writable = false;
                     d.configurable = false;
                 }
@@ -1055,7 +1050,6 @@ fn object_define_property(
         vm.heap.with_obj(idx.0, |obj| {
             obj.props()
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from(key.as_str()), descriptor);
         });
     }
@@ -1077,7 +1071,7 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     // Inherit `name` from the prototype (each Error subclass proto sets it),
     // falling back to "Error".
     let proto_idx = vm.heap.with_obj(idx.0, |obj| {
-        obj.proto().lock().unwrap().as_ref().and_then(|p| {
+        obj.proto().lock().as_ref().and_then(|p| {
             if let Value::Object(pi) = p {
                 Some(*pi)
             } else {
@@ -1090,7 +1084,6 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
             vm.heap.with_obj(pi.0, |o| {
                 o.props()
                     .lock()
-                    .unwrap()
                     .get(&PropertyKey::from("name"))
                     .and_then(|d| {
                         if let Value::String(s) = &d.value {
@@ -1108,7 +1101,6 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
             vm.heap.with_obj(oi.0, |o| {
                 o.props()
                     .lock()
-                    .unwrap()
                     .get(&PropertyKey::from("cause"))
                     .map(|d| d.value.clone())
             })
@@ -1120,16 +1112,13 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         if let HeapObj::Object(o) = obj {
             o.props
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("message"), data_prop(Value::String(msg)));
             o.props
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("name"), data_prop(Value::String(name)));
             if let Some(c) = cause {
                 o.props
                     .lock()
-                    .unwrap()
                     .insert(PropertyKey::from("cause"), data_prop(c));
             }
         }
@@ -1190,7 +1179,6 @@ pub fn setup(vm: &mut Vm) {
         vm.heap.with_obj(object_ctor.0, |obj| {
             obj.props()
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
         });
     }
@@ -1508,14 +1496,13 @@ fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error::Result<Str
                 let is_array = matches!(o, HeapObj::Array(_));
                 let is_func = matches!(o, HeapObj::Function(_));
                 let items = if let HeapObj::Array(a) = o {
-                    a.items.lock().unwrap().clone()
+                    a.items.lock().clone()
                 } else {
                     Vec::new()
                 };
                 let pairs: Vec<(Arc<str>, Value)> = o
                     .props()
                     .lock()
-                    .unwrap()
                     .iter()
                     .filter(|(_, d)| d.enumerable)
                     .filter_map(|(k, d)| {
@@ -1612,7 +1599,7 @@ fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
         if is_arr {
             let items = vm.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
-                    a.items.lock().unwrap().clone()
+                    a.items.lock().clone()
                 } else {
                     Vec::new()
                 }
@@ -1694,11 +1681,10 @@ fn has_json_cycle_depth(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>, depth: us
     seen.push(idx);
     // Collect child values out of the borrow scope before recursing.
     let children: Vec<Value> = vm.heap.with_obj(idx, |obj| match obj {
-        HeapObj::Array(a) => a.items.lock().unwrap().clone(),
+        HeapObj::Array(a) => a.items.lock().clone(),
         HeapObj::Object(o) => o
             .props
             .lock()
-            .unwrap()
             .values()
             .filter(|d| d.enumerable)
             .map(|d| d.value.clone())
@@ -1755,10 +1741,10 @@ fn stringify_value(
                 return None;
             }
             let (is_arr, items, props) = vm.heap.with_obj(idx.0, |obj| match obj {
-                HeapObj::Array(a) => (true, a.items.lock().unwrap().clone(), IndexMap::new()),
-                HeapObj::Object(o) => (false, Vec::new(), o.props.lock().unwrap().clone()),
+                HeapObj::Array(a) => (true, a.items.lock().clone(), IndexMap::new()),
+                HeapObj::Object(o) => (false, Vec::new(), o.props.lock().clone()),
                 HeapObj::Function(_) => (false, Vec::new(), IndexMap::new()),
-                _ => (false, Vec::new(), obj.props().lock().unwrap().clone()),
+                _ => (false, Vec::new(), obj.props().lock().clone()),
             });
             let child_indent = if ctx.gap.is_empty() {
                 String::new()
@@ -1909,8 +1895,8 @@ fn apply_reviver(
     let walked = match val {
         Value::Object(idx) => {
             let (is_arr, items, props) = vm.heap.with_obj(idx.0, |o| match o {
-                HeapObj::Array(a) => (true, a.items.lock().unwrap().clone(), IndexMap::new()),
-                HeapObj::Object(o) => (false, Vec::new(), o.props.lock().unwrap().clone()),
+                HeapObj::Array(a) => (true, a.items.lock().clone(), IndexMap::new()),
+                HeapObj::Object(o) => (false, Vec::new(), o.props.lock().clone()),
                 _ => (false, Vec::new(), IndexMap::new()),
             });
             if is_arr {
@@ -2180,7 +2166,6 @@ fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
             if let HeapObj::Object(o) = o {
                 o.props
                     .lock()
-                    .unwrap()
                     .insert(PropertyKey::from("__time__"), data_prop(Value::Number(ts)));
             }
         });
@@ -2194,7 +2179,6 @@ fn date_get_time(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Re
         let ts = vm.heap.with_obj(idx.0, |o| {
             o.props()
                 .lock()
-                .unwrap()
                 .get(&PropertyKey::from("__time__"))
                 .map(|d| d.value.clone())
         });
@@ -2284,7 +2268,7 @@ fn reflect_apply(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
     let call_args = if let Value::Object(idx) = &args_arr {
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -2300,7 +2284,7 @@ fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Re
     let call_args = if let Value::Object(idx) = &args_arr {
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -2657,7 +2641,6 @@ fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
             desc.enumerable = false;
             obj.props()
                 .lock()
-                .unwrap()
                 .insert(crate::value::PropertyKey::from("constructor"), desc);
         });
     }
@@ -2723,14 +2706,13 @@ fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
         }
         let (is_arr, arr_items, len) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                (true, a.items.lock().unwrap().clone(), 0)
+                (true, a.items.lock().clone(), 0)
             } else if let HeapObj::Iterator(_) = o {
                 (false, Vec::new(), 0)
             } else {
                 let len = o
                     .props()
                     .lock()
-                    .unwrap()
                     .get(&crate::value::PropertyKey::from("length"))
                     .and_then(|d| {
                         if let Value::Number(n) = d.value {
@@ -2796,12 +2778,12 @@ fn array_push(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().extend_from_slice(args);
+                a.items.lock().extend_from_slice(args);
             }
         });
         let len = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().len()
+                a.items.lock().len()
             } else {
                 0
             }
@@ -2814,7 +2796,7 @@ fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         return Ok(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().pop().unwrap_or(Value::Undefined)
+                a.items.lock().pop().unwrap_or(Value::Undefined)
             } else {
                 Value::Undefined
             }
@@ -2837,7 +2819,7 @@ fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -2861,7 +2843,7 @@ fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -2893,7 +2875,7 @@ fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -2928,7 +2910,7 @@ fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3104,7 +3086,7 @@ fn array_reduce_right(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3146,7 +3128,7 @@ fn array_to_reversed(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().iter().rev().cloned().collect()
+                a.items.lock().iter().rev().cloned().collect()
             } else {
                 Vec::new()
             }
@@ -3160,7 +3142,7 @@ fn array_to_sorted(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
     if let Some(Value::Object(idx)) = this {
         let mut items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3176,7 +3158,7 @@ fn array_to_spliced(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3205,7 +3187,7 @@ fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         let mut items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3226,7 +3208,7 @@ fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3274,7 +3256,7 @@ fn array_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3295,7 +3277,7 @@ fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3316,7 +3298,7 @@ fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3372,7 +3354,7 @@ fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     if let Some(Value::Object(idx)) = this {
         items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3386,7 +3368,7 @@ fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
             if is_arr {
                 let extra = vm.heap.with_obj(aidx.0, |obj| {
                     if let HeapObj::Array(a) = obj {
-                        a.items.lock().unwrap().clone()
+                        a.items.lock().clone()
                     } else {
                         Vec::new()
                     }
@@ -3410,7 +3392,7 @@ fn array_reverse(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().reverse();
+                a.items.lock().reverse();
             }
         });
         return Ok(Value::Object(idx));
@@ -3424,7 +3406,7 @@ fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
         // Collect items, sort via comparator (default: cast to string, UTF-16 code unit compare).
         let mut items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3458,7 +3440,7 @@ fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
         }
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                *a.items.lock().unwrap() = items;
+                *a.items.lock() = items;
             }
         });
         return Ok(Value::Object(idx));
@@ -3470,7 +3452,7 @@ fn array_shift(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Resu
     if let Some(Value::Object(idx)) = this {
         return Ok(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock().unwrap();
+                let mut items = a.items.lock();
                 if items.is_empty() {
                     Value::Undefined
                 } else {
@@ -3487,7 +3469,7 @@ fn array_unshift(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock().unwrap();
+                let mut items = a.items.lock();
                 for (i, v) in args.iter().enumerate() {
                     items.insert(i, v.clone());
                 }
@@ -3495,7 +3477,7 @@ fn array_unshift(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Res
         });
         let len = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().len()
+                a.items.lock().len()
             } else {
                 0
             }
@@ -3508,7 +3490,7 @@ fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     if let Some(Value::Object(idx)) = this {
         let items_clone = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3534,7 +3516,7 @@ fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         };
         let removed: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock().unwrap();
+                let mut items = a.items.lock();
                 let r: Vec<Value> = items.drain(start..start + delete_count).collect();
                 for (i, v) in args.iter().skip(2).enumerate() {
                     items.insert(start + i, v.clone());
@@ -3554,7 +3536,7 @@ fn array_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3586,7 +3568,7 @@ fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<V
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3627,7 +3609,7 @@ fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
                     },
                     |o| {
                         if let HeapObj::Array(a) = o {
-                            a.items.lock().unwrap().clone()
+                            a.items.lock().clone()
                         } else {
                             Vec::new()
                         }
@@ -3642,7 +3624,7 @@ fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3658,7 +3640,7 @@ fn array_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     let items = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3694,7 +3676,7 @@ fn array_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
                 },
                 |o| {
                     if let HeapObj::Array(a) = o {
-                        a.items.lock().unwrap().clone()
+                        a.items.lock().clone()
                     } else {
                         Vec::new()
                     }
@@ -3711,7 +3693,7 @@ fn array_copy_within(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     if let Some(Value::Object(idx)) = this {
         let len = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().len()
+                a.items.lock().len()
             } else {
                 0
             }
@@ -3741,14 +3723,14 @@ fn array_copy_within(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         let count = (last - from).min(len as usize - to);
         let src: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap()[from..from + count].to_vec()
+                a.items.lock()[from..from + count].to_vec()
             } else {
                 Vec::new()
             }
         });
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                let mut items = a.items.lock().unwrap();
+                let mut items = a.items.lock();
                 for (i, v) in src.into_iter().enumerate() {
                     items[to + i] = v;
                 }
@@ -3762,7 +3744,7 @@ fn array_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Resul
     let len = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().len()
+                a.items.lock().len()
             } else {
                 0
             }
@@ -3777,7 +3759,7 @@ fn array_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Res
     let items = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3791,7 +3773,7 @@ fn array_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Re
     let items = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3850,7 +3832,7 @@ fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3877,7 +3859,7 @@ fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3904,7 +3886,7 @@ fn array_find_last(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::R
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3931,7 +3913,7 @@ fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -3970,7 +3952,7 @@ fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
         if s < e {
             vm.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Array(a) = obj {
-                    let mut items = a.items.lock().unwrap();
+                    let mut items = a.items.lock();
                     for i in s..e.min(items.len()) {
                         items[i] = value.clone();
                     }
@@ -3986,7 +3968,7 @@ fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -4013,7 +3995,7 @@ fn array_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -4268,7 +4250,7 @@ fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     // If the separator is a RegExp, split on regex matches.
     if let Some(Value::Object(idx)) = args.first() {
         let (source, flags) = vm.heap.with_obj(idx.0, |o| {
-            let p = o.props().lock().unwrap();
+            let p = o.props().lock();
             let src = p
                 .get(&crate::value::PropertyKey::from("source"))
                 .map(|d| d.value.clone());
@@ -4344,7 +4326,7 @@ fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     // If the search value is a RegExp, use regex replacement.
     if let Some(Value::Object(idx)) = args.first() {
         let (source, flags) = vm.heap.with_obj(idx.0, |o| {
-            let p = o.props().lock().unwrap();
+            let p = o.props().lock();
             let src = p
                 .get(&crate::value::PropertyKey::from("source"))
                 .map(|d| d.value.clone());
@@ -4518,7 +4500,7 @@ fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<
     match args.first() {
         Some(Value::Object(idx)) => {
             let (source, flags) = vm.heap.with_obj(idx.0, |o| {
-                let p = o.props().lock().unwrap();
+                let p = o.props().lock();
                 let src = p.get(&PropertyKey::from("source")).map(|d| d.value.clone());
                 let flg = p
                     .get(&PropertyKey::from("flags"))
@@ -4572,7 +4554,7 @@ fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                a.items.lock().unwrap().clone()
+                a.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -5246,7 +5228,6 @@ pub fn setup_full(vm: &mut Vm) {
         vm.heap.with_obj(dc.0, |obj| {
             obj.props()
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("now"), data_prop(Value::Object(now_fn)));
         });
     }
@@ -5308,7 +5289,6 @@ pub fn setup_full(vm: &mut Vm) {
         vm.heap.with_obj(array_ctor.0, |obj| {
             obj.props()
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
         });
     }
@@ -5354,12 +5334,11 @@ pub fn setup_full(vm: &mut Vm) {
     vm.heap.with_obj(str_ctor.0, |obj| {
         obj.props()
             .lock()
-            .unwrap()
             .insert(PropertyKey::from("raw"), data_prop(Value::Object(raw_fn)));
     });
     let fcp_fn = vm.new_native_function("fromCodePoint", string_from_code_point, 1);
     vm.heap.with_obj(str_ctor.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("fromCodePoint"),
             data_prop(Value::Object(fcp_fn)),
         );
@@ -5367,7 +5346,7 @@ pub fn setup_full(vm: &mut Vm) {
     // String statics
     let from_char_code_fn = vm.new_native_function("fromCharCode", str_from_char_code, 1);
     vm.heap.with_obj(str_ctor.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("fromCharCode"),
             data_prop(Value::Object(from_char_code_fn)),
         );
@@ -5422,7 +5401,6 @@ pub fn setup_full(vm: &mut Vm) {
             for (name, val) in &static_props {
                 f.props
                     .lock()
-                    .unwrap()
                     .insert(PropertyKey::from(name.clone()), data_prop(val.clone()));
             }
         }
@@ -5470,17 +5448,17 @@ pub fn setup_full(vm: &mut Vm) {
             let bi = bigint_idx;
             vm.heap.with_obj(bi.0, |obj| {
                 if let HeapObj::Function(f) = obj {
-                    *f.prototype.lock().unwrap() = Some(bproto.clone());
+                    *f.prototype.lock() = Some(bproto.clone());
                 }
             });
             let to_str = vm.new_native_function("toString", bigint_to_string, 0);
             if let Value::Object(pi) = bproto {
                 vm.heap.with_obj(pi.0, |obj| {
-                    obj.props().lock().unwrap().insert(
+                    obj.props().lock().insert(
                         crate::value::PropertyKey::from("toString"),
                         crate::value::PropertyDescriptor::data(Value::Object(to_str)),
                     );
-                    obj.props().lock().unwrap().insert(
+                    obj.props().lock().insert(
                         crate::value::PropertyKey::from("valueOf"),
                         crate::value::PropertyDescriptor::data(Value::Object(to_str)),
                     );
@@ -5512,11 +5490,11 @@ pub fn setup_full(vm: &mut Vm) {
     let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1);
     let reject_static = vm.new_native_function("reject", promise_static_reject, 1);
     vm.heap.with_obj(promise_ctor.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("resolve"),
             data_prop(Value::Object(resolve_static)),
         );
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("reject"),
             data_prop(Value::Object(reject_static)),
         );
@@ -5531,7 +5509,7 @@ pub fn setup_full(vm: &mut Vm) {
     );
     vm.heap.with_obj(regex_proto.0, |o| {
         if let HeapObj::Object(obj) = o {
-            obj.props.lock().unwrap().insert(
+            obj.props.lock().insert(
                 PropertyKey::from("__regex_proto__"),
                 data_prop(Value::Bool(true)),
             );
@@ -5540,7 +5518,7 @@ pub fn setup_full(vm: &mut Vm) {
     // Store regex_proto on the constructor so regexp_constructor can use it.
     vm.heap.with_obj(regex_ctor.0, |o| {
         if let HeapObj::Function(f) = o {
-            f.props.lock().unwrap().insert(
+            f.props.lock().insert(
                 PropertyKey::from("__proto__"),
                 data_prop(Value::Object(regex_proto)),
             );
@@ -5563,13 +5541,12 @@ pub fn setup_full(vm: &mut Vm) {
         vm.heap.with_obj(generator_proto_idx, |o| {
             o.props()
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
-            o.props().lock().unwrap().insert(
+            o.props().lock().insert(
                 PropertyKey::from("return"),
                 data_prop(Value::Object(return_fn)),
             );
-            o.props().lock().unwrap().insert(
+            o.props().lock().insert(
                 PropertyKey::from("throw"),
                 data_prop(Value::Object(throw_fn)),
             );
@@ -5597,14 +5574,14 @@ pub fn setup_full(vm: &mut Vm) {
     );
     // Function.prototype points to the function prototype object.
     vm.heap.with_obj(function_ctor_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("prototype"),
             data_prop(Value::Object(function_proto_idx)),
         );
     });
     // The function prototype's `constructor` is the Function constructor.
     vm.heap.with_obj(function_proto_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(function_ctor_idx)),
         );
@@ -5621,7 +5598,7 @@ fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                let mut entries = m.entries.lock().unwrap();
+                let mut entries = m.entries.lock();
                 if let Some(slot) = entries.iter_mut().find(|(k, _)| k.same_value_zero(&key)) {
                     slot.1 = val;
                 } else {
@@ -5639,7 +5616,6 @@ fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
             if let HeapObj::Map(m) = obj {
                 m.entries
                     .lock()
-                    .unwrap()
                     .iter()
                     .find(|(k, _)| k.same_value_zero(&key))
                     .map(|(_, v)| v.clone())
@@ -5658,7 +5634,6 @@ fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
             if let HeapObj::Map(m) = obj {
                 m.entries
                     .lock()
-                    .unwrap()
                     .iter()
                     .any(|(k, _)| k.same_value_zero(&key))
             } else {
@@ -5673,7 +5648,7 @@ fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                let mut entries = m.entries.lock().unwrap();
+                let mut entries = m.entries.lock();
                 let len = entries.len();
                 entries.retain(|(k, _)| k != &key);
                 entries.len() != len
@@ -5695,7 +5670,7 @@ fn weakmap_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> er
     let proto = match _this {
         Some(Value::Object(idx)) => vm
             .heap
-            .with_obj(idx.0, |o| o.proto().lock().unwrap().clone()),
+            .with_obj(idx.0, |o| o.proto().lock().clone()),
         _ => Some(vm.object_proto.clone()),
     };
     let obj_idx = vm
@@ -5722,7 +5697,7 @@ fn weakmap_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::WeakMap(wm) = obj {
-                let mut entries = wm.entries.lock().unwrap();
+                let mut entries = wm.entries.lock();
                 if let Some(slot) = entries.iter_mut().find(|(k, _)| *k == key_idx) {
                     slot.1 = val;
                 } else {
@@ -5745,7 +5720,6 @@ fn weakmap_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             if let HeapObj::WeakMap(wm) = obj {
                 wm.entries
                     .lock()
-                    .unwrap()
                     .iter()
                     .find(|(k, _)| *k == key_idx)
                     .map(|(_, v)| v.clone())
@@ -5769,7 +5743,6 @@ fn weakmap_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
             if let HeapObj::WeakMap(wm) = obj {
                 wm.entries
                     .lock()
-                    .unwrap()
                     .iter()
                     .any(|(k, _)| *k == key_idx)
             } else {
@@ -5789,7 +5762,7 @@ fn weakmap_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::WeakMap(wm) = obj {
-                let mut entries = wm.entries.lock().unwrap();
+                let mut entries = wm.entries.lock();
                 let len = entries.len();
                 entries.retain(|(k, _)| *k != key_idx);
                 entries.len() != len
@@ -5805,7 +5778,7 @@ fn weakset_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> er
     let proto = match _this {
         Some(Value::Object(idx)) => vm
             .heap
-            .with_obj(idx.0, |o| o.proto().lock().unwrap().clone()),
+            .with_obj(idx.0, |o| o.proto().lock().clone()),
         _ => Some(vm.object_proto.clone()),
     };
     let obj_idx = vm
@@ -5831,7 +5804,7 @@ fn weakset_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::WeakSet(ws) = obj {
-                let mut items = ws.items.lock().unwrap();
+                let mut items = ws.items.lock();
                 if !items.contains(&key_idx) {
                     items.push(key_idx);
                 }
@@ -5850,7 +5823,7 @@ fn weakset_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::WeakSet(ws) = obj {
-                ws.items.lock().unwrap().contains(&key_idx)
+                ws.items.lock().contains(&key_idx)
             } else {
                 false
             }
@@ -5868,7 +5841,7 @@ fn weakset_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::WeakSet(ws) = obj {
-                let mut items = ws.items.lock().unwrap();
+                let mut items = ws.items.lock();
                 let len = items.len();
                 items.retain(|k| *k != key_idx);
                 items.len() != len
@@ -5883,7 +5856,7 @@ fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().unwrap().clear();
+                m.entries.lock().clear();
             }
         });
     }
@@ -5893,7 +5866,7 @@ fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().unwrap().len()
+                m.entries.lock().len()
             } else {
                 0
             }
@@ -5906,7 +5879,7 @@ fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
     if let Some(Value::Object(idx)) = this {
         let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().unwrap().clone()
+                m.entries.lock().clone()
             } else {
                 Vec::new()
             }
@@ -5929,7 +5902,6 @@ fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
             if let HeapObj::Map(m) = obj {
                 m.entries
                     .lock()
-                    .unwrap()
                     .iter()
                     .map(|(k, _)| k.clone())
                     .collect()
@@ -5948,7 +5920,6 @@ fn map_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Resul
             if let HeapObj::Map(m) = obj {
                 m.entries
                     .lock()
-                    .unwrap()
                     .iter()
                     .map(|(_, v)| v.clone())
                     .collect()
@@ -5967,7 +5938,7 @@ fn map_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     if let Some(Value::Object(idx)) = this {
         let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().unwrap().clone()
+                m.entries.lock().clone()
             } else {
                 Vec::new()
             }
@@ -6004,7 +5975,7 @@ fn map_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
                 let (k, v) = if let Value::Object(pi) = &pair {
                     vm.heap.with_obj(pi.0, |o| {
                         if let HeapObj::Array(a) = o {
-                            let it2 = a.items.lock().unwrap();
+                            let it2 = a.items.lock();
                             (
                                 it2.first().cloned().unwrap_or(Value::Undefined),
                                 it2.get(1).cloned().unwrap_or(Value::Undefined),
@@ -6018,7 +5989,7 @@ fn map_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
                 };
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Map(m) = o {
-                        m.entries.lock().unwrap().push((k, v));
+                        m.entries.lock().push((k, v));
                     }
                 });
             }
@@ -6035,7 +6006,7 @@ fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                let mut items = s.items.lock().unwrap();
+                let mut items = s.items.lock();
                 if !items.iter().any(|i| i.same_value_zero(&val)) {
                     items.push(val);
                 }
@@ -6051,7 +6022,6 @@ fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Va
             if let HeapObj::Set(s) = obj {
                 s.items
                     .lock()
-                    .unwrap()
                     .iter()
                     .any(|i| i.same_value_zero(&val))
             } else {
@@ -6066,7 +6036,7 @@ fn set_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                let mut items = s.items.lock().unwrap();
+                let mut items = s.items.lock();
                 let len = items.len();
                 items.retain(|i| i != &val);
                 items.len() != len
@@ -6081,7 +6051,7 @@ fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                s.items.lock().unwrap().len()
+                s.items.lock().len()
             } else {
                 0
             }
@@ -6093,7 +6063,7 @@ fn set_values_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                s.items.lock().unwrap().clone()
+                s.items.lock().clone()
             } else {
                 Vec::new()
             }
@@ -6152,7 +6122,7 @@ fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error:
                 }
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Set(s) = o {
-                        let mut items = s.items.lock().unwrap();
+                        let mut items = s.items.lock();
                         if !items.iter().any(|i| i.same_value_zero(&v)) {
                             items.push(v);
                         }
@@ -6197,7 +6167,7 @@ fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: std::sync::Mutex::new(crate::value::PromiseStatus::Pending),
+            state: Mutex::new(crate::value::PromiseStatus::Pending),
             result: Mutex::new(Value::Undefined),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
@@ -6302,7 +6272,7 @@ fn promise_static_resolve(
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: std::sync::Mutex::new(crate::value::PromiseStatus::Fulfilled),
+            state: Mutex::new(crate::value::PromiseStatus::Fulfilled),
             result: Mutex::new(value),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
@@ -6321,7 +6291,7 @@ fn promise_static_reject(
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: std::sync::Mutex::new(crate::value::PromiseStatus::Rejected),
+            state: Mutex::new(crate::value::PromiseStatus::Rejected),
             result: Mutex::new(reason),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
@@ -6341,7 +6311,7 @@ fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
     let derived = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: std::sync::Mutex::new(crate::value::PromiseStatus::Pending),
+            state: Mutex::new(crate::value::PromiseStatus::Pending),
             result: Mutex::new(Value::Undefined),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
@@ -6349,7 +6319,7 @@ fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         }));
     let (state, _result) = vm.heap.with_obj(p_idx, |o| {
         if let HeapObj::Promise(p) = o {
-            (*p.state.lock().unwrap(), p.result.lock().unwrap().clone())
+            (*p.state.lock(), p.result.lock().clone())
         } else {
             (crate::value::PromiseStatus::Fulfilled, Value::Undefined)
         }
@@ -6363,7 +6333,7 @@ fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resu
         crate::value::PromiseStatus::Pending => {
             vm.heap.with_obj(p_idx, |o| {
                 if let HeapObj::Promise(p) = o {
-                    p.handlers.lock().unwrap().push(handler);
+                    p.handlers.lock().push(handler);
                 }
             });
         }
@@ -6411,7 +6381,6 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
                 .with_obj(ci.0, |o| {
                     o.props()
                         .lock()
-                        .unwrap()
                         .get(&crate::value::PropertyKey::from("prototype"))
                         .map(|d| d.value.clone())
                 })
@@ -6454,7 +6423,7 @@ fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> erro
     );
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
-            *obj.props.lock().unwrap() = props;
+            *obj.props.lock() = props;
         }
     });
     Ok(Value::Object(GcIdx(obj_idx)))
@@ -6490,7 +6459,6 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| {
             o.props()
                 .lock()
-                .unwrap()
                 .get(&PropertyKey::from("lastIndex"))
                 .map(|d| match &d.value {
                     Value::Number(n) => *n,
@@ -6510,7 +6478,7 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
         if let Some(Value::Object(idx)) = &this {
             vm.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Object(obj) = o {
-                    obj.props.lock().unwrap().insert(
+                    obj.props.lock().insert(
                         PropertyKey::from("lastIndex"),
                         data_prop(Value::Number(0.0)),
                     );
@@ -6541,7 +6509,7 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
                 if let Some(Value::Object(idx)) = &this {
                     vm.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Object(obj) = o {
-                            obj.props.lock().unwrap().insert(
+                            obj.props.lock().insert(
                                 PropertyKey::from("lastIndex"),
                                 data_prop(Value::Number(match_end as f64)),
                             );
@@ -6557,7 +6525,7 @@ fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Resul
                 if let Some(Value::Object(idx)) = &this {
                     vm.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Object(obj) = o {
-                            obj.props.lock().unwrap().insert(
+                            obj.props.lock().insert(
                                 PropertyKey::from("lastIndex"),
                                 data_prop(Value::Number(0.0)),
                             );
@@ -6586,7 +6554,6 @@ fn read_regexp_field(vm: &mut Vm, this: &Option<Value>, field: &str) -> error::R
             let s = vm.heap.with_obj(idx.0, |o| {
                 o.props()
                     .lock()
-                    .unwrap()
                     .get(&crate::value::PropertyKey::from(field))
                     .map(|d| d.value.clone())
             });
@@ -6625,7 +6592,7 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         // Legacy eager generator (kept for safety).
         vm.heap.with_obj(g_idx, |o| {
             if let HeapObj::Generator(g) = o {
-                let state = g.state.lock().unwrap();
+                let state = g.state.lock();
                 let idx = g.ip.load(Ordering::Relaxed);
                 if idx < state.len() {
                     g.ip.store(idx + 1, Ordering::Relaxed);
@@ -6652,11 +6619,9 @@ fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
         if let HeapObj::Object(obj) = o {
             obj.props
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("value"), data_prop(value));
             obj.props
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
         }
     });
@@ -6692,11 +6657,9 @@ fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bool) -> erro
         if let HeapObj::Object(obj) = o {
             obj.props
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("value"), data_prop(value));
             obj.props
                 .lock()
-                .unwrap()
                 .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
         }
     });
@@ -6799,7 +6762,7 @@ pub fn setup_collections(vm: &mut Vm) {
     let map_entries_fn = vm.new_native_function("entries", map_entries, 0);
     if let Value::Object(mp) = vm.map_proto.clone() {
         vm.heap.with_obj(mp.0, |o| {
-            o.props().lock().unwrap().insert(
+            o.props().lock().insert(
                 PropertyKey::Symbol(vm.well_known_symbols.iterator),
                 data_prop(Value::Object(map_entries_fn)),
             );
@@ -6827,7 +6790,7 @@ pub fn setup_collections(vm: &mut Vm) {
     let set_values_fn = vm.new_native_function("values", set_values, 0);
     if let Value::Object(sp) = vm.set_proto.clone() {
         vm.heap.with_obj(sp.0, |o| {
-            o.props().lock().unwrap().insert(
+            o.props().lock().insert(
                 PropertyKey::Symbol(vm.well_known_symbols.iterator),
                 data_prop(Value::Object(set_values_fn)),
             );
@@ -6867,27 +6830,27 @@ pub fn setup_collections(vm: &mut Vm) {
     let sym_for_idx = vm.new_native_function("for", symbol_for, 1);
     if let Value::Object(idx) = Value::Object(sym_idx) {
         vm.heap.with_obj(idx.0, |obj| {
-            obj.props().lock().unwrap().insert(
+            obj.props().lock().insert(
                 PropertyKey::from("for"),
                 data_prop(Value::Object(sym_for_idx)),
             );
-            obj.props().lock().unwrap().insert(
+            obj.props().lock().insert(
                 PropertyKey::from("iterator"),
                 data_prop(Value::Symbol(vm.well_known_symbols.iterator)),
             );
-            obj.props().lock().unwrap().insert(
+            obj.props().lock().insert(
                 PropertyKey::from("asyncIterator"),
                 data_prop(Value::Symbol(vm.well_known_symbols.async_iterator)),
             );
-            obj.props().lock().unwrap().insert(
+            obj.props().lock().insert(
                 PropertyKey::from("toPrimitive"),
                 data_prop(Value::Symbol(vm.well_known_symbols.to_primitive)),
             );
-            obj.props().lock().unwrap().insert(
+            obj.props().lock().insert(
                 PropertyKey::from("hasInstance"),
                 data_prop(Value::Symbol(vm.well_known_symbols.has_instance)),
             );
-            obj.props().lock().unwrap().insert(
+            obj.props().lock().insert(
                 PropertyKey::from("toStringTag"),
                 data_prop(Value::Symbol(vm.well_known_symbols.to_string_tag)),
             );
@@ -6954,13 +6917,13 @@ fn make_builtin_constructor_with(
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("prototype"),
             data_prop(Value::Object(proto_idx)),
         );
     });
     vm.heap.with_obj(proto_idx.0, |obj| {
-        obj.props().lock().unwrap().insert(
+        obj.props().lock().insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
         );
@@ -7033,13 +6996,12 @@ fn function_apply(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
     let arr_args: Vec<Value> = match args.get(1) {
         Some(Value::Undefined) | Some(Value::Null) => Vec::new(),
         Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Array(a) => a.items.lock().unwrap().clone(),
+            HeapObj::Array(a) => a.items.lock().clone(),
             _ => {
                 // Array-like fallback: read .length and integer-indexed props.
                 let len = obj
                     .props()
                     .lock()
-                    .unwrap()
                     .get(&PropertyKey::from("length"))
                     .and_then(|d| {
                         if let Value::Number(n) = d.value {
@@ -7053,7 +7015,6 @@ fn function_apply(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Re
                     .map(|i| {
                         obj.props()
                             .lock()
-                            .unwrap()
                             .get(&PropertyKey::from(i.to_string().as_str()))
                             .map(|d| d.value.clone())
                             .unwrap_or(Value::Undefined)
