@@ -27,7 +27,8 @@
   over 50,000 iterations without triggering a panic.
 - **Module split**: `src/builtins.rs` (7,000+ lines) was split into
   `src/builtins/{mod,math,json,global,array,string,collections,regexp,function}.rs`.
-  The `vm.rs` split is still pending.
+  `src/vm.rs` was split into `src/vm/{mod,ops}.rs`, with the main opcode dispatch
+  loop and helpers moved to `ops.rs`.
 
 ### Documentation
 - Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
