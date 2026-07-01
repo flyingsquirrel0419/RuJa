@@ -63,5 +63,6 @@ All green.
    in builtins that may be called with fewer arguments.
 2. Decide on a project-wide mutex policy (`parking_lot`, poison-recovery, or
    documented invariant).
-3. Run `cargo-fuzz` on the public API (`Vm::run`) to discover remaining panic
-   paths empirically.
+3. ✅ Run `cargo-fuzz` on the public API (`Vm::run`) to discover remaining panic
+   paths empirically. Fuzz target added at `fuzz/fuzz_targets/fuzz_target_1.rs`;
+   initial 30-second run completed 50k+ iterations without panics.
