@@ -9,16 +9,19 @@
 - **Number radix formatting panic**: `biguint_to_radix` used `String::from_utf8(...).unwrap()`
   on an ASCII-only digit buffer. Replaced with `unwrap_or_default()` to remove the
   unconditional panic path.
-
-### Documentation
-- Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
-  `src/vm.rs` and `src/builtins.rs`, reachability policy, and remaining work.
-
-### Security / Hardening
 - **Direct `args[idx]` indexing**: Replaced the remaining direct `args[0]`/`args[1]`
   accesses in `src/builtins.rs` with safe `get()`/`first()` fallbacks. All call sites
   were already guarded by length checks, but the new form removes any latent panic
   path if a builtin is invoked with fewer arguments through meta-programming.
+- **VM invariant unwraps**: Added an empty-frame guard at the top of the
+  `interpret_inner_raw` loop and converted the two `finally_stack.last().unwrap()`
+  paths in throw/finally diversion to `ok_or_else` propagation. The remaining
+  `frames.last().unwrap()` calls are loop-invariant and will be hardened during
+  the `vm.rs` module split.
+
+### Documentation
+- Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
+  `src/vm.rs` and `src/builtins.rs`, reachability policy, and remaining work.
 
 ## [0.3.0-alpha] - 2026-07-01
 

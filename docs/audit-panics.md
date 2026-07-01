@@ -36,9 +36,12 @@ practice.
 - `Mutex::lock().unwrap()` project-wide. Current policy: acceptable as an
   invariant, with the understanding that no user input should be able to cause
   a panic that could poison a lock.
-- `frames.last().unwrap()` and similar VM invariants in `src/vm.rs`. These rely on
-  correct bytecode/opcode sequences. They should become defensive `ok_or_else`
-  over time, but are not the top panic risk from JavaScript.
+- `frames.last().unwrap()` and similar VM invariants in `src/vm.rs`. The most
+  dangerous invariant failure (an empty frame stack at the top of the interpret
+  loop) is now caught and returns `Error::internal`. The remaining `.unwrap()`
+  calls rely on the loop invariant that a frame is always present while
+  dispatching opcodes; they will be converted to defensive `ok_or_else` during
+  the upcoming `vm.rs` module split.
 
 ## Verification
 

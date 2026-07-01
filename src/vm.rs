@@ -802,6 +802,11 @@ impl Vm {
             // forced throw (set by resume_generator on a Throw resume), raise
             // it now at the suspended `yield` point. This lets the generator
             // body's own try/catch handle the injected exception.
+            if self.frames.is_empty() {
+                return Err(crate::error::Error::internal(
+                    "interpret loop with no call frame",
+                ));
+            }
             if let Some(exc) = self
                 .frames
                 .last()
@@ -2043,7 +2048,15 @@ impl Vm {
                                 _ => false,
                             };
                         if divert_to_finally {
-                            let target = frame.finally_stack.last().unwrap().0;
+                            let target = frame
+                                .finally_stack
+                                .last()
+                                .map(|(ip, _)| *ip)
+                                .ok_or_else(|| {
+                                    crate::error::Error::internal(
+                                        "finally stack empty during throw diversion",
+                                    )
+                                })?;
                             frame.finally_completion_tag.store(4, Ordering::Relaxed);
                             *frame.finally_completion_val.lock().unwrap() = v;
                             frame.ip = target;
@@ -2253,7 +2266,15 @@ impl Vm {
                                     _ => false,
                                 };
                             if divert_to_outer_finally {
-                                let outer = frame.finally_stack.last().unwrap().0;
+                                let outer = frame
+                                    .finally_stack
+                                    .last()
+                                    .map(|(ip, _)| *ip)
+                                    .ok_or_else(|| {
+                                        crate::error::Error::internal(
+                                            "finally stack empty during throw diversion",
+                                        )
+                                    })?;
                                 frame.finally_completion_tag.store(4, Ordering::Relaxed);
                                 *frame.finally_completion_val.lock().unwrap() = val.clone();
                                 frame.ip = outer;
