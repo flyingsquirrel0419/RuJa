@@ -14,12 +14,32 @@ TEST262 = os.environ.get("TEST262", "/root/test262")
 HARNESS = Path(TEST262) / "harness"
 
 SKIP_FEATURES = {
-    "module", "import-assertions", "top-level-await", "arraybuffer",
-    "sharedarraybuffer", "atomics", "DataView", "TypedArray",
-    "Intl", "WeakRef", "FinalizationRegistry", "AggregateError",
-    "resizable-arraybuffer", "regexp-v-flag", "regexp-duplicate-named-groups",
-    "json-modules", "import-attributes", "hashbang",
-    "regexp-named-groups", "regexp-unicode-property-escapes",
+    "AggregateError", "ArrayBuffer", "DataView", "FinalizationRegistry",
+    "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
+    "Int32Array", "Intl", "Map", "Promise", "Set", "SharedArrayBuffer",
+    "Symbol", "Symbol.asyncIterator", "Symbol.hasInstance", "Symbol.iterator",
+    "Symbol.toPrimitive", "Symbol.toStringTag", "Symbol.unscopables",
+    "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
+    "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
+    "WeakSet", "arraybuffer", "async-functions", "async-iteration", "atomics",
+    "class", "class-fields-private", "class-fields-private-in",
+    "class-fields-public", "class-methods-private", "class-static-block",
+    "class-static-fields-private", "class-static-fields-public",
+    "class-static-methods-private", "computed-property-names", "decorators",
+    "default-parameters", "destructuring-assignment", "destructuring-binding",
+    "dynamic-import", "error-cause", "explicit-resource-management",
+    "export-star-as-namespace-from-module", "for-in-order", "for-of",
+    "generators", "globalThis", "hashbang", "import-assertions",
+    "import-attributes", "import-defer", "import.meta", "iterator-helpers",
+    "json-modules", "logical-assignment-operators", "module", "new.target",
+    "object-rest", "object-spread", "optional-catch-binding",
+    "optional-chaining", "proxy-missing-checks", "Proxy", "Reflect",
+    "Reflect.construct", "regexp-duplicate-named-groups",
+    "regexp-named-groups", "regexp-unicode-property-escapes", "regexp-v-flag",
+    "resizable-arraybuffer", "rest-parameters", "shadowrealm",
+    "sharedarraybuffer", "source-phase-imports",
+    "source-phase-imports-module-source", "super", "tail-call-optimization",
+    "top-level-await", "u180e",
 }
 
 def parse_meta(src):

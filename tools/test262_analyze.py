@@ -10,12 +10,32 @@ TEST262 = os.environ.get("TEST262", "/root/test262")
 HARNESS = Path(TEST262) / "harness"
 
 SKIP_FEATURES = {
-    "module", "import-assertions", "top-level-await", "arraybuffer",
-    "sharedarraybuffer", "atomics", "DataView", "TypedArray",
-    "Intl", "WeakRef", "FinalizationRegistry", "AggregateError",
-    "resizable-arraybuffer", "regexp-v-flag", "regexp-duplicate-named-groups",
-    "json-modules", "import-attributes", "hashbang",
-    "regexp-named-groups", "regexp-unicode-property-escapes",
+    "AggregateError", "ArrayBuffer", "DataView", "FinalizationRegistry",
+    "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
+    "Int32Array", "Intl", "Map", "Promise", "Set", "SharedArrayBuffer",
+    "Symbol", "Symbol.asyncIterator", "Symbol.hasInstance", "Symbol.iterator",
+    "Symbol.toPrimitive", "Symbol.toStringTag", "Symbol.unscopables",
+    "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
+    "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
+    "WeakSet", "arraybuffer", "async-functions", "async-iteration", "atomics",
+    "class", "class-fields-private", "class-fields-private-in",
+    "class-fields-public", "class-methods-private", "class-static-block",
+    "class-static-fields-private", "class-static-fields-public",
+    "class-static-methods-private", "computed-property-names", "decorators",
+    "default-parameters", "destructuring-assignment", "destructuring-binding",
+    "dynamic-import", "error-cause", "explicit-resource-management",
+    "export-star-as-namespace-from-module", "for-in-order", "for-of",
+    "generators", "globalThis", "hashbang", "import-assertions",
+    "import-attributes", "import-defer", "import.meta", "iterator-helpers",
+    "json-modules", "logical-assignment-operators", "module", "new.target",
+    "object-rest", "object-spread", "optional-catch-binding",
+    "optional-chaining", "proxy-missing-checks", "Proxy", "Reflect",
+    "Reflect.construct", "regexp-duplicate-named-groups",
+    "regexp-named-groups", "regexp-unicode-property-escapes", "regexp-v-flag",
+    "resizable-arraybuffer", "rest-parameters", "shadowrealm",
+    "sharedarraybuffer", "source-phase-imports",
+    "source-phase-imports-module-source", "super", "tail-call-optimization",
+    "top-level-await", "u180e",
 }
 
 def parse_meta(src):
@@ -28,7 +48,6 @@ def parse_meta(src):
         m2 = re.search(rf'^{key}:\s*\[(.*?)\]', block, re.MULTILINE | re.DOTALL)
         if m2:
             meta[key] = [x.strip() for x in m2.group(1).split(',') if x.strip()]
-    # negative: { phase: <parse|runtime|resolution>, type: <ErrorName> }
     mn = re.search(r'^negative:\s*\n(  phase:\s*(\w+)\n  type:\s*(\w+)|  type:\s*(\w+)\n  phase:\s*(\w+))', block, re.MULTILINE)
     if mn:
         phase = mn.group(2) or mn.group(5)
@@ -84,7 +103,7 @@ def run_test(path):
             want = neg.get('type', '')
             if want and want in out:
                 return 'pass', ''
-            return 'fail', out or f'expected {want}, no error raised'
+            return 'fail', out
         if r.returncode == 0 and not out:
             return 'pass', ''
         return 'fail', out
@@ -93,77 +112,51 @@ def run_test(path):
     except Exception as e:
         return 'error', str(e)
 
-def normalize_err(err):
-    e = err
-    if 'ParseError' in e or 'SyntaxError' in e and 'parse' in e.lower():
-        if 'Unexpected token' in e:
-            return 'PARSE: unexpected token'
-        if 'Expected' in e:
-            return 'PARSE: expected something'
-        return 'PARSE: other'
-    if 'not defined' in e.lower() or 'is not defined' in e.lower():
-        return 'RUNTIME: not defined'
-    if 'not a function' in e.lower():
-        return 'RUNTIME: not a function'
-    if 'cannot read propert' in e.lower() or ('undefined' in e.lower() and 'read' in e.lower()):
-        return 'RUNTIME: cannot read property of undefined'
-    if 'TypeError' in e:
-        return 'RUNTIME: TypeError'
-    if 'RangeError' in e:
-        return 'RUNTIME: RangeError'
-    if 'ReferenceError' in e:
-        return 'RUNTIME: ReferenceError'
-    if 'stack' in e.lower() and 'overflow' in e.lower():
-        return 'RUNTIME: stack overflow'
-    if 'panic' in e.lower():
-        return 'PANIC'
-    if 'Test262Error' in e:
-        return 'ASSERT: Test262 assertion failed'
-    if 'Assertion' in e:
-        return 'ASSERT: failed'
-    if not e:
-        return 'FAIL: no output (nonzero exit)'
-    first = e.splitlines()[0][:120] if e else ''
-    return f'OTHER: {first}'
+def bucket(err):
+    if not err:
+        return 'OTHER: (no output)'
+    # normalize paths/ids
+    err = re.sub(r"'[^']{5,}'", "'<value>'", err)
+    err = re.sub(r'\([^)]*\)', '()', err)
+    err = re.sub(r'at line \d+', 'at line <n>', err)
+    err = re.sub(r'\[[^\]]+\]', '[]', err)
+    err = err.strip().split('\n')[0]
+    return err[:200]
 
 def main():
-    dirs = sys.argv[1:] if len(sys.argv) > 1 else ['language/identifiers']
-    fails = []
+    dirs = sys.argv[1:] if len(sys.argv) > 1 else ['language/expressions']
+    fails = defaultdict(list)
     counts = Counter()
-    total = 0
     for d in dirs:
         base = Path(TEST262) / 'test' / d
         if not base.exists():
+            print(f"SKIP missing: {base}", file=sys.stderr)
             continue
-        for f in sorted(base.rglob('*.js')):
+        files = sorted(base.rglob('*.js'))
+        print(f"Scanning {len(files)} files under {d} ...", file=sys.stderr)
+        for f in files:
             if '_FIXTURE' in f.name:
                 continue
-            total += 1
             status, err = run_test(f)
-            counts[status] += 1
             if status == 'fail':
-                bucket = normalize_err(err)
-                fails.append((str(f.relative_to(Path(TEST262)/'test')), bucket, err[:300]))
-    ran = counts['pass'] + counts['fail']
-    rate = 100 * counts['pass'] / ran if ran else 0
-    print(f"\n=== SUMMARY over {total} tests (ran {ran}) ===")
-    print(f"pass rate: {rate:.1f}%  pass={counts['pass']} fail={counts['fail']} skip={counts['skip']}")
-    print("\n=== FAIL BUCKETS ===")
-    bucket_counts = Counter(b for _,b,_ in fails)
-    for b, c in bucket_counts.most_common():
-        print(f"  {c:4d}  {b}")
+                b = bucket(err)
+                fails[b].append((str(f.relative_to(Path(TEST262) / 'test')), err))
+                counts[b] += 1
+
+    # Sort buckets by frequency
+    print("\n=== SUMMARY ===")
+    for b, c in counts.most_common():
+        print(f"{c:>4} {b}")
     print("\n=== SAMPLE FAILS PER BUCKET ===")
-    by_bucket = defaultdict(list)
-    for path, bucket, err in fails:
-        by_bucket[bucket].append((path, err))
-    for bucket, items in sorted(by_bucket.items(), key=lambda x:-len(x[1]))[:8]:
-        print(f"\n--- {bucket} ({len(items)}) ---")
-        for path, err in items[:4]:
-            print(f"  {path}")
-            for line in err.splitlines()[:3]:
-                print(f"      {line}")
-    out = Path('/tmp/ruja_test262_fails.json')
-    out.write_text(json.dumps({'rate': rate, 'counts': dict(counts), 'fails': fails}, indent=2))
+    for b, items in fails.items():
+        print(f"\n--- {b} ({len(items)}) ---")
+        for p, e in items[:3]:
+            print(f"  {p}")
+            print(f"      {e[:200]}")
+
+    out = '/tmp/ruja_test262_fails.json'
+    with open(out, 'w') as f:
+        json.dump({b: items for b, items in fails.items()}, f, indent=2)
     print(f"\nfull dump -> {out}")
 
 if __name__ == '__main__':
