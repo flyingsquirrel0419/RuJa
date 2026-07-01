@@ -27,13 +27,13 @@ impl Vm {
                 {
                     return Err(Error::thrown(exc, &self.heap));
                 }
-                let frame = self.frames.last().unwrap();
+                let frame = self.current_frame()?;
                 let ip = frame.ip;
                 if ip >= frame.chunk.code.len() {
                     return Ok(Value::Undefined);
                 }
                 let op = frame.chunk.code[ip].clone();
-                self.frames.last_mut().unwrap().ip += 1;
+                self.current_frame_mut()?.ip += 1;
                 match op {
                     Op::Halt => {
                         let v = self.stack.pop().unwrap_or(Value::Undefined);
@@ -49,7 +49,7 @@ impl Vm {
                     }
                     Op::Const(idx) => {
                         let v = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             frame.chunk.constants[idx].clone()
                         };
                         self.stack.push(v);
@@ -136,7 +136,7 @@ impl Vm {
                     }
                     Op::DeclareEnv(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -160,7 +160,7 @@ impl Vm {
                     }
                     Op::DeclareVar(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -178,7 +178,7 @@ impl Vm {
                     }
                     Op::DeclareLet(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -202,7 +202,7 @@ impl Vm {
                     }
                     Op::DeclareConst(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -226,7 +226,7 @@ impl Vm {
                     }
                     Op::DeclareEnvConst(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -250,7 +250,7 @@ impl Vm {
                     }
                     Op::DeclareLetUninit(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -272,7 +272,7 @@ impl Vm {
                     }
                     Op::DeclareConstUninit(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -294,7 +294,7 @@ impl Vm {
                     }
                     Op::InitEnv(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -325,7 +325,7 @@ impl Vm {
                     }
                     Op::InitEnvConst(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -356,7 +356,7 @@ impl Vm {
                     }
                     Op::InitLet(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -387,7 +387,7 @@ impl Vm {
                     }
                     Op::InitConst(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -418,7 +418,7 @@ impl Vm {
                     }
                     Op::LoadEnv(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -469,7 +469,7 @@ impl Vm {
                     }
                     Op::StoreEnv(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -533,7 +533,7 @@ impl Vm {
                             *f.pending_with_this.lock() = None;
                         }
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -569,9 +569,7 @@ impl Vm {
                             // opcode.
                             if matches!(v, Value::Object(_)) {
                                 *self
-                                    .frames
-                                    .last_mut()
-                                    .unwrap()
+                                    .current_frame_mut()?
                                     .pending_with_this
                                     .lock() = Some(with_obj);
                             }
@@ -612,7 +610,7 @@ impl Vm {
                     Op::StoreEnvName(name_idx) => {
                         let value = self.stack.pop().unwrap_or(Value::Undefined);
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants
@@ -666,12 +664,12 @@ impl Vm {
                         self.stack.push(Value::Undefined);
                     }
                     Op::LoadLocal(idx) => {
-                        let v = self.frames.last().unwrap().locals[idx].clone();
+                        let v = self.current_frame()?.locals[idx].clone();
                         self.stack.push(v);
                     }
                     Op::StoreLocal(idx) => {
                         let v = self.stack.pop().unwrap_or(Value::Undefined);
-                        self.frames.last_mut().unwrap().locals[idx] = v;
+                        self.current_frame_mut()?.locals[idx] = v;
                     }
                     Op::Null => self.stack.push(Value::Null),
                     Op::Undefined => self.stack.push(Value::Undefined),
@@ -683,7 +681,7 @@ impl Vm {
                     Op::PushScope => {
                         let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                         let new_env = env::new_env(&self.heap, Some(cur_env), false);
-                        self.frames.last_mut().unwrap().env = new_env;
+                        self.current_frame_mut()?.env = new_env;
                     }
                     Op::PopScope => {
                         let parent = self.frames.last().and_then(|f| {
@@ -696,14 +694,14 @@ impl Vm {
                             })
                         });
                         if let Some(p) = parent {
-                            self.frames.last_mut().unwrap().env = p;
+                            self.current_frame_mut()?.env = p;
                         }
                     }
                     Op::PushWithEnv => {
                         let object = self.stack.pop().unwrap_or(Value::Undefined);
                         let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                         let new_env = env::new_with_env(&self.heap, cur_env, object);
-                        self.frames.last_mut().unwrap().env = new_env;
+                        self.current_frame_mut()?.env = new_env;
                     }
                     Op::PopWithEnv => {
                         let parent = self.frames.last().and_then(|f| {
@@ -716,7 +714,7 @@ impl Vm {
                             })
                         });
                         if let Some(p) = parent {
-                            self.frames.last_mut().unwrap().env = p;
+                            self.current_frame_mut()?.env = p;
                         }
                     }
                     Op::CloneLetNames(idx) => {
@@ -731,7 +729,7 @@ impl Vm {
                             .map(|f| f.chunk.let_names.get(idx).cloned().unwrap_or_default())
                             .unwrap_or_default();
                         let child = env::clone_loop_vars(&self.heap, cur_env, &names);
-                        self.frames.last_mut().unwrap().env = child;
+                        self.current_frame_mut()?.env = child;
                     }
                     Op::RestoreParentEnv => {
                         // After the loop body (which ran in a CloneLetEnv child),
@@ -748,7 +746,7 @@ impl Vm {
                             })
                         });
                         if let Some(p) = parent {
-                            self.frames.last_mut().unwrap().env = p;
+                            self.current_frame_mut()?.env = p;
                         }
                     }
                     Op::Dup => {
@@ -909,30 +907,30 @@ impl Vm {
                         self.stack.push(Value::Number((av >> (bv & 31)) as f64));
                     }
                     Op::Jump(target) => {
-                        self.frames.last_mut().unwrap().ip = target;
+                        self.current_frame_mut()?.ip = target;
                     }
                     Op::JumpIfFalse(target) => {
                         let v = self.stack.pop().unwrap_or(Value::Undefined);
                         if !v.is_truthy() {
-                            self.frames.last_mut().unwrap().ip = target;
+                            self.current_frame_mut()?.ip = target;
                         }
                     }
                     Op::JumpIfTrue(target) => {
                         let v = self.stack.pop().unwrap_or(Value::Undefined);
                         if v.is_truthy() {
-                            self.frames.last_mut().unwrap().ip = target;
+                            self.current_frame_mut()?.ip = target;
                         }
                     }
                     Op::JumpIfNullish(target) => {
                         let v = self.stack.pop().unwrap_or(Value::Undefined);
                         if v.is_nullish() {
-                            self.frames.last_mut().unwrap().ip = target;
+                            self.current_frame_mut()?.ip = target;
                         }
                     }
                     Op::JumpIfNotNullish(target) => {
                         let v = self.stack.pop().unwrap_or(Value::Undefined);
                         if !v.is_nullish() {
-                            self.frames.last_mut().unwrap().ip = target;
+                            self.current_frame_mut()?.ip = target;
                         }
                     }
                     Op::Return => {
@@ -1280,19 +1278,19 @@ impl Vm {
                         return Err(Error::thrown(v, &self.heap));
                     }
                     Op::PushTry(handler) => {
-                        let f = self.frames.last_mut().unwrap();
+                        let f = self.current_frame_mut()?;
                         let seq = f.guard_seq.load(Ordering::Relaxed) + 1;
                         f.guard_seq.store(seq, Ordering::Relaxed);
                         f.catch_stack.push((handler, seq));
                     }
                     Op::PopTry => {
-                        let f = self.frames.last_mut().unwrap();
+                        let f = self.current_frame_mut()?;
                         f.catch_stack.pop();
                     }
                     Op::PushFinally(target) => {
                         // Begin guarding try/catch with a finally: record the
                         // finally entry so non-local transfers divert to it.
-                        let f = self.frames.last_mut().unwrap();
+                        let f = self.current_frame_mut()?;
                         let seq = f.guard_seq.load(Ordering::Relaxed) + 1;
                         f.guard_seq.store(seq, Ordering::Relaxed);
                         f.finally_stack.push((target, seq));
@@ -1301,11 +1299,11 @@ impl Vm {
                         // The guarded region completed normally; drop the finally
                         // guard. A pending completion from inside the region was
                         // already popped when the transfer diverted to finally.
-                        self.frames.last_mut().unwrap().finally_stack.pop();
+                        self.current_frame_mut()?.finally_stack.pop();
                     }
                     Op::DivertBreak(finally_start) => {
                         let resume_ip = ip + 1;
-                        let f = self.frames.last_mut().unwrap();
+                        let f = self.current_frame_mut()?;
                         f.finally_completion_tag.store(2, Ordering::Relaxed);
                         *f.finally_completion_val.lock() = Value::Number(resume_ip as f64);
                         f.ip = finally_start;
@@ -1315,7 +1313,7 @@ impl Vm {
                         // A `continue` inside an active try/finally: record the
                         // completion as a continue with the loop's continue target,
                         // and divert to the finally body.
-                        let f = self.frames.last_mut().unwrap();
+                        let f = self.current_frame_mut()?;
                         f.finally_completion_tag.store(3, Ordering::Relaxed);
                         *f.finally_completion_val.lock() = Value::Number(cont as f64);
                         f.ip = finally_start;
@@ -1335,7 +1333,7 @@ impl Vm {
                     }
                     Op::GetPrivate(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             match &frame.chunk.constants[name_idx] {
                                 Value::String(s) => s.to_string(),
                                 _ => String::new(),
@@ -1361,7 +1359,7 @@ impl Vm {
                     }
                     Op::SetPrivate(name_idx) => {
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             match &frame.chunk.constants[name_idx] {
                                 Value::String(s) => s.to_string(),
                                 _ => String::new(),
@@ -1389,7 +1387,7 @@ impl Vm {
                         args.reverse();
                         let obj = self.stack.pop().unwrap_or(Value::Undefined);
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             match &frame.chunk.constants[name_idx] {
                                 Value::String(s) => s.to_string(),
                                 _ => String::new(),
@@ -1418,14 +1416,14 @@ impl Vm {
                         // completion (return/break/continue/throw) that diverted
                         // here, if any. A normal completion (tag 0) falls through.
                         let (tag, val) = {
-                            let f = self.frames.last().unwrap();
+                            let f = self.current_frame()?;
                             (
                                 f.finally_completion_tag.load(Ordering::Relaxed),
                                 f.finally_completion_val.lock().clone(),
                             )
                         };
                         {
-                            let f = self.frames.last_mut().unwrap();
+                            let f = self.current_frame_mut()?;
                             f.finally_completion_tag.store(0, Ordering::Relaxed);
                             *f.finally_completion_val.lock() = Value::Undefined;
                         }
@@ -1458,7 +1456,7 @@ impl Vm {
                             }
                             4 => {
                                 // throw
-                                let frame = self.frames.last_mut().unwrap();
+                                let frame = self.current_frame_mut()?;
                                 // If an outer finally still guards this scope,
                                 // divert the throw through it first.
                                 // Divert only if the outer finally is more deeply
@@ -1499,7 +1497,7 @@ impl Vm {
                             // transfer by jumping to its saved target. These are
                             // recorded as the loop's break/continue ip.
                             2 | 3 => {
-                                let frame = self.frames.last_mut().unwrap();
+                                let frame = self.current_frame_mut()?;
                                 // If an outer finally still guards this scope,
                                 // divert the break/continue through it first.
                                 if let Some(&(outer, _)) = frame.finally_stack.last() {
@@ -1539,7 +1537,7 @@ impl Vm {
                             .map(|f| f.gen_mode.load(Ordering::Relaxed))
                             .unwrap_or(false);
                         if in_gen {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             *frame.gen_yield.lock() = Some(v);
                             frame.gen_suspended.store(true, Ordering::Relaxed);
                             return Ok(Value::Undefined);
@@ -1569,7 +1567,7 @@ impl Vm {
                         // Rebind `this` in the current environment to the (possibly updated) value.
                         let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                         crate::environment::set(&self.heap, cur_env, "this", new_this.clone());
-                        self.frames.last_mut().unwrap().this_val = new_this.clone();
+                        self.current_frame_mut()?.this_val = new_this.clone();
                         self.stack.push(new_this);
                     }
                     Op::CallSuper(arg_count) => {
@@ -1647,7 +1645,7 @@ impl Vm {
                     Op::TypeofVar(name_idx) => {
                         // `typeof name`: "undefined" if the name is not bound (must not throw).
                         let name = {
-                            let frame = self.frames.last().unwrap();
+                            let frame = self.current_frame()?;
                             let v = frame
                                 .chunk
                                 .constants

@@ -196,6 +196,18 @@ impl Default for Vm {
 }
 
 impl Vm {
+    fn current_frame(&self) -> error::Result<&CallFrame> {
+        self.frames.last().ok_or_else(|| {
+            crate::error::Error::internal("no active call frame")
+        })
+    }
+
+    fn current_frame_mut(&mut self) -> error::Result<&mut CallFrame> {
+        self.frames.last_mut().ok_or_else(|| {
+            crate::error::Error::internal("no active call frame")
+        })
+    }
+
     pub fn new() -> Self {
         let heap = Heap::new();
         let global = env::new_env(&heap, None, true);
@@ -571,7 +583,7 @@ impl Vm {
             this_val.clone(),
         ));
         // Restore the saved catch_stack onto the new frame.
-        self.frames.last_mut().unwrap().catch_stack = catch_stack;
+        self.current_frame_mut()?.catch_stack = catch_stack;
         // Swap in a dedicated operand stack for the generator run, preserving
         // the caller's stack untouched. This keeps generator execution fully
         // isolated from the caller's operand values.
@@ -759,9 +771,9 @@ impl Vm {
                             };
                             // Pop the handler so we don't loop, push the thrown value
                             // for the catch binding, and jump to the handler ip.
-                            self.frames.last_mut().unwrap().catch_stack.pop();
+                            self.current_frame_mut()?.catch_stack.pop();
                             self.stack.push(thrown);
-                            self.frames.last_mut().unwrap().ip = handler;
+                            self.current_frame_mut()?.ip = handler;
                             continue;
                         }
                         None => return Err(e),
