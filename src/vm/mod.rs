@@ -2648,7 +2648,7 @@ impl Vm {
                     // would panic on RefCell reborrow).
                     let pairs: Vec<(Value, Value)> = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Map(m) = o {
-                            m.entries.lock().iter().cloned().collect()
+                            m.entries.lock().iter().map(|(k, v)| (k.0.clone(), v.clone())).collect::<Vec<_>>()
                         } else {
                             Vec::new()
                         }
@@ -2669,7 +2669,7 @@ impl Vm {
                 } else if is_set {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Set(s) = o {
-                            s.items.lock().clone()
+                            s.items.lock().iter().map(|k| k.0.clone()).collect::<Vec<_>>()
                         } else {
                             Vec::new()
                         }
@@ -2723,7 +2723,7 @@ impl Vm {
                     }
                 }
                 if let HeapObj::Map(m) = o {
-                    for (k, _) in m.entries.lock().iter() {
+                    for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
                         if let Value::String(s) = k {
                             own.push(Value::String(s.clone()));
                         }

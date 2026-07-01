@@ -29,11 +29,11 @@ use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{
-    ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, ObjectData,
-    PropertyDescriptor, PropertyKey, SetData, Value,
+    ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, MapKey,
+    ObjectData, PropertyDescriptor, PropertyKey, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_rational::Ratio;
@@ -419,7 +419,7 @@ pub(crate) fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
                 }
             }
             if let HeapObj::Map(m) = o {
-                for (k, _) in m.entries.lock().iter() {
+                for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
                     if let Value::String(s) = k {
                         keys.push(s.clone());
                     }

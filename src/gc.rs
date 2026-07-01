@@ -107,7 +107,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         HeapObj::Map(m) => {
             for (k, v) in m.entries.lock().iter() {
-                push_value(k, worklist);
+                push_value(&k.0, worklist);
                 push_value(v, worklist);
             }
         }
@@ -120,8 +120,8 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         HeapObj::WeakSet(_) => {}
         HeapObj::Set(s) => {
-            for v in s.items.lock().iter() {
-                push_value(v, worklist);
+            for k in s.items.lock().iter() {
+                push_value(&k.0, worklist);
             }
         }
         HeapObj::Promise(p) => {
