@@ -43,7 +43,9 @@ practice.
   loop) is now caught and returns `Error::internal`. The remaining `.unwrap()`
   calls rely on the loop invariant that a frame is always present while
   dispatching opcodes; they will be converted to defensive `ok_or_else` during
-  the upcoming `vm.rs` module split.
+  the `vm.rs` module split.
+- **File size**: `src/builtins.rs` was split into `src/builtins/{mod,math,json,global,array,string,collections,regexp,function}.rs`.
+  The `vm.rs` split is still pending.
 
 ## Verification
 

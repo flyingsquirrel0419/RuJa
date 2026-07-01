@@ -25,6 +25,9 @@
 - **cargo-fuzz target**: Added `fuzz/fuzz_targets/fuzz_target_1.rs` exercising the
   public `Vm::run` API with fuel-capped execution. Initial 30-second run completed
   over 50,000 iterations without triggering a panic.
+- **Module split**: `src/builtins.rs` (7,000+ lines) was split into
+  `src/builtins/{mod,math,json,global,array,string,collections,regexp,function}.rs`.
+  The `vm.rs` split is still pending.
 
 ### Documentation
 - Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
