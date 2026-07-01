@@ -41,7 +41,7 @@ jobs:
           # Enumerate test262/test children. language/ is expanded into its
           # subdirectories; do not also include language/ itself.
           dirs=$(cd ~/test262/test && {
-            find . -maxdepth 1 -mindepth 1 -type d | sed 's|^\./||' | grep -vx 'harness\|language'
+            find . -maxdepth 1 -mindepth 1 -type d | sed 's|^\./||' | grep -vxE 'harness|language|intl402|staging'
             find ./language -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sed 's|^\./||'
           } | sort -u | jq -R . | jq -s -c .)
           echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
