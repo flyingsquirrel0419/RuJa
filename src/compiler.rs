@@ -121,11 +121,13 @@ impl Compiler {
         let n = program.body.len();
         // Hoist function declarations: compile them first so they're available
         // before any statement in the body runs.
+        let mut fn_decl_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for stmt in &program.body {
             if let StmtNode::FunctionDecl(f) = &stmt.node {
+                if let Some(name) = &f.name {
+                    fn_decl_names.insert(name.to_string());
+                }
                 self.compile_stmt(stmt)?;
-                // StoreGlobal (from FunctionDecl) pushes undefined; discard it.
-                self.chunk.emit(Op::Pop, self.current_line);
                 let _ = f;
             }
         }
@@ -134,10 +136,17 @@ impl Compiler {
             let mut var_names = Vec::new();
             collect_var_names_recursive(&stmt.node, &mut var_names);
             for name in &var_names {
+                // Skip names already hoisted by function declaration hoisting.
+                if fn_decl_names.contains(&**name) {
+                    continue;
+                }
                 self.declare(name, VarKind::Var)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::Const(name_idx), self.current_line);
-                self.chunk.emit(Op::StoreGlobal, self.current_line);
+                // Use Undefined + DeclareVar (always creates a binding)
+                // instead of StoreGlobal (which would throw in strict mode
+                // when the binding doesn't exist yet).
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
             }
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at the top
@@ -460,9 +469,11 @@ impl Compiler {
                         self.declare(name, *kind)?;
                         let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                         if self.scopes.len() == 1 {
-                            // top-level var: store as global
-                            self.chunk.emit(Op::Const(name_idx), self.current_line);
-                            self.chunk.emit(Op::StoreGlobal, self.current_line);
+                            // top-level var: declare as global binding.
+                            // Use DeclareVar (always creates binding) instead
+                            // of StoreGlobal (which throws for undeclared in
+                            // strict mode).
+                            self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
                         } else {
                             // var was hoisted to function-scope root; just set the value.
                             self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
@@ -852,8 +863,9 @@ impl Compiler {
                     } else {
                         // store as global so recursive calls can find it
                         let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
-                        self.chunk.emit(Op::Const(name_idx), self.current_line);
-                        self.chunk.emit(Op::StoreGlobal, self.current_line);
+                        // Use DeclareVar (always creates binding) instead of
+                        // StoreGlobal (which throws for undeclared in strict).
+                        self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
                     }
                 }
             }
@@ -1216,6 +1228,16 @@ impl Compiler {
             let mut var_names = Vec::new();
             collect_var_names_recursive(&stmt.node, &mut var_names);
             for name in &var_names {
+                // Skip names that will be hoisted by function declaration
+                // hoisting below (declaring them as Var here would make
+                // resolve() find them and use StoreLocal instead of DeclareVar,
+                // causing a storage mismatch).
+                let is_fn_decl = f.body.iter().any(|s| {
+                    matches!(&s.node, StmtNode::FunctionDecl(fd) if fd.name.as_deref() == Some(&**name))
+                });
+                if is_fn_decl {
+                    continue;
+                }
                 self.declare(name, VarKind::Var)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::Undefined, self.current_line);
@@ -1227,8 +1249,6 @@ impl Compiler {
         for stmt in &f.body {
             if let StmtNode::FunctionDecl(_) = &stmt.node {
                 self.compile_stmt(stmt)?;
-                // StoreGlobal pushes undefined; discard it.
-                self.chunk.emit(Op::Pop, self.current_line);
             }
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at function
@@ -3130,9 +3150,15 @@ fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
                 // Skip duplicate names to avoid double-hoisting.
             }
         }
-        // Function declarations are hoisted separately by the function
-        // declaration hoisting pass; do NOT collect them here to avoid
-        // overwriting the function value with undefined.
+        // Function declarations are also collected here so eval leak-back
+        // knows about them. They're hoisted separately by a dedicated pass
+        // that runs before var hoisting, and DeclareVar doesn't overwrite
+        // existing bindings (declare_var checks already_exists).
+        StmtNode::FunctionDecl(f) => {
+            if let Some(name) = &f.name {
+                out.push(name.clone());
+            }
+        }
         StmtNode::Block(body) => {
             for s in body {
                 collect_var_names_recursive(&s.node, out);

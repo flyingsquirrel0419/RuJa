@@ -122,6 +122,14 @@ impl Vm {
                             )));
                         }
                         crate::environment::SetOutcome::NotFound => {
+                            // Strict mode: assigning to an undeclared variable
+                            // throws ReferenceError (not auto-global).
+                            if self.current_strict() {
+                                return Err(Error::reference(format!(
+                                    "{} is not defined",
+                                    name
+                                )));
+                            }
                             crate::environment::declare(
                                 &self.heap,
                                 self.global,
@@ -647,6 +655,14 @@ impl Vm {
                                 }
                             }
                             if !set_on_with {
+                                // Strict mode: assigning to an undeclared variable
+                                // throws ReferenceError (not auto-global).
+                                if self.current_strict() {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )));
+                                }
                                 crate::environment::declare(
                                     &self.heap,
                                     env,
