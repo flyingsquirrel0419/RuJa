@@ -735,21 +735,40 @@ pub fn utf16_from_codes(codes: &[u16]) -> String {
 }
 
 /// Return the JS length (UTF-16 code-unit count) of a Rust string.
+/// Fast path: if the string is pure ASCII (the common case in JS),
+/// the length equals the byte length — no UTF-16 encoding needed.
 pub fn utf16_len(s: &str) -> usize {
-    s.encode_utf16().count()
+    if s.is_ascii() {
+        s.len()
+    } else {
+        s.encode_utf16().count()
+    }
 }
 
 /// Get the code unit at UTF-16 index `i`, or None if out of range.
+/// Fast path: ASCII strings can index directly by byte.
 pub fn utf16_get(s: &str, i: usize) -> Option<u16> {
-    s.encode_utf16().nth(i)
+    if s.is_ascii() {
+        s.as_bytes().get(i).map(|b| *b as u16)
+    } else {
+        s.encode_utf16().nth(i)
+    }
 }
 
 /// Slice a Rust string by UTF-16 code-unit indices [start, end).
+/// Fast path: ASCII strings can slice directly by byte index.
 pub fn utf16_slice(s: &str, start: usize, end: usize) -> String {
-    let units: Vec<u16> = s.encode_utf16().collect();
-    let start = start.min(units.len());
-    let end = end.clamp(start, units.len());
-    String::from_utf16_lossy(&units[start..end])
+    if s.is_ascii() {
+        let len = s.len();
+        let start = start.min(len);
+        let end = end.clamp(start, len);
+        s[start..end].to_string()
+    } else {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let start = start.min(units.len());
+        let end = end.clamp(start, units.len());
+        String::from_utf16_lossy(&units[start..end])
+    }
 }
 
 /// Find the UTF-16 code-unit index of `needle` in `s` starting at or after
