@@ -628,6 +628,14 @@ impl Parser {
                     "Class declaration cannot be used as a single statement body".to_string(),
                 ));
             }
+            // ES6: labelled function declarations are not allowed as the
+            // body of if/else/while/do-while/for/with without a block.
+            // Check recursively through nested labels.
+            StmtNode::Labeled(_, body) if is_labelled_function(&stmt.node) => {
+                return Err(error::Error::syntax(
+                    "Labelled function declaration cannot be used as a single statement body".to_string(),
+                ));
+            }
             // ES6: function declarations are not allowed as the body of
             // if/else/while/do-while/for/with without a block (in strict mode).
             StmtNode::FunctionDecl(_) => {
@@ -2680,6 +2688,16 @@ impl Parser {
 /// and function in strict mode) go into `lexical`; var declarations (var,
 /// and function in sloppy mode) go into `var`. Does NOT descend into blocks
 /// or nested function bodies — only the case body's direct children matter.
+/// Check if a statement is a labelled function declaration (possibly nested
+/// through multiple labels).
+fn is_labelled_function(node: &StmtNode) -> bool {
+    match node {
+        StmtNode::Labeled(_, body) => is_labelled_function(&body.node),
+        StmtNode::FunctionDecl(_) => true,
+        _ => false,
+    }
+}
+
 fn collect_decl_names(
     node: &StmtNode,
     lexical: &mut Vec<Arc<str>>,
