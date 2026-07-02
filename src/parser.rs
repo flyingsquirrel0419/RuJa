@@ -25,6 +25,8 @@ pub struct Parser {
     /// Whether the current parse context is strict (inherited from an
     /// enclosing strict function/program). Drives directive inheritance.
     is_strict_context: bool,
+    /// When true, `in` is not treated as a binary operator (for-in head parsing).
+    no_in: bool,
     /// Source line of the first token of the statement currently being parsed
     /// (captured at `parse_stmt` entry). Used by `stmt()` so a statement's line
     /// reflects where it begins, not where its construction helper finishes.
@@ -53,6 +55,7 @@ impl Parser {
             arrow_rest: None,
             arrow_destructure_decls: Vec::new(),
             is_strict_context: false,
+            no_in: false,
             stmt_start_line: 0,
             expr_depth: 0,
             stmt_depth: 0,
@@ -516,8 +519,11 @@ impl Parser {
             self.peek(),
             TokenKind::Var | TokenKind::Let | TokenKind::Const
         ) {
-            // could be for-in / for-of
+            // could be for-in / for-of; set no_in so the initializer
+            // expression doesn't consume the `in` as a binary operator.
+            self.no_in = true;
             let stmt = self.parse_var_decl_no_semi()?;
+            self.no_in = false;
             if self.check(&TokenKind::In) {
                 self.advance();
                 let right = self.parse_expr()?;
@@ -547,7 +553,48 @@ impl Parser {
             }
             Some(Box::new(stmt))
         } else {
-            let e = self.parse_expr()?;
+            // Non-declaration for-head: `for (expr in/of rhs)`.
+            // Parse the left-hand side with `no_in` so that `in` is not
+            // consumed as a binary operator, allowing us to detect the
+            // for-in form.
+            self.no_in = true;
+            let e = self.parse_assign()?;
+            self.no_in = false;
+            if self.check(&TokenKind::In) {
+                self.advance();
+                let right = self.parse_expr()?;
+                self.expect(&TokenKind::RParen, ")")?;
+                let body = Box::new(self.parse_stmt()?);
+                return Ok(self.stmt(StmtNode::ForIn {
+                    left: Box::new(self.stmt(StmtNode::ExprStmt(e))),
+                    right,
+                    body,
+                }));
+            }
+            if self.check(&TokenKind::Of) {
+                self.advance();
+                let right = self.parse_assign()?;
+                self.expect(&TokenKind::RParen, ")")?;
+                let body = Box::new(self.parse_stmt()?);
+                return Ok(self.stmt(StmtNode::ForOf {
+                    left: Box::new(self.stmt(StmtNode::ExprStmt(e))),
+                    right,
+                    body,
+                    is_await,
+                }));
+            }
+            // Not for-in/for-of: regular for-loop with expression init.
+            // The expression may contain a comma sequence.
+            let mut e = e;
+            if self.check(&TokenKind::Comma) {
+                let mut exprs = vec![e];
+                while self.eat(&TokenKind::Comma) {
+                    self.no_in = true;
+                    exprs.push(self.parse_assign()?);
+                    self.no_in = false;
+                }
+                e = Expr::Sequence(exprs);
+            }
             Some(Box::new(self.stmt(StmtNode::ExprStmt(e))))
         };
         self.expect(&TokenKind::Semicolon, ";")?;
@@ -884,7 +931,7 @@ impl Parser {
                 TokenKind::Lte => BinOp::Lte,
                 TokenKind::Gte => BinOp::Gte,
                 TokenKind::Instanceof => BinOp::Instanceof,
-                TokenKind::In => BinOp::In,
+                TokenKind::In if !self.no_in => BinOp::In,
                 _ => break,
             };
             self.advance();

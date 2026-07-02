@@ -1182,6 +1182,13 @@ impl Compiler {
                 }
             }
         }
+        // Hoist function declarations: compile them first so they're available
+        // before any statement in the body runs (matches top-level behavior).
+        for stmt in &f.body {
+            if let StmtNode::FunctionDecl(_) = &stmt.node {
+                self.compile_stmt(stmt)?;
+            }
+        }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at function
         // entry, so accessing them before the declaration throws ReferenceError.
         {
@@ -1189,6 +1196,9 @@ impl Compiler {
             self.emit_lexical_hoist(&lex)?;
         }
         for stmt in &f.body {
+            if matches!(&stmt.node, StmtNode::FunctionDecl(_)) {
+                continue;
+            }
             self.compile_stmt(stmt)?;
         }
         self.chunk.emit(Op::ReturnUndefined, self.current_line);
