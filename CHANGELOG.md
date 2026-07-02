@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### test262 conformance improvements
+
+- **for-in/for-of non-declaration parsing**: `for (x in obj)` and
+  `for ((x) in obj)` now parse and assign correctly (was: SyntaxError or
+  undefined). Added `no_in` flag to prevent `in` being consumed as a binary
+  operator in for-head expressions.
+- **StoreGlobal stack imbalance**: function declaration hoisting left an
+  `undefined` on the stack, corrupting `console.log(f())` when `f` contained
+  a nested function declaration. Fixed by emitting `Pop` after each hoisted
+  function declaration.
+- **with-statement var semantics**: `var foo = "x"` inside `with(o)` where
+  `o` has a `foo` property now sets `o.foo` per ES5 spec. Previously the
+  assignment went to the function-scope root, bypassing the with-object.
+- **Strict-mode eval/arguments enforcement**: `eval = 42`, `var eval`,
+  `function eval()`, `function f(eval)`, and duplicate parameters in strict
+  mode now throw `SyntaxError` at parse time.
+- **try-finally continue/break**: `continue`/`break` inside a `finally`
+  block caused an infinite loop because `finally_stack` was not popped
+  before compiling the finally body, causing `DivertContinue` to loop back
+  into the same finally.
+- **Class declarations in single-statement position**: `if (x) class C {}`
+  and similar now throw `SyntaxError` per ES6 spec.
+- **for-in/for-of non-declaration left side assignment**: the iterator value
+  was left on the stack and discarded instead of being assigned to the
+  variable. Now uses `compile_assign_target` for proper assignment.
+
 ## [0.4.0-alpha] - 2026-07-02
 
 ### Heap Limit Enforcement Overhaul
