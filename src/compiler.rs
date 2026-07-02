@@ -120,6 +120,8 @@ impl Compiler {
         for stmt in &program.body {
             if let StmtNode::FunctionDecl(f) = &stmt.node {
                 self.compile_stmt(stmt)?;
+                // StoreGlobal (from FunctionDecl) pushes undefined; discard it.
+                self.chunk.emit(Op::Pop, self.current_line);
                 let _ = f;
             }
         }
@@ -1187,6 +1189,8 @@ impl Compiler {
         for stmt in &f.body {
             if let StmtNode::FunctionDecl(_) = &stmt.node {
                 self.compile_stmt(stmt)?;
+                // StoreGlobal pushes undefined; discard it.
+                self.chunk.emit(Op::Pop, self.current_line);
             }
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at function
