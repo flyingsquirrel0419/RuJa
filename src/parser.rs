@@ -688,6 +688,34 @@ impl Parser {
         Ok(self.stmt(StmtNode::DoWhile { body, cond }))
     }
 
+    /// Check for duplicate bound names in a for-in/for-of declaration.
+    /// ES spec: It is a Syntax Error if the BoundNames of ForDeclaration
+    /// contains any duplicate entries.
+    fn check_for_dup_bound_names(&self, node: &StmtNode) -> error::Result<()> {
+        let mut names = Vec::new();
+        match node {
+            StmtNode::VarDecl { decls, .. } => {
+                for (name, _) in decls {
+                    names.push(name.clone());
+                }
+            }
+            StmtNode::Destructure { pattern, .. } => {
+                collect_pattern_names(pattern, &mut names);
+            }
+            _ => return Ok(()),
+        }
+        let mut seen = std::collections::HashSet::new();
+        for name in &names {
+            if !seen.insert(name.clone()) {
+                return Err(error::Error::syntax(format!(
+                    "Duplicate declaration '{}' in for-in/for-of head",
+                    name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn parse_for(&mut self) -> error::Result<Stmt> {
         self.advance();
         // `for await (x of asyncIterable)` — async iteration. Only the for-of
@@ -706,6 +734,8 @@ impl Parser {
             self.no_in = true;
             let stmt = self.parse_var_decl_no_semi()?;
             self.no_in = false;
+            // Check for duplicate bound names in for-in/for-of declarations.
+            self.check_for_dup_bound_names(&stmt.node)?;
            if self.check(&TokenKind::In) {
                self.advance();
                let right = self.parse_expr()?;
