@@ -2938,18 +2938,45 @@ impl Compiler {
                 property,
                 computed,
                 ..
-            } => {
-                // Load current value via GetProp/GetElem.
-                self.compile_member_load(object, property, *computed)?;
-                // value, bin -> result
+           } => {
+                // Evaluate obj+key ONCE, then Dup2 so the same pair is
+                // available for both the load and the store. This matches
+                // the spec requirement that ToPropertyKey is called only
+                // once for compound assignment.
+                self.compile_expr(object)?;
+                if *computed {
+                    self.compile_expr(property)?;
+                } else {
+                    let key = if let Expr::String(s) = property.as_ref() {
+                        s.to_string()
+                    } else {
+                        String::new()
+                    };
+                    let key_idx = self
+                        .chunk
+                        .add_constant(Value::String(Arc::from(key.as_str())));
+                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                }
+                // stack: [obj, key]
+                self.chunk.emit(Op::Dup2, self.current_line);
+                // stack: [obj, key, obj, key]
+                // Load current value.
+                if *computed {
+                    self.chunk.emit(Op::GetElem, self.current_line);
+                } else {
+                    self.chunk.emit(Op::GetProp, self.current_line);
+                }
+                // stack: [obj, key, currentValue]
+                // Evaluate RHS and apply binary op.
                 self.compile_expr(value)?;
                 self.chunk.emit(bin, 0);
-                // Store: re-push object/key, then SetProp consumes [obj, key, result].
-                // result is currently on top; rotate so obj,key land below it.
-                self.compile_member_key(object, property, *computed)?;
-                // stack: [result, obj, key] -> Rot3 -> [obj, key, result] for SetProp.
-                self.chunk.emit(Op::Rot3, self.current_line);
-                self.chunk.emit(Op::SetProp, self.current_line);
+                // stack: [obj, key, result]
+                // Store: SetProp/SetElem consumes [obj, key, value] and pushes value.
+                if *computed {
+                    self.chunk.emit(Op::SetElem, self.current_line);
+                } else {
+                    self.chunk.emit(Op::SetProp, self.current_line);
+                }
             }
             _ => {
                 self.compile_expr(target)?;
@@ -2983,9 +3010,33 @@ impl Compiler {
                 computed,
                 ..
             } => {
+                // Evaluate obj+key once, Dup2 for reuse in the store.
+                self.compile_expr(object)?;
+                if *computed {
+                    self.compile_expr(property)?;
+                } else {
+                    let key = if let Expr::String(s) = property.as_ref() {
+                        s.to_string()
+                    } else {
+                        String::new()
+                    };
+                    let key_idx = self
+                        .chunk
+                        .add_constant(Value::String(Arc::from(key.as_str())));
+                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                }
+                // stack: [obj, key]
+                self.chunk.emit(Op::Dup2, self.current_line);
+                // stack: [obj, key, obj, key]
                 // Load current value.
-                self.compile_member_load(object, property, *computed)?;
+                if *computed {
+                    self.chunk.emit(Op::GetElem, self.current_line);
+                } else {
+                    self.chunk.emit(Op::GetProp, self.current_line);
+                }
+                // stack: [obj, key, currentValue]
                 self.chunk.emit(Op::Dup, self.current_line);
+                // stack: [obj, key, currentValue, currentValue]
                 let (cond_jump, fires_when) = match op {
                     AssignOp::AndAssign => (Op::JumpIfFalse(0), "falsy"),
                     AssignOp::OrAssign => (Op::JumpIfTrue(0), "truthy"),
@@ -2995,14 +3046,17 @@ impl Compiler {
                 let _ = fires_when;
                 let jskip = self.chunk.code.len();
                 self.chunk.emit(cond_jump, 0);
-                // Short-circuit fired: drop the old value, evaluate the RHS, store it.
+                // Short-circuit fired: drop the old value (keep obj+key),
+                // evaluate the RHS, store it.
                 self.chunk.emit(Op::Pop, self.current_line);
+                // stack: [obj, key]
                 self.compile_expr(value)?;
-                // stack: [result]; re-push object/key and store via SetProp.
-                self.compile_member_key(object, property, *computed)?;
-                // stack: [result, obj, key] -> Rot3 -> [obj, key, result] for SetProp.
-                self.chunk.emit(Op::Rot3, self.current_line);
-                self.chunk.emit(Op::SetProp, self.current_line);
+                // stack: [obj, key, result]
+                if *computed {
+                    self.chunk.emit(Op::SetElem, self.current_line);
+                } else {
+                    self.chunk.emit(Op::SetProp, self.current_line);
+                }
                 self.chunk.patch_jump(jskip, self.chunk.code.len());
             }
             _ => {
@@ -3023,56 +3077,6 @@ impl Compiler {
                 self.compile_assign_target(target)?;
                 self.chunk.patch_jump(jskip, self.chunk.code.len());
             }
-        }
-        Ok(())
-    }
-
-    /// Push the current value of a member expression onto the stack.
-    fn compile_member_load(
-        &mut self,
-        object: &Expr,
-        property: &Expr,
-        computed: bool,
-    ) -> error::Result<()> {
-        self.compile_expr(object)?;
-        if computed {
-            self.compile_expr(property)?;
-            self.chunk.emit(Op::GetElem, self.current_line);
-        } else {
-            let key = if let Expr::String(s) = property {
-                s.to_string()
-            } else {
-                String::new()
-            };
-            let key_idx = self
-                .chunk
-                .add_constant(Value::String(Arc::from(key.as_str())));
-            self.chunk.emit(Op::Const(key_idx), self.current_line);
-            self.chunk.emit(Op::GetProp, self.current_line);
-        }
-        Ok(())
-    }
-
-    /// Push the object and key for a member store (without the value).
-    fn compile_member_key(
-        &mut self,
-        object: &Expr,
-        property: &Expr,
-        computed: bool,
-    ) -> error::Result<()> {
-        self.compile_expr(object)?;
-        if computed {
-            self.compile_expr(property)?;
-        } else {
-            let key = if let Expr::String(s) = property {
-                s.to_string()
-            } else {
-                String::new()
-            };
-            let key_idx = self
-                .chunk
-                .add_constant(Value::String(Arc::from(key.as_str())));
-            self.chunk.emit(Op::Const(key_idx), self.current_line);
         }
         Ok(())
     }

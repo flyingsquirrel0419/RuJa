@@ -762,6 +762,15 @@ impl Vm {
                         self.stack.push(c);
                     }
                 }
+                Op::Dup2 => {
+                    let len = self.stack.len();
+                    if len >= 2 {
+                        let b = self.stack[len - 1].clone();
+                        let a = self.stack[len - 2].clone();
+                        self.stack.push(a);
+                        self.stack.push(b);
+                    }
+                }
                 Op::Add => self.bin_op(
                     |a, b| Value::Number(a + b),
                     |a, b| Value::String(Arc::from(format!("{}{}", a, b).as_str())),

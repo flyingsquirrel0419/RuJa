@@ -230,9 +230,26 @@ impl Vm {
                 let pkey = crate::value::PropertyKey::from(key);
 
                 // 1. Look for an accessor `set` up the prototype chain.
-                if let Some(setter) = self.find_setter(*idx, &pkey) {
-                    self.call_function(&setter, std::slice::from_ref(&value), Some(obj.clone()))?;
-                    return Ok(());
+                // find_setter returns:
+                //   Some(Some(setter)) — accessor with setter: call it.
+                //   Some(None)          — accessor without setter: throw in strict.
+                //   None               — no accessor found: proceed to data.
+                match self.find_setter(*idx, &pkey) {
+                    Some(Some(setter)) => {
+                        self.call_function(&setter, std::slice::from_ref(&value), Some(obj.clone()))?;
+                        return Ok(());
+                    }
+                    Some(None) => {
+                        // Accessor property with no setter.
+                        if self.current_strict() {
+                            return Err(Error::type_err(format!(
+                                "Cannot set property '{}' which has only a getter",
+                                key
+                            )));
+                        }
+                        return Ok(());
+                    }
+                    None => {} // No accessor found; continue to data property checks.
                 }
 
                 // 2. Reject writes to a non-writable own data property.
@@ -319,31 +336,33 @@ impl Vm {
     }
 
     /// Walk the prototype chain starting at `idx` looking for an accessor
-    /// descriptor for `key` with a non-empty `set` function. Returns the
-    /// setter to invoke, if any. Used by ordinary [[Set]] to honor inherited
-    /// setters.
+    /// descriptor for `key`. Returns:
+    /// - `Some(Some(setter))` if an accessor with a setter is found.
+    /// - `Some(None)` if an accessor is found but it has no setter
+    ///   (`set: undefined`); the caller must throw TypeError in strict mode.
+    /// - `None` if no accessor was found on the chain.
     pub(crate) fn find_setter(
         &mut self,
         mut idx: GcIdx,
         key: &crate::value::PropertyKey,
-    ) -> Option<Value> {
+    ) -> Option<Option<Value>> {
         let mut depth = 0;
         while depth < 1024 {
             depth += 1;
             let (found, proto) = self.heap.with_obj(idx.0, |o| {
                 let props = o.props();
-                let setter = props.lock().get(key).and_then(|d| {
+                let result = props.lock().get(key).and_then(|d| {
                     if d.is_accessor {
-                        d.set.clone()
+                        Some(d.set.clone())
                     } else {
                         None
                     }
                 });
                 let proto = o.proto().lock().clone();
-                (setter, proto)
+                (result, proto)
             });
-            if let Some(s) = found {
-                return Some(s);
+            if let Some(setter_opt) = found {
+                return Some(setter_opt);
             }
             match proto {
                 Some(Value::Object(pidx)) => idx = pidx,

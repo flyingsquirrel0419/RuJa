@@ -109,6 +109,8 @@ pub enum Op {
     Dup,
     Swap,
     Rot3,
+    /// Duplicate the top two stack values: [a, b] -> [a, b, a, b]
+    Dup2,
 
     // Literals
     Null,

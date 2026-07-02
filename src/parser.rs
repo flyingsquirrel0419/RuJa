@@ -40,6 +40,13 @@ pub struct Parser {
     /// `expr_depth`: deeply nested `{{...}}` / `if(1) if(1) ...` would
     /// otherwise overflow the Rust parser stack on untrusted input.
     stmt_depth: usize,
+    /// Nesting depth of iteration statements (while, do-while, for, for-in,
+    /// for-of). `break` (unlabelled) is valid inside loops or switch;
+    /// `continue` is valid only inside loops.
+    loop_depth: usize,
+    /// Nesting depth of switch statements. `break` (unlabelled) is valid
+    /// inside switch even without an enclosing loop.
+    switch_depth: usize,
 }
 
 impl Parser {
@@ -59,6 +66,8 @@ impl Parser {
             stmt_start_line: 0,
             expr_depth: 0,
             stmt_depth: 0,
+            loop_depth: 0,
+            switch_depth: 0,
         }
     }
 
@@ -267,12 +276,24 @@ impl Parser {
                 self.advance();
                 let l = self.parse_opt_label();
                 self.expect_semi()?;
+                // `break` (unlabelled) is only valid inside a loop or switch.
+                if l.is_none() && self.loop_depth == 0 && self.switch_depth == 0 {
+                    return Err(error::Error::syntax(
+                        "Illegal break statement".to_string(),
+                    ));
+                }
                 Ok(self.stmt(StmtNode::Break(l)))
             }
             TokenKind::Continue => {
                 self.advance();
                 let l = self.parse_opt_label();
                 self.expect_semi()?;
+                // `continue` (unlabelled) is only valid inside a loop.
+                if l.is_none() && self.loop_depth == 0 {
+                    return Err(error::Error::syntax(
+                        "Illegal continue statement".to_string(),
+                    ));
+                }
                 Ok(self.stmt(StmtNode::Continue(l)))
             }
             TokenKind::Throw => {
@@ -535,7 +556,9 @@ impl Parser {
         self.expect(&TokenKind::LParen, "(")?;
         let cond = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
+        self.loop_depth += 1;
         let body = Box::new(self.parse_single_stmt()?);
+        self.loop_depth -= 1;
         Ok(self.stmt(StmtNode::While { cond, body }))
     }
 
@@ -550,7 +573,9 @@ impl Parser {
 
     fn parse_do_while(&mut self) -> error::Result<Stmt> {
         self.advance();
+        self.loop_depth += 1;
         let body = Box::new(self.parse_single_stmt()?);
+        self.loop_depth -= 1;
         self.expect(&TokenKind::While, "while")?;
         self.expect(&TokenKind::LParen, "(")?;
         let cond = self.parse_expr()?;
@@ -577,11 +602,13 @@ impl Parser {
             self.no_in = true;
             let stmt = self.parse_var_decl_no_semi()?;
             self.no_in = false;
-            if self.check(&TokenKind::In) {
-                self.advance();
-                let right = self.parse_expr()?;
-                self.expect(&TokenKind::RParen, ")")?;
+           if self.check(&TokenKind::In) {
+               self.advance();
+               let right = self.parse_expr()?;
+               self.expect(&TokenKind::RParen, ")")?;
+                self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
+                self.loop_depth -= 1;
                 return Ok(self.stmt(StmtNode::ForIn {
                     left: Box::new(stmt),
                     right,
@@ -592,7 +619,9 @@ impl Parser {
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
+                self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
+                self.loop_depth -= 1;
                 return Ok(self.stmt(StmtNode::ForOf {
                     left: Box::new(stmt),
                     right,
@@ -617,7 +646,9 @@ impl Parser {
                 self.advance();
                 let right = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
+                self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
+                self.loop_depth -= 1;
                 return Ok(self.stmt(StmtNode::ForIn {
                     left: Box::new(self.stmt(StmtNode::ExprStmt(e))),
                     right,
@@ -628,7 +659,9 @@ impl Parser {
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
+                self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
+                self.loop_depth -= 1;
                 return Ok(self.stmt(StmtNode::ForOf {
                     left: Box::new(self.stmt(StmtNode::ExprStmt(e))),
                     right,
@@ -663,7 +696,9 @@ impl Parser {
             Some(self.parse_expr()?)
         };
         self.expect(&TokenKind::RParen, ")")?;
+        self.loop_depth += 1;
         let body = Box::new(self.parse_single_stmt()?);
+        self.loop_depth -= 1;
         Ok(self.stmt(StmtNode::For {
             init,
             cond,
@@ -778,6 +813,7 @@ impl Parser {
         let disc = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
         self.expect(&TokenKind::LBrace, "{")?;
+        self.switch_depth += 1;
         let mut cases = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let test = if self.eat(&TokenKind::Case) {
@@ -798,8 +834,34 @@ impl Parser {
             }
             cases.push(SwitchCase { test, body });
         }
-        self.expect(&TokenKind::RBrace, "}")?;
-        Ok(self.stmt(StmtNode::Switch { disc, cases }))
+       self.expect(&TokenKind::RBrace, "}")?;
+       self.switch_depth -= 1;
+        // Static semantic early errors: detect duplicate lexical names
+        // and lexical/var name clashes within a single switch CaseBlock.
+        // (ES2025: LexicallyDeclaredNames of CaseBlock must not contain
+        // duplicates, and must not intersect with VarDeclaredNames.)
+        let mut lexical_names: Vec<Arc<str>> = Vec::new();
+        let mut var_names: Vec<Arc<str>> = Vec::new();
+        for case in &cases {
+            for stmt in &case.body {
+                collect_decl_names(&stmt.node, &mut lexical_names, &mut var_names, self.is_strict_context);
+            }
+        }
+        for n in &lexical_names {
+            if lexical_names.iter().filter(|x| *x == n).count() > 1 {
+                return Err(error::Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    n
+                )));
+            }
+            if var_names.contains(n) {
+                return Err(error::Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    n
+                )));
+            }
+        }
+       Ok(self.stmt(StmtNode::Switch { disc, cases }))
     }
 
     // ---- Expressions (Pratt) ----
@@ -2492,6 +2554,52 @@ impl Parser {
     }
 }
 
+/// Collect top-level declaration names from a statement node that appears
+/// directly inside a switch case body. Lexical declarations (let/const/class,
+/// and function in strict mode) go into `lexical`; var declarations (var,
+/// and function in sloppy mode) go into `var`. Does NOT descend into blocks
+/// or nested function bodies — only the case body's direct children matter.
+fn collect_decl_names(
+    node: &StmtNode,
+    lexical: &mut Vec<Arc<str>>,
+    var: &mut Vec<Arc<str>>,
+    is_strict: bool,
+) {
+    match node {
+        StmtNode::VarDecl { kind, decls } => match kind {
+            VarKind::Var => {
+                for (name, _) in decls {
+                    var.push(name.clone());
+                }
+            }
+            VarKind::Let | VarKind::Const => {
+                for (name, _) in decls {
+                    lexical.push(name.clone());
+                }
+            }
+        },
+        StmtNode::Destructure { kind, pattern, .. } => match kind {
+            VarKind::Var => collect_pattern_names(pattern, var),
+            VarKind::Let | VarKind::Const => collect_pattern_names(pattern, lexical),
+        },
+        StmtNode::FunctionDecl(f) => {
+            if let Some(name) = &f.name {
+                if is_strict {
+                    lexical.push(name.clone());
+                } else {
+                    var.push(name.clone());
+                }
+            }
+        }
+        StmtNode::ExprStmt(Expr::Class(c)) => {
+            if let Some(name) = &c.name {
+                lexical.push(name.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2584,5 +2692,28 @@ mod tests {
     fn parse_try_catch() {
         let p = parse("try { f(); } catch (e) { g(); } finally { h(); }");
         assert!(matches!(&p.body[0].node, StmtNode::TryCatch { .. }));
+    }
+}
+
+/// Extract all binding names from a destructuring pattern.
+fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<Arc<str>>) {
+    match pattern {
+        Pattern::Ident(name) => names.push(name.clone()),
+        Pattern::Hole => {}
+        Pattern::Array(elements) => {
+            for p in elements {
+                collect_pattern_names(p, names);
+            }
+        }
+        Pattern::Object(props, rest) => {
+            for (_, p) in props {
+                collect_pattern_names(p, names);
+            }
+            if let Some(r) = rest {
+                collect_pattern_names(r, names);
+            }
+        }
+        Pattern::Assign(p, _) => collect_pattern_names(p, names),
+        Pattern::Rest(p) => collect_pattern_names(p, names),
     }
 }
