@@ -863,6 +863,20 @@ impl Parser {
         };
         self.advance();
         let mut right = self.parse_assign()?;
+        // Validate that the left side is a valid assignment target.
+        // Invalid: literals, binary ops, unary ops, function calls, etc.
+        match &left {
+            Expr::Ident(_)
+            | Expr::Member { .. }
+            | Expr::PrivateGet { .. }
+            | Expr::Array(_)
+            | Expr::Object(_) => {}
+            _ => {
+                return Err(error::Error::syntax(
+                    "Invalid left-hand side in assignment".to_string(),
+                ));
+            }
+        }
         // Strict mode: assignment to `eval` or `arguments` is a SyntaxError.
         if self.is_strict_context {
             if let Expr::Ident(ref id) = left {
