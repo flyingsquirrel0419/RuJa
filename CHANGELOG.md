@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0-alpha] - 2026-07-02
+
 ### Heap Limit Enforcement Overhaul
 
 - **`Heap::allocate` now returns `Result<usize, HeapLimitExceeded>`** with a
@@ -407,7 +409,7 @@ now run the `finally` body before completing the transfer (single-level).
   `op_call_spread`, `op_new`, `op_await`, `op_make_closure`) extracted into
   dedicated methods, shrinking the dispatch loop from 1366 to ~1216 lines.
 
-## [0.2.0] - 2026-06-28
+## [0.2.0-alpha] - 2026-06-28
 
 ### Added
 - **Symbol-keyed properties**: a `PropertyKey` model (string/Symbol) backs all
