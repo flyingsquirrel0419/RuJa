@@ -2017,6 +2017,35 @@ impl Parser {
                 body = combined;
             }
             let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+            // Strict-mode validation for arrow function parameters.
+            if is_strict {
+                for p in &params {
+                    if matches!(&**p, "eval" | "arguments") {
+                        return Err(error::Error::syntax(format!(
+                            "Parameter name '{}' is not allowed in strict mode",
+                            p
+                        )));
+                    }
+                }
+                let mut seen = std::collections::HashSet::new();
+                for p in &params {
+                    if !seen.insert(p.clone()) {
+                        return Err(error::Error::syntax(format!(
+                            "Duplicate parameter '{}' is not allowed in strict mode",
+                            p
+                        )));
+                    }
+                }
+            }
+            // 'use strict' directive not allowed with non-simple params.
+            let has_non_simple = !param_defaults.is_empty()
+                || rest_param.is_some()
+                || !self.arrow_destructure_decls.is_empty();
+            if has_non_simple && Self::scan_directive_prologue(&body) {
+                return Err(error::Error::syntax(
+                    "'use strict' not allowed with non-simple parameters".to_string(),
+                ));
+            }
             Ok(Expr::Arrow(FunctionExpr {
                 name: None,
                 params,
@@ -2033,6 +2062,26 @@ impl Parser {
             let e = self.parse_assign()?;
             let mut body = prelude;
             body.push(self.stmt(StmtNode::Return(Some(e))));
+            // Strict-mode param validation for expression-body arrows.
+            if self.is_strict_context {
+                for p in &params {
+                    if matches!(&**p, "eval" | "arguments") {
+                        return Err(error::Error::syntax(format!(
+                            "Parameter name '{}' is not allowed in strict mode",
+                            p
+                        )));
+                    }
+                }
+                let mut seen = std::collections::HashSet::new();
+                for p in &params {
+                    if !seen.insert(p.clone()) {
+                        return Err(error::Error::syntax(format!(
+                            "Duplicate parameter '{}' is not allowed in strict mode",
+                            p
+                        )));
+                    }
+                }
+            }
             Ok(Expr::Arrow(FunctionExpr {
                 name: None,
                 params,
