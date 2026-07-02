@@ -131,17 +131,13 @@ impl Compiler {
         }
         // Hoist `var` declarations as undefined at the top level.
         for stmt in &program.body {
-            if let StmtNode::VarDecl {
-                kind: VarKind::Var,
-                decls,
-            } = &stmt.node
-            {
-                for (name, _) in decls {
-                    self.declare(name, VarKind::Var)?;
-                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk.emit(Op::Const(name_idx), self.current_line);
-                    self.chunk.emit(Op::StoreGlobal, self.current_line);
-                }
+            let mut var_names = Vec::new();
+            collect_var_names_recursive(&stmt.node, &mut var_names);
+            for name in &var_names {
+                self.declare(name, VarKind::Var)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::Const(name_idx), self.current_line);
+                self.chunk.emit(Op::StoreGlobal, self.current_line);
             }
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at the top
@@ -388,22 +384,13 @@ impl Compiler {
 
     /// Collect top-level `var` and function-declaration names from a statement
     /// list (for direct-eval leak into the caller's function scope).
+    /// Recursively descends into nested blocks, loops, if/else, switch, and
+    /// try/catch bodies so that `var` declarations inside these are hoisted
+    /// to the function scope (per ES spec: `var` is function-scoped).
     pub fn collect_var_names(body: &[Stmt]) -> Vec<Arc<str>> {
         let mut out = Vec::new();
         for stmt in body {
-            match &stmt.node {
-                StmtNode::VarDecl { kind, decls } if *kind == VarKind::Var => {
-                    for (name, _) in decls {
-                        out.push(name.clone());
-                    }
-                }
-                StmtNode::FunctionDecl(f) => {
-                    if let Some(name) = &f.name {
-                        out.push(name.clone());
-                    }
-                }
-                _ => {}
-            }
+            collect_var_names_recursive(&stmt.node, &mut out);
         }
         out
     }
@@ -1226,17 +1213,13 @@ impl Compiler {
         }
         // Hoist `var` declarations within the function body as undefined.
         for stmt in &f.body {
-            if let StmtNode::VarDecl {
-                kind: VarKind::Var,
-                decls,
-            } = &stmt.node
-            {
-                for (name, _) in decls {
-                    self.declare(name, VarKind::Var)?;
-                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk.emit(Op::Undefined, self.current_line);
-                    self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
-                }
+            let mut var_names = Vec::new();
+            collect_var_names_recursive(&stmt.node, &mut var_names);
+            for name in &var_names {
+                self.declare(name, VarKind::Var)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
             }
         }
         // Hoist function declarations: compile them first so they're available
@@ -3133,5 +3116,64 @@ impl Compiler {
             AssignOp::UshrAssign => Op::Ushr,
             _ => Op::Add,
         }
+    }
+}
+
+/// Recursively collect `var` and function-declaration names from a
+/// statement tree. `var` is function-scoped, so declarations inside
+/// blocks, loops, if/else, switch, and try/catch must all be hoisted.
+fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
+    match node {
+        StmtNode::VarDecl { kind, decls } if *kind == VarKind::Var => {
+            for (name, _) in decls {
+                out.push(name.clone());
+                // Skip duplicate names to avoid double-hoisting.
+            }
+        }
+        // Function declarations are hoisted separately by the function
+        // declaration hoisting pass; do NOT collect them here to avoid
+        // overwriting the function value with undefined.
+        StmtNode::Block(body) => {
+            for s in body {
+                collect_var_names_recursive(&s.node, out);
+            }
+        }
+        StmtNode::If { then, else_, .. } => {
+            collect_var_names_recursive(&then.node, out);
+            if let Some(e) = else_ {
+                collect_var_names_recursive(&e.node, out);
+            }
+        }
+        StmtNode::While { body, .. } => collect_var_names_recursive(&body.node, out),
+        StmtNode::DoWhile { body, .. } => collect_var_names_recursive(&body.node, out),
+        StmtNode::For { init, body, .. } => {
+            if let Some(init) = init {
+                collect_var_names_recursive(&init.node, out);
+            }
+            collect_var_names_recursive(&body.node, out);
+        }
+        StmtNode::ForIn { left, body, .. } | StmtNode::ForOf { left, body, .. } => {
+            collect_var_names_recursive(&left.node, out);
+            collect_var_names_recursive(&body.node, out);
+        }
+        StmtNode::With { body, .. } => collect_var_names_recursive(&body.node, out),
+        StmtNode::Switch { cases, .. } => {
+            for case in cases {
+                for s in &case.body {
+                    collect_var_names_recursive(&s.node, out);
+                }
+            }
+        }
+        StmtNode::TryCatch { try_body, catch_body, finally_body, .. } => {
+            collect_var_names_recursive(&try_body.node, out);
+            if let Some(cb) = catch_body {
+                collect_var_names_recursive(&cb.node, out);
+            }
+            if let Some(fb) = finally_body {
+                collect_var_names_recursive(&fb.node, out);
+            }
+        }
+        StmtNode::Labeled(_, body) => collect_var_names_recursive(&body.node, out),
+        _ => {}
     }
 }
