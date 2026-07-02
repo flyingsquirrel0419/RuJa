@@ -8,7 +8,11 @@ use super::*;
 /// `Function.prototype.toString`: return a spec-ish string representation.
 /// For native functions: `function name() { [native code] }`. For interpreted
 /// functions, the source is not retained, so we emit `function name() { ... }`.
-pub(crate) fn function_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn function_to_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let f = match this {
         Some(v) => v,
         None => return Ok(Value::String(Arc::from("function () { [native code] }"))),
@@ -31,7 +35,11 @@ pub(crate) fn function_to_string(vm: &mut Vm, _args: &[Value], this: Option<Valu
     Ok(Value::String(Arc::from("function () { [native code] }")))
 }
 
-pub(crate) fn function_call(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn function_call(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let target = match this {
         Some(t) => t,
         None => return Err(error::Error::type_err("undefined is not a function")),
@@ -49,7 +57,11 @@ pub(crate) fn function_call(vm: &mut Vm, args: &[Value], this: Option<Value>) ->
 
 /// `Function.prototype.apply(thisArg, [argsArray])`: invoke `this` (a
 /// function) with an explicit `this` binding and an array-like of arguments.
-pub(crate) fn function_apply(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn function_apply(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let target = match this {
         Some(t) => t,
         None => return Err(error::Error::type_err("undefined is not a function")),
@@ -97,7 +109,11 @@ pub(crate) fn function_apply(vm: &mut Vm, args: &[Value], this: Option<Value>) -
 
 /// `Function.prototype.bind(thisArg, ...args)`: create a new function with a
 /// fixed `this` binding and leading arguments.
-pub(crate) fn function_bind(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn function_bind(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let target = match this {
         Some(t) => t,
         None => return Err(error::Error::type_err("undefined is not a function")),

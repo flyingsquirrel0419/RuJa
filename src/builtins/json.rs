@@ -13,7 +13,11 @@ fn json_array_index(s: &str) -> Option<u32> {
     s.parse::<u32>().ok().filter(|n| (*n as u64) < (1u64 << 32))
 }
 
-pub(crate) fn json_stringify(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn json_stringify(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let v = args.first().unwrap_or(&Value::Undefined).clone();
     let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
     let space_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
@@ -174,7 +178,10 @@ fn stringify_value(
         Value::Object(idx) => {
             // Check for toJSON method before any other processing.
             let to_json = vm.heap.with_obj(idx.0, |obj| {
-                obj.props().lock().get(&PropertyKey::from("toJSON")).cloned()
+                obj.props()
+                    .lock()
+                    .get(&PropertyKey::from("toJSON"))
+                    .cloned()
             });
             if let Some(desc) = to_json {
                 if desc.enumerable || true {
@@ -609,7 +616,11 @@ fn now_ms() -> f64 {
         .map(|d| d.as_millis() as f64)
         .unwrap_or(0.0)
 }
-pub(crate) fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn date_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let ts = if args.is_empty() {
         now_ms()
     } else if args.len() == 1 {
@@ -640,7 +651,11 @@ pub(crate) fn date_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>)
         Ok(Value::String(Arc::from(format!("{}", ts as i64).as_str())))
     }
 }
-pub(crate) fn date_get_time(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn date_get_time(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = &this {
         let ts = vm.heap.with_obj(idx.0, |o| {
             o.props()
@@ -654,13 +669,21 @@ pub(crate) fn date_get_time(vm: &mut Vm, _args: &[Value], this: Option<Value>) -
     }
     Ok(Value::Number(f64::NAN))
 }
-pub(crate) fn date_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn date_to_string(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = &this {
         let _ = idx;
     }
     Ok(Value::String(Arc::from("Date")))
 }
-pub(crate) fn date_now(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn date_now(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     Ok(Value::Number(now_ms()))
 }
 
@@ -696,7 +719,11 @@ pub(crate) fn reflect_has(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
         .unwrap_or(false);
     Ok(Value::Bool(has))
 }
-pub(crate) fn reflect_delete_property(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn reflect_delete_property(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let key = match args.get(1) {
         Some(v) => vm.to_property_key(v)?,
@@ -706,7 +733,11 @@ pub(crate) fn reflect_delete_property(vm: &mut Vm, args: &[Value], _: Option<Val
         .map(|_| Value::Bool(true))
         .or(Ok(Value::Bool(false)))
 }
-pub(crate) fn reflect_own_keys(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn reflect_own_keys(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let keys = own_string_keys(vm, &target);
     Ok(make_str_array(vm, keys))
@@ -811,4 +842,3 @@ pub(crate) fn build_json(vm: &mut Vm) -> Value {
     });
     Value::Object(GcIdx(vm.heap.allocate(obj)))
 }
-

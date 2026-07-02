@@ -118,7 +118,11 @@ pub(crate) fn array_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
     Ok(make_value_array(vm, args.to_vec()))
 }
 
-pub(crate) fn array_is_array(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_is_array(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     Ok(Value::Bool(is_array(
         args.first().unwrap_or(&Value::Undefined),
         &vm.heap,
@@ -156,7 +160,11 @@ pub(crate) fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
 }
 /// Array.prototype.toString: delegates to join(",") (Object.prototype.toString
 /// would otherwise return "[object Array]").
-pub(crate) fn array_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_to_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     array_join(vm, &[], this)
 }
 
@@ -220,7 +228,11 @@ pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_filter(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -255,7 +267,11 @@ pub(crate) fn array_filter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_reduce(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_reduce(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -313,7 +329,11 @@ pub(crate) fn norm_index(v: Value, len: f64, vm: &mut Vm) -> error::Result<usize
 }
 
 /// Sort items with an optional comparator callback (default: string compare).
-pub(crate) fn sort_with_cb(vm: &mut Vm, items: &mut [Value], cmp: &Option<Value>) -> error::Result<()> {
+pub(crate) fn sort_with_cb(
+    vm: &mut Vm,
+    items: &mut [Value],
+    cmp: &Option<Value>,
+) -> error::Result<()> {
     match cmp {
         None | Some(Value::Undefined) | Some(Value::Null) => {
             items.sort_by(|a, b| {
@@ -431,7 +451,11 @@ where
     Ok(())
 }
 
-pub(crate) fn array_reduce_right(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_reduce_right(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -474,7 +498,11 @@ pub(crate) fn array_reduce_right(vm: &mut Vm, args: &[Value], this: Option<Value
     Ok(Value::Undefined)
 }
 
-pub(crate) fn array_to_reversed(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_to_reversed(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -488,7 +516,11 @@ pub(crate) fn array_to_reversed(vm: &mut Vm, _args: &[Value], this: Option<Value
     Ok(Value::Undefined)
 }
 
-pub(crate) fn array_to_sorted(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_to_sorted(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         let mut items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -504,7 +536,11 @@ pub(crate) fn array_to_sorted(vm: &mut Vm, args: &[Value], this: Option<Value>) 
     Ok(Value::Undefined)
 }
 
-pub(crate) fn array_to_spliced(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_to_spliced(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -553,7 +589,11 @@ pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     Ok(Value::Undefined)
 }
 
-pub(crate) fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_for_each(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -579,7 +619,12 @@ pub(crate) fn array_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -
 }
 /// Resolve a `fromIndex`-style argument (ToInteger, default 0) to a starting
 /// position clamped into `[0, len]`. Negative wraps from the end.
-pub(crate) fn from_index_arg(vm: &mut Vm, args: &[Value], idx: usize, len: usize) -> error::Result<usize> {
+pub(crate) fn from_index_arg(
+    vm: &mut Vm,
+    args: &[Value],
+    idx: usize,
+    len: usize,
+) -> error::Result<usize> {
     let raw = match args.get(idx) {
         Some(v) => vm.to_number(v)?,
         None => 0.0,
@@ -601,7 +646,11 @@ pub(crate) fn from_index_arg(vm: &mut Vm, args: &[Value], idx: usize, len: usize
     Ok(start)
 }
 
-pub(crate) fn array_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_index_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -622,7 +671,11 @@ pub(crate) fn array_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -
     }
     Ok(Value::Number(-1.0))
 }
-pub(crate) fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_includes(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -644,7 +697,11 @@ pub(crate) fn array_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -
     }
     Ok(Value::Bool(false))
 }
-pub(crate) fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_slice(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -699,7 +756,11 @@ pub(crate) fn array_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_concat(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let mut items = Vec::new();
     if let Some(Value::Object(idx)) = this {
         items = vm.heap.with_obj(idx.0, |obj| {
@@ -738,7 +799,11 @@ pub(crate) fn array_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
 
-pub(crate) fn array_reverse(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_reverse(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -798,7 +863,11 @@ pub(crate) fn array_sort(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     Ok(Value::Undefined)
 }
 
-pub(crate) fn array_shift(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_shift(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         return Ok(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -815,7 +884,11 @@ pub(crate) fn array_shift(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> 
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_unshift(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_unshift(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -836,7 +909,11 @@ pub(crate) fn array_unshift(vm: &mut Vm, args: &[Value], this: Option<Value>) ->
     }
     Ok(Value::Number(0.0))
 }
-pub(crate) fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_splice(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         let items_clone = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -881,7 +958,11 @@ pub(crate) fn array_splice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_last_index_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let target = args.first().unwrap_or(&Value::Undefined).clone();
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -985,7 +1066,11 @@ pub(crate) fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_flat_map(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     // flatMap(fn) = map(fn).flat(1)
     let items = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
@@ -1039,7 +1124,11 @@ pub(crate) fn array_flat_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -
     }
     Ok(make_value_array(vm, out))
 }
-pub(crate) fn array_copy_within(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_copy_within(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {
         let len = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1090,7 +1179,11 @@ pub(crate) fn array_copy_within(vm: &mut Vm, args: &[Value], this: Option<Value>
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_keys(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let len = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1105,7 +1198,11 @@ pub(crate) fn array_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> e
     let items: Vec<Value> = (0..len).map(|i| Value::Number(i as f64)).collect();
     Ok(make_value_array(vm, items))
 }
-pub(crate) fn array_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_values(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let items = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1119,7 +1216,11 @@ pub(crate) fn array_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) ->
     };
     Ok(make_value_array(vm, items))
 }
-pub(crate) fn array_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_entries(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let items = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
@@ -1139,7 +1240,11 @@ pub(crate) fn array_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -
     Ok(make_value_array(vm, pairs))
 }
 
-pub(crate) fn array_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     // `Array(n)` / `new Array(n)` with a single number argument creates a
     // sparse array of length n (filled with holes). Other argument forms
     // create an array of the given elements. `this` (from `new`) is ignored:
@@ -1204,7 +1309,11 @@ pub(crate) fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_find_index(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -1231,7 +1340,11 @@ pub(crate) fn array_find_index(vm: &mut Vm, args: &[Value], this: Option<Value>)
     }
     Ok(Value::Number(-1.0))
 }
-pub(crate) fn array_find_last(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_find_last(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -1340,7 +1453,11 @@ pub(crate) fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     }
     Ok(Value::Bool(false))
 }
-pub(crate) fn array_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_every(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -1367,4 +1484,3 @@ pub(crate) fn array_every(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     }
     Ok(Value::Bool(true))
 }
-

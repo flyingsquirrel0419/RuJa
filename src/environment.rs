@@ -3,9 +3,9 @@
 use crate::gc::Heap;
 use crate::value::{BindingKind, GcIdx, HeapObj, Value};
 use indexmap::IndexMap;
+use parking_lot::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use parking_lot::Mutex;
 
 use std::sync::Arc;
 
@@ -170,10 +170,7 @@ pub fn with_objects(heap: &Heap, env: GcIdx) -> Vec<Value> {
     while let Some(e_idx) = cur {
         let (obj, parent) = heap.with_obj(e_idx.0, |o| {
             if let HeapObj::Environment(e) = o {
-                (
-                    e.with_object.lock().clone(),
-                    *e.parent.lock(),
-                )
+                (e.with_object.lock().clone(), *e.parent.lock())
             } else {
                 (None, None)
             }
@@ -380,10 +377,7 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
     while let Some(e_idx) = cur {
         let (found, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
-                return (
-                    e.vars.lock().contains_key(name),
-                    *e.parent.lock(),
-                );
+                return (e.vars.lock().contains_key(name), *e.parent.lock());
             }
             (false, None)
         });

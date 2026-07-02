@@ -2,7 +2,11 @@ use super::*;
 
 // RegExp
 // =========================================================================
-pub(crate) fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn regexp_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     let pattern = match args.first() {
         Some(Value::String(s)) => s.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
@@ -72,7 +76,11 @@ pub(crate) fn regexp_constructor(vm: &mut Vm, args: &[Value], _this: Option<Valu
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
-pub(crate) fn regexp_test(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn regexp_test(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let source = read_regexp_source(vm, &this)?;
     let input = match args.first() {
         Some(Value::String(s)) => s.to_string(),
@@ -85,7 +93,11 @@ pub(crate) fn regexp_test(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(Value::Bool(re.is_match(&input)))
 }
 
-pub(crate) fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn regexp_exec(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let source = read_regexp_source(vm, &this)?;
     let input = match args.first() {
         Some(Value::String(s)) => s.to_string(),
@@ -149,7 +161,8 @@ pub(crate) fn regexp_exec(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
                 })
                 .collect();
             if global || sticky {
-                let match_end = start + crate::value::utf16_len(caps.get(0).map(|mch| mch.as_str()).unwrap_or(""));
+                let match_end = start
+                    + crate::value::utf16_len(caps.get(0).map(|mch| mch.as_str()).unwrap_or(""));
                 if let Some(Value::Object(idx)) = &this {
                     vm.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Object(obj) = o {
@@ -192,7 +205,11 @@ pub(crate) fn read_regexp_flags(vm: &mut Vm, this: &Option<Value>) -> error::Res
 }
 
 /// Read a string field (`source`/`flags`/`lastIndex`) from a RegExp object.
-pub(crate) fn read_regexp_field(vm: &mut Vm, this: &Option<Value>, field: &str) -> error::Result<String> {
+pub(crate) fn read_regexp_field(
+    vm: &mut Vm,
+    this: &Option<Value>,
+    field: &str,
+) -> error::Result<String> {
     match this {
         Some(Value::Object(idx)) => {
             let s = vm.heap.with_obj(idx.0, |o| {
@@ -216,7 +233,11 @@ pub(crate) fn read_regexp_field(vm: &mut Vm, this: &Option<Value>, field: &str) 
     }
 }
 
-pub(crate) fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn generator_next(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let g_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
         _ => return Err(Error::type_err("not a generator".to_string())),
@@ -288,7 +309,12 @@ pub(crate) fn generator_next(vm: &mut Vm, _args: &[Value], this: Option<Value>) 
 }
 
 /// Build a {value, done} object, wrapped in a Promise for async generators.
-pub(crate) fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bool) -> error::Result<Value> {
+pub(crate) fn gen_result(
+    vm: &mut Vm,
+    value: Value,
+    done: bool,
+    is_async_gen: bool,
+) -> error::Result<Value> {
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.object_proto.clone())),
@@ -328,7 +354,11 @@ pub(crate) fn gen_result(vm: &mut Vm, value: Value, done: bool, is_async_gen: bo
 /// a `yield`, the value `v` becomes the result of the yield* / next() call and
 /// the generator is marked done. If it was already done, returns {value:v,
 /// done:true}.
-pub(crate) fn generator_return(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn generator_return(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let g_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
         _ => return Err(Error::type_err("not a generator".to_string())),
@@ -356,7 +386,11 @@ pub(crate) fn generator_return(vm: &mut Vm, args: &[Value], this: Option<Value>)
 /// generator resumes so the suspended `yield` throws `v`; if the body catches
 /// it, the catch handler runs and the next value is returned, otherwise the
 /// exception propagates out of the `throw()` call.
-pub(crate) fn generator_throw(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn generator_throw(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let g_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
         _ => return Err(Error::type_err("not a generator".to_string())),
