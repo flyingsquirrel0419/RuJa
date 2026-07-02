@@ -1046,9 +1046,13 @@ impl Compiler {
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
             _other => {
-                // Non-declaration left side (e.g. `for (x of ...)`): treat as assignment target.
-                // `other` is a &StmtNode; the full statement is `left`.
-                self.compile_stmt(left)?;
+                // Non-declaration left side (e.g. `for (x of/in ...)`): the iterator
+                // value is on the stack. Assign it to the target expression.
+                if let StmtNode::ExprStmt(expr) = &left.node {
+                    self.compile_assign_target(expr)?;
+                } else {
+                    self.compile_stmt(left)?;
+                }
             }
         }
         Ok(())
