@@ -379,7 +379,7 @@ impl Vm {
         this_val: Value,
         caller_strict: bool,
     ) -> error::Result<Value> {
-        let program = crate::parser::Parser::parse(src)?;
+        let program = crate::parser::Parser::parse_strict_inherited(src, caller_strict)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         self.functions.extend(funcs);

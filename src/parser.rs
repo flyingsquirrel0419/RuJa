@@ -78,6 +78,19 @@ impl Parser {
         p.parse_program()
     }
 
+    /// Parse with an inherited strict-mode flag (used by direct eval in a
+    /// strict caller context). The parser enforces strict-mode early errors
+    /// even without an explicit "use strict" directive in the source.
+    pub fn parse_strict_inherited(src: &str, inherited: bool) -> error::Result<Program> {
+        let mut lx = crate::lexer::Lexer::new(src);
+        let tokens = lx.tokens();
+        let mut p = Parser::new(tokens);
+        if inherited {
+            p.is_strict_context = true;
+        }
+        p.parse_program()
+    }
+
     fn peek(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
     }
@@ -198,7 +211,7 @@ impl Parser {
         // a run of string-literal expression statements; only the leading
         // "use strict" matters here.
         let is_strict = self.peek_use_strict_directive();
-        self.is_strict_context = is_strict;
+        self.is_strict_context = is_strict || self.is_strict_context;
         let mut body = Vec::new();
         while !self.check(&TokenKind::Eof) {
             body.push(self.parse_stmt()?);
