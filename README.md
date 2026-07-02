@@ -35,9 +35,11 @@ no `unsafe` code anywhere in the engine.
 
 ES5.1 + classes, async/await, generators, Promises, destructuring,
 getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
-Reflect, Proxy, Uint8Array, BigInt, Date, regex, and more. See
-[limitations](docs/limitations.md) for the full list of supported and
-intentionally-unsupported features.
+Reflect, Proxy, Uint8Array, BigInt, Date, regex, and more. RuJa does not
+claim full ES conformance — conformance is scoped to this subset. See
+[test262 conformance](docs/test262.md#supported-subset) for the exact
+feature list and current pass rates, and [limitations](docs/limitations.md)
+for intentionally-unsupported features.
 
 ```sh
 $ cargo run --release -- examples/fib.js

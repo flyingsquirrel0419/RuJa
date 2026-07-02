@@ -41,10 +41,12 @@ guarantees, run RuJa in a separately killable process as well.
 - Async generator scheduling uses a synchronous microtask-drain model (no
   real event-loop preemption), though `Vm::tick()` now allows hosts to
   execute a single microtask at a time for cooperative scheduling
-- test262 conformance is partial: the full suite is run in CI (excluding
-  `intl402`/`staging`), with a baseline pass rate of ~33%. A curated
-  `language/` subset (~61%) is run on every push for fast regression
-  detection. Full ES conformance is not claimed. See
+- test262 conformance is scoped, not full: RuJa targets a deliberately
+  scoped subset of ES5.1 + selected ES2015+ features (see
+  [test262.md](test262.md#supported-subset) for the exact list). The full
+  suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
+  rate of ~33%; within the supported subset, ~56% of `language/` tests
+  pass. Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
