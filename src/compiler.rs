@@ -816,16 +816,17 @@ impl Compiler {
                     self.chunk.patch_jump(jump_past_catch, finally_start);
                 }
                 if let Some(fin) = finally_body {
-                    // Drop the finally guard before running the finally body, so
-                    // a non-local transfer *inside* the finally (return/throw/
-                    // break/continue) completes directly instead of diverting
-                    // back into this same finally (infinite loop).
+                    // Drop the finally guard before running the finally body
+                    // AND pop the finally_stack so that non-local transfers
+                    // inside the finally (return/throw/break/continue) use
+                    // direct jumps instead of DivertContinue/DivertBreak
+                    // (which would loop back into this same finally).
                     self.chunk.emit(Op::PopFinally, self.current_line);
+                    self.finally_stack.pop();
                     self.compile_stmt(fin)?;
                     // Re-raise the pending completion (return/break/continue/throw)
                     // that diverted here. A normal completion falls through.
                     self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
-                    self.finally_stack.pop();
                 }
             }
             StmtNode::FunctionDecl(f) => {
