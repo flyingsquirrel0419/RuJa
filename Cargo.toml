@@ -1,6 +1,6 @@
 [package]
 name = "ruja"
-version = "0.3.0-alpha"
+version = "0.4.0-alpha"
 edition = "2021"
 authors = ["flyingsquirrel0419"]
 description = "A sandboxed, embeddable JavaScript runtime for untrusted scripts in Rust"
