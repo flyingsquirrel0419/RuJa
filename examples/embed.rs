@@ -5,7 +5,7 @@
 
 #[cfg(feature = "serde")]
 fn main() {
-    use ruja::{Vm, Value};
+    use ruja::{Value, Vm};
 
     let mut vm = Vm::new();
 
