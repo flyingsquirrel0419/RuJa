@@ -333,6 +333,15 @@ impl Parser {
                 )))
             }
         };
+        // Strict mode: function name cannot be `eval` or `arguments`.
+        if let Some(ref n) = name {
+            if self.is_strict_context && matches!(&**n, "eval" | "arguments") {
+                return Err(error::Error::syntax(format!(
+                    "'{}' cannot be used as a function name in strict mode",
+                    n
+                )));
+            }
+        }
         let params = self.parse_params()?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
@@ -343,6 +352,27 @@ impl Parser {
             body = pre;
         }
         let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+        // Strict mode (inherited or from body directive): validate that no
+        // parameter name is `eval` or `arguments`, and no duplicate params.
+        if is_strict {
+            for p in &params {
+                if matches!(&**p, "eval" | "arguments") {
+                    return Err(error::Error::syntax(format!(
+                        "Parameter name '{}' is not allowed in strict mode",
+                        p
+                    )));
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            for p in &params {
+                if !seen.insert(p.clone()) {
+                    return Err(error::Error::syntax(format!(
+                        "Duplicate parameter '{}' is not allowed in strict mode",
+                        p
+                    )));
+                }
+            }
+        }
         let saved = self.is_strict_context;
         self.is_strict_context = is_strict;
         // Re-scan not needed; params already parsed before body. Strictness from
@@ -652,6 +682,13 @@ impl Parser {
                     )))
                 }
             };
+            // Strict mode: `eval` and `arguments` cannot be used as binding names.
+            if self.is_strict_context && matches!(&*name, "eval" | "arguments") {
+                return Err(error::Error::syntax(format!(
+                    "'{}' cannot be used as a binding name in strict mode",
+                    name
+                )));
+            }
             let init = if self.eat(&TokenKind::Assign) {
                 let mut e = self.parse_assign()?;
                 Self::name_function_from_ident(&mut e, &name);
@@ -803,6 +840,17 @@ impl Parser {
         };
         self.advance();
         let mut right = self.parse_assign()?;
+        // Strict mode: assignment to `eval` or `arguments` is a SyntaxError.
+        if self.is_strict_context {
+            if let Expr::Ident(ref id) = left {
+                if matches!(&**id, "eval" | "arguments") {
+                    return Err(error::Error::syntax(format!(
+                        "Assignment to '{}' is not allowed in strict mode",
+                        id
+                    )));
+                }
+            }
+        }
         // SetFunctionName for `obj.prop = <anon function>` / `obj[prop] = ...`.
         if matches!(op, AssignOp::Assign) {
             if let Some(key_name) = Self::assign_target_name(&left) {
@@ -1708,6 +1756,26 @@ impl Parser {
             body = pre;
         }
         let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+        // Strict mode: validate parameter names and duplicates (same as decl).
+        if is_strict {
+            for p in &params {
+                if matches!(&**p, "eval" | "arguments") {
+                    return Err(error::Error::syntax(format!(
+                        "Parameter name '{}' is not allowed in strict mode",
+                        p
+                    )));
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            for p in &params {
+                if !seen.insert(p.clone()) {
+                    return Err(error::Error::syntax(format!(
+                        "Duplicate parameter '{}' is not allowed in strict mode",
+                        p
+                    )));
+                }
+            }
+        }
         Ok(Expr::Function(FunctionExpr {
             name,
             params,
