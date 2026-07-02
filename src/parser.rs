@@ -47,6 +47,9 @@ pub struct Parser {
     /// Nesting depth of switch statements. `break` (unlabelled) is valid
     /// inside switch even without an enclosing loop.
     switch_depth: usize,
+    /// Stack of labels visible in the current scope: (label, is_loop).
+    /// Used to validate `break label` / `continue label` targets.
+    label_stack: Vec<(Arc<str>, bool)>,
 }
 
 impl Parser {
@@ -68,6 +71,7 @@ impl Parser {
             stmt_depth: 0,
             loop_depth: 0,
             switch_depth: 0,
+            label_stack: Vec::new(),
         }
     }
 
@@ -285,12 +289,20 @@ impl Parser {
         // Labeled statement: `ident:` followed by any statement. Detect by
         // peeking two tokens so a leading identifier isn't misread as an
         // expression statement.
-        if let TokenKind::Ident(s) = self.peek().clone() {
-            if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
-                let label = Arc::from(s.as_str());
-                self.advance(); // ident
-                self.advance(); // ':'
+       if let TokenKind::Ident(s) = self.peek().clone() {
+           if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
+              let label = Arc::from(s.as_str());
+              let label: Arc<str> = label;
+              self.advance(); // ident
+               self.advance(); // ':'
+                // Peek the body's first token to determine if it's a loop.
+                let is_loop = matches!(
+                    self.peek(),
+                    TokenKind::While | TokenKind::Do | TokenKind::For
+                );
+                self.label_stack.push((label.clone(), is_loop));
                 let body = self.parse_stmt_inner()?;
+                self.label_stack.pop();
                 return Ok(self.stmt(StmtNode::Labeled(label, Box::new(body))));
             }
         }
@@ -328,6 +340,15 @@ impl Parser {
                         "Illegal break statement".to_string(),
                     ));
                 }
+                // `break label` must target a visible label.
+                if let Some(ref label) = l {
+                    if !self.label_stack.iter().any(|(name, _)| name == label) {
+                        return Err(error::Error::syntax(format!(
+                            "Undefined label '{}'",
+                            label
+                        )));
+                    }
+                }
                 Ok(self.stmt(StmtNode::Break(l)))
             }
             TokenKind::Continue => {
@@ -339,6 +360,20 @@ impl Parser {
                     return Err(error::Error::syntax(
                         "Illegal continue statement".to_string(),
                     ));
+                }
+                // `continue label` must target a label on an enclosing
+                // iteration statement (not just any labeled statement).
+                if let Some(ref label) = l {
+                    if !self
+                        .label_stack
+                        .iter()
+                        .any(|(name, is_loop)| name == label && *is_loop)
+                    {
+                        return Err(error::Error::syntax(format!(
+                            "Continue label '{}' must target an enclosing iteration statement",
+                            label
+                        )));
+                    }
                 }
                 Ok(self.stmt(StmtNode::Continue(l)))
             }
