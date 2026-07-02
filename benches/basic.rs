@@ -11,7 +11,7 @@ fn bench_fib(c: &mut Criterion) {
     "#;
     c.bench_function("fib(25)", |b| {
         b.iter(|| {
-            let mut vm = Vm::new();
+            let mut vm = Vm::new().expect("failed to initialize VM");
             vm.run(src).expect("fib failed")
         })
     });
@@ -27,7 +27,7 @@ fn bench_tight_loop(c: &mut Criterion) {
     "#;
     c.bench_function("loop_100k", |b| {
         b.iter(|| {
-            let mut vm = Vm::new();
+            let mut vm = Vm::new().expect("failed to initialize VM");
             vm.run(src).expect("loop failed")
         })
     });
@@ -43,7 +43,7 @@ fn bench_array_push(c: &mut Criterion) {
     "#;
     c.bench_function("array_push_10k", |b| {
         b.iter(|| {
-            let mut vm = Vm::new();
+            let mut vm = Vm::new().expect("failed to initialize VM");
             vm.run(src).expect("array push failed")
         })
     });
