@@ -3,11 +3,9 @@
 //! All built-in constructors, prototypes, and global functions are registered
 //! here. Native functions follow the `NativeFn` signature used by the VM.
 
-
-pub(crate) mod math;
-pub(crate) mod json;
 pub(crate) mod global;
-
+pub(crate) mod json;
+pub(crate) mod math;
 
 pub(crate) mod array;
 pub(crate) use array::*;
@@ -23,11 +21,16 @@ pub(crate) mod function;
 pub(crate) mod proxy;
 pub(crate) mod typed_array;
 pub(crate) use function::*;
+pub(crate) use global::{
+    bigint_to_string, function_constructor, global_bigint, global_eval, global_is_finite,
+    global_is_nan, global_parse_float, global_parse_int,
+};
+pub(crate) use json::{
+    build_json, build_reflect, date_constructor, date_get_time, date_now, date_to_string,
+};
+pub(crate) use math::{build_console, build_math};
 pub(crate) use proxy::*;
 pub(crate) use typed_array::*;
-pub(crate) use math::{build_console, build_math};
-pub(crate) use json::{build_json, build_reflect, date_constructor, date_get_time, date_now, date_to_string};
-pub(crate) use global::{bigint_to_string, function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan, global_parse_float, global_parse_int};
 
 use crate::environment as env;
 use crate::error::{self, Error};
@@ -54,8 +57,8 @@ fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
     b.dot_matches_new_line(flags.contains('s'));
     b.build()
 }
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use std::sync::Arc;
 
@@ -131,8 +134,7 @@ pub(crate) fn object_to_string(
                 let name = obj.class_name();
                 if name == "Object" {
                     // check constructor name via prototype
-                    if let Some(Value::Object(pidx)) = obj.proto().lock().as_ref().cloned()
-                    {
+                    if let Some(Value::Object(pidx)) = obj.proto().lock().as_ref().cloned() {
                         let constructor = vm.heap.with_obj(pidx.0, |p| {
                             p.props()
                                 .lock()
@@ -654,9 +656,9 @@ fn object_get_own_property_names(
 fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
-        return Ok(vm.heap.with_obj(idx.0, |o| {
-            o.proto().lock().clone().unwrap_or(Value::Null)
-        }));
+        return Ok(vm
+            .heap
+            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
     }
     Ok(Value::Null)
 }
@@ -1226,7 +1228,6 @@ pub fn setup(vm: &mut Vm) {
         define_global(vm, name, Value::Object(ctor));
     }
 }
-
 
 // =========================================================================
 // Extended setup

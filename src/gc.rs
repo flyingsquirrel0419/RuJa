@@ -12,8 +12,8 @@
 //! `Mutex`), and keeps each lock scope tiny.
 
 use crate::value::HeapObj;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub struct GcCell {
     pub obj: Mutex<Option<HeapObj>>,
@@ -280,9 +280,7 @@ impl Heap {
                             .retain(|(k, _)| *k < marked.len() && marked[*k]);
                     }
                     HeapObj::WeakSet(ws) => {
-                        ws.items
-                            .lock()
-                            .retain(|k| *k < marked.len() && marked[*k]);
+                        ws.items.lock().retain(|k| *k < marked.len() && marked[*k]);
                     }
                     _ => {}
                 }

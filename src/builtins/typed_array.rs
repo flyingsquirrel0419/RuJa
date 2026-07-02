@@ -11,9 +11,7 @@ pub(crate) fn uint8array_constructor(
         match &args[0] {
             Value::Number(n) => {
                 if *n < 0.0 || n.is_nan() || n.is_infinite() {
-                    return Err(Error::type_err(
-                        "Invalid typed array length".to_string(),
-                    ));
+                    return Err(Error::type_err("Invalid typed array length".to_string()));
                 }
                 *n as usize
             }
@@ -30,25 +28,27 @@ pub(crate) fn uint8array_constructor(
                 for item in &items {
                     buf.push(vm.to_number(item)? as u8);
                 }
-                let idx = vm.heap.allocate(HeapObj::TypedArray(
-                    crate::value::TypedArrayData {
+                let idx = vm
+                    .heap
+                    .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
                         buffer: buf,
                         kind: crate::value::TypedArrayKind::Uint8,
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(vm.object_proto.clone())),
-                    },
-                ));
+                    }));
                 return Ok(Value::Object(GcIdx(idx)));
             }
             _ => 0,
         }
     };
 
-    let idx = vm.heap.allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
-        buffer: vec![0u8; length],
-        kind: crate::value::TypedArrayKind::Uint8,
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-    }));
+    let idx = vm
+        .heap
+        .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
+            buffer: vec![0u8; length],
+            kind: crate::value::TypedArrayKind::Uint8,
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+        }));
     Ok(Value::Object(GcIdx(idx)))
 }

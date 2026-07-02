@@ -3,7 +3,11 @@ use super::*;
 // =========================================================================
 // Global functions
 // =========================================================================
-pub(crate) fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn global_parse_int(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let input = match args.first() {
         Some(Value::String(s)) => s.trim().to_string(),
         Some(v) => vm.to_string(v)?.to_string(),
@@ -63,7 +67,11 @@ pub(crate) fn global_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) ->
         Err(_) => Ok(Value::Number(f64::NAN)),
     }
 }
-pub(crate) fn global_parse_float(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn global_parse_float(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     // Parse the longest prefix matching the StrDecimalLiteral grammar:
     // optional sign, digits, optional `.` digits, optional exponent. Anything
     // after that prefix is ignored (NaN only if no valid prefix exists).
@@ -134,14 +142,22 @@ pub(crate) fn global_is_nan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(n.is_nan()))
 }
-pub(crate) fn global_is_finite(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn global_is_finite(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     Ok(Value::Bool(n.is_finite()))
 }
 
 /// `BigInt(x)`: convert a number, string, or boolean to a BigInt. Throws
 /// RangeError for non-integral numbers and SyntaxError for unparseable strings.
-pub(crate) fn global_bigint(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn global_bigint(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let arg = args.first().unwrap_or(&Value::Undefined);
     match arg {
         Value::BigInt(n) => Ok(Value::BigInt(n.clone())),
@@ -171,7 +187,11 @@ pub(crate) fn global_bigint(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> e
 }
 
 /// `BigInt.prototype.toString()`: returns the decimal string of the BigInt.
-pub(crate) fn bigint_to_string(_vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn bigint_to_string(
+    _vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let _ = args;
     let v = match this {
         Some(Value::BigInt(n)) => n.clone(),
@@ -198,7 +218,11 @@ pub(crate) fn global_eval(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
 /// `new Function(p0, p1, ..., body)`: dynamically build a function from a
 /// parameter list and a body source string. The last argument is the body;
 /// earlier arguments are parameter names (comma-separated within each).
-pub(crate) fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn function_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     use crate::ast::FunctionExpr;
     use crate::value::{FunctionData, FunctionKind};
     use std::sync::Arc;
@@ -207,7 +231,11 @@ pub(crate) fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>
     let (params_src, body_src) = if args.is_empty() {
         (String::new(), String::new())
     } else if args.len() == 1 {
-        (String::new(), vm.to_string(args.first().unwrap_or(&Value::Undefined))?.to_string())
+        (
+            String::new(),
+            vm.to_string(args.first().unwrap_or(&Value::Undefined))?
+                .to_string(),
+        )
     } else {
         let body = vm.to_string(&args[args.len() - 1])?.to_string();
         let params = args[..args.len() - 1]
@@ -303,4 +331,3 @@ pub(crate) fn function_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>
     let _ = func_idx;
     Ok(Value::Object(GcIdx(f_idx)))
 }
-

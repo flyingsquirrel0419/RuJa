@@ -6,8 +6,8 @@
 
 use crate::ast::FunctionExpr;
 use indexmap::{IndexMap, IndexSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use std::fmt;
 use std::sync::Arc;
@@ -245,7 +245,10 @@ impl std::hash::Hash for MapKey {
         match &self.0 {
             Value::Undefined => 0u8.hash(state),
             Value::Null => 1u8.hash(state),
-            Value::Bool(b) => { 2u8.hash(state); b.hash(state); }
+            Value::Bool(b) => {
+                2u8.hash(state);
+                b.hash(state);
+            }
             Value::Number(n) => {
                 3u8.hash(state);
                 if n.is_nan() {
@@ -254,10 +257,22 @@ impl std::hash::Hash for MapKey {
                     n.to_bits().hash(state);
                 }
             }
-            Value::BigInt(n) => { 4u8.hash(state); n.hash(state); }
-            Value::String(s) => { 5u8.hash(state); s.hash(state); }
-            Value::Object(idx) => { 6u8.hash(state); idx.0.hash(state); }
-            Value::Symbol(id) => { 7u8.hash(state); id.hash(state); }
+            Value::BigInt(n) => {
+                4u8.hash(state);
+                n.hash(state);
+            }
+            Value::String(s) => {
+                5u8.hash(state);
+                s.hash(state);
+            }
+            Value::Object(idx) => {
+                6u8.hash(state);
+                idx.0.hash(state);
+            }
+            Value::Symbol(id) => {
+                7u8.hash(state);
+                id.hash(state);
+            }
         }
     }
 }

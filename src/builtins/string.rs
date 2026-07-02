@@ -21,7 +21,11 @@ pub(crate) fn str_val(vm: &mut Vm, this: &Option<Value>) -> error::Result<String
         None => Ok("undefined".into()),
     }
 }
-pub(crate) fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_char_at(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     // ES: position is ToInteger; negatives and out-of-range yield "".
     // Rust's `as usize` saturates negatives to 0, so "abc".charAt(-1)
@@ -45,7 +49,11 @@ pub(crate) fn str_char_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
         None => Ok(Value::String(Arc::from(""))),
     }
 }
-pub(crate) fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_char_code_at(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     // ES: position is ToInteger(position); NaN -> 0, but a negative or
     // out-of-range index yields NaN. Rust's `as usize` saturates negatives
@@ -66,7 +74,11 @@ pub(crate) fn str_char_code_at(vm: &mut Vm, args: &[Value], this: Option<Value>)
         .map(|unit| Value::Number(unit as f64))
         .unwrap_or(Value::Number(f64::NAN)))
 }
-pub(crate) fn str_code_point_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_code_point_at(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let pos = match args.first() {
         Some(Value::Number(n)) => *n,
@@ -134,7 +146,11 @@ pub(crate) fn string_raw(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
     Ok(Value::String(Arc::from(result.as_str())))
 }
 
-pub(crate) fn string_from_code_point(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn string_from_code_point(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let mut units: Vec<u16> = Vec::new();
     for a in args {
         let cp = vm.to_number(a)? as u32;
@@ -154,7 +170,11 @@ pub(crate) fn string_from_code_point(vm: &mut Vm, args: &[Value], _: Option<Valu
     )))
 }
 
-pub(crate) fn str_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_index_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let n = args
         .first()
@@ -202,12 +222,20 @@ pub(crate) fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     let r = crate::value::utf16_slice(&s, st, en);
     Ok(Value::String(Arc::from(r.as_str())))
 }
-pub(crate) fn str_to_upper(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_to_upper(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     Ok(Value::String(Arc::from(
         str_val(vm, &this)?.to_uppercase().as_str(),
     )))
 }
-pub(crate) fn str_to_lower(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_to_lower(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     Ok(Value::String(Arc::from(
         str_val(vm, &this)?.to_lowercase().as_str(),
     )))
@@ -278,10 +306,12 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         None => vec![s],
         Some(sep) if sep.is_empty() => {
             let units: Vec<u16> = s.encode_utf16().collect();
-            units.iter().take(limit).map(|&u| {
-                String::from_utf16_lossy(&[u])
-            }).collect()
-        },
+            units
+                .iter()
+                .take(limit)
+                .map(|&u| String::from_utf16_lossy(&[u]))
+                .collect()
+        }
         Some(sep) => s.split(&sep).take(limit).map(|p| p.to_string()).collect(),
     };
     let items: Vec<Value> = parts
@@ -296,7 +326,11 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     });
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
 }
-pub(crate) fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_replace(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
     // Is the replacement a function?
@@ -391,7 +425,11 @@ pub(crate) fn str_replace(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
 }
 /// String.prototype.lastIndexOf(searchString, fromIndex): last occurrence at
 /// or before `fromIndex` (default +Inf -> search from end).
-pub(crate) fn str_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_last_index_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let n = args
         .first()
@@ -415,7 +453,11 @@ pub(crate) fn str_last_index_of(vm: &mut Vm, args: &[Value], this: Option<Value>
         .unwrap_or(Value::Number(-1.0)))
 }
 
-pub(crate) fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_includes(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let n = args
         .first()
@@ -426,7 +468,11 @@ pub(crate) fn str_includes(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     let tail = crate::value::utf16_slice(&s, start, len);
     Ok(Value::Bool(tail.contains(n.as_str())))
 }
-pub(crate) fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_starts_with(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     Ok(Value::Bool(
         str_val(vm, &this)?.starts_with(
             args.first()
@@ -436,7 +482,11 @@ pub(crate) fn str_starts_with(vm: &mut Vm, args: &[Value], this: Option<Value>) 
         ),
     ))
 }
-pub(crate) fn str_ends_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_ends_with(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     Ok(Value::Bool(
         str_val(vm, &this)?.ends_with(
             args.first()
@@ -526,7 +576,11 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         _ => Ok(Value::Null),
     }
 }
-pub(crate) fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn array_find_last_index(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let fn_val = args.first().cloned().unwrap_or(Value::Undefined);
     if let Some(Value::Object(idx)) = this {
         let items = vm.heap.with_obj(idx.0, |obj| {
@@ -550,7 +604,11 @@ pub(crate) fn array_find_last_index(vm: &mut Vm, args: &[Value], this: Option<Va
     Ok(Value::Number(-1.0))
 }
 
-pub(crate) fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_pad_start(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     // targetLength uses ToLength semantics: negatives clamp to 0, but a
     // non-finite or absurdly large length must throw RangeError (Node throws
@@ -592,7 +650,11 @@ pub(crate) fn str_pad_start(vm: &mut Vm, args: &[Value], this: Option<Value>) ->
     out.push_str(&s);
     Ok(Value::String(Arc::from(out.as_str())))
 }
-pub(crate) fn str_pad_end(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_pad_end(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let target = match args.first() {
         Some(v) => vm.to_number(v)?,
@@ -641,15 +703,27 @@ pub(crate) fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn str_trim_start(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_trim_start(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     Ok(Value::String(Arc::from(s.trim_start())))
 }
-pub(crate) fn str_trim_end(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_trim_end(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     Ok(Value::String(Arc::from(s.trim_end())))
 }
-pub(crate) fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_replace_all(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let from = match args.first() {
         Some(Value::String(p)) => p.to_string(),
@@ -673,7 +747,11 @@ pub(crate) fn str_replace_all(vm: &mut Vm, args: &[Value], this: Option<Value>) 
     }
     Ok(Value::String(Arc::from(s.replace(&from, &to))))
 }
-pub(crate) fn str_substring(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_substring(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let len = crate::value::utf16_len(&s) as f64;
     let mut start = match args.first() {
@@ -734,7 +812,11 @@ pub(crate) fn str_substr(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     Ok(Value::String(Arc::from(result.as_str())))
 }
 
-pub(crate) fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn str_from_char_code(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     // Build from UTF-16 code units. Unlike char::from_u32, this handles
     // surrogate pairs and lone surrogates correctly (each arg is one code
     // unit in [0, 65535] after ToUint16).
@@ -751,7 +833,11 @@ pub(crate) fn str_from_char_code(_vm: &mut Vm, args: &[Value], _: Option<Value>)
     let s = crate::value::utf16_from_codes(&codes);
     Ok(Value::String(Arc::from(s.as_str())))
 }
-pub(crate) fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn string_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(_)) = &this {
         let prim = match args.first() {
             None => Value::String(Arc::from("")),
@@ -767,7 +853,11 @@ pub(crate) fn string_constructor(vm: &mut Vm, args: &[Value], this: Option<Value
         Some(v) => Ok(Value::String(vm.to_string(v)?)),
     }
 }
-pub(crate) fn number_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(_)) = &this {
         let prim = match args.first() {
             None => Value::Number(0.0),
@@ -782,25 +872,41 @@ pub(crate) fn number_constructor(vm: &mut Vm, args: &[Value], this: Option<Value
     }
 }
 
-pub(crate) fn number_is_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_is_integer(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     match args.first() {
         Some(Value::Number(n)) if n.is_finite() && n.fract() == 0.0 => Ok(Value::Bool(true)),
         _ => Ok(Value::Bool(false)),
     }
 }
-pub(crate) fn number_is_finite(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_is_finite(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     match args.first() {
         Some(Value::Number(n)) if n.is_finite() => Ok(Value::Bool(true)),
         _ => Ok(Value::Bool(false)),
     }
 }
-pub(crate) fn number_is_nan(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_is_nan(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     match args.first() {
         Some(Value::Number(n)) if n.is_nan() => Ok(Value::Bool(true)),
         _ => Ok(Value::Bool(false)),
     }
 }
-pub(crate) fn number_is_safe_integer(_vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_is_safe_integer(
+    _vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     match args.first() {
         Some(Value::Number(n))
             if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9007199254740991.0 =>
@@ -810,13 +916,25 @@ pub(crate) fn number_is_safe_integer(_vm: &mut Vm, args: &[Value], _: Option<Val
         _ => Ok(Value::Bool(false)),
     }
 }
-pub(crate) fn number_parse_int(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_parse_int(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     global_parse_int(vm, args, None)
 }
-pub(crate) fn number_parse_float(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn number_parse_float(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     global_parse_float(vm, args, None)
 }
-pub(crate) fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn num_to_fixed(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let n = match &this {
         Some(Value::Number(n)) => *n,
         Some(v) => vm.to_number(v)?,
@@ -847,7 +965,11 @@ pub(crate) fn num_to_fixed(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     let digits = d as usize;
     Ok(Value::String(Arc::from(format!("{:.*}", digits, n))))
 }
-pub(crate) fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn num_to_precision(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let n = match &this {
         Some(Value::Number(n)) => *n,
         Some(v) => vm.to_number(v)?,
@@ -913,7 +1035,11 @@ pub(crate) fn num_to_precision(vm: &mut Vm, args: &[Value], this: Option<Value>)
     }
 }
 
-pub(crate) fn num_to_exponential(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn num_to_exponential(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let n = match &this {
         Some(Value::Number(n)) => *n,
         Some(v) => vm.to_number(v)?,
@@ -945,7 +1071,11 @@ pub(crate) fn num_to_exponential(vm: &mut Vm, args: &[Value], this: Option<Value
     }
 }
 
-pub(crate) fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn num_proto_to_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let n = match &this {
         Some(Value::Number(n)) => *n,
         Some(v) => vm.to_number(v)?,
@@ -1157,7 +1287,11 @@ pub(crate) fn format_f64_radix(n: f64, radix: u32) -> String {
     format!("{}", n)
 }
 
-pub(crate) fn boolean_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn boolean_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     if let Some(Value::Object(_)) = &this {
         let prim = Value::Bool(args.first().unwrap_or(&Value::Undefined).is_truthy());
         vm.set_primitive(this.as_ref().unwrap(), prim);
@@ -1167,4 +1301,3 @@ pub(crate) fn boolean_constructor(vm: &mut Vm, args: &[Value], this: Option<Valu
         args.first().unwrap_or(&Value::Undefined).is_truthy(),
     ))
 }
-

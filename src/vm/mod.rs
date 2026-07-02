@@ -9,10 +9,10 @@ use crate::gc::Heap;
 use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use indexmap::IndexMap;
 use num_traits::{Signed, Zero};
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
@@ -200,15 +200,15 @@ impl Default for Vm {
 
 impl Vm {
     fn current_frame(&self) -> error::Result<&CallFrame> {
-        self.frames.last().ok_or_else(|| {
-            crate::error::Error::internal("no active call frame")
-        })
+        self.frames
+            .last()
+            .ok_or_else(|| crate::error::Error::internal("no active call frame"))
     }
 
     fn current_frame_mut(&mut self) -> error::Result<&mut CallFrame> {
-        self.frames.last_mut().ok_or_else(|| {
-            crate::error::Error::internal("no active call frame")
-        })
+        self.frames
+            .last_mut()
+            .ok_or_else(|| crate::error::Error::internal("no active call frame"))
     }
 
     pub fn new() -> Self {
@@ -1145,10 +1145,7 @@ impl Vm {
             }
             depth += 1;
             let (has, proto) = self.heap.with_obj(idx.0, |o| {
-                (
-                    o.props().lock().contains_key(key),
-                    o.proto().lock().clone(),
-                )
+                (o.props().lock().contains_key(key), o.proto().lock().clone())
             });
             if has {
                 return true;
@@ -1421,9 +1418,9 @@ impl Vm {
                 }
                 // __proto__ getter returns the object's [[Prototype]].
                 if key == "__proto__" {
-                    return Ok(self.heap.with_obj(idx.0, |o| {
-                        o.proto().lock().clone().unwrap_or(Value::Null)
-                    }));
+                    return Ok(self
+                        .heap
+                        .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
                 }
                 // globalThis routes property reads to the global environment.
                 let is_global_this = self.heap.with_obj(idx.0, |o| {
@@ -1500,9 +1497,7 @@ impl Vm {
                 }
                 // walk proto chain, preserving the original receiver so that
                 // getters inherited from a prototype bind `this` to the receiver.
-                let p = self
-                    .heap
-                    .with_obj(idx.0, |o| o.proto().lock().clone());
+                let p = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
                         return self.get_property_rx(&proto, key, obj.clone(), 0);
@@ -1564,26 +1559,17 @@ impl Vm {
                                 return Some(Value::Undefined);
                             }
                             return Some(
-                                a.items
-                                    .lock()
-                                    .get(i)
-                                    .cloned()
-                                    .unwrap_or(Value::Undefined),
+                                a.items.lock().get(i).cloned().unwrap_or(Value::Undefined),
                             );
                         }
                     }
-                    o.props()
-                        .lock()
-                        .get(&pkey)
-                        .map(|d| d.value.clone())
+                    o.props().lock().get(&pkey).map(|d| d.value.clone())
                 });
                 if let Some(v) = val {
                     return Ok(v);
                 }
                 // Walk up.
-                let p = self
-                    .heap
-                    .with_obj(idx.0, |o| o.proto().lock().clone());
+                let p = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
                         return self.get_property_rx(&proto, key, receiver, depth + 1);
@@ -1810,9 +1796,7 @@ impl Vm {
             if cur == target {
                 return true;
             }
-            let next = self
-                .heap
-                .with_obj(cur, |o| o.proto().lock().clone());
+            let next = self.heap.with_obj(cur, |o| o.proto().lock().clone());
             match next {
                 Some(Value::Object(p)) => cur = p.0,
                 _ => return false,
@@ -2303,13 +2287,11 @@ impl Vm {
                             // chain: when ret settles, settle derived
                             self.heap.with_obj(ret_idx.0, |o| {
                                 if let HeapObj::Promise(p) = o {
-                                    p.handlers
-                                        .lock()
-                                        .push(crate::value::PromiseHandler {
-                                            on_fulfilled: Value::Undefined,
-                                            on_rejected: Value::Undefined,
-                                            derived: Some(d),
-                                        });
+                                    p.handlers.lock().push(crate::value::PromiseHandler {
+                                        on_fulfilled: Value::Undefined,
+                                        on_rejected: Value::Undefined,
+                                        derived: Some(d),
+                                    });
                                 }
                             });
                             // If `ret` is already settled, the handler we just
@@ -2318,10 +2300,7 @@ impl Vm {
                             // now so the derived promise settles.
                             let (settled, state) = self.heap.with_obj(ret_idx.0, |o| {
                                 if let HeapObj::Promise(p) = o {
-                                    (
-                                        *p.state.lock() != PromiseStatus::Pending,
-                                        *p.state.lock(),
-                                    )
+                                    (*p.state.lock() != PromiseStatus::Pending, *p.state.lock())
                                 } else {
                                     (false, PromiseStatus::Pending)
                                 }
@@ -2804,7 +2783,11 @@ impl Vm {
                     // would panic on RefCell reborrow).
                     let pairs: Vec<(Value, Value)> = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Map(m) = o {
-                            m.entries.lock().iter().map(|(k, v)| (k.0.clone(), v.clone())).collect::<Vec<_>>()
+                            m.entries
+                                .lock()
+                                .iter()
+                                .map(|(k, v)| (k.0.clone(), v.clone()))
+                                .collect::<Vec<_>>()
                         } else {
                             Vec::new()
                         }
@@ -2825,7 +2808,11 @@ impl Vm {
                 } else if is_set {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Set(s) = o {
-                            s.items.lock().iter().map(|k| k.0.clone()).collect::<Vec<_>>()
+                            s.items
+                                .lock()
+                                .iter()
+                                .map(|k| k.0.clone())
+                                .collect::<Vec<_>>()
                         } else {
                             Vec::new()
                         }

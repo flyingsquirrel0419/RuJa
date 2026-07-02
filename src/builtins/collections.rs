@@ -36,9 +36,7 @@ pub(crate) fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries
-                    .lock()
-                    .contains_key(&MapKey(key))
+                m.entries.lock().contains_key(&MapKey(key))
             } else {
                 false
             }
@@ -62,15 +60,17 @@ pub(crate) fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 
 // --- WeakMap / WeakSet (true weak-reference semantics) ---
 
-pub(crate) fn weakmap_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakmap_constructor(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     // The WeakMap prototype (with get/set/has/delete) is the constructor's
     // own `.prototype` property. `construct` passes a fresh Object whose
     // [[Prototype]] is that prototype as `this`; copy it so the returned
     // WeakMap object inherits the methods.
     let proto = match _this {
-        Some(Value::Object(idx)) => vm
-            .heap
-            .with_obj(idx.0, |o| o.proto().lock().clone()),
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| o.proto().lock().clone()),
         _ => Some(vm.object_proto.clone()),
     };
     let obj_idx = vm
@@ -83,7 +83,11 @@ pub(crate) fn weakmap_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Va
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
-pub(crate) fn weakmap_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakmap_set(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let val = args.get(1).cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
@@ -109,7 +113,11 @@ pub(crate) fn weakmap_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(this.unwrap_or(Value::Undefined))
 }
 
-pub(crate) fn weakmap_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakmap_get(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
         Value::Object(i) => i.0,
@@ -132,7 +140,11 @@ pub(crate) fn weakmap_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(Value::Undefined)
 }
 
-pub(crate) fn weakmap_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakmap_has(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
         Value::Object(i) => i.0,
@@ -141,10 +153,7 @@ pub(crate) fn weakmap_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::WeakMap(wm) = obj {
-                wm.entries
-                    .lock()
-                    .iter()
-                    .any(|(k, _)| *k == key_idx)
+                wm.entries.lock().iter().any(|(k, _)| *k == key_idx)
             } else {
                 false
             }
@@ -153,7 +162,11 @@ pub(crate) fn weakmap_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(Value::Bool(false))
 }
 
-pub(crate) fn weakmap_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakmap_delete(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
         Value::Object(i) => i.0,
@@ -174,11 +187,13 @@ pub(crate) fn weakmap_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -
     Ok(Value::Bool(false))
 }
 
-pub(crate) fn weakset_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakset_constructor(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     let proto = match _this {
-        Some(Value::Object(idx)) => vm
-            .heap
-            .with_obj(idx.0, |o| o.proto().lock().clone()),
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| o.proto().lock().clone()),
         _ => Some(vm.object_proto.clone()),
     };
     let obj_idx = vm
@@ -191,7 +206,11 @@ pub(crate) fn weakset_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Va
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
-pub(crate) fn weakset_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakset_add(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
         Value::Object(i) => i.0,
@@ -214,7 +233,11 @@ pub(crate) fn weakset_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(this.unwrap_or(Value::Undefined))
 }
 
-pub(crate) fn weakset_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakset_has(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
         Value::Object(i) => i.0,
@@ -232,7 +255,11 @@ pub(crate) fn weakset_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> e
     Ok(Value::Bool(false))
 }
 
-pub(crate) fn weakset_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn weakset_delete(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let key_idx = match &key {
         Value::Object(i) => i.0,
@@ -296,7 +323,11 @@ pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> 
         Vec::new()
     }
 }
-pub(crate) fn map_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn map_entries(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let pairs = map_entries_list(vm, &this);
     Ok(make_value_array(vm, pairs))
 }
@@ -304,11 +335,7 @@ pub(crate) fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
     let keys: Vec<Value> = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries
-                    .lock()
-                    .iter()
-                    .map(|(k, _)| k.0.clone())
-                    .collect()
+                m.entries.lock().iter().map(|(k, _)| k.0.clone()).collect()
             } else {
                 Vec::new()
             }
@@ -318,15 +345,15 @@ pub(crate) fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
     };
     Ok(make_value_array(vm, keys))
 }
-pub(crate) fn map_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn map_values(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let vals: Vec<Value> = if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries
-                    .lock()
-                    .values()
-                    .cloned()
-                    .collect()
+                m.entries.lock().values().cloned().collect()
             } else {
                 Vec::new()
             }
@@ -336,7 +363,11 @@ pub(crate) fn map_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> e
     };
     Ok(make_value_array(vm, vals))
 }
-pub(crate) fn map_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn map_for_each(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned();
     if let Some(Value::Object(idx)) = this {
@@ -365,7 +396,11 @@ pub(crate) fn map_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn map_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn map_constructor(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
@@ -475,7 +510,11 @@ pub(crate) fn set_values_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
         Vec::new()
     }
 }
-pub(crate) fn set_entries(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn set_entries(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let vals = set_values_list(vm, &this);
     let mut pairs: Vec<Value> = Vec::new();
     for v in vals {
@@ -487,11 +526,19 @@ pub(crate) fn set_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
     let vals = set_values_list(vm, &this);
     Ok(make_value_array(vm, vals))
 }
-pub(crate) fn set_values(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn set_values(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let vals = set_values_list(vm, &this);
     Ok(make_value_array(vm, vals))
 }
-pub(crate) fn set_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn set_for_each(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned();
     let vals = set_values_list(vm, &this);
@@ -508,7 +555,11 @@ pub(crate) fn set_for_each(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     }
     Ok(Value::Undefined)
 }
-pub(crate) fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn set_constructor(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
@@ -537,7 +588,11 @@ pub(crate) fn set_constructor(vm: &mut Vm, _args: &[Value], _this: Option<Value>
 // =========================================================================
 // Symbol
 // =========================================================================
-pub(crate) fn symbol_constructor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn symbol_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let _desc = args.first().cloned().unwrap_or(Value::Undefined);
     let id = vm.next_symbol_id;
     vm.next_symbol_id += 1;
@@ -548,7 +603,11 @@ pub(crate) fn symbol_for(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> erro
     vm.next_symbol_id += 1;
     Ok(Value::Symbol(id))
 }
-pub(crate) fn symbol_to_string(_vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn symbol_to_string(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     // RuJa's Symbol is `Value::Symbol(u32)` with no stored description, so
     // we return the no-description form "Symbol()".
     Ok(Value::String(Arc::from("Symbol()")))
@@ -561,7 +620,11 @@ pub(crate) fn symbol_to_string(_vm: &mut Vm, _args: &[Value], _this: Option<Valu
 // =========================================================================
 // Promise
 // =========================================================================
-pub(crate) fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn promise_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
     let executor = args.first().cloned().unwrap_or(Value::Undefined);
     // create the promise object
     let p_idx = vm
@@ -634,7 +697,11 @@ pub(crate) fn promise_constructor(vm: &mut Vm, args: &[Value], _this: Option<Val
     Ok(p_val)
 }
 
-pub(crate) fn promise_resolve(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn promise_resolve(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let p_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
         _ => return Ok(Value::Undefined),
@@ -643,7 +710,11 @@ pub(crate) fn promise_resolve(vm: &mut Vm, args: &[Value], this: Option<Value>) 
     vm.promise_resolve(p_idx, value);
     Ok(Value::Undefined)
 }
-pub(crate) fn promise_reject(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn promise_reject(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let p_idx = match &this {
         Some(Value::Object(idx)) => idx.0,
         _ => return Ok(Value::Undefined),
@@ -700,7 +771,11 @@ pub(crate) fn promise_static_reject(
     Ok(Value::Object(GcIdx(p_idx)))
 }
 
-pub(crate) fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn promise_then(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     let on_fulfilled = args.first().cloned().unwrap_or(Value::Undefined);
     let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
     let p_idx = match &this {
@@ -750,7 +825,11 @@ pub(crate) fn promise_then(vm: &mut Vm, args: &[Value], this: Option<Value>) -> 
     Ok(Value::Object(GcIdx(derived)))
 }
 
-pub(crate) fn promise_catch(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+pub(crate) fn promise_catch(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     // p.catch(r) === p.then(undefined, r)
     let on_rejected = args.first().cloned().unwrap_or(Value::Undefined);
     promise_then(vm, &[Value::Undefined, on_rejected], this)

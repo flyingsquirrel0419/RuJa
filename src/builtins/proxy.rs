@@ -20,12 +20,13 @@ pub(crate) fn proxy_constructor(
         ));
     }
 
-    let proto = vm
-        .heap
-        .with_obj(match &target {
+    let proto = vm.heap.with_obj(
+        match &target {
             Value::Object(idx) => idx.0,
             _ => unreachable!(),
-        }, |o| o.proto().lock().clone());
+        },
+        |o| o.proto().lock().clone(),
+    );
 
     let idx = vm.heap.allocate(HeapObj::Proxy(crate::value::ProxyData {
         target,
@@ -81,10 +82,9 @@ pub(crate) fn proxy_revocable(
     if let Value::Object(oidx) = &obj {
         vm.heap.with_obj(oidx.0, |o| {
             if let HeapObj::Object(od) = o {
-                od.props.lock().insert(
-                    PropertyKey::from("proxy"),
-                    data_prop(proxy_val),
-                );
+                od.props
+                    .lock()
+                    .insert(PropertyKey::from("proxy"), data_prop(proxy_val));
                 od.props.lock().insert(
                     PropertyKey::from("revoke"),
                     data_prop(Value::Object(GcIdx(revoke_fn_idx))),
