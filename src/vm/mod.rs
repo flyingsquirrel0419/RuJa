@@ -64,6 +64,9 @@ pub struct Vm {
     pub(crate) set_proto: Value,
     pub(crate) date_proto: Value,
     pub(crate) microtask_queue: std::collections::VecDeque<Microtask>,
+    /// Monomorphic inline cache: (heap_idx, property_name) -> cached Value.
+    /// Caches the result of the last GetProp on that object for that key.
+    pub(crate) ic: std::collections::HashMap<(usize, String), Value>,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
@@ -234,6 +237,7 @@ impl Vm {
             set_proto: Value::Undefined,
             date_proto: Value::Undefined,
             microtask_queue: std::collections::VecDeque::new(),
+            ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
             next_symbol_id: 1,
@@ -2187,6 +2191,51 @@ impl Vm {
             }
         }
         Ok(())
+    }
+
+    /// Execute a single microtask from the queue, if any. Returns true if
+    /// a task was executed, false if the queue is empty. This allows hosts
+    /// (e.g. WASM, server runtimes) to cooperatively interleave JS microtask
+    /// execution with other work, rather than draining all microtasks at once.
+    pub fn tick(&mut self) -> error::Result<bool> {
+        if let Some(task) = self.microtask_queue.pop_front() {
+            match task {
+                Microtask::Then {
+                    promise,
+                    on_fulfilled,
+                    on_rejected,
+                    derived,
+                } => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
+                Microtask::Resolve { promise, value } => {
+                    self.promise_resolve(promise.0, value);
+                }
+                Microtask::Reject { promise, reason } => {
+                    self.promise_reject(promise.0, reason);
+                }
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Returns true if there are pending microtasks in the queue.
+    pub fn has_pending_microtasks(&self) -> bool {
+        !self.microtask_queue.is_empty()
+    }
+
+    /// Inline cache lookup: returns cached value if (obj_idx, key) was seen.
+    pub(crate) fn ic_get(&self, obj_idx: usize, key: &str) -> Option<Value> {
+        self.ic.get(&(obj_idx, key.to_string())).cloned()
+    }
+
+    /// Store a value in the inline cache.
+    pub(crate) fn ic_put(&mut self, obj_idx: usize, key: String, val: Value) {
+        // Limit cache size to avoid unbounded growth.
+        if self.ic.len() > 4096 {
+            self.ic.clear();
+        }
+        self.ic.insert((obj_idx, key), val);
     }
 
     /// Run a single then handler for a settled promise, chaining into the
