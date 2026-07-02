@@ -1,5 +1,32 @@
 # Known limitations
 
+## Sandbox guarantees
+
+RuJa is designed for running untrusted JavaScript safely inside a host process.
+The following resource limits are enforced:
+
+- **Execution fuel**: `Vm::set_fuel(Some(n))` bounds execution to ~n opcodes.
+  Exhaustion throws a `RangeError("fuel exhausted")` that is *not catchable*
+  by user `try/catch` (a host-level abort). `None` = unbounded (default).
+- **Heap object limit**: `Vm::set_max_heap_objects(Some(n))` caps the number
+  of live GC-managed heap objects. When exceeded, allocation throws a
+  catchable `RangeError("heap limit exceeded")`. A GC cycle is attempted
+  before the error is raised. `None` = unlimited (default).
+- **Call-stack depth**: JavaScript recursion is capped at 1000 frames.
+  Exceeding this throws a catchable `RangeError("Maximum call stack size
+  exceeded")`, not a native stack overflow (SIGSEGV/abort).
+- **ReDoS-safe regex**: The `regex` crate uses RE2-style linear-time matching
+  with no backtracking, so catastrophic regex patterns cannot cause
+  exponential-time hangs.
+- **String/array caps**: `"x".repeat(n)` is capped at 256 MiB output.
+  `Array.from(iterable)` is capped at 65k elements. Dense arrays are capped
+  at 1M elements (`MAX_DENSE_ARRAY_LEN`); beyond that, indices are stored
+  sparsely as named properties.
+
+These limits make it safe to pass untrusted JS to `Vm::run` without risking
+process crashes, infinite loops, or OOM kills. For truly hard real-time
+guarantees, run RuJa in a separately killable process as well.
+
 - No `eval`/`with` process-level security sandbox (local-trust execution model)
 - Execution fuel is **cooperative, not preemptive**: `Vm::set_fuel(Some(n))`
   bounds execution to ~n opcodes (exhaustion throws a `RangeError` that is
