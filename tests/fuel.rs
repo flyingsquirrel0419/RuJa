@@ -65,3 +65,20 @@ fn normal_errors_remain_catchable() {
         .unwrap();
     assert_eq!(v, ruja::Value::String(std::sync::Arc::from("caught true")));
 }
+
+#[test]
+fn heap_limit_is_catchable_not_a_panic() {
+    let mut vm = ruja::Vm::new();
+    vm.set_max_heap_objects(Some(5));
+    let result = vm.run("let a = []; for (let i = 0; i < 1000; i++) { a.push({}); }");
+    assert!(
+        result.is_err(),
+        "heap limit should produce a catchable error, not a panic"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("heap limit"),
+        "expected 'heap limit' in error, got: {}",
+        err
+    );
+}

@@ -187,25 +187,6 @@ impl Default for Heap {
 
 impl Heap {
     pub fn allocate(&self, obj: HeapObj) -> usize {
-        // Check heap object count limit before allocating.
-        let max = self.max_objects.load(Ordering::Relaxed);
-        if max > 0 {
-            let cells = self.cells.lock();
-            let free = self.free_list.lock();
-            let live = cells.len() - free.len();
-            if live >= max {
-                // Trigger a GC to reclaim dead objects before giving up.
-                drop(cells);
-                drop(free);
-                self.collect(&[]);
-                let cells = self.cells.lock();
-                let free = self.free_list.lock();
-                let live = cells.len() - free.len();
-                if live >= max {
-                    return usize::MAX;
-                }
-            }
-        }
         let idx = {
             let mut free = self.free_list.lock();
             if let Some(idx) = free.pop() {

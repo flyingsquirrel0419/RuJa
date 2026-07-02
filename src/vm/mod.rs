@@ -2368,23 +2368,21 @@ impl Vm {
     /// heap limit is exceeded. Callers that can propagate errors should
     /// use `alloc_checked` instead.
     pub(crate) fn alloc(&mut self, obj: HeapObj) -> GcIdx {
-        let idx = self.heap.allocate(obj);
-        if idx == usize::MAX {
-            GcIdx(0)
-        } else {
-            GcIdx(idx)
-        }
+        GcIdx(self.heap.allocate(obj))
     }
 
     /// Allocate a heap object, returning a RangeError if the heap
     /// limit is exceeded.
     pub(crate) fn alloc_checked(&mut self, obj: HeapObj) -> error::Result<GcIdx> {
-        let idx = self.heap.allocate(obj);
-        if idx == usize::MAX {
-            Err(Error::range("heap limit exceeded"))
-        } else {
-            Ok(GcIdx(idx))
+        // Check heap limit before allocating.
+        let max = self.max_heap_objects;
+        if max > 0 && self.heap.live_count() >= max {
+            self.heap.collect(&self.collect_roots());
+            if self.heap.live_count() >= max {
+                return Err(Error::range("heap limit exceeded"));
+            }
         }
+        Ok(GcIdx(self.heap.allocate(obj)))
     }
 
     /// Set the wrapped primitive on an object (for `new Number(5)`,
