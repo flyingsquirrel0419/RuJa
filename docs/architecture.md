@@ -18,21 +18,25 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
 - **Compiler** (`src/compiler.rs`) — single-pass AST → bytecode compilation
   with lexical scope resolution, hoisting, and TDZ tracking.
 - **Bytecode** (`src/bytecode.rs`) — a stack-machine instruction set (`Op`).
-- **VM** (`src/vm.rs`) — the dispatch loop: call frames, operand stack,
-  property access, type coercion, and non-local control flow.
+- **VM** (`src/vm/mod.rs`, `src/vm/ops.rs`) — the dispatch loop: call frames,
+  operand stack, property access, type coercion, and non-local control flow.
+  `ops.rs` holds the opcode dispatch and immediate helpers; `mod.rs` holds
+  the `Vm` struct, public API, and runtime helpers.
 - **GC** (`src/gc.rs`) — mark-and-sweep collector that traces from VM roots.
 - **Values** (`src/value.rs`) — the `HeapObj` enum
   (Object/Array/Function/Environment/Map/Set/Promise/Generator) referenced by
   `GcIdx` handles.
-- **Builtins** (`src/builtins.rs`) — the standard library: Object, Array,
-  String, Number, Boolean, Function, Math, JSON, console, RegExp, Map, Set,
-  Symbol, Promise, and the Error hierarchy.
+- **Builtins** (`src/builtins/mod.rs` + submodules) — the standard library:
+  Object, Array, String, Number, Boolean, Function, Math, JSON, console, RegExp,
+  Map, Set, Symbol, Promise, Proxy, TypedArray, and the Error hierarchy.
 
 ## Garbage collection
 
-A non-incremental, non-generational mark-and-sweep collector reclaims
+A mark-and-sweep collector with optional incremental marking reclaims
 reference cycles. Collection runs at safe points only (after a run settles,
-and throttled at frame boundaries), so very long-running tight loops can
+and throttled at frame boundaries). Incremental marking via
+`collect_incremental(roots, budget)` allows limiting the number of cells
+marked per GC step, avoiding long pauses. There is no generational collector.
 accumulate memory before a collection. A `gc_pins` stack lets call paths pin
 heap values held in Rust locals across allocations that could trigger a GC.
 
