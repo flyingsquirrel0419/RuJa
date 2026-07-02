@@ -656,6 +656,24 @@ impl Vm {
                         return Ok(v);
                     }
                 }
+                // Strict-mode function: reading "caller" or "arguments"
+                // throws TypeError (ES5 13.2.3, ES2025).
+                if matches!(key, "caller" | "arguments") {
+                    let is_strict_fn = self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Function(f) = o {
+                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
+                                return func.chunk.is_strict;
+                            }
+                        }
+                        false
+                    });
+                    if is_strict_fn {
+                        return Err(Error::type_err(format!(
+                            "'{}' is not allowed on a strict-mode function",
+                            key
+                        )));
+                    }
+                }
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {

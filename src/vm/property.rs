@@ -271,6 +271,27 @@ impl Vm {
                 }
 
                 // 3. Define/overwrite an own writable data property.
+                // Check extensibility: adding a new property to a
+                // non-extensible object throws TypeError in strict mode.
+                let is_extensible = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Object(od) = o {
+                        od.extensible.load(std::sync::atomic::Ordering::Relaxed)
+                    } else {
+                        true // arrays, functions, etc. are extensible by default
+                    }
+                });
+                let has_own = self.heap.with_obj(idx.0, |o| {
+                    o.props().lock().contains_key(&pkey)
+                });
+                if !is_extensible && !has_own {
+                    if self.current_strict() {
+                        return Err(Error::type_err(format!(
+                            "Cannot add property '{}', object is not extensible",
+                            key
+                        )));
+                    }
+                    return Ok(());
+                }
                 // Strict-mode function: setting "caller" or "arguments" throws TypeError.
                 if matches!(key, "caller" | "arguments") {
                     let is_strict_fn = self.heap.with_obj(idx.0, |o| {
