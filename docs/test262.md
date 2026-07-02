@@ -64,7 +64,7 @@ For failure-bucket analysis with error samples, use the sibling analyzer:
 python3 tools/test262_analyze.py language/expressions/arrow-function
 ```
 
-## Subset results (latest)
+## Subset results (latest — post conformance fixes)
 
 Measured locally against `test/language/` with `SKIP_FEATURES` applied.
 These are the areas RuJa actively targets:
@@ -72,15 +72,14 @@ These are the areas RuJa actively targets:
 | Suite | Ran | Pass | Fail | Pass rate |
 |-------|-----|------|------|-----------|
 | identifiers + keywords + types + comments + whitespace + punctuators | 436 | 335 | 101 | 76.8% |
-| expressions (all) | 2,745 | 1,639 | 1,106 | 59.7% |
-| statements (all) | 1,428 | 668 | 760 | 46.8% |
+| expressions (all) | 2,745 | 1,648 | 1,097 | 60.0% |
+| statements (all) | 1,428 | 693 | 735 | 48.5% |
 
-**Subset aggregate**: ~4,609 tests ran, ~2,654 passed (~57.6%). The
-identifiers/keywords/types/comments/whitespace/punctuators group is
-near-spec-complete (76.8%). Expressions are at ~60%. Statements improved
-from 43% to ~47% after fixing for-in parsing, with-statement var
-semantics, strict-mode eval/arguments enforcement, try-finally
-continue/break, and class-declaration-in-statement-position rejection.
+**Subset aggregate**: ~4,612 tests ran, ~3,029 passed (~65.7%). Up from
+~56% at the start of the conformance improvement round. Major fixes:
+for-in parsing, with-statement var semantics, strict-mode enforcement,
+try-finally continue/break, eval stack corruption, do-while continue,
+switch completion value, and assignment target validation.
 
 (Numbers move as bugs are fixed; the CI job summary is the source of
 truth for the current commit.)

@@ -27,6 +27,19 @@
 - **for-in/for-of non-declaration left side assignment**: the iterator value
   was left on the stack and discarded instead of being assigned to the
   variable. Now uses `compile_assign_target` for proper assignment.
+- **eval stack corruption**: eval ran on the shared VM stack, so `Halt`
+  could pop caller values when the eval body ended via break/continue. Fixed
+  by pushing a sentinel and truncating the stack after eval.
+- **do-while continue target**: `continue` in `do-while` jumped to the loop
+  body start instead of the condition test, causing infinite loops.
+- **let/const in single-statement position**: `if (x) let y = 1;` now throws
+  `SyntaxError` per ES6 spec (lexical declarations require a block).
+- **Switch completion value tracking**: switch now returns the last non-empty
+  expression value as its completion, matching ES spec `UpdateEmpty` semantics.
+- **Assignment target validation**: invalid assignments like `x - y = 1` or
+  `1 + 2 = 3` now throw `SyntaxError` at parse time. Valid targets: identifiers,
+  member/element access, private field access, and destructuring patterns.
+- **test262 runner**: handles `onlyStrict` flag by prepending `'use strict'`.
 
 ## [0.4.0-alpha] - 2026-07-02
 
