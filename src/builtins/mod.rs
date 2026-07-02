@@ -21,8 +21,10 @@ pub(crate) mod regexp;
 pub(crate) use regexp::*;
 pub(crate) mod function;
 pub(crate) mod proxy;
+pub(crate) mod typed_array;
 pub(crate) use function::*;
 pub(crate) use proxy::*;
+pub(crate) use typed_array::*;
 pub(crate) use math::{build_console, build_math};
 pub(crate) use json::{build_json, build_reflect, date_constructor, date_get_time, date_now, date_to_string};
 pub(crate) use global::{bigint_to_string, function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan, global_parse_float, global_parse_int};
@@ -1260,6 +1262,10 @@ pub fn setup_full(vm: &mut Vm) {
         }
     });
     define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
+
+    // Uint8Array constructor.
+    let u8_ctor_idx = vm.new_native_function("Uint8Array", uint8array_constructor, 1);
+    define_global(vm, "Uint8Array", Value::Object(u8_ctor_idx));
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with(
         vm,

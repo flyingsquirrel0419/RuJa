@@ -1325,6 +1325,44 @@ impl Vm {
                 key
             ))),
             Value::Object(idx) => {
+                // TypedArray index access: read from buffer.
+                let ta_info = self.heap.with_obj(idx.0, |o| {
+                    if let crate::value::HeapObj::TypedArray(t) = o {
+                        Some((t.kind, t.buffer.len()))
+                    } else {
+                        None
+                    }
+                });
+                if let Some((kind, buf_len)) = ta_info {
+                    if key == "length" {
+                        return Ok(Value::Number(buf_len as f64));
+                    }
+                    if key == "byteLength" {
+                        return Ok(Value::Number((buf_len * kind.element_size()) as f64));
+                    }
+                    if key == "byteOffset" {
+                        return Ok(Value::Number(0.0));
+                    }
+                    if let Ok(i) = key.parse::<usize>() {
+                        let elem_size = kind.element_size();
+                        let offset = i * elem_size;
+                        if offset + elem_size <= buf_len {
+                            let val = self.heap.with_obj(idx.0, |o| {
+                                if let crate::value::HeapObj::TypedArray(t) = o {
+                                    match kind {
+                                        crate::value::TypedArrayKind::Uint8 => t.buffer[i] as f64,
+                                        _ => t.buffer[i] as f64, // simplified for now
+                                    }
+                                } else {
+                                    f64::NAN
+                                }
+                            });
+                            return Ok(Value::Number(val));
+                        }
+                        return Ok(Value::Undefined);
+                    }
+                    // Non-index property: fall through to object props.
+                }
                 // Proxy trap: if this object is a Proxy, call handler.get.
                 let proxy_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::Proxy(p) = o {
