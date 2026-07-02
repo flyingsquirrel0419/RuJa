@@ -512,10 +512,20 @@ impl Parser {
     /// class declarations as the body of a single statement.
     fn parse_single_stmt(&mut self) -> error::Result<Stmt> {
         let stmt = self.parse_stmt()?;
-        if let StmtNode::ExprStmt(Expr::Class(_)) = &stmt.node {
-            return Err(error::Error::syntax(
-                "Class declaration cannot be used as a single statement body".to_string(),
-            ));
+        match &stmt.node {
+            StmtNode::ExprStmt(Expr::Class(_)) => {
+                return Err(error::Error::syntax(
+                    "Class declaration cannot be used as a single statement body".to_string(),
+                ));
+            }
+            // ES6: lexical declarations (let/const) are not allowed as the
+            // body of if/else/while/do-while/for/with without a block.
+            StmtNode::VarDecl { kind, .. } if *kind != VarKind::Var => {
+                return Err(error::Error::syntax(
+                    "Lexical declaration cannot be used as a single statement body".to_string(),
+                ));
+            }
+            _ => {}
         }
         Ok(stmt)
     }
