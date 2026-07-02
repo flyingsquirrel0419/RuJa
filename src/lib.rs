@@ -25,6 +25,9 @@ pub mod vm;
 // builtins is an internal bootstrap module; not part of the public API.
 mod builtins;
 
+#[cfg(feature = "serde")]
+pub mod interop;
+
 pub use compiler::Compiler;
 pub use error::{Error, ErrorKind};
 pub use lexer::Lexer;
