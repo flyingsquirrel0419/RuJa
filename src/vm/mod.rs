@@ -1325,6 +1325,38 @@ impl Vm {
                 key
             ))),
             Value::Object(idx) => {
+                // Proxy trap: if this object is a Proxy, call handler.get.
+                let proxy_info = self.heap.with_obj(idx.0, |o| {
+                    if let crate::value::HeapObj::Proxy(p) = o {
+                        if *p.revoked.lock() {
+                            return Some(Err(crate::error::Error::type_err(
+                                "Cannot perform 'get' on a proxy that has been revoked".to_string(),
+                            )));
+                        }
+                        Some(Ok((p.target.clone(), p.handler.clone())))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(result) = proxy_info {
+                    match result {
+                        Err(e) => return Err(e),
+                        Ok((target, handler)) => {
+                            let key_val = Value::String(Arc::from(key));
+                            let trap = self.get_property(&handler, "get")?;
+                            if !trap.is_undefined() {
+                                let receiver = obj.clone();
+                                return self.call_function(
+                                    &trap,
+                                    &[target, key_val, receiver],
+                                    Some(handler),
+                                );
+                            }
+                            // No trap: forward to target.
+                            return self.get_property(&target, key);
+                        }
+                    }
+                }
                 // Honor an accessor getter on this object (own property).
                 // Inherited accessors are handled by the recursive proto-chain
                 // walk below, since `get_property` is called again on the
@@ -1568,6 +1600,38 @@ impl Vm {
         // logic below before falling back to ordinary object semantics.
         match obj {
             Value::Object(idx) => {
+                // Proxy trap: if this object is a Proxy, call handler.set.
+                let proxy_info = self.heap.with_obj(idx.0, |o| {
+                    if let crate::value::HeapObj::Proxy(p) = o {
+                        if *p.revoked.lock() {
+                            return Some(Err(crate::error::Error::type_err(
+                                "Cannot perform 'set' on a proxy that has been revoked".to_string(),
+                            )));
+                        }
+                        Some(Ok((p.target.clone(), p.handler.clone())))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(result) = proxy_info {
+                    match result {
+                        Err(e) => return Err(e),
+                        Ok((target, handler)) => {
+                            let key_val = Value::String(Arc::from(key));
+                            let trap = self.get_property(&handler, "set")?;
+                            if !trap.is_undefined() {
+                                let receiver = obj.clone();
+                                self.call_function(
+                                    &trap,
+                                    &[target, key_val, value, receiver],
+                                    Some(handler),
+                                )?;
+                                return Ok(());
+                            }
+                            return self.set_property(&target, key, value);
+                        }
+                    }
+                }
                 // __proto__ assignment sets the object's [[Prototype]].
                 if key == "__proto__" {
                     match &value {

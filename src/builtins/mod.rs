@@ -20,7 +20,9 @@ pub(crate) use collections::*;
 pub(crate) mod regexp;
 pub(crate) use regexp::*;
 pub(crate) mod function;
+pub(crate) mod proxy;
 pub(crate) use function::*;
+pub(crate) use proxy::*;
 pub(crate) use math::{build_console, build_math};
 pub(crate) use json::{build_json, build_reflect, date_constructor, date_get_time, date_now, date_to_string};
 pub(crate) use global::{bigint_to_string, function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan, global_parse_float, global_parse_int};
@@ -1245,6 +1247,19 @@ pub fn setup_full(vm: &mut Vm) {
     // Reflect
     let reflect = build_reflect(vm);
     define_global(vm, "Reflect", reflect);
+
+    // Proxy constructor + revocable.
+    let proxy_ctor_idx = vm.new_native_function("Proxy", proxy_constructor, 2);
+    let proxy_rev_idx = vm.new_native_function("revocable", proxy_revocable, 2);
+    vm.heap.with_obj(proxy_ctor_idx.0, |o| {
+        if let HeapObj::Function(f) = o {
+            f.props.lock().insert(
+                PropertyKey::from("revocable"),
+                data_prop(Value::Object(proxy_rev_idx)),
+            );
+        }
+    });
+    define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with(
         vm,

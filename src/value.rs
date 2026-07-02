@@ -298,6 +298,15 @@ impl fmt::Debug for Value {
     }
 }
 
+/// A Proxy object: intercepts property operations via handler traps.
+pub struct ProxyData {
+    pub target: Value,
+    pub handler: Value,
+    pub revoked: parking_lot::Mutex<bool>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+}
+
 /// A heap-allocated JS object. All heap-resident data is one of these.
 pub enum HeapObj {
     Object(ObjectData),
@@ -312,6 +321,7 @@ pub enum HeapObj {
     Generator(GeneratorData),
     Iterator(IteratorData),
     LazyGenerator(LazyGeneratorData),
+    Proxy(ProxyData),
 }
 
 /// Generic JS object.
@@ -573,6 +583,7 @@ impl HeapObj {
             HeapObj::Promise(p) => &p.props,
             HeapObj::Generator(g) => &g.props,
             HeapObj::LazyGenerator(g) => &g.props,
+            HeapObj::Proxy(p) => &p.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -591,6 +602,7 @@ impl HeapObj {
             HeapObj::Promise(p) => &p.proto,
             HeapObj::Generator(g) => &g.proto,
             HeapObj::LazyGenerator(g) => &g.proto,
+            HeapObj::Proxy(p) => &p.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -615,6 +627,7 @@ impl HeapObj {
             HeapObj::LazyGenerator(_) => "Generator",
             HeapObj::Iterator(_) => "Iterator",
             HeapObj::Environment(_) => "Environment",
+            HeapObj::Proxy(_) => "Object",
         }
     }
 
