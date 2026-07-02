@@ -792,7 +792,12 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token(&mut self) -> Token {
-        self.skip_ws_and_comments();
+        // In template-literal mode (state 3), the next segment starts
+        // right after `}` — do NOT skip whitespace, as it's part of the
+        // template string content.
+        if self.template_state != 3 {
+            self.skip_ws_and_comments();
+        }
         let line = self.line;
         let col = self.col;
         let preceded_by_newline = self.saw_newline;
