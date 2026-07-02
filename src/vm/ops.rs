@@ -1181,6 +1181,11 @@ impl Vm {
                         let obj = self.stack.pop().unwrap_or(Value::Undefined);
                         let key_str = self.to_property_key(&key)?;
                         self.set_property(&obj, &key_str, value.clone())?;
+                        // Invalidate IC entry for this object+key so stale
+                        // cached values are not returned on next GetProp.
+                        if let Value::Object(idx) = &obj {
+                            self.ic_invalidate(idx.0, &key_str);
+                        }
                         self.stack.push(value);
                     }
                     Op::SetElem => {

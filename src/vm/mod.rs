@@ -2238,6 +2238,11 @@ impl Vm {
         self.ic.insert((obj_idx, key), val);
     }
 
+    /// Invalidate a cache entry when a property is written.
+    pub(crate) fn ic_invalidate(&mut self, obj_idx: usize, key: &str) {
+        self.ic.remove(&(obj_idx, key.to_string()));
+    }
+
     /// Run a single then handler for a settled promise, chaining into the
     /// derived promise (if any). The derived promise is stored in the handler
     /// via a side-table keyed by the handler function index.
