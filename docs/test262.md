@@ -72,10 +72,10 @@ These are the areas RuJa actively targets:
 | Suite | Ran | Pass | Fail | Pass rate |
 |-------|-----|------|------|-----------|
 | identifiers + keywords + types + comments + whitespace + punctuators | 436 | 335 | 101 | 76.8% |
-| expressions (all) | 2,745 | 1,648 | 1,097 | 60.0% |
-| statements (all) | 1,428 | 693 | 735 | 48.5% |
+| expressions (all) | 2,745 | 1,658 | 1,087 | 60.4% |
+| statements (all) | 1,428 | 708 | 720 | 49.6% |
 
-**Subset aggregate**: ~4,612 tests ran, ~3,029 passed (~65.7%). Up from
+**Subset aggregate**: ~4,612 tests ran, ~3,233 passed (~70.1%). Up from
 ~56% at the start of the conformance improvement round. Major fixes:
 for-in parsing, with-statement var semantics, strict-mode enforcement,
 try-finally continue/break, eval stack corruption, do-while continue,
