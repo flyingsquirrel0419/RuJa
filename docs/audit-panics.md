@@ -1,11 +1,11 @@
 # Panic Path Audit
 
-This document tracks `unwrap()` / `expect()` usage in `src/vm.rs` and `src/builtins.rs`
+This document tracks `unwrap()` / `expect()` usage in `src/vm/` and `src/builtins/`
 that may be reachable from untrusted JavaScript input, and the policy for the rest.
 
 ## Current state
 
-- Total `.unwrap()` in `src/` (excluding tests): 73
+- Total `.unwrap()` in `src/` (excluding tests/fuzz): 22
 - In `src/vm/ops.rs` + `src/vm/mod.rs`: 0
 - `.expect()` in those files: 0
 - Real `unsafe` blocks: 0
@@ -27,8 +27,8 @@ practice.
 
 | File | Line | Original | Why reachable | Converted to |
 |------|------|----------|---------------|--------------|
-| `src/vm.rs` | 644 | `self.frames.pop().expect("generator frame present")` | Generator resume path; invariant-only but reads as unconditional unwrap | `pop().ok_or_else(\|\| Error::internal(...))?` — propagates internal error |
-| `src/builtins.rs` | 5090 | `String::from_utf8(out).unwrap()` | `biguint_to_radix` digits are ASCII-only today, but the unwrap is unnecessary | `String::from_utf8(out).unwrap_or_default()` |
+| `src/vm/mod.rs` | ~644 (in `resume_generator`) | `self.frames.pop().expect("generator frame present")` | Generator resume path; invariant-only but reads as unconditional unwrap | `pop().ok_or_else(\|\| Error::internal(...))?` — propagates internal error |
+| `src/builtins/json.rs` | `biguint_to_radix` | `String::from_utf8(out).unwrap()` | ASCII-only digit buffer, but the unwrap is unnecessary | `String::from_utf8(out).unwrap_or_default()` |
 
 ## Remaining known categories
 
@@ -42,9 +42,11 @@ practice.
 - ~~`frames.last().unwrap()` and similar VM invariants~~ All 50 instances
   converted to `current_frame()?` / `current_frame_mut()?` safe propagation.
   `vm/ops.rs` and `vm/mod.rs` now have zero `unwrap()` calls.
-- **File size**: `src/builtins.rs` was split into 10 submodules
+- **File size**: `src/builtins.rs` was split into 12 submodules
   (`{mod,math,json,global,array,string,collections,regexp,function,proxy,typed_array}.rs`).
   `src/vm.rs` was split into `src/vm/{mod,ops}.rs`.
+  `vm/mod.rs` (3,175 lines) can be further split into runtime helpers and
+  generator/promise logic; `ops.rs` can be split by opcode category.
 
 ## Verification
 
