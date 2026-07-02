@@ -112,10 +112,10 @@ pub(crate) fn finish_array_from(
         }
         items = mapped;
     }
-    Ok(make_value_array(vm, items))
+    make_value_array(vm, items)
 }
 pub(crate) fn array_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    Ok(make_value_array(vm, args.to_vec()))
+    make_value_array(vm, args.to_vec())
 }
 
 pub(crate) fn array_is_array(
@@ -224,7 +224,7 @@ pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
+        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
     }
     Ok(Value::Undefined)
 }
@@ -263,7 +263,7 @@ pub(crate) fn array_filter(
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
+        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
     }
     Ok(Value::Undefined)
 }
@@ -308,16 +308,14 @@ pub(crate) fn array_reduce(
     Ok(Value::Undefined)
 }
 /// Build a heap array from a Vec of values.
-pub(crate) fn make_array(vm: &mut Vm, items: Vec<Value>) -> Value {
-    let idx = vm
-        .heap
-        .allocate_unchecked(HeapObj::Array(crate::value::ArrayData {
-            items: Mutex::new(items),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.array_proto.clone())),
-            sparse_max: Mutex::new(None),
-        }));
-    Value::Object(GcIdx(idx))
+pub(crate) fn make_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
+    let idx = vm.heap.allocate(HeapObj::Array(crate::value::ArrayData {
+        items: Mutex::new(items),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.array_proto.clone())),
+        sparse_max: Mutex::new(None),
+    }))?;
+    Ok(Value::Object(GcIdx(idx)))
 }
 
 /// Normalize an array index argument (negative wraps from end).
@@ -513,7 +511,7 @@ pub(crate) fn array_to_reversed(
                 Vec::new()
             }
         });
-        return Ok(make_array(vm, items));
+        return make_array(vm, items);
     }
     Ok(Value::Undefined)
 }
@@ -533,7 +531,7 @@ pub(crate) fn array_to_sorted(
         });
         let cb = args.first().cloned();
         sort_with_cb(vm, &mut items, &cb)?;
-        return Ok(make_array(vm, items));
+        return make_array(vm, items);
     }
     Ok(Value::Undefined)
 }
@@ -566,7 +564,7 @@ pub(crate) fn array_to_spliced(
             result.push(a.clone());
         }
         result.extend_from_slice(&items[start + del_count..]);
-        return Ok(make_array(vm, result));
+        return make_array(vm, result);
     }
     Ok(Value::Undefined)
 }
@@ -586,7 +584,7 @@ pub(crate) fn array_with(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
             return Err(Error::range("Invalid array index"));
         }
         items[index] = get_arg(args, 1);
-        return Ok(make_array(vm, items));
+        return make_array(vm, items);
     }
     Ok(Value::Undefined)
 }
@@ -754,7 +752,7 @@ pub(crate) fn array_slice(
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
+        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
     }
     Ok(Value::Undefined)
 }
@@ -798,7 +796,7 @@ pub(crate) fn array_concat(
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
 pub(crate) fn array_reverse(
@@ -955,7 +953,7 @@ pub(crate) fn array_splice(
                 Vec::new()
             }
         });
-        let arr = make_value_array(vm, removed);
+        let arr = make_value_array(vm, removed)?;
         return Ok(arr);
     }
     Ok(Value::Undefined)
@@ -1064,7 +1062,7 @@ pub(crate) fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         });
         let mut out = Vec::new();
         flatten(vm, &items, depth, &mut out);
-        return Ok(make_value_array(vm, out));
+        return make_value_array(vm, out);
     }
     Ok(Value::Undefined)
 }
@@ -1124,7 +1122,7 @@ pub(crate) fn array_flat_map(
             out.push(v.clone());
         }
     }
-    Ok(make_value_array(vm, out))
+    make_value_array(vm, out)
 }
 pub(crate) fn array_copy_within(
     vm: &mut Vm,
@@ -1198,7 +1196,7 @@ pub(crate) fn array_keys(
         0
     };
     let items: Vec<Value> = (0..len).map(|i| Value::Number(i as f64)).collect();
-    Ok(make_value_array(vm, items))
+    make_value_array(vm, items)
 }
 pub(crate) fn array_values(
     vm: &mut Vm,
@@ -1216,7 +1214,7 @@ pub(crate) fn array_values(
     } else {
         Vec::new()
     };
-    Ok(make_value_array(vm, items))
+    make_value_array(vm, items)
 }
 pub(crate) fn array_entries(
     vm: &mut Vm,
@@ -1234,12 +1232,14 @@ pub(crate) fn array_entries(
     } else {
         Vec::new()
     };
-    let pairs: Vec<Value> = items
-        .iter()
-        .enumerate()
-        .map(|(i, v)| make_value_array(vm, vec![Value::Number(i as f64), v.clone()]))
-        .collect();
-    Ok(make_value_array(vm, pairs))
+    let mut pairs: Vec<Value> = Vec::with_capacity(items.len());
+    for (i, v) in items.iter().enumerate() {
+        pairs.push(make_value_array(
+            vm,
+            vec![Value::Number(i as f64), v.clone()],
+        )?);
+    }
+    make_value_array(vm, pairs)
 }
 
 pub(crate) fn array_constructor(
@@ -1281,7 +1281,7 @@ pub(crate) fn array_constructor(
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
 pub(crate) fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

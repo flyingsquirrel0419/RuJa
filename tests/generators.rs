@@ -354,7 +354,7 @@ fn generator_return_terminates() {
 
 #[test]
 fn generator_throw_propagates() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let res = vm.run(
         r#"
             function* g() { yield 1; yield 2; }
@@ -402,7 +402,7 @@ fn generator_throw_caught_by_body() {
 #[test]
 fn generator_throw_uncaught_marks_done() {
     // If throw(e) is not caught, the generator is done and the error propagates.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let res = vm.run(
         r#"
             function* g() { yield 1; yield 2; }
@@ -462,7 +462,7 @@ fn generator_return_runs_finally() {
 
 #[test]
 fn generator_throw_on_done_rethrows() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let res = vm.run(
         r#"
             function* g() { yield 1; }

@@ -196,7 +196,7 @@ pub enum Microtask {
 
 impl Default for Vm {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("failed to initialize VM")
     }
 }
 
@@ -213,9 +213,9 @@ impl Vm {
             .ok_or_else(|| crate::error::Error::internal("no active call frame"))
     }
 
-    pub fn new() -> Self {
+    pub fn new() -> error::Result<Self> {
         let heap = Heap::new();
-        let global = env::new_env(&heap, None, true);
+        let global = env::new_env(&heap, None, true)?;
         let mut vm = Vm {
             heap,
             global,
@@ -256,8 +256,8 @@ impl Vm {
             fuel: None,
             max_heap_objects: 0,
         };
-        crate::builtins::setup_full(&mut vm);
-        vm
+        crate::builtins::setup_full(&mut vm)?;
+        Ok(vm)
     }
 
     /// Set an execution-fuel budget. While set, each dispatched opcode
@@ -414,7 +414,7 @@ impl Vm {
                 crate::environment::declare_var(&self.heap, caller_env, name, Value::Undefined);
             }
         }
-        let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true);
+        let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true)?;
         let result = self.execute_chunk_scoped(chunk, eval_env, this_val);
         // After running, copy the var/function bindings that the eval body
         // established back into the caller's environment (they leak per spec).
@@ -711,7 +711,7 @@ impl Vm {
 
     /// Build a catchable `Error` object for a native (non-thrown) error, so
     /// `try/catch` receives a real object with `message` and `name`.
-    fn make_error_value(&mut self, e: &Error) -> Value {
+    fn make_error_value(&mut self, e: &Error) -> error::Result<Value> {
         use crate::value::{ObjectData, PropertyDescriptor};
         let ctor_name = match e.kind {
             crate::error::ErrorKind::Type => "TypeError",
@@ -755,7 +755,7 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        Value::Object(GcIdx(self.heap.allocate_unchecked(obj)))
+        Ok(Value::Object(GcIdx(self.heap.allocate(obj)?)))
     }
 
     /// Run the dispatch loop, routing runtime errors to an active try/catch
@@ -782,7 +782,7 @@ impl Vm {
                                 Some(v) => v,
                                 None => {
                                     // Synthesize an Error object for native errors.
-                                    self.make_error_value(&e)
+                                    self.make_error_value(&e)?
                                 }
                             };
                             // Pop the handler so we don't loop, push the thrown value
@@ -2352,7 +2352,7 @@ impl Vm {
         Ok(())
     }
 
-    pub fn new_object(&mut self) -> GcIdx {
+    pub fn new_object(&mut self) -> error::Result<GcIdx> {
         let obj = HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(self.object_proto.clone())),
@@ -2364,25 +2364,16 @@ impl Vm {
         self.alloc(obj)
     }
 
-    /// Allocate a heap object, returning a sentinel GcIdx(0) if the
-    /// heap limit is exceeded. Callers that can propagate errors should
-    /// use `alloc_checked` instead.
-    pub(crate) fn alloc(&mut self, obj: HeapObj) -> GcIdx {
-        GcIdx(self.heap.allocate(obj))
-    }
-
-    /// Allocate a heap object, returning a RangeError if the heap
-    /// limit is exceeded.
-    pub(crate) fn alloc_checked(&mut self, obj: HeapObj) -> error::Result<GcIdx> {
-        // Check heap limit before allocating.
+    /// Allocate a heap object, returning a catchable `RangeError` if the
+    /// heap limit is exceeded. All heap allocations must go through this
+    /// method so the limit is enforced uniformly.
+    pub(crate) fn alloc(&mut self, obj: HeapObj) -> error::Result<GcIdx> {
+        // If a heap limit is set, try collecting first to free up space.
         let max = self.max_heap_objects;
         if max > 0 && self.heap.live_count() >= max {
             self.heap.collect(&self.collect_roots());
-            if self.heap.live_count() >= max {
-                return Err(Error::range("heap limit exceeded"));
-            }
         }
-        Ok(GcIdx(self.heap.allocate_unchecked(obj)))
+        Ok(GcIdx(self.heap.allocate(obj)?))
     }
 
     /// Set the wrapped primitive on an object (for `new Number(5)`,
@@ -2405,19 +2396,25 @@ impl Vm {
     /// ```no_run
     /// use ruja::{Vm, Value};
     ///
-    /// let mut vm = Vm::new();
+    /// let mut vm = Vm::new().expect("init");
     /// vm.register_fn("double", |vm, args, _| {
     ///     let n = vm.to_number(&args[0])?;
     ///     Ok(Value::Number(n * 2.0))
-    /// }, 1);
-    /// vm.run("double(21);"); // -> 42
+    /// }, 1).unwrap();
+    /// vm.run("double(21);").unwrap(); // -> 42
     /// ```
-    pub fn register_fn(&mut self, name: &str, func: NativeFn, length: usize) {
-        let idx = self.new_native_function(name, func, length);
+    pub fn register_fn(&mut self, name: &str, func: NativeFn, length: usize) -> error::Result<()> {
+        let idx = self.new_native_function(name, func, length)?;
         crate::builtins::define_global(self, name, Value::Object(idx));
+        Ok(())
     }
 
-    pub fn new_native_function(&mut self, name: &str, func: NativeFn, length: usize) -> GcIdx {
+    pub fn new_native_function(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+    ) -> error::Result<GcIdx> {
         let fdef = crate::value::FunctionData {
             name: Some(Arc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
@@ -2432,7 +2429,7 @@ impl Vm {
             }),
             props: Mutex::new(IndexMap::new()),
         };
-        GcIdx(self.heap.allocate_unchecked(HeapObj::Function(fdef)))
+        Ok(GcIdx(self.heap.allocate(HeapObj::Function(fdef))?))
     }
 
     /// Define a global binding (visible to JS as a top-level variable).
@@ -2457,7 +2454,7 @@ impl Vm {
         Ok(match value {
             Value::Object(idx) => Value::Object(*idx),
             _ => {
-                let idx = self.new_object();
+                let idx = self.new_object()?;
                 self.set_primitive(&Value::Object(idx), value.clone());
                 Value::Object(idx)
             }
@@ -2552,7 +2549,7 @@ impl Vm {
                 is_arrow,
                 is_async,
             }) => {
-                let call_env = env::new_env(&self.heap, Some(closure), true);
+                let call_env = env::new_env(&self.heap, Some(closure), true)?;
                 // Declare every parameter binding as *uninitialized* (TDZ). The raw
                 // argument still lives in `locals[i]`, which the compiled
                 // parameter prologue reads via `LoadLocal`; the binding is only
@@ -2585,7 +2582,7 @@ impl Vm {
                         &self.heap,
                         call_env,
                         rest_name,
-                        Value::Object(GcIdx(self.heap.allocate_unchecked(arr))),
+                        Value::Object(GcIdx(self.heap.allocate(arr)?)),
                         crate::value::BindingKind::Const,
                     );
                 }
@@ -2609,7 +2606,7 @@ impl Vm {
                     &self.heap,
                     call_env,
                     "arguments",
-                    Value::Object(GcIdx(self.heap.allocate_unchecked(arr))),
+                    Value::Object(GcIdx(self.heap.allocate(arr)?)),
                     crate::value::BindingKind::Const,
                 );
                 // In sloppy (non-strict) mode, an unbound `this` (plain
@@ -2645,7 +2642,7 @@ impl Vm {
                 if is_gen {
                     // Lazy generator: don't run the body yet. Create a suspended
                     // generator object; the body runs incrementally via next().
-                    let g_idx = self.heap.allocate_unchecked(HeapObj::LazyGenerator(
+                    let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
                         crate::value::LazyGeneratorData {
                             fdef: func.clone(),
                             closure: call_env,
@@ -2663,7 +2660,7 @@ impl Vm {
                             props: Mutex::new(IndexMap::new()),
                             proto: Mutex::new(Some(self.generator_proto.clone())),
                         },
-                    ));
+                    ))?;
                     Ok(Value::Object(GcIdx(g_idx)))
                 } else {
                     // execute the compiled function chunk
@@ -2675,7 +2672,7 @@ impl Vm {
                         // reason) rather than propagating as a hard error.
                         match result {
                             Ok(value) => {
-                                let p_idx = self.heap.allocate_unchecked(HeapObj::Promise(
+                                let p_idx = self.heap.allocate(HeapObj::Promise(
                                     crate::value::PromiseData {
                                         state: Mutex::new(PromiseStatus::Fulfilled),
                                         result: Mutex::new(value),
@@ -2683,7 +2680,7 @@ impl Vm {
                                         props: Mutex::new(IndexMap::new()),
                                         proto: Mutex::new(Some(self.promise_proto.clone())),
                                     },
-                                ));
+                                ))?;
                                 Ok(Value::Object(GcIdx(p_idx)))
                             }
                             Err(err) => {
@@ -2693,7 +2690,7 @@ impl Vm {
                                     Some(v) => v.clone(),
                                     None => Value::String(Arc::from(err.to_string().as_str())),
                                 };
-                                let p_idx = self.heap.allocate_unchecked(HeapObj::Promise(
+                                let p_idx = self.heap.allocate(HeapObj::Promise(
                                     crate::value::PromiseData {
                                         state: Mutex::new(PromiseStatus::Rejected),
                                         result: Mutex::new(reason),
@@ -2701,7 +2698,7 @@ impl Vm {
                                         props: Mutex::new(IndexMap::new()),
                                         proto: Mutex::new(Some(self.promise_proto.clone())),
                                     },
-                                ));
+                                ))?;
                                 Ok(Value::Object(GcIdx(p_idx)))
                             }
                         }
@@ -2746,7 +2743,7 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        let this_obj = Value::Object(GcIdx(self.heap.allocate_unchecked(new_obj)));
+        let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)?));
         self.pending_new_target = Some(constructor.clone());
         let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
         if matches!(result, Value::Object(_)) {
@@ -2795,7 +2792,7 @@ impl Vm {
                 if self.has_property_key(iterable, &sym_key) {
                     let iter_method = self.get_property_by_key(iterable, &sym_key)?;
                     let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
-                    return Ok(self.new_lazy_iterator(iter_obj));
+                    return self.new_lazy_iterator(iter_obj);
                 }
             }
         }
@@ -2818,7 +2815,7 @@ impl Vm {
                     // pull. This preserves the generator's return value (needed
                     // by `yield*`) and avoids eagerly draining infinite
                     // generators before the loop even starts.
-                    return Ok(self.new_generator_iterator(iterable.clone()));
+                    return self.new_generator_iterator(iterable.clone());
                 } else if is_array {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
@@ -2844,18 +2841,17 @@ impl Vm {
                         }
                     });
                     let array_proto = self.array_proto.clone();
-                    pairs
-                        .into_iter()
-                        .map(|(k, v)| {
-                            let pair = HeapObj::Array(crate::value::ArrayData {
-                                items: Mutex::new(vec![k, v]),
-                                props: Mutex::new(IndexMap::new()),
-                                proto: Mutex::new(Some(array_proto.clone())),
-                                sparse_max: Mutex::new(None),
-                            });
-                            Value::Object(GcIdx(self.heap.allocate_unchecked(pair)))
-                        })
-                        .collect::<Vec<_>>()
+                    let mut pair_vals = Vec::with_capacity(pairs.len());
+                    for (k, v) in pairs {
+                        let pair = HeapObj::Array(crate::value::ArrayData {
+                            items: Mutex::new(vec![k, v]),
+                            props: Mutex::new(IndexMap::new()),
+                            proto: Mutex::new(Some(array_proto.clone())),
+                            sparse_max: Mutex::new(None),
+                        });
+                        pair_vals.push(Value::Object(GcIdx(self.heap.allocate(pair)?)));
+                    }
+                    pair_vals
                 } else if is_set {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Set(s) = o {
@@ -2879,7 +2875,7 @@ impl Vm {
                 )))
             }
         };
-        Ok(self.new_iterator(items))
+        self.new_iterator(items)
     }
 
     /// Obtain an async iterator for `for await...of`. Prefers a user-defined
@@ -2892,7 +2888,7 @@ impl Vm {
             if self.has_property_key(iterable, &akey) {
                 let m = self.get_property_by_key(iterable, &akey)?;
                 let iter_obj = self.call_function(&m, &[], Some(iterable.clone()))?;
-                return Ok(self.new_lazy_iterator(iter_obj));
+                return self.new_lazy_iterator(iter_obj);
             }
             // No async iterator: fall back to the sync iterator protocol. Each
             // `next()` is awaited (a non-Promise value awaits to itself).
@@ -2942,10 +2938,10 @@ impl Vm {
                 break;
             }
         }
-        Ok(self.new_iterator(keys))
+        self.new_iterator(keys)
     }
 
-    fn new_iterator(&mut self, items: Vec<Value>) -> Value {
+    fn new_iterator(&mut self, items: Vec<Value>) -> error::Result<Value> {
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(items),
             index: std::sync::atomic::AtomicUsize::new(0),
@@ -2953,13 +2949,13 @@ impl Vm {
             generator: Mutex::new(None),
             done: std::sync::atomic::AtomicBool::new(false),
         });
-        Value::Object(GcIdx(self.heap.allocate_unchecked(it)))
+        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
     }
 
     /// Build a *lazy* iterator wrapping a JS iterator object (one returned by a
     /// user-defined `Symbol.iterator` method). Each `next()` call invokes the
     /// JS object's `next()` method and reads its `value`/`done` properties.
-    fn new_lazy_iterator(&mut self, iter_obj: Value) -> Value {
+    fn new_lazy_iterator(&mut self, iter_obj: Value) -> error::Result<Value> {
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
@@ -2967,13 +2963,13 @@ impl Vm {
             generator: Mutex::new(None),
             done: std::sync::atomic::AtomicBool::new(false),
         });
-        Value::Object(GcIdx(self.heap.allocate_unchecked(it)))
+        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
     }
 
     /// Build a lazy iterator wrapping a generator object. Each `next()` resumes
     /// the generator via `resume_generator`, preserving its return value (so
     /// `yield* gen()` yields the generator's return value as the result).
-    fn new_generator_iterator(&mut self, gen: Value) -> Value {
+    fn new_generator_iterator(&mut self, gen: Value) -> error::Result<Value> {
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
@@ -2981,7 +2977,7 @@ impl Vm {
             generator: Mutex::new(Some(gen)),
             done: std::sync::atomic::AtomicBool::new(false),
         });
-        Value::Object(GcIdx(self.heap.allocate_unchecked(it)))
+        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
     }
 
     pub fn iterator_next(&mut self, it: &Value) -> error::Result<(Value, bool)> {

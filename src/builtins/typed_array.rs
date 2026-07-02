@@ -35,7 +35,7 @@ pub(crate) fn uint8array_constructor(
                         kind: crate::value::TypedArrayKind::Uint8,
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(vm.object_proto.clone())),
-                    }));
+                    }))?;
                 return Ok(Value::Object(GcIdx(idx)));
             }
             _ => 0,
@@ -49,6 +49,6 @@ pub(crate) fn uint8array_constructor(
             kind: crate::value::TypedArrayKind::Uint8,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.object_proto.clone())),
-        }));
+        }))?;
     Ok(Value::Object(GcIdx(idx)))
 }

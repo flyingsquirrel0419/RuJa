@@ -43,7 +43,7 @@ fn print_value(vm: &mut Vm, v: &Value) {
 fn run_file(path: &str) -> i32 {
     match fs::read_to_string(path) {
         Ok(src) => {
-            let mut vm = Vm::new();
+            let mut vm = Vm::new().expect("failed to initialize VM");
             match vm.run(&src) {
                 Ok(_) => 0,
                 Err(e) => {
@@ -60,7 +60,7 @@ fn run_file(path: &str) -> i32 {
 }
 
 fn run_eval(code: &str) -> i32 {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     match vm.run(code) {
         Ok(v) => {
             print_value(&mut vm, &v);
@@ -74,7 +74,7 @@ fn run_eval(code: &str) -> i32 {
 }
 
 fn repl() -> i32 {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut buffer = String::new();

@@ -6,7 +6,7 @@ use ruja::{Value, Vm};
 /// Panics if evaluation errors out (use `run_err` when an error is expected),
 /// so a test does not silently pass on a runtime error.
 pub fn run(src: &str) -> Value {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(src).expect("evaluation errored")
 }
 
@@ -14,7 +14,7 @@ pub fn run(src: &str) -> Value {
 /// error message (a Rust `String`). Panics if evaluation succeeds.
 #[allow(dead_code)]
 pub fn run_err(src: &str) -> String {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     match vm.run(src) {
         Err(e) => e.to_string(),
         Ok(v) => panic!("expected error, got value: {:?}", v),

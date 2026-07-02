@@ -5,7 +5,7 @@ use common::run;
 use ruja::Value;
 
 fn run_err_msg(src: &str) -> String {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run(src) {
         Err(e) => e.to_string(),
         Ok(v) => panic!("expected error, got value: {:?}", v),

@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Heap Limit Enforcement Overhaul
+
+- **`Heap::allocate` now returns `Result<usize, HeapLimitExceeded>`** with a
+  `From<HeapLimitExceeded> for Arc<Error>` impl, so exceeding the limit
+  produces a catchable `RangeError("heap limit exceeded")` at *every*
+  allocation site — not just object literals.
+- **Eliminated `allocate_unchecked` / raw `heap.allocate().unwrap_or(0)`**:
+  all 59+ call sites that previously bypassed the heap limit (Array methods
+  like `map`/`filter`/`slice`, `JSON.parse`, `RegExp.exec`, `Proxy`,
+  `Map`/`Set` constructors, Promise allocation, generator creation, etc.)
+  now propagate the error via `?`.
+- **Removed sentinel `usize::MAX`** return from `Heap::allocate` — the
+  previous sentinel pattern could cause index-out-of-bounds panics when
+  callers forgot to check it.
+- **Fixed GC-on-allocate with empty roots**: `Heap::allocate` no longer
+  calls `self.collect(&[])` (which would sweep every live object). GC
+  before allocation is now done by `Vm::alloc` with the correct root set
+  via `self.collect_roots()`.
+- **Signature changes**: `Vm::new()`, `register_fn()`, `setup()`,
+  `setup_full()`, `make_builtin_constructor()`, `make_error_constructor()`,
+  `make_builtin_constructor_with()`, `build_math()`, `build_json()`,
+  `build_reflect()`, `build_console()`, `make_value_array()`,
+  `make_str_array()`, `make_array()`, `map_entries_list()`,
+  `clone_lexical_env()`, `clone_loop_vars()`, `new_env()`,
+  `new_with_env()`, `new_iterator()`, `new_lazy_iterator()`,
+  `new_generator_iterator()`, `make_error_value()` now return `Result`.
+- **Verification tests**: added `heap_limit_enforced_in_json_parse`,
+  `heap_limit_enforced_in_array_map`, `heap_limit_enforced_in_regexp`
+  to `tests/fuel.rs`, confirming the limit is enforced through builtin
+  code paths that were previously bypassable.
+
 ### Security / Hardening
 - **Generator resume panic**: `resume_generator` used `frames.pop().expect(...)`, which
   would abort the process if a generator frame was missing. Converted to an

@@ -676,7 +676,7 @@ impl Vm {
                 }
                 Op::PushScope => {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let new_env = env::new_env(&self.heap, Some(cur_env), false);
+                    let new_env = env::new_env(&self.heap, Some(cur_env), false)?;
                     self.current_frame_mut()?.env = new_env;
                 }
                 Op::PopScope => {
@@ -696,7 +696,7 @@ impl Vm {
                 Op::PushWithEnv => {
                     let object = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let new_env = env::new_with_env(&self.heap, cur_env, object);
+                    let new_env = env::new_with_env(&self.heap, cur_env, object)?;
                     self.current_frame_mut()?.env = new_env;
                 }
                 Op::PopWithEnv => {
@@ -724,7 +724,7 @@ impl Vm {
                         .last()
                         .map(|f| f.chunk.let_names.get(idx).cloned().unwrap_or_default())
                         .unwrap_or_default();
-                    let child = env::clone_loop_vars(&self.heap, cur_env, &names);
+                    let child = env::clone_loop_vars(&self.heap, cur_env, &names)?;
                     self.current_frame_mut()?.env = child;
                 }
                 Op::RestoreParentEnv => {
@@ -969,7 +969,7 @@ impl Vm {
                         private_fields: Mutex::new(std::collections::HashMap::new()),
                         primitive: Mutex::new(None),
                     });
-                    let idx = self.alloc_checked(obj)?;
+                    let idx = self.alloc(obj)?;
                     self.stack.push(Value::Object(idx));
                 }
                 Op::NewArray(count) => {
@@ -984,7 +984,7 @@ impl Vm {
                         proto: Mutex::new(Some(self.array_proto.clone())),
                         sparse_max: Mutex::new(None),
                     });
-                    let idx = self.alloc_checked(obj)?;
+                    let idx = self.alloc(obj)?;
                     self.stack.push(Value::Object(idx));
                 }
                 Op::ArrayPush => {
@@ -1062,7 +1062,7 @@ impl Vm {
                         }
                     }
                     let src = self.stack.pop().unwrap_or(Value::Undefined);
-                    let new_obj = Value::Object(self.new_object());
+                    let new_obj = Value::Object(self.new_object()?);
                     if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&new_obj, &src) {
                         let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
                             let mut out = Vec::new();
@@ -1748,7 +1748,7 @@ impl Vm {
                         proto: Mutex::new(Some(self.array_proto.clone())),
                         sparse_max: Mutex::new(None),
                     });
-                    let val = Value::Object(self.alloc_checked(arr)?);
+                    let val = Value::Object(self.alloc(arr)?);
                     self.stack.push(val);
                 }
                 _ => {
@@ -1918,7 +1918,7 @@ impl Vm {
                     private_fields: Mutex::new(std::collections::HashMap::new()),
                     primitive: Mutex::new(None),
                 });
-                Value::Object(self.alloc_checked(proto)?)
+                Value::Object(self.alloc(proto)?)
             } else {
                 Value::Undefined
             };
@@ -1937,7 +1937,7 @@ impl Vm {
                 }),
                 props: Mutex::new(IndexMap::new()),
             };
-            let idx = self.alloc_checked(HeapObj::Function(fd))?;
+            let idx = self.alloc(HeapObj::Function(fd))?;
             // link prototype.constructor back to the function
             if let Value::Object(pidx) = &proto_val {
                 self.heap.with_obj(pidx.0, |obj| {

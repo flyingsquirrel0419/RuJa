@@ -6,7 +6,7 @@ use ruja::Vm;
 
 #[test]
 fn fuel_bounds_infinite_loop() {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(10_000));
     let err = vm.run("var i=0; while(true){i++;}").unwrap_err();
     assert!(
@@ -19,7 +19,7 @@ fn fuel_bounds_infinite_loop() {
 
 #[test]
 fn fuel_unbounded_by_default() {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     assert_eq!(vm.fuel_remaining(), None);
     // a bounded loop completes fine without a fuel limit
     let v = vm
@@ -30,7 +30,7 @@ fn fuel_unbounded_by_default() {
 
 #[test]
 fn fuel_can_be_refilled_between_runs() {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(100));
     let _ = vm.run("while(true){}");
     // exhausted; refill and a fresh run succeeds
@@ -43,7 +43,7 @@ fn fuel_can_be_refilled_between_runs() {
 fn fuel_exhaustion_is_uncatchable() {
     // Untrusted code must not be able to swallow a fuel exhaustion in a
     // try/catch and keep looping. The catch must not fire.
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(5_000));
     let src = "var n=0; for(;;){ try { while(true){} } catch(e){ n++; if(n>2){throw 'done';} } }";
     let err = vm.run(src).unwrap_err();
@@ -58,7 +58,7 @@ fn fuel_exhaustion_is_uncatchable() {
 #[test]
 fn normal_errors_remain_catchable() {
     // Fuel change must not break ordinary try/catch of catchable errors.
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     vm.set_fuel(Some(1_000_000));
     let v = vm
         .run("var r; try { null.x; } catch(e) { r = 'caught ' + (e instanceof Error); } r;")
@@ -68,9 +68,11 @@ fn normal_errors_remain_catchable() {
 
 #[test]
 fn heap_limit_is_catchable_not_a_panic() {
-    let mut vm = ruja::Vm::new();
-    vm.set_max_heap_objects(Some(5));
-    let result = vm.run("let a = []; for (let i = 0; i < 1000; i++) { a.push({}); }");
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    // Set a limit slightly above the current live count so only script
+    // allocations push past the threshold.
+    vm.set_max_heap_objects(Some(500));
+    let result = vm.run("var a = []; while(true) { a.push({ x: 1, y: 2 }); }");
     assert!(
         result.is_err(),
         "heap limit should produce a catchable error, not a panic"
@@ -81,4 +83,56 @@ fn heap_limit_is_catchable_not_a_panic() {
         "expected 'heap limit' in error, got: {}",
         err
     );
+}
+
+/// Heap limit must be enforced even when allocations happen inside builtins
+/// (JSON.parse, Array.prototype.map/slice, RegExp). Previously, raw
+/// `heap.allocate()` calls in builtins bypassed the limit entirely.
+#[test]
+fn heap_limit_enforced_in_json_parse() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.set_max_heap_objects(Some(500));
+    // Each element of the parsed array is a separate heap object.
+    let big_json = format!(
+        "[{}]",
+        (0..10_000)
+            .map(|i| format!("{{\"k\":{}}}", i))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let result = vm.run(&format!("JSON.parse({:?})", big_json));
+    assert!(result.is_err(), "JSON.parse should hit heap limit");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("heap limit"),
+        "expected 'heap limit' in error, got: {}",
+        err
+    );
+}
+
+#[test]
+fn heap_limit_enforced_in_array_map() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.set_max_heap_objects(Some(500));
+    // map() creates a new array + result objects per element.
+    let result = vm.run(
+        "var a = [1,2,3,4,5,6,7,8,9,10]; \
+         var b = a; \
+         for (var i = 0; i < 10000; i++) { b = b.concat(a).map(function(x) { return { v: x }; }); }",
+    );
+    assert!(result.is_err(), "Array.map should hit heap limit");
+}
+
+#[test]
+fn heap_limit_enforced_in_regexp() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.set_max_heap_objects(Some(500));
+    // Each match creates a result array object on the heap.
+    let result = vm.run(
+        "var s = 'a'.repeat(10000); \
+         var re = /a/g; \
+         var matches = []; \
+         while (re.exec(s) !== null) { matches.push(re.exec(s)); }",
+    );
+    assert!(result.is_err(), "RegExp should hit heap limit");
 }

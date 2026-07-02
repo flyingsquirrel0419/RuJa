@@ -298,7 +298,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 proto: Mutex::new(Some(vm.array_proto.clone())),
                 sparse_max: Mutex::new(None),
             });
-            return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
+            return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
         }
     }
     let sep = args.first().map(crate::value::value_to_debug_string);
@@ -324,7 +324,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 pub(crate) fn str_replace(
     vm: &mut Vm,
@@ -552,7 +552,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                     if items.is_empty() {
                         Ok(Value::Null)
                     } else {
-                        Ok(make_value_array(vm, items))
+                        make_value_array(vm, items)
                     }
                 } else {
                     match re.captures(&s) {
@@ -564,7 +564,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                                     None => Value::Undefined,
                                 })
                                 .collect();
-                            Ok(make_value_array(vm, items))
+                            make_value_array(vm, items)
                         }
                         None => Ok(Value::Null),
                     }

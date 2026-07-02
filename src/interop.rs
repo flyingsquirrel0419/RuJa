@@ -97,7 +97,7 @@ pub fn from_json_value(vm: &mut Vm, v: &serde_json::Value) -> error::Result<Valu
                 proto: Mutex::new(Some(vm.array_proto.clone())),
                 sparse_max: Mutex::new(None),
             });
-            Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(obj))))
+            Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
         }
         serde_json::Value::Object(map) => {
             let mut converted: Vec<(String, Value)> = Vec::new();
@@ -105,7 +105,7 @@ pub fn from_json_value(vm: &mut Vm, v: &serde_json::Value) -> error::Result<Valu
                 let ruja_val = from_json_value(vm, val)?;
                 converted.push((key.clone(), ruja_val));
             }
-            let idx = vm.new_object();
+            let idx = vm.new_object()?;
             vm.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Object(od) = o {
                     let mut props = od.props.lock();

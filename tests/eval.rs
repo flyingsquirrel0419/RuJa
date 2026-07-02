@@ -149,7 +149,7 @@ fn eval_let_visible_inside_eval() {
 #[test]
 fn eval_let_does_not_leak_at_top_level() {
     // Top-level eval `let` must not create a global binding.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let _ = vm.run(r#"eval("let w = 3");"#);
     let r = match vm.run("typeof w;") {
         Ok(v) => v,

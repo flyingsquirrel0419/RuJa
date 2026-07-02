@@ -60,6 +60,22 @@ cargo test --test generators
 
 All green.
 
+## Heap limit enforcement
+
+`Heap::allocate` returns `Result<usize, HeapLimitExceeded>`. A
+`From<HeapLimitExceeded> for Arc<Error>` impl converts the error into a
+catchable `RangeError("heap limit exceeded")`.
+
+All heap allocations go through `Vm::alloc`, which first attempts a GC pass
+(with the correct root set) before calling `Heap::allocate`. If the limit is
+still exceeded after GC, the `RangeError` propagates to the caller.
+
+Previously, 59+ call sites used `heap.allocate().unwrap_or(0)` or raw
+`heap.allocate()` without checking the result, which meant builtin code paths
+(Array.prototype.map, JSON.parse, RegExp.exec, Proxy, Map/Set constructors,
+Promise allocation, etc.) silently bypassed the heap limit. These have all been
+converted to propagate the error via `?`.
+
 ## Future work
 
 1. ✅ Replace remaining `args[idx]` direct indexing — done.
@@ -70,3 +86,6 @@ All green.
 6. Add IC for `GetElem` and `SetElem` opcodes.
 7. Implement remaining Proxy traps (`has`, `deleteProperty`, `ownKeys`, etc.).
 8. Add more TypedArray kinds (Int8, Uint16, etc.) and `set`/`subarray` methods.
+9. ✅ Heap limit enforcement — all allocation sites now return `Result` and
+   propagate `HeapLimitExceeded` via `?`. Verified with tests for `JSON.parse`,
+   `Array.map`, and `RegExp.exec` under heap limit.

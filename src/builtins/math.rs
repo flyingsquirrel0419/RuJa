@@ -173,7 +173,7 @@ fn math_random(_vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result
     Ok(Value::Number(r))
 }
 
-pub(crate) fn build_math(vm: &mut Vm) -> Value {
+pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     // build methods first, collect into a temp vec
     let mut method_entries: Vec<(&str, NativeFn, usize)> = vec![
@@ -211,7 +211,7 @@ pub(crate) fn build_math(vm: &mut Vm) -> Value {
         ("random", math_random, 0),
     ];
     for (name, f, len) in method_entries.drain(..) {
-        let idx = vm.new_native_function(name, f, len);
+        let idx = vm.new_native_function(name, f, len)?;
         props.insert(PropertyKey::from(name), data_prop(Value::Object(idx)));
     }
     props.insert(
@@ -254,7 +254,7 @@ pub(crate) fn build_math(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }
 
 // =========================================================================
@@ -341,10 +341,10 @@ pub(crate) fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error:
         }
     }
 }
-pub(crate) fn build_console(vm: &mut Vm) -> Value {
+pub(crate) fn build_console(vm: &mut Vm) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for name in &["log", "error", "warn", "info", "debug", "dir", "trace"] {
-        let idx = vm.new_native_function(name, console_log, 0);
+        let idx = vm.new_native_function(name, console_log, 0)?;
         props.insert(PropertyKey::from(*name), data_prop(Value::Object(idx)));
     }
     let obj = HeapObj::Object(ObjectData {
@@ -355,5 +355,5 @@ pub(crate) fn build_console(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }

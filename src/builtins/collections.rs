@@ -79,7 +79,7 @@ pub(crate) fn weakmap_constructor(
             entries: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(proto),
-        }));
+        }))?;
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
@@ -202,7 +202,7 @@ pub(crate) fn weakset_constructor(
             items: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(proto),
-        }));
+        }))?;
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
@@ -302,7 +302,7 @@ pub(crate) fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
     Ok(Value::Number(0.0))
 }
 /// Collect Map entries as [key, value] arrays.
-pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
+pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> error::Result<Vec<Value>> {
     if let Some(Value::Object(idx)) = this {
         let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
@@ -315,12 +315,13 @@ pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> 
                 Vec::new()
             }
         });
-        pairs
-            .into_iter()
-            .map(|(k, v)| make_value_array(vm, vec![k, v]))
-            .collect()
+        let mut out = Vec::with_capacity(pairs.len());
+        for (k, v) in pairs {
+            out.push(make_value_array(vm, vec![k, v])?);
+        }
+        Ok(out)
     } else {
-        Vec::new()
+        Ok(Vec::new())
     }
 }
 pub(crate) fn map_entries(
@@ -328,8 +329,8 @@ pub(crate) fn map_entries(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let pairs = map_entries_list(vm, &this);
-    Ok(make_value_array(vm, pairs))
+    let pairs = map_entries_list(vm, &this)?;
+    make_value_array(vm, pairs)
 }
 pub(crate) fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let keys: Vec<Value> = if let Some(Value::Object(idx)) = this {
@@ -343,7 +344,7 @@ pub(crate) fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
     } else {
         Vec::new()
     };
-    Ok(make_value_array(vm, keys))
+    make_value_array(vm, keys)
 }
 pub(crate) fn map_values(
     vm: &mut Vm,
@@ -361,7 +362,7 @@ pub(crate) fn map_values(
     } else {
         Vec::new()
     };
-    Ok(make_value_array(vm, vals))
+    make_value_array(vm, vals)
 }
 pub(crate) fn map_for_each(
     vm: &mut Vm,
@@ -401,11 +402,11 @@ pub(crate) fn map_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let obj_idx = vm.heap.allocate_unchecked(HeapObj::Map(MapData {
+    let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.map_proto.clone())),
-    }));
+    }))?;
     // Initialize from an optional iterable of [key, value] pairs.
     if let Some(iterable) = _args.first() {
         if !iterable.is_undefined() && !iterable.is_null() {
@@ -518,13 +519,13 @@ pub(crate) fn set_entries(
     let vals = set_values_list(vm, &this);
     let mut pairs: Vec<Value> = Vec::new();
     for v in vals {
-        pairs.push(make_value_array(vm, vec![v.clone(), v]));
+        pairs.push(make_value_array(vm, vec![v.clone(), v])?);
     }
-    Ok(make_value_array(vm, pairs))
+    make_value_array(vm, pairs)
 }
 pub(crate) fn set_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let vals = set_values_list(vm, &this);
-    Ok(make_value_array(vm, vals))
+    make_value_array(vm, vals)
 }
 pub(crate) fn set_values(
     vm: &mut Vm,
@@ -532,7 +533,7 @@ pub(crate) fn set_values(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let vals = set_values_list(vm, &this);
-    Ok(make_value_array(vm, vals))
+    make_value_array(vm, vals)
 }
 pub(crate) fn set_for_each(
     vm: &mut Vm,
@@ -560,11 +561,11 @@ pub(crate) fn set_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let obj_idx = vm.heap.allocate_unchecked(HeapObj::Set(SetData {
+    let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.set_proto.clone())),
-    }));
+    }))?;
     // Initialize from an optional iterable.
     if let Some(iterable) = _args.first() {
         if !iterable.is_undefined() && !iterable.is_null() {
@@ -635,11 +636,11 @@ pub(crate) fn promise_constructor(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.promise_proto.clone())),
-        }));
+        }))?;
     let p_val = Value::Object(GcIdx(p_idx));
     // create resolve/reject native functions bound via `this` = promise
-    let resolve_target = vm.new_native_function("resolve", promise_resolve, 1);
-    let reject_target = vm.new_native_function("reject", promise_reject, 1);
+    let resolve_target = vm.new_native_function("resolve", promise_resolve, 1)?;
+    let reject_target = vm.new_native_function("reject", promise_reject, 1)?;
     // Wrap as bound functions with  = the promise, so resolve/reject know
     // which promise to settle.
     let resolve_fn = vm
@@ -658,7 +659,7 @@ pub(crate) fn promise_constructor(
                 _ => None,
             }),
             props: Mutex::new(IndexMap::new()),
-        }));
+        }))?;
     let reject_fn = vm
         .heap
         .allocate(HeapObj::Function(crate::value::FunctionData {
@@ -675,7 +676,7 @@ pub(crate) fn promise_constructor(
                 _ => None,
             }),
             props: Mutex::new(IndexMap::new()),
-        }));
+        }))?;
     match vm.call_function(
         &executor,
         &[
@@ -748,7 +749,7 @@ pub(crate) fn promise_static_resolve(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.promise_proto.clone())),
-        }));
+        }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
 
@@ -767,7 +768,7 @@ pub(crate) fn promise_static_reject(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.promise_proto.clone())),
-        }));
+        }))?;
     Ok(Value::Object(GcIdx(p_idx)))
 }
 
@@ -791,7 +792,7 @@ pub(crate) fn promise_then(
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(vm.promise_proto.clone())),
-        }));
+        }))?;
     let (state, _result) = vm.heap.with_obj(p_idx, |o| {
         if let HeapObj::Promise(p) = o {
             (*p.state.lock(), p.result.lock().clone())
