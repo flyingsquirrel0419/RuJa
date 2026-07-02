@@ -829,8 +829,12 @@ impl Parser {
                 Self::name_function_from_ident(&mut e, &name);
                 Some(e)
             } else {
-                // ES6: `const` declarations must have an initializer.
-                if kind == VarKind::Const {
+                // ES6: `const` declarations must have an initializer,
+                // UNLESS this is a for-in/for-of head (`for (const x of/of ...)`).
+                if kind == VarKind::Const
+                    && !self.check(&TokenKind::In)
+                    && !self.check(&TokenKind::Of)
+                {
                     return Err(error::Error::syntax(
                         "Missing initializer in const declaration".to_string(),
                     ));

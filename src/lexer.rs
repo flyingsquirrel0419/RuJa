@@ -161,6 +161,12 @@ impl<'a> Lexer<'a> {
                     // vertical tab and form feed are whitespace per ES.
                     self.advance();
                 }
+                // NBSP (U+00A0) is whitespace per ES spec (WhiteSpace).
+                // UTF-8: 0xC2 0xA0
+                Some(0xC2) if self.peek_at(1) == Some(0xA0) => {
+                    self.advance();
+                    self.advance();
+                }
                 Some(b'\n') => {
                     self.advance();
                 }
@@ -876,6 +882,30 @@ impl<'a> Lexer<'a> {
                 return self.next_token();
             }
             Some(0x0b) | Some(0x0c) => {
+                return self.next_token();
+            }
+            // NBSP (U+00A0) whitespace.
+            Some(0xC2) if self.peek_at(1) == Some(0xA0) => {
+                self.advance();
+                self.advance();
+                return self.next_token();
+            }
+            // NEL (U+0085) line terminator.
+            Some(0xC2) if self.peek_at(1) == Some(0x85) => {
+                self.advance();
+                self.advance();
+                self.saw_newline = true;
+                return self.next_token();
+            }
+            // LS (U+2028) / PS (U+2029) line terminators.
+            Some(0xE2)
+                if self.peek_at(1) == Some(0x80)
+                    && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
+            {
+                self.advance();
+                self.advance();
+                self.advance();
+                self.saw_newline = true;
                 return self.next_token();
             }
             _ => {
