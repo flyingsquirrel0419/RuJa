@@ -1109,6 +1109,17 @@ impl Parser {
             };
             self.advance();
             let e = self.parse_unary()?;
+            // Strict mode: eval/arguments cannot be the operand of update.
+            if self.is_strict_context {
+                if let Expr::Ident(ref id) = e {
+                    if matches!(&**id, "eval" | "arguments") {
+                        return Err(error::Error::syntax(format!(
+                            "'{}' cannot be used as the target of an update operator in strict mode",
+                            id
+                        )));
+                    }
+                }
+            }
             return Ok(Expr::Update(op, true, Box::new(e)));
         }
         let op = match self.peek() {
@@ -1133,6 +1144,17 @@ impl Parser {
         let mut e = self.parse_call()?;
         // postfix ++/--
         if matches!(self.peek(), TokenKind::Inc | TokenKind::Dec) {
+            // Strict mode: eval/arguments cannot be the operand of update.
+            if self.is_strict_context {
+                if let Expr::Ident(ref id) = e {
+                    if matches!(&**id, "eval" | "arguments") {
+                        return Err(error::Error::syntax(format!(
+                            "'{}' cannot be used as the target of an update operator in strict mode",
+                            id
+                        )));
+                    }
+                }
+            }
             let op = if matches!(self.peek(), TokenKind::Inc) {
                 UpdateOp::Inc
             } else {
