@@ -184,23 +184,20 @@ fn stringify_value(
                     .cloned()
             });
             if let Some(desc) = to_json {
-                if desc.enumerable || true {
-                    let to_json_val = desc.value.clone();
-                    let is_fn = vm.heap.with_obj(idx.0, |_obj| {
-                        if let Value::Object(fidx) = &to_json_val {
-                            vm.heap.with_obj(fidx.0, |o| o.is_function())
-                        } else {
-                            false
-                        }
-                    });
-                    if is_fn {
-                        let key_val = Value::String(Arc::from(""));
-                        let result = vm.call_function(&to_json_val, &[], Some(v.clone()));
-                        if let Ok(to_jsoned) = result {
-                            // Recurse with the toJSON result, applying replacer.
-                            let val = apply_replacer(vm, ctx, &key_val, &to_jsoned);
-                            return stringify_value(vm, &val, seen, indent, ctx, depth);
-                        }
+                let to_json_val = desc.value.clone();
+                let is_fn = vm.heap.with_obj(idx.0, |_obj| {
+                    if let Value::Object(fidx) = &to_json_val {
+                        vm.heap.with_obj(fidx.0, |o| o.is_function())
+                    } else {
+                        false
+                    }
+                });
+                if is_fn {
+                    let key_val = Value::String(Arc::from(""));
+                    let result = vm.call_function(&to_json_val, &[], Some(v.clone()));
+                    if let Ok(to_jsoned) = result {
+                        let val = apply_replacer(vm, ctx, &key_val, &to_jsoned);
+                        return stringify_value(vm, &val, seen, indent, ctx, depth);
                     }
                 }
             }
