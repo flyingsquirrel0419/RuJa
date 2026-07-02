@@ -698,6 +698,7 @@ impl Compiler {
                 body,
                 is_await,
             } => {
+                self.reset_completion();
                 // for (let x of iterable): iterate values. `for await` uses the
                 // async iterator protocol (Symbol.asyncIterator) and awaits each
                 // next() result.
@@ -760,6 +761,7 @@ impl Compiler {
                 catch_body,
                 finally_body,
             } => {
+                self.reset_completion();
                 let has_finally = finally_body.is_some();
                 let has_catch = catch_body.is_some();
                 // --- try body, guarded by the catch handler (and finally guard) ---
@@ -1131,6 +1133,7 @@ impl Compiler {
     /// Compile `for (left in right)`: iterate enumerable own+inherited string keys.
     fn compile_for_in(&mut self, left: &Stmt, right: &Expr, body: &Stmt) -> error::Result<()> {
         self.push_scope(false);
+        self.reset_completion();
         self.compile_expr(right)?;
         // GetForInKeys pops the object and pushes an iterator over its string keys.
         self.chunk.emit(Op::GetForInKeys, self.current_line);
