@@ -410,8 +410,121 @@ fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
             return Ok(p);
         }
     }
-    // No wrapped primitive: fall back to `this` (an ordinary object).
     Ok(this.unwrap_or(Value::Undefined))
+}
+
+/// `Boolean.prototype.toString`: return "true" or "false".
+fn boolean_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let val = match &this {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Object(idx)) => {
+            _vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    od.primitive.lock().clone()
+                } else {
+                    None
+                }
+            }).map(|v| v.is_truthy()).unwrap_or(false)
+        }
+        _ => false,
+    };
+    Ok(Value::String(Arc::from(if val { "true" } else { "false" })))
+}
+
+/// `Number.prototype.toString(radix)`: convert number to string in given radix.
+fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let radix = if args.is_empty() { 10.0 } else { vm.to_number(&args[0]).unwrap_or(10.0) };
+    let n = match &this {
+        Some(Value::Number(n)) => *n,
+        Some(Value::Object(idx)) => {
+            vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    if let Some(Value::Number(n)) = od.primitive.lock().clone() {
+                        return n;
+                    }
+                }
+                f64::NAN
+            })
+        }
+        _ => f64::NAN,
+    };
+    if radix == 10.0 {
+        let s = vm.to_string(&Value::Number(n))?;
+        return Ok(Value::String(s));
+    }
+    let radix = radix as u32;
+    if radix < 2 || radix > 36 {
+        return Err(Error::range("toString() radix must be between 2 and 36"));
+    }
+    let s = if n.is_nan() {
+        "NaN".to_string()
+    } else if n.is_infinite() {
+        if n > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }
+    } else {
+        format_radix(n, radix)
+    };
+    Ok(Value::String(Arc::from(s.as_str())))
+}
+
+/// `Number.prototype.valueOf` (same as boxed_value_of for Number).
+fn number_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = &this {
+        let prim = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                od.primitive.lock().clone()
+            } else {
+                None
+            }
+        });
+        if let Some(p) = prim {
+            return Ok(p);
+        }
+    }
+    Ok(this.unwrap_or(Value::Undefined))
+}
+
+/// Format a number in a given radix (2-36). Handles integers and fractions.
+fn format_radix(n: f64, radix: u32) -> String {
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    let neg = n < 0.0;
+    let mut n = n.abs();
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut int_part = n.trunc() as u64;
+    let frac_part = n.fract();
+    let mut int_str = String::new();
+    if int_part == 0 {
+        int_str.push('0');
+    } else {
+        while int_part > 0 {
+            let d = (int_part % radix as u64) as usize;
+            int_str.insert(0, digits[d] as char);
+            int_part /= radix as u64;
+        }
+    }
+    let mut result = int_str;
+    if frac_part > 0.0 {
+        result.push('.');
+        let mut f = frac_part;
+        for _ in 0..52 {
+            f *= radix as f64;
+            let d = f.trunc() as usize;
+            if d >= radix as usize {
+                break;
+            }
+            result.push(digits[d] as char);
+            f -= d as f64;
+            if f < 1e-15 {
+                break;
+            }
+        }
+    }
+    if neg {
+        format!("-{}", result)
+    } else {
+        result
+    }
 }
 
 /// Collect an object's own enumerable string keys in array-index-first then property order.
@@ -1491,7 +1604,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         vm,
         "Boolean",
         boolean_constructor,
-        &[("valueOf", boxed_value_of, 0)],
+        &[
+            ("valueOf", boxed_value_of, 0),
+            ("toString", boolean_to_string, 0),
+        ],
     )?;
     vm.boolean_proto = Value::Object(bool_proto);
     define_global(vm, "Boolean", Value::Object(bool_ctor));
