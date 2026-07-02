@@ -498,13 +498,26 @@ impl Parser {
         self.expect(&TokenKind::LParen, "(")?;
         let cond = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
-        let then = Box::new(self.parse_stmt()?);
+        let then = Box::new(self.parse_single_stmt()?);
         let else_ = if self.eat(&TokenKind::Else) {
-            Some(Box::new(self.parse_stmt()?))
+            Some(Box::new(self.parse_single_stmt()?))
         } else {
             None
         };
         Ok(self.stmt(StmtNode::If { cond, then, else_ }))
+    }
+
+    /// Parse a single statement in a position where class declarations
+    /// are not allowed (if/else/while/for/with body). ES6 spec forbids
+    /// class declarations as the body of a single statement.
+    fn parse_single_stmt(&mut self) -> error::Result<Stmt> {
+        let stmt = self.parse_stmt()?;
+        if let StmtNode::ExprStmt(Expr::Class(_)) = &stmt.node {
+            return Err(error::Error::syntax(
+                "Class declaration cannot be used as a single statement body".to_string(),
+            ));
+        }
+        Ok(stmt)
     }
 
     fn parse_while(&mut self) -> error::Result<Stmt> {
@@ -512,7 +525,7 @@ impl Parser {
         self.expect(&TokenKind::LParen, "(")?;
         let cond = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
-        let body = Box::new(self.parse_stmt()?);
+        let body = Box::new(self.parse_single_stmt()?);
         Ok(self.stmt(StmtNode::While { cond, body }))
     }
 
@@ -521,13 +534,13 @@ impl Parser {
         self.expect(&TokenKind::LParen, "(")?;
         let object = self.parse_expr()?;
         self.expect(&TokenKind::RParen, ")")?;
-        let body = Box::new(self.parse_stmt()?);
+        let body = Box::new(self.parse_single_stmt()?);
         Ok(self.stmt(StmtNode::With { object, body }))
     }
 
     fn parse_do_while(&mut self) -> error::Result<Stmt> {
         self.advance();
-        let body = Box::new(self.parse_stmt()?);
+        let body = Box::new(self.parse_single_stmt()?);
         self.expect(&TokenKind::While, "while")?;
         self.expect(&TokenKind::LParen, "(")?;
         let cond = self.parse_expr()?;
@@ -558,7 +571,7 @@ impl Parser {
                 self.advance();
                 let right = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
-                let body = Box::new(self.parse_stmt()?);
+                let body = Box::new(self.parse_single_stmt()?);
                 return Ok(self.stmt(StmtNode::ForIn {
                     left: Box::new(stmt),
                     right,
@@ -569,7 +582,7 @@ impl Parser {
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
-                let body = Box::new(self.parse_stmt()?);
+                let body = Box::new(self.parse_single_stmt()?);
                 return Ok(self.stmt(StmtNode::ForOf {
                     left: Box::new(stmt),
                     right,
@@ -594,7 +607,7 @@ impl Parser {
                 self.advance();
                 let right = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
-                let body = Box::new(self.parse_stmt()?);
+                let body = Box::new(self.parse_single_stmt()?);
                 return Ok(self.stmt(StmtNode::ForIn {
                     left: Box::new(self.stmt(StmtNode::ExprStmt(e))),
                     right,
@@ -605,7 +618,7 @@ impl Parser {
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
-                let body = Box::new(self.parse_stmt()?);
+                let body = Box::new(self.parse_single_stmt()?);
                 return Ok(self.stmt(StmtNode::ForOf {
                     left: Box::new(self.stmt(StmtNode::ExprStmt(e))),
                     right,
@@ -640,7 +653,7 @@ impl Parser {
             Some(self.parse_expr()?)
         };
         self.expect(&TokenKind::RParen, ")")?;
-        let body = Box::new(self.parse_stmt()?);
+        let body = Box::new(self.parse_single_stmt()?);
         Ok(self.stmt(StmtNode::For {
             init,
             cond,
