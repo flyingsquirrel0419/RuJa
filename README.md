@@ -122,6 +122,7 @@ long native call is not subdivided. See [Limitations](docs/limitations.md).
 - [Features](docs/features.md) — full language and stdlib reference
 - [Limitations](docs/limitations.md) — known gaps and edge cases
 - [test262](docs/test262.md) — conformance suite runner and pass rate
+- [Benchmarks](docs/benchmarks.md) — honest performance comparison vs QuickJS/Node.js
 - [Changelog](CHANGELOG.md) — release history
 - [Contributing](CONTRIBUTING.md) — how to propose changes
 
