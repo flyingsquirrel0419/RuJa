@@ -1219,6 +1219,13 @@ impl Parser {
             };
             self.advance();
             let e = self.parse_unary()?;
+            // Validate: only identifiers and member expressions are valid
+            // update targets. Call expressions, literals, etc. are not.
+            if !matches!(&e, Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }) {
+                return Err(error::Error::syntax(
+                    "Invalid left-hand side expression in prefix update operation".to_string(),
+                ));
+            }
             // Strict mode: eval/arguments cannot be the operand of update.
             if self.is_strict_context {
                 if let Expr::Ident(ref id) = e {
@@ -1254,6 +1261,13 @@ impl Parser {
         let mut e = self.parse_call()?;
         // postfix ++/--
         if matches!(self.peek(), TokenKind::Inc | TokenKind::Dec) {
+            // Validate: only identifiers and member expressions are valid
+            // update targets. Call expressions, literals, etc. are not.
+            if !matches!(&e, Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }) {
+                return Err(error::Error::syntax(
+                    "Invalid left-hand side expression in postfix operation".to_string(),
+                ));
+            }
             // Strict mode: eval/arguments cannot be the operand of update.
             if self.is_strict_context {
                 if let Expr::Ident(ref id) = e {
