@@ -13,6 +13,7 @@ These benchmarks are here to be honest about that tradeoff, not to hide it.
 
 - **RuJa**: `cargo bench` (criterion, 100 samples) + standalone `Date.now()`
   timing for cross-engine comparison
+- **Boa**: `boa` CLI v0.21.1 (pure-Rust JS engine, closest peer)
 - **QuickJS**: `qjs` (system package, version 2021-03-27)
 - **Node.js**: V8 JIT (for reference; not a fair comparison for an
   embeddable engine, but shows the ceiling)
@@ -22,11 +23,11 @@ Each test runs the workload 10 times and reports the average.
 
 ## Results
 
-| Benchmark | RuJa | QuickJS | Node.js (V8) |
-|-----------|------|---------|-------------|
-| fib(25) | 719 ms | 5.2 ms | 0.6 ms |
-| loop 100k | 248 ms | 3.4 ms | 0.3 ms |
-| array push 10k | 31 ms | 0.6 ms | 0.2 ms |
+| Benchmark | RuJa | Boa | QuickJS | Node.js (V8) |
+|-----------|------|-----|---------|-------------|
+| fib(25) | 719 ms | 53 ms | 5.2 ms | 0.6 ms |
+| loop 100k | 248 ms | 59 ms | 3.4 ms | 0.3 ms |
+| array push 10k | 31 ms | 6.1 ms | 0.6 ms | 0.2 ms |
 
 ### Criterion detail (RuJa only)
 
@@ -44,14 +45,16 @@ reuses a pre-built `Vm`.
 
 ## Interpretation
 
-RuJa is roughly **100-140x slower** than QuickJS and **250-1200x slower**
+RuJa is roughly **14x slower** than Boa (the closest pure-Rust peer),
+**100-140x slower** than QuickJS, and **250-1200x slower**
 than V8 on these benchmarks. This is expected for a pure-Rust bytecode
 interpreter with `Mutex`-guarded `Send` semantics and no JIT. The overhead
 comes from:
 
 - **`Arc`/`Mutex` everywhere**: every heap access, property lookup, and
   variable read goes through a `Mutex` lock (required for `Send` without
-  `unsafe`). This is the single largest overhead source.
+  `unsafe`). This is the single largest overhead source and the main reason
+  RuJa is ~14x slower than Boa, which uses `Rc`/`RefCell` (no synchronization).
 - **No JIT**: all code is interpreted bytecode. QuickJS has a bytecode
   interpreter too, but it uses direct C struct access without synchronization.
 - **Worklist-based GC**: mark-sweep with a worklist (to avoid re-entrant

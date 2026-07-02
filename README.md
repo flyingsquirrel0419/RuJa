@@ -69,7 +69,9 @@ console.log([0,1,2,3,4,5,6,7,8,9,10].map(fib).join(", "));
 ```
 
 More in the [`examples/`](examples/) directory — generators, async/await,
-class hierarchies, and Promise chaining.
+class hierarchies, Promise chaining, and a
+[plugin runner demo](examples/plugin_runner.rs) showing how to safely
+execute untrusted JS with fuel limits, heap caps, and a curated host API.
 
 ## Library API
 
