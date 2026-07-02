@@ -628,6 +628,13 @@ impl Parser {
                     "Class declaration cannot be used as a single statement body".to_string(),
                 ));
             }
+            // ES6: function declarations are not allowed as the body of
+            // if/else/while/do-while/for/with without a block (in strict mode).
+            StmtNode::FunctionDecl(_) => {
+                return Err(error::Error::syntax(
+                    "Function declaration cannot be used as a single statement body".to_string(),
+                ));
+            }
             // ES6: lexical declarations (let/const) are not allowed as the
             // body of if/else/while/do-while/for/with without a block.
             StmtNode::VarDecl { kind, .. } if *kind != VarKind::Var => {
