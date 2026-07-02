@@ -298,6 +298,51 @@ impl fmt::Debug for Value {
     }
 }
 
+/// A TypedArray backed by a Vec<u8>. Only Uint8Array is supported for now;
+/// other TypedArray kinds can be added by extending `TypedArrayKind`.
+pub struct TypedArrayData {
+    pub buffer: Vec<u8>,
+    pub kind: TypedArrayKind,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum TypedArrayKind {
+    Uint8,
+    Int8,
+    Uint16,
+    Int16,
+    Uint32,
+    Int32,
+    Float32,
+    Float64,
+}
+
+impl TypedArrayKind {
+    pub fn element_size(&self) -> usize {
+        match self {
+            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => 1,
+            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => 2,
+            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => 4,
+            TypedArrayKind::Float32 => 4,
+            TypedArrayKind::Float64 => 8,
+        }
+    }
+    pub fn name(&self) -> &'static str {
+        match self {
+            TypedArrayKind::Uint8 => "Uint8Array",
+            TypedArrayKind::Int8 => "Int8Array",
+            TypedArrayKind::Uint16 => "Uint16Array",
+            TypedArrayKind::Int16 => "Int16Array",
+            TypedArrayKind::Uint32 => "Uint32Array",
+            TypedArrayKind::Int32 => "Int32Array",
+            TypedArrayKind::Float32 => "Float32Array",
+            TypedArrayKind::Float64 => "Float64Array",
+        }
+    }
+}
+
 /// A Proxy object: intercepts property operations via handler traps.
 pub struct ProxyData {
     pub target: Value,
@@ -322,6 +367,7 @@ pub enum HeapObj {
     Iterator(IteratorData),
     LazyGenerator(LazyGeneratorData),
     Proxy(ProxyData),
+    TypedArray(TypedArrayData),
 }
 
 /// Generic JS object.
@@ -584,6 +630,7 @@ impl HeapObj {
             HeapObj::Generator(g) => &g.props,
             HeapObj::LazyGenerator(g) => &g.props,
             HeapObj::Proxy(p) => &p.props,
+            HeapObj::TypedArray(t) => &t.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -603,6 +650,7 @@ impl HeapObj {
             HeapObj::Generator(g) => &g.proto,
             HeapObj::LazyGenerator(g) => &g.proto,
             HeapObj::Proxy(p) => &p.proto,
+            HeapObj::TypedArray(t) => &t.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -628,6 +676,7 @@ impl HeapObj {
             HeapObj::Iterator(_) => "Iterator",
             HeapObj::Environment(_) => "Environment",
             HeapObj::Proxy(_) => "Object",
+            HeapObj::TypedArray(t) => t.kind.name(),
         }
     }
 
