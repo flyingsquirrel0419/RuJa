@@ -706,6 +706,23 @@ impl Vm {
                             return Ok(Value::Number(s.items.lock().len() as f64));
                         }
                     }
+                    // Boxed String: `new String("abc").length` returns the
+                    // string length, and integer indices return characters.
+                    if let HeapObj::Object(od) = o {
+                        if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                            if key == "length" {
+                                return Ok(Value::Number(crate::value::utf16_len(&s) as f64));
+                            }
+                            if let Ok(i) = key.parse::<usize>() {
+                                if let Some(unit) = crate::value::utf16_get(&s, i) {
+                                    return Ok(Value::String(Arc::from(
+                                        String::from_utf16_lossy(&[unit]).as_str(),
+                                    )));
+                                }
+                                return Ok(Value::Undefined);
+                            }
+                        }
+                    }
                     let props = o.props();
                     if let Some(desc) = props.lock().get(&pkey) {
                         return Ok(desc.value.clone());
