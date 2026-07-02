@@ -90,6 +90,10 @@ def build_source(path):
         p = HARNESS / inc
         if p.exists():
             parts.append(p.read_text())
+    # onlyStrict: prepend 'use strict' so the test runs in strict mode.
+    flags = meta.get('flags', [])
+    if 'onlyStrict' in flags:
+        parts.append("'use strict';")
     parts.append(src)
     return "\n".join(parts), meta
 
