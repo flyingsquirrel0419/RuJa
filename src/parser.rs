@@ -50,6 +50,9 @@ pub struct Parser {
     /// Stack of labels visible in the current scope: (label, is_loop).
     /// Used to validate `break label` / `continue label` targets.
     label_stack: Vec<(Arc<str>, bool)>,
+    /// Current function nesting depth. 0 = top-level program code.
+    /// `return` at depth 0 is a SyntaxError.
+    function_depth: usize,
 }
 
 impl Parser {
@@ -72,6 +75,7 @@ impl Parser {
             loop_depth: 0,
             switch_depth: 0,
             label_stack: Vec::new(),
+            function_depth: 0,
         }
     }
 
@@ -560,11 +564,13 @@ impl Parser {
 
     fn parse_fn_body(&mut self) -> error::Result<Vec<Stmt>> {
         self.expect(&TokenKind::LBrace, "{")?;
+        self.function_depth += 1;
         let mut body = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             body.push(self.parse_stmt()?);
         }
         self.expect(&TokenKind::RBrace, "}")?;
+        self.function_depth -= 1;
         Ok(body)
     }
 
@@ -850,6 +856,12 @@ impl Parser {
     }
 
     fn parse_return(&mut self) -> error::Result<Stmt> {
+        // `return` at the top level (outside any function) is a SyntaxError.
+        if self.function_depth == 0 {
+            return Err(error::Error::syntax(
+                "Illegal return statement".to_string(),
+            ));
+        }
         self.advance();
         if self.check(&TokenKind::Semicolon)
             || self.check(&TokenKind::RBrace)
