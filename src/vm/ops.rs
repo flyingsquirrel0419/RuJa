@@ -855,6 +855,17 @@ impl Vm {
                     // stack: [obj, ctor]; walk obj's proto chain for ctor.prototype.
                     let ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    // ES spec: if ctor is not a function, throw TypeError.
+                    let is_function = if let Value::Object(ci) = &ctor {
+                        self.heap.with_obj(ci.0, |o| o.is_function())
+                    } else {
+                        false
+                    };
+                    if !is_function {
+                        return Err(Error::type_err(
+                            "Right-hand side of 'instanceof' is not callable".to_string(),
+                        ));
+                    }
                     let ctor_proto = if let Value::Object(ci) = &ctor {
                         self.heap.with_obj(ci.0, |o| {
                             if let HeapObj::Function(f) = o {
