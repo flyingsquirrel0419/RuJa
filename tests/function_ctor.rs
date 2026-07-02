@@ -58,7 +58,7 @@ fn function_ctor_has_prototype() {
 #[test]
 fn function_ctor_use_strict_body() {
     // A "use strict" directive inside the body makes the function strict.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run(r#"new Function("a", "a", '"use strict"; return a;')"#);
     assert!(
         r.is_err(),
@@ -68,7 +68,7 @@ fn function_ctor_use_strict_body() {
 
 #[test]
 fn function_ctor_invalid_body_throws() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run(r#"new Function("return ;");"#);
     // A valid body returns a function; an invalid one errors. This body is valid.
     assert!(r.is_ok());

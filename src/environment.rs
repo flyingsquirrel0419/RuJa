@@ -9,14 +9,18 @@ use std::sync::atomic::Ordering;
 
 use std::sync::Arc;
 
-pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> GcIdx {
+pub fn new_env(
+    heap: &Heap,
+    parent: Option<GcIdx>,
+    is_function_scope: bool,
+) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
     let env = HeapObj::Environment(crate::value::EnvironmentData {
         vars: Mutex::new(IndexMap::new()),
         parent: Mutex::new(parent),
         is_function_scope,
         with_object: Mutex::new(None),
     });
-    GcIdx(heap.allocate_unchecked(env))
+    Ok(GcIdx(heap.allocate(env)?))
 }
 
 /// Create a per-iteration child environment for a `for (let ...)` loop: copy
@@ -25,12 +29,12 @@ pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> G
 /// binding so closures created in the body capture distinct values (the
 /// classic `for (let i...) out.push(()=>i)` case). `var` bindings are not
 /// copied (they belong to the function scope, not the loop).
-pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
+pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
     // The child's parent is `env` itself. The body runs in `child` (so
     // closures capture a per-iteration binding), then the frame env is
     // restored to `env` (child's parent) before the update runs, so the
     // chain does not grow across iterations and outer scopes stay reachable.
-    let child = new_env(heap, Some(env), false);
+    let child = new_env(heap, Some(env), false)?;
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             let vars = e.vars.lock();
@@ -60,7 +64,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
             });
         }
     });
-    child
+    Ok(child)
 }
 
 /// Per-iteration environment for `for (let ...)`: copy ONLY the named loop
@@ -68,8 +72,12 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> GcIdx {
 /// NOT copied, so mutations to them in the body persist in `env` (via the
 /// chain). Each iteration's closures capture a distinct binding for the loop
 /// variable while sharing the rest of the scope.
-pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Arc<str>]) -> GcIdx {
-    let child = new_env(heap, Some(env), false);
+pub fn clone_loop_vars(
+    heap: &Heap,
+    env: GcIdx,
+    names: &[Arc<str>],
+) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
+    let child = new_env(heap, Some(env), false)?;
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {
             let vars = e.vars.lock();
@@ -99,19 +107,23 @@ pub fn clone_loop_vars(heap: &Heap, env: GcIdx, names: &[Arc<str>]) -> GcIdx {
             });
         }
     });
-    child
+    Ok(child)
 }
 
 /// Create a `with`-statement environment record wrapping `object`: name lookups
 /// that miss the lexical chain fall back to `object`'s own properties.
-pub fn new_with_env(heap: &Heap, parent: GcIdx, object: crate::value::Value) -> GcIdx {
+pub fn new_with_env(
+    heap: &Heap,
+    parent: GcIdx,
+    object: crate::value::Value,
+) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
     let env = HeapObj::Environment(crate::value::EnvironmentData {
         vars: Mutex::new(IndexMap::new()),
         parent: Mutex::new(Some(parent)),
         is_function_scope: false,
         with_object: Mutex::new(Some(object)),
     });
-    GcIdx(heap.allocate_unchecked(env))
+    Ok(GcIdx(heap.allocate(env)?))
 }
 
 /// True if `env` has a binding for `name` that is NOT a `var` (i.e. a

@@ -25,7 +25,7 @@ fn run_num_big_stack(src: &str) -> f64 {
     let worker = thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             match vm.run(&src) {
                 Ok(ruja::Value::Number(n)) => n,
                 Ok(v) => panic!("expected number, got {:?}", v),
@@ -45,7 +45,7 @@ fn run_err_big_stack(src: &str) -> String {
     let worker = thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             match vm.run(&src) {
                 Err(e) => e.to_string(),
                 Ok(v) => panic!("expected error, got value: {:?}", v),
@@ -334,7 +334,7 @@ fn deeply_nested_expression_throws_syntax_error_not_crash() {
     let worker = thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             match vm.run(&src_owned) {
                 Ok(_) => String::new(),
                 Err(e) => e.to_string(),

@@ -12,6 +12,21 @@
 //! `Mutex`), and keeps each lock scope tiny.
 
 use crate::value::HeapObj;
+
+#[derive(Debug, Clone, Copy)]
+pub struct HeapLimitExceeded;
+
+impl std::convert::From<HeapLimitExceeded> for std::sync::Arc<crate::error::Error> {
+    fn from(_: HeapLimitExceeded) -> Self {
+        std::sync::Arc::new(crate::error::Error {
+            kind: crate::error::ErrorKind::Range,
+            message: "heap limit exceeded".into(),
+            stack: Vec::new(),
+            thrown_value: None,
+            line: None,
+        })
+    }
+}
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -186,7 +201,19 @@ impl Default for Heap {
 }
 
 impl Heap {
-    pub fn allocate(&self, obj: HeapObj) -> usize {
+    pub fn allocate(&self, obj: HeapObj) -> Result<usize, HeapLimitExceeded> {
+        let max = self.max_objects.load(Ordering::Relaxed);
+        if max > 0 {
+            let live = self.live_count();
+            if live >= max {
+                // Do not run GC here: `Heap` does not know the root set.
+                // The VM runs incremental GC periodically with proper roots.
+                // If we collected with empty roots, every live object would
+                // be swept, breaking the runtime.  Instead, just refuse to
+                // allocate past the hard limit.
+                return Err(HeapLimitExceeded);
+            }
+        }
         let idx = {
             let mut free = self.free_list.lock();
             if let Some(idx) = free.pop() {
@@ -205,7 +232,7 @@ impl Heap {
             }
         };
         self.alloc_since_gc.fetch_add(1, Ordering::Relaxed);
-        idx
+        Ok(idx)
     }
 
     pub fn collect(&self, roots: &[usize]) {
@@ -294,12 +321,6 @@ impl Heap {
         let live = cells.len() - free.len();
         self.gc_threshold
             .store((live * 2).max(1024), Ordering::Relaxed);
-    }
-
-    /// Allocate without checking the limit. Used by builtins where the
-    /// interpret loop's periodic check catches limit violations.
-    pub fn allocate_unchecked(&self, obj: HeapObj) -> usize {
-        self.allocate(obj)
     }
 
     pub fn maybe_collect(&self, roots: &[usize]) {

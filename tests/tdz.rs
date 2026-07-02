@@ -178,7 +178,7 @@ fn default_param_self_reference_is_tdz() {
     // `function f(a = a)` must throw ReferenceError when the default is used,
     // because `a` is in the TDZ during default evaluation.
     use ruja::Value;
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("function f(a = a) { return a; } f();") {
         Err(e) => assert!(
             e.to_string().contains("before initialization")
@@ -220,7 +220,7 @@ fn default_param_reverse_order_is_reference_error() {
     // been initialized yet. Per ES spec, parameter default initializers run in
     // a scope where every parameter is visible but only those already
     // initialized are readable.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("function f(a = b, b = 2) { return a + b; } f();") {
         Err(e) => assert!(
             e.to_string().contains("before initialization")
@@ -277,7 +277,7 @@ fn default_param_single_default_undefined_arg() {
 #[test]
 fn default_param_self_reference_still_tdz() {
     // `function f(a = a)` still throws (existing behavior, must not regress).
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("function f(a = a) { return a; } f();") {
         Err(e) => assert!(
             e.to_string().contains("before initialization")
@@ -294,7 +294,7 @@ fn default_param_only_later_default_is_tdz() {
     // `function f(a = b, b)` -- `b` has no default but `a`'s default still
     // reads it before it is initialized, so it must throw when called with no
     // args.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("function f(a = b, b) { return a; } f();") {
         Err(e) => assert!(
             e.to_string().contains("before initialization")
@@ -319,7 +319,7 @@ fn default_param_chain_forward_reference() {
 
 #[test]
 fn let_let_redecl_is_syntax_error() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("{ let a = 1; let a = 2; }") {
         Err(e) => assert!(
             e.to_string().contains("already been declared"),
@@ -332,7 +332,7 @@ fn let_let_redecl_is_syntax_error() {
 
 #[test]
 fn const_redecl_is_syntax_error() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("{ const a = 1; const a = 2; }") {
         Err(e) => assert!(e.to_string().contains("already been declared")),
         Ok(v) => panic!("expected error, got {:?}", v),
@@ -346,7 +346,7 @@ fn var_var_redecl_allowed() {
 
 #[test]
 fn let_then_var_redecl_is_error() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("{ let a = 1; var a = 2; }") {
         Err(e) => assert!(e.to_string().contains("already been declared")),
         Ok(v) => panic!("expected error, got {:?}", v),
@@ -355,7 +355,7 @@ fn let_then_var_redecl_is_error() {
 
 #[test]
 fn param_let_shadow_is_error() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     match vm.run("function f(a = 1) { let a = 2; return a; } f();") {
         Err(e) => assert!(e.to_string().contains("already been declared")),
         Ok(v) => panic!("expected error, got {:?}", v),
@@ -365,7 +365,7 @@ fn param_let_shadow_is_error() {
 #[test]
 fn nested_scope_same_name_ok() {
     // Same name in different (nested) scopes is allowed (no redeclaration error).
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("{ let a = 1; { let a = 2; } a; }");
     assert!(
         r.is_ok(),

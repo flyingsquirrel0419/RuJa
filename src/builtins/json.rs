@@ -378,14 +378,14 @@ fn apply_reviver(
                         new_items.push(w);
                     }
                 }
-                Value::Object(GcIdx(vm.heap.allocate_unchecked(HeapObj::Array(
+                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Array(
                     crate::value::ArrayData {
                         items: Mutex::new(new_items),
                         props: Mutex::new(IndexMap::new()),
                         proto: Mutex::new(Some(vm.array_proto.clone())),
                         sparse_max: Mutex::new(None),
                     },
-                ))))
+                ))?))
             } else {
                 let mut new_props = IndexMap::new();
                 for (pk, d) in &props {
@@ -399,7 +399,7 @@ fn apply_reviver(
                         }
                     }
                 }
-                Value::Object(GcIdx(vm.heap.allocate_unchecked(HeapObj::Object(
+                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(
                     crate::value::ObjectData {
                         props: Mutex::new(new_props),
                         proto: Mutex::new(Some(vm.object_proto.clone())),
@@ -408,7 +408,7 @@ fn apply_reviver(
                         private_fields: Mutex::new(std::collections::HashMap::new()),
                         primitive: Mutex::new(None),
                     },
-                ))))
+                ))?))
             }
         }
         _ => val.clone(),
@@ -532,7 +532,7 @@ fn parse_json_obj(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(obj))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }
 fn parse_json_arr(
     vm: &mut Vm,
@@ -571,7 +571,7 @@ fn parse_json_arr(
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(obj))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }
 fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
     let mut s = String::new();
@@ -737,7 +737,7 @@ pub(crate) fn reflect_own_keys(
 ) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let keys = own_string_keys(vm, &target);
-    Ok(make_str_array(vm, keys))
+    make_str_array(vm, keys)
 }
 fn reflect_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     object_get_prototype_of(vm, args, None)
@@ -789,7 +789,7 @@ fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Re
     vm.construct(&target, &call_args)
 }
 
-pub(crate) fn build_reflect(vm: &mut Vm) -> Value {
+pub(crate) fn build_reflect(vm: &mut Vm) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     let entries: &[(&str, NativeFn, usize)] = &[
         ("get", reflect_get as NativeFn, 2),
@@ -809,7 +809,7 @@ pub(crate) fn build_reflect(vm: &mut Vm) -> Value {
         ("construct", reflect_construct as NativeFn, 2),
     ];
     for (name, f, len) in entries {
-        let idx = vm.new_native_function(name, *f, *len);
+        let idx = vm.new_native_function(name, *f, *len)?;
         props.insert(PropertyKey::from(*name), data_prop(Value::Object(idx)));
     }
     let obj = HeapObj::Object(ObjectData {
@@ -820,13 +820,13 @@ pub(crate) fn build_reflect(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }
 
-pub(crate) fn build_json(vm: &mut Vm) -> Value {
+pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
-    let pi = vm.new_native_function("parse", json_parse, 1);
-    let si = vm.new_native_function("stringify", json_stringify, 3);
+    let pi = vm.new_native_function("parse", json_parse, 1)?;
+    let si = vm.new_native_function("stringify", json_stringify, 3)?;
     props.insert(PropertyKey::from("parse"), data_prop(Value::Object(pi)));
     props.insert(PropertyKey::from("stringify"), data_prop(Value::Object(si)));
     let obj = HeapObj::Object(ObjectData {
@@ -837,5 +837,5 @@ pub(crate) fn build_json(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
+    Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }

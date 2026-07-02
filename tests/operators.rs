@@ -409,7 +409,7 @@ fn sort_comparator_is_not_quadratic() {
     let worker = thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             match vm.run(&src) {
                 Ok(ruja::Value::Number(n)) => n,
                 Ok(v) => panic!("expected number, got {:?}", v),

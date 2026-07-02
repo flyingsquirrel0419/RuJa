@@ -9,7 +9,7 @@ use ruja::Value;
 #[test]
 fn use_strict_at_top_enables_strict() {
     // A leading "use strict" makes the program strict: `with` is rejected.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("\"use strict\"; var o = {x:1}; with(o){ x; }");
     assert!(r.is_err(), "expected with to be rejected in strict mode");
 }
@@ -26,7 +26,7 @@ fn strict_in_function_via_directive() {
     // A function with a "use strict" directive is strict: `with` inside it is
     // a compile-time SyntaxError, while `with` in the (non-strict) outer
     // program is allowed.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run(
         r#"var o = {x: 5};
            with(o){ }
@@ -43,7 +43,7 @@ fn strict_in_function_via_directive() {
 #[test]
 fn strictness_inherits_into_nested_functions() {
     // An outer "use strict" makes nested functions strict too.
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run(
         r#"\"use strict\"; function outer(){ function inner(){ var o={x:1}; with(o){x;} } inner(); } outer();"#,
     );
@@ -54,7 +54,7 @@ fn strictness_inherits_into_nested_functions() {
 
 #[test]
 fn strict_rejects_duplicate_params() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("\"use strict\"; function f(a, a){ return a; }");
     assert!(r.is_err(), "expected duplicate param error in strict");
 }
@@ -70,7 +70,7 @@ fn non_strict_allows_duplicate_params_last_wins() {
 
 #[test]
 fn strict_function_directive_rejects_duplicate_params() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("function f(a, a){ \"use strict\"; return a; }");
     assert!(r.is_err(), "expected duplicate param error");
 }
@@ -79,7 +79,7 @@ fn strict_function_directive_rejects_duplicate_params() {
 
 #[test]
 fn class_methods_are_strict_reject_with() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run(r#"class C { m(){ var o={x:1}; with(o){ x; } } } new C().m();"#);
     assert!(r.is_err(), "class methods are always strict");
 }
@@ -88,7 +88,7 @@ fn class_methods_are_strict_reject_with() {
 
 #[test]
 fn strict_rejects_with_with_clear_message() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let e = vm.run("\"use strict\"; with({}){}").unwrap_err();
     assert!(
         e.to_string().contains("strict"),
@@ -99,7 +99,7 @@ fn strict_rejects_with_with_clear_message() {
 
 #[test]
 fn strict_with_inside_block_scope_also_rejected() {
-    let mut vm = ruja::Vm::new();
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("\"use strict\"; { with({}){} }");
     assert!(r.is_err());
 }

@@ -35,16 +35,14 @@ pub(crate) fn regexp_constructor(
             _ => vm.object_proto.clone(),
         }
     };
-    let obj_idx = vm
-        .heap
-        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(regex_proto_val)),
-            extensible: AtomicBool::new(true),
-            class_name: Some(Arc::from("RegExp")),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }));
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(regex_proto_val)),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("RegExp")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
     let mut props = IndexMap::new();
     props.insert(
         PropertyKey::from("source"),
@@ -176,7 +174,7 @@ pub(crate) fn regexp_exec(
                     });
                 }
             }
-            Ok(make_value_array(vm, items))
+            make_value_array(vm, items)
         }
         None => {
             // No match: for global/sticky, reset lastIndex to 0.
@@ -274,16 +272,14 @@ pub(crate) fn generator_next(
         })
     };
     // return {value, done}
-    let obj_idx = vm
-        .heap
-        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
-            extensible: AtomicBool::new(true),
-            class_name: None,
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }));
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
             obj.props
@@ -305,7 +301,7 @@ pub(crate) fn generator_next(
                 handlers: Mutex::new(Vec::new()),
                 props: Mutex::new(IndexMap::new()),
                 proto: Mutex::new(Some(vm.promise_proto.clone())),
-            }));
+            }))?;
         Ok(Value::Object(GcIdx(p_idx)))
     } else {
         Ok(result_obj)
@@ -319,16 +315,14 @@ pub(crate) fn gen_result(
     done: bool,
     is_async_gen: bool,
 ) -> error::Result<Value> {
-    let obj_idx = vm
-        .heap
-        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
-            extensible: AtomicBool::new(true),
-            class_name: None,
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }));
+    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
             obj.props
@@ -349,7 +343,7 @@ pub(crate) fn gen_result(
                 handlers: Mutex::new(Vec::new()),
                 props: Mutex::new(IndexMap::new()),
                 proto: Mutex::new(Some(vm.promise_proto.clone())),
-            }));
+            }))?;
         Ok(Value::Object(GcIdx(p_idx)))
     } else {
         Ok(result_obj)
@@ -421,7 +415,7 @@ pub(crate) fn generator_throw(
     gen_result(vm, value, done, is_async_gen)
 }
 
-pub fn setup_collections(vm: &mut Vm) {
+pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     // Map
     let (map_ctor, map_proto) = make_builtin_constructor_with(
         vm,
@@ -439,11 +433,11 @@ pub fn setup_collections(vm: &mut Vm) {
             ("values", map_values, 0),
             ("forEach", map_for_each, 1),
         ],
-    );
+    )?;
     vm.map_proto = Value::Object(map_proto);
     define_global(vm, "Map", Value::Object(map_ctor));
     // Map.prototype[Symbol.iterator] === Map.prototype.entries
-    let map_entries_fn = vm.new_native_function("entries", map_entries, 0);
+    let map_entries_fn = vm.new_native_function("entries", map_entries, 0)?;
     if let Value::Object(mp) = vm.map_proto.clone() {
         vm.heap.with_obj(mp.0, |o| {
             o.props().lock().insert(
@@ -467,11 +461,11 @@ pub fn setup_collections(vm: &mut Vm) {
             ("values", set_values, 0),
             ("forEach", set_for_each, 1),
         ],
-    );
+    )?;
     vm.set_proto = Value::Object(set_proto);
     define_global(vm, "Set", Value::Object(set_ctor));
     // Set.prototype[Symbol.iterator] === Set.prototype.values
-    let set_values_fn = vm.new_native_function("values", set_values, 0);
+    let set_values_fn = vm.new_native_function("values", set_values, 0)?;
     if let Value::Object(sp) = vm.set_proto.clone() {
         vm.heap.with_obj(sp.0, |o| {
             o.props().lock().insert(
@@ -492,7 +486,7 @@ pub fn setup_collections(vm: &mut Vm) {
             ("has", weakmap_has, 1),
             ("delete", weakmap_delete, 1),
         ],
-    );
+    )?;
     define_global(vm, "WeakMap", Value::Object(weakmap_ctor));
     let _ = weakmap_proto;
     let (weakset_ctor, weakset_proto) = make_builtin_constructor_with(
@@ -504,14 +498,14 @@ pub fn setup_collections(vm: &mut Vm) {
             ("has", weakset_has, 1),
             ("delete", weakset_delete, 1),
         ],
-    );
+    )?;
     define_global(vm, "WeakSet", Value::Object(weakset_ctor));
     let _ = weakset_proto;
 
     // Symbol
-    let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1);
+    let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1)?;
     define_global(vm, "Symbol", Value::Object(sym_idx));
-    let sym_for_idx = vm.new_native_function("for", symbol_for, 1);
+    let sym_for_idx = vm.new_native_function("for", symbol_for, 1)?;
     if let Value::Object(idx) = Value::Object(sym_idx) {
         vm.heap.with_obj(idx.0, |obj| {
             obj.props().lock().insert(
@@ -543,7 +537,7 @@ pub fn setup_collections(vm: &mut Vm) {
     // Symbol.prototype: a plain Object with a toString method. Symbol is a
     // value type (not a constructor), so build the proto manually rather than
     // going through make_builtin_constructor.
-    let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0);
+    let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0)?;
     let mut sym_proto_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     sym_proto_props.insert(
         PropertyKey::from("toString"),
@@ -561,8 +555,9 @@ pub fn setup_collections(vm: &mut Vm) {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let sym_proto_idx = GcIdx(vm.heap.allocate_unchecked(sym_proto_obj));
+    let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj)?);
     vm.symbol_proto = Value::Object(sym_proto_idx);
+    Ok(())
 }
 
 pub(crate) fn make_builtin_constructor_with(
@@ -570,10 +565,10 @@ pub(crate) fn make_builtin_constructor_with(
     name: &str,
     ctor: NativeFn,
     methods: &[(&str, NativeFn, usize)],
-) -> (GcIdx, GcIdx) {
+) -> error::Result<(GcIdx, GcIdx)> {
     let mut method_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
-        let func_idx = vm.new_native_function(n, *f, *len);
+        let func_idx = vm.new_native_function(n, *f, *len)?;
         method_props.insert(PropertyKey::from(*n), data_prop(Value::Object(func_idx)));
     }
     let proto_obj = HeapObj::Object(ObjectData {
@@ -584,7 +579,7 @@ pub(crate) fn make_builtin_constructor_with(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let proto_idx = GcIdx(vm.heap.allocate_unchecked(proto_obj));
+    let proto_idx = GcIdx(vm.heap.allocate(proto_obj)?);
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
@@ -599,7 +594,7 @@ pub(crate) fn make_builtin_constructor_with(
         }),
         props: Mutex::new(IndexMap::new()),
     };
-    let ctor_idx = GcIdx(vm.heap.allocate_unchecked(HeapObj::Function(ctor_func)));
+    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func))?);
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
@@ -612,7 +607,7 @@ pub(crate) fn make_builtin_constructor_with(
             data_prop(Value::Object(ctor_idx)),
         );
     });
-    (ctor_idx, proto_idx)
+    Ok((ctor_idx, proto_idx))
 }
 
 // =========================================================================

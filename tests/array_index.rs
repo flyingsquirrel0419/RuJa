@@ -22,7 +22,7 @@ fn run_big_stack(src: &str) -> ruja::Value {
     let worker = thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             vm.run(&src).expect("evaluation errored")
         })
         .expect("failed to spawn worker");
@@ -385,7 +385,7 @@ fn reentrant_with_obj_does_not_panic() {
     let worker = thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             vm.run(&src).expect("evaluation errored")
         })
         .expect("failed to spawn worker");
@@ -427,7 +427,7 @@ fn array_from_large_generator_not_truncated() {
     let worker = thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
-            let mut vm = ruja::Vm::new();
+            let mut vm = ruja::Vm::new().expect("failed to initialize VM");
             vm.run(&src).expect("evaluation errored")
         })
         .expect("failed to spawn worker");

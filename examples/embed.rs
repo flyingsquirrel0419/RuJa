@@ -7,7 +7,7 @@
 fn main() {
     use ruja::{Value, Vm};
 
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM")?;
 
     // Sandbox: limit execution and memory.
     vm.set_fuel(Some(100_000));
@@ -22,7 +22,7 @@ fn main() {
             Ok(Value::Number(a + b))
         },
         2,
-    );
+    )?;
 
     // Run untrusted script.
     let result = vm.run("add(3, 4) * 2;").expect("evaluation failed");
