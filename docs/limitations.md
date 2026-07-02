@@ -8,12 +8,12 @@
   function that loops in Rust) is not subdivided, and there is no true
   async interrupt / `vm.Interrupt()` like goja. To hard-bound untrusted
   code, also run RuJa in a separately killable process.
-- Map/Set are backed by a `Vec`, so `get`/`has`/`set` are O(n) linear scans
-  (keyed by SameValueZero). Correct but slow for large collections; no
-  hash table yet. `WeakMap`/`WeakSet` use the same structure (entries are
-  held strongly here, see below).
+- Map/Set are backed by `IndexMap`/`IndexSet` with SameValueZero keys
+  (`MapKey` wrapper), so `get`/`has`/`set` are O(1). `WeakMap`/`WeakSet`
+  still use `Vec` (entries are keyed by heap index for GC integration).
 - Async generator scheduling uses a synchronous microtask-drain model (no
-  real event-loop preemption)
+  real event-loop preemption), though `Vm::tick()` now allows hosts to
+  execute a single microtask at a time for cooperative scheduling
 - test262 conformance is partial: the full suite is run in CI (excluding
   `intl402`/`staging`), with a baseline pass rate of ~33%. A curated
   `language/` subset (~61%) is run on every push for fast regression
@@ -43,8 +43,8 @@
   global object), and a top-level strict `eval` `var` still routes through the
   global slot path (the in-function strict-eval case is handled)
 - GC runs at safe points only (after a run settles, and throttled at frame
-  boundaries), so very long-running tight loops can accumulate memory before a
-  collection; there is no incremental/generational collector
+  boundaries). Incremental marking is supported via `collect_incremental(roots, budget)`,
+  but there is no generational collector yet
 - Private methods are stored per-instance as private fields (each instance
   gets its own closure copy); behavior is spec-correct, but this is more
   memory-heavy than a shared per-class method table would be

@@ -5,10 +5,11 @@ that may be reachable from untrusted JavaScript input, and the policy for the re
 
 ## Current state
 
-- Total `.unwrap()` in `src/`: 469
-- In `src/vm.rs` + `src/builtins.rs`: 376
-- `.expect()` in those files: 1 (`src/vm.rs:644`)
+- Total `.unwrap()` in `src/` (excluding tests): 73
+- In `src/vm/ops.rs` + `src/vm/mod.rs`: 0
+- `.expect()` in those files: 0
 - Real `unsafe` blocks: 0
+- `Mutex::lock().unwrap()` count: 0 (parking_lot, panic-free)
 
 ## Reachability policy
 
@@ -38,15 +39,12 @@ practice.
   `.unwrap()` calls are gone. The remaining `.unwrap()` in the engine are
   `Option`/`Result`/`Vec` operations on data that should be guarded by script-level
   checks (e.g. `String::from_utf8`, `parse`, `stack.pop()` with defaults).
-- `frames.last().unwrap()` and similar VM invariants in `src/vm.rs`. The most
-  dangerous invariant failure (an empty frame stack at the top of the interpret
-  loop) is now caught and returns `Error::internal`. The remaining `.unwrap()`
-  calls rely on the loop invariant that a frame is always present while
-  dispatching opcodes; they will be converted to defensive `ok_or_else` during
-  the `vm.rs` module split.
-- **File size**: `src/builtins.rs` was split into `src/builtins/{mod,math,json,global,array,string,collections,regexp,function}.rs`.
-  `src/vm.rs` was split into `src/vm/{mod,ops}.rs`, with the main opcode dispatch
-  loop moved to `ops.rs`.
+- ~~`frames.last().unwrap()` and similar VM invariants~~ All 50 instances
+  converted to `current_frame()?` / `current_frame_mut()?` safe propagation.
+  `vm/ops.rs` and `vm/mod.rs` now have zero `unwrap()` calls.
+- **File size**: `src/builtins.rs` was split into 10 submodules
+  (`{mod,math,json,global,array,string,collections,regexp,function,proxy,typed_array}.rs`).
+  `src/vm.rs` was split into `src/vm/{mod,ops}.rs`.
 
 ## Verification
 
@@ -62,10 +60,11 @@ All green.
 
 ## Future work
 
-1. Replace remaining `args[idx]` direct indexing with `.get(idx).unwrap_or(...)`
-   in builtins that may be called with fewer arguments.
-2. Decide on a project-wide mutex policy (`parking_lot`, poison-recovery, or
-   documented invariant).
-3. ✅ Run `cargo-fuzz` on the public API (`Vm::run`) to discover remaining panic
-   paths empirically. Fuzz target added at `fuzz/fuzz_targets/fuzz_target_1.rs`;
-   initial 30-second run completed 50k+ iterations without panics.
+1. ✅ Replace remaining `args[idx]` direct indexing — done.
+2. ✅ Project-wide mutex policy — `parking_lot::Mutex` adopted.
+3. ✅ `cargo-fuzz` target — added and verified (96k+ iterations, no panics).
+4. ✅ `frames.last().unwrap()` — all converted to safe propagation.
+5. Run longer fuzzing sessions (hours) to discover edge-case panics.
+6. Add IC for `GetElem` and `SetElem` opcodes.
+7. Implement remaining Proxy traps (`has`, `deleteProperty`, `ownKeys`, etc.).
+8. Add more TypedArray kinds (Int8, Uint16, etc.) and `set`/`subarray` methods.

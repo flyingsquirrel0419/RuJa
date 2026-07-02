@@ -30,6 +30,42 @@
   `src/vm.rs` was split into `src/vm/{mod,ops}.rs`, with the main opcode dispatch
   loop and helpers moved to `ops.rs`.
 
+### Performance
+- **Map/Set O(1) lookups**: Replaced `Vec`-backed linear scans with
+  `IndexMap`/`IndexSet` using a `MapKey(Value)` wrapper that implements
+  `Hash`/`Eq` via SameValueZero semantics (NaN == NaN, -0 == +0).
+- **UTF-16 ASCII fast-path**: `utf16_len`, `utf16_get`, `utf16_slice` now
+  check `is_ascii()` first, skipping `encode_utf16().count()` for the
+  common case where byte length equals UTF-16 length.
+- **Monomorphic inline cache**: `GetProp` caches `(heap_idx, key)` -> `Value`
+  to skip the prototype-chain walk on repeated property reads. Cache is
+  invalidated on `SetProp` to prevent stale reads. Capped at 4096 entries.
+
+### Features
+- **Proxy**: `new Proxy(target, handler)` with `get`/`set` traps and
+  `Proxy.revocable()` returning `{ proxy, revoke }`. Revoked proxies throw
+  `TypeError` on trap invocation.
+- **TypedArray (Uint8Array)**: `new Uint8Array(length)` or
+  `new Uint8Array(arrayLike)` with index access, `length`, `byteLength`,
+  and `byteOffset` properties. `TypedArrayKind` enum defined for all 8
+  typed array element kinds.
+- **toJSON support**: `JSON.stringify` now calls `toJSON()` on objects
+  that define it before serializing, matching ES spec behavior.
+- **UTF-16 correctness**: `str_includes`, `str_split` (empty separator),
+  and `str_replace_all` (empty pattern) now use UTF-16 code-unit iteration
+  instead of Rust `chars()`.
+- **RegExp lastIndex UTF-16**: `RegExp.exec` bounds check and match offset
+  calculation now use UTF-16 code-unit indices, preventing panics on
+  supplementary characters.
+- **VM invariant unwrap removal**: All 50 `frames.last().unwrap()` calls
+  in `vm/ops.rs` and `vm/mod.rs` converted to `current_frame()?` /
+  `current_frame_mut()?` safe propagation. Zero `unwrap()` calls remain
+  in those files.
+- **Incremental GC**: `Heap::collect_incremental(roots, budget)` marks up
+  to `budget` cells per call, allowing the VM to avoid long GC pauses.
+- **Async tick API**: `Vm::tick()` executes a single microtask and returns,
+  enabling cooperative event-loop scheduling by hosts.
+
 ### Documentation
 - Added `docs/audit-panics.md` documenting the `unwrap()`/`expect()` inventory in
   `src/vm.rs` and `src/builtins.rs`, reachability policy, and remaining work.
