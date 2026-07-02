@@ -814,7 +814,14 @@ impl Vm {
                     },
                 )?,
                 Op::Pow => self.num_bin_bigint(
-                    |a, b| a.powf(b),
+                    |a, b| {
+                        // ES spec: (-1) ** ±Infinity = NaN
+                        if a == -1.0 && b.is_infinite() {
+                            f64::NAN
+                        } else {
+                            a.powf(b)
+                        }
+                    },
                     |x, y| {
                         if y.is_negative() {
                             num_bigint::BigInt::from(0)
