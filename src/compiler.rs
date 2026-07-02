@@ -2154,12 +2154,21 @@ impl Compiler {
                                 String::new()
                             }
                         } else {
+                            // Computed key: compile the expression so its
+                            // value is on the stack as the property key.
+                            self.compile_expr(property)?;
                             String::new()
                         };
-                        let key_idx = self
-                            .chunk
-                            .add_constant(Value::String(Arc::from(key.as_str())));
-                        self.chunk.emit(Op::Const(key_idx), self.current_line);
+                        // For computed keys, the key expression is already on
+                        // the stack; for non-computed, push the key constant.
+                        if *computed {
+                            // key is on the stack from compile_expr above
+                        } else {
+                            let key_idx = self
+                                .chunk
+                                .add_constant(Value::String(Arc::from(key.as_str())));
+                            self.chunk.emit(Op::Const(key_idx), self.current_line);
+                        }
                         // push args
                         for a in args {
                             if let Expr::Spread(_) = a {
