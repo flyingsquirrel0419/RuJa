@@ -254,6 +254,23 @@ impl Vm {
                 }
 
                 // 3. Define/overwrite an own writable data property.
+                // Strict-mode function: setting "caller" or "arguments" throws TypeError.
+                if matches!(key, "caller" | "arguments") {
+                    let is_strict_fn = self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Function(f) = o {
+                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
+                                return func.chunk.is_strict;
+                            }
+                        }
+                        false
+                    });
+                    if is_strict_fn {
+                        return Err(Error::type_err(format!(
+                            "'{}' is not allowed on a strict-mode function",
+                            key
+                        )));
+                    }
+                }
                 self.heap.with_obj(idx.0, |o| {
                     let props = o.props();
                     let mut props = props.lock();
