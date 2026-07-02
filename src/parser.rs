@@ -181,10 +181,28 @@ impl Parser {
         if self.is_strict_context && matches!(name, "eval" | "arguments") {
             return Err(error::Error::syntax(format!(
                 "'{}' cannot be used as a binding name in strict mode",
-                name
-            )));
+               name
+           )));
         }
         Ok(())
+    }
+
+    /// Determine if `let` at the current position is a lexical declaration
+    /// (as opposed to an identifier). Per spec, `let` is a declaration when
+    /// followed by `[`, `{`, or an identifier name. When followed by `=`, `in`,
+    /// `of`, `;`, etc., it's an identifier (in non-strict mode).
+    fn is_let_lexical_position(&self) -> bool {
+        // In strict mode, `let` is always a lexical declaration.
+        if self.is_strict_context {
+            return true;
+        }
+        // Non-strict: `let` is lexical only when followed by `[`, `{`, or an
+        // identifier (the start of a binding pattern or name).
+        match self.peek_at_tok(1).kind {
+            TokenKind::LBracket | TokenKind::LBrace => true,
+            TokenKind::Ident(_) => true,
+            _ => false,
+        }
     }
 
     fn expect_semi(&mut self) -> error::Result<()> {
@@ -727,8 +745,10 @@ impl Parser {
             None
         } else if matches!(
             self.peek(),
-            TokenKind::Var | TokenKind::Let | TokenKind::Const
-        ) {
+            TokenKind::Var | TokenKind::Const
+        ) || (matches!(self.peek(), TokenKind::Let)
+            && self.is_let_lexical_position())
+        {
             // could be for-in / for-of; set no_in so the initializer
             // expression doesn't consume the `in` as a binary operator.
             self.no_in = true;
