@@ -109,6 +109,18 @@ impl Compiler {
         self.scopes.last().map(|s| s.is_strict).unwrap_or(false)
     }
 
+    /// Reset the completion value slot to undefined when tracking is active.
+    /// Called at the start of if/while/for/do-while so that the statement's
+    /// completion value starts fresh (per ES spec: each statement has its
+    /// own completion, not inherited from the previous one).
+    fn reset_completion(&mut self) {
+        if let Some(sv) = self.switch_val_depth {
+            self.chunk.emit(Op::Undefined, self.current_line);
+            self.chunk.emit(Op::StoreEnvName(sv), self.current_line);
+            self.chunk.emit(Op::Pop, self.current_line);
+        }
+    }
+
     pub fn compile_program(
         &mut self,
         program: &Program,
@@ -155,23 +167,24 @@ impl Compiler {
             let lex = Self::collect_lexical_names(&program.body);
             self.emit_lexical_hoist(&lex)?;
         }
+        // Allocate a completion-value slot. Expression statements store their
+        // value here; if/while/for bodies inherit the slot so that the last
+        // expression in a taken branch becomes the script's completion value.
+        let comp_idx = self.intern("#comp");
+        self.chunk.emit(Op::Undefined, self.current_line);
+        self.chunk.emit(Op::DeclareEnv(comp_idx), self.current_line);
+        let saved_comp = self.switch_val_depth;
+        self.switch_val_depth = Some(comp_idx);
         for (i, stmt) in program.body.iter().enumerate() {
             // Function declarations were hoisted above; skip them in the body pass.
             if matches!(&stmt.node, StmtNode::FunctionDecl(_)) {
                 continue;
             }
-            if i + 1 == n {
-                // last statement: if it's an expression, keep its value as the result
-                if let StmtNode::ExprStmt(e) = &stmt.node {
-                    self.current_line = stmt.line as usize;
-                    self.compile_expr(e)?;
-                } else {
-                    self.compile_stmt(stmt)?;
-                }
-            } else {
-                self.compile_stmt(stmt)?;
-            }
+            self.compile_stmt(stmt)?;
         }
+        self.switch_val_depth = saved_comp;
+        // Push the completion value onto the stack for Halt to return.
+        self.chunk.emit(Op::LoadEnv(comp_idx), self.current_line);
         self.chunk.emit(Op::Halt, self.current_line);
         let mut chunk = std::mem::take(&mut self.chunk);
         chunk.is_strict = program.is_strict;
@@ -452,6 +465,9 @@ impl Compiler {
                     // Inside a switch: store the expression value as the
                     // switch completion value instead of discarding it.
                     self.chunk.emit(Op::StoreEnvName(sv), self.current_line);
+                    // StoreEnvName pushes Undefined as a side effect; pop it
+                    // to keep the stack balanced (net effect: push expr, pop expr).
+                    self.chunk.emit(Op::Pop, self.current_line);
                 } else {
                     self.chunk.emit(Op::Pop, self.current_line);
                 }
@@ -545,6 +561,7 @@ impl Compiler {
                 self.pop_scope();
             }
             StmtNode::If { cond, then, else_ } => {
+                self.reset_completion();
                 self.compile_expr(cond)?;
                 let jump_false = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
@@ -563,6 +580,7 @@ impl Compiler {
                 }
             }
             StmtNode::While { cond, body } => {
+                self.reset_completion();
                 let loop_start = self.chunk.code.len();
                 self.begin_loop(loop_start);
                 self.compile_expr(cond)?;
@@ -575,6 +593,7 @@ impl Compiler {
                 self.end_loop(end);
             }
             StmtNode::DoWhile { body, cond } => {
+                self.reset_completion();
                 let loop_start = self.chunk.code.len();
                 // continue target is the condition test, which is after the
                 // body. Use usize::MAX as placeholder; set_continue_target
@@ -599,6 +618,7 @@ impl Compiler {
                 if let Some(init_stmt) = init {
                     self.compile_stmt(init_stmt)?;
                 }
+                self.reset_completion();
                 let loop_start = self.chunk.code.len();
                 // continue should re-run the update, then the condition: insert the
                 // update block as the continue target after loop_start.
@@ -1152,6 +1172,8 @@ impl Compiler {
     pub fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
         let saved_chunk = std::mem::take(&mut self.chunk);
         let saved_names = std::mem::take(&mut self.name_map);
+        let saved_switch_val = self.switch_val_depth;
+        self.switch_val_depth = None;
         self.scopes.push(Scope {
             bindings: HashMap::new(),
             is_function: true,
@@ -1269,6 +1291,7 @@ impl Compiler {
         func_chunk.is_strict = f.is_strict;
         self.name_map = saved_names;
         self.chunk = saved_chunk;
+        self.switch_val_depth = saved_switch_val;
         Ok((func_chunk, param_slots))
     }
 
