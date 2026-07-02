@@ -79,7 +79,12 @@ def build_source(path):
     """Build the full source: harness files + the test."""
     src = Path(path).read_text()
     meta = parse_meta(src)
+    flags = meta.get('flags', [])
     parts = []
+    # onlyStrict: prepend 'use strict' at the very start so the parser
+    # recognizes it as a directive prologue (before any harness code).
+    if 'onlyStrict' in flags:
+        parts.append("'use strict';")
     # Base harness (sta.js defines Test262Error; assert.js needs it).
     for inc in BASE_HARNESS:
         p = HARNESS / inc
@@ -90,10 +95,6 @@ def build_source(path):
         p = HARNESS / inc
         if p.exists():
             parts.append(p.read_text())
-    # onlyStrict: prepend 'use strict' so the test runs in strict mode.
-    flags = meta.get('flags', [])
-    if 'onlyStrict' in flags:
-        parts.append("'use strict';")
     parts.append(src)
     return "\n".join(parts), meta
 
