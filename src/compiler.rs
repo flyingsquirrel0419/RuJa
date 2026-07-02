@@ -1851,6 +1851,15 @@ impl Compiler {
                     UnOp::Delete => {
                         // `delete obj.prop` / `delete obj[expr]`
                         match e.as_ref() {
+                            Expr::Ident(name) => {
+                                if self.is_strict() {
+                                    return Err(error::Error::syntax(format!(
+                                        "Cannot delete identifier {} in strict mode",
+                                        name
+                                    )));
+                                }
+                                self.chunk.emit(Op::True, self.current_line);
+                            }
                             Expr::Member {
                                 object,
                                 property,
@@ -1876,9 +1885,8 @@ impl Compiler {
                             }
                             #[allow(unreachable_patterns)]
                             _ => {
-                                // delete of a variable or other expression always succeeds.
-                                self.compile_expr(e)?;
-                                self.chunk.emit(Op::Pop, self.current_line);
+                                // delete of a non-reference expression always succeeds (e.g. delete 1).
+
                                 self.chunk.emit(Op::True, self.current_line);
                             }
                         }
