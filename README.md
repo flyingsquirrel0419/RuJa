@@ -75,7 +75,7 @@ class hierarchies, and Promise chaining.
 use ruja::{Vm, Value};
 
 fn main() {
-    let mut vm = Vm::new();
+    let mut vm = Vm::new().expect("failed to initialize VM");
     let result = vm.run("[1,2,3].reduce((a,b) => a+b, 0);");
     assert_eq!(result.unwrap(), Value::Number(6.0));
 }
@@ -93,9 +93,8 @@ fn add(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> Result<Value> {
 }
 
 fn main() {
-    let mut vm = Vm::new();
-    let f = vm.new_native_function("add", add as NativeFn, 2);
-    vm.define_global("add", Value::Object(f.into()));
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn("add", add as NativeFn, 2).unwrap();
     assert_eq!(vm.run("add(3, 4)").unwrap(), Value::Number(7.0));
 }
 ```
@@ -107,7 +106,7 @@ fn main() {
 Bound untrusted code with an execution-fuel budget:
 
 ```rust
-let mut vm = Vm::new();
+let mut vm = Vm::new().expect("failed to initialize VM");
 vm.set_fuel(Some(1_000_000));      // ~1M opcodes before a RangeError
 let _ = vm.run("while(true){}");    // returns Err("fuel exhausted")
 vm.set_fuel(None);                  // unbounded again
