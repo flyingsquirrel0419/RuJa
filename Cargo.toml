@@ -3,13 +3,13 @@ name = "ruja"
 version = "0.3.0-alpha"
 edition = "2021"
 authors = ["flyingsquirrel0419"]
-description = "RuJa - A JavaScript engine written in Rust"
+description = "A sandboxed, embeddable JavaScript runtime for untrusted scripts in Rust"
 license = "Apache-2.0"
 repository = "https://github.com/flyingsquirrel0419/RuJa"
 homepage = "https://github.com/flyingsquirrel0419/RuJa"
 readme = "README.md"
-keywords = ["javascript", "js", "interpreter", "engine", "runtime"]
-categories = ["compilers", "development-tools", "parser-implementations"]
+keywords = ["javascript", "sandbox", "embedded", "runtime", "scripting"]
+categories = ["compilers", "embedded"]
 
 
 [dependencies]

@@ -9,15 +9,35 @@
 
 [English](README.md) · [한국어](readme/README.ko.md) · [Español](readme/README.es.md) · [日本語](readme/README.ja.md) · [中文](readme/README.zh.md)
 
-A JavaScript engine written in Rust — **bytecode VM** + **mark-and-sweep GC**,
-with **minimal dependencies** and a **Send (movable) VM**.
+A **sandboxed, embeddable JavaScript runtime** for running untrusted scripts
+inside Rust applications — **zero `unsafe`**, **fuel-metered execution**,
+**panic-audited**, with **heap and call-stack limits**.
 
-Runs a pragmatic ES5.1 subset plus selected ES2015+ features: classes,
-async/await (incl. async arrows), generators, Promises, destructuring (incl.
-object rest/spread), getters/setters, tagged templates, Symbols, Map/Set,
-WeakMap/WeakSet (true weak-ref semantics), Reflect, Date, regex, BigInt
-(arbitrary precision), and more. JavaScript is compiled to a stack-based
-bytecode and executed on a custom VM with automatic memory management.
+Designed for plugin systems, game scripting, and sandboxed evaluation where
+the host process must not crash, hang, or OOM regardless of script input.
+JavaScript is compiled to a stack-based bytecode and executed on a custom
+VM with mark-and-sweep GC. The VM is `Send` (movable between threads) with
+no `unsafe` code anywhere in the engine.
+
+### Sandbox guarantees
+
+- **Execution fuel**: `vm.set_fuel(Some(100_000))` bounds opcode count;
+  exhaustion throws a non-catchable `RangeError`
+- **Heap limit**: `vm.set_max_heap_objects(Some(10_000))` caps live objects;
+  exceeding throws a catchable `RangeError`
+- **Call-stack cap**: 1000 frames max; deep recursion throws `RangeError`,
+  not a native crash
+- **ReDoS-safe regex**: RE2-style linear-time matching (no backtracking)
+- **Panic-free**: 0 `unwrap()` in VM hot path; cargo-fuzz verified (96k+
+  iterations without panics)
+
+### Supported language subset
+
+ES5.1 + classes, async/await, generators, Promises, destructuring,
+getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
+Reflect, Proxy, Uint8Array, BigInt, Date, regex, and more. See
+[limitations](docs/limitations.md) for the full list of supported and
+intentionally-unsupported features.
 
 ```sh
 $ cargo run --release -- examples/fib.js
