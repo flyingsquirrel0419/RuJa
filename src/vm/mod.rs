@@ -321,6 +321,11 @@ impl Vm {
         this_val: Value,
     ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
+        // eval runs on the shared stack. Push a sentinel Undefined so that
+        // Halt has something to pop even if the eval body never pushes a
+        // value (e.g. break/continue jumping directly to Halt).
+        let stack_depth = self.stack.len();
+        self.stack.push(Value::Undefined);
         self.frames.push(CallFrame::new(
             chunk.clone(),
             0,
@@ -330,6 +335,8 @@ impl Vm {
         ));
         let depth_before = self.frames.len();
         let result = self.interpret();
+        // Restore caller stack to its pre-eval state, then push the result.
+        self.stack.truncate(stack_depth);
         // Pop any frames we pushed for the eval (Halt leaves it; Return popped it).
         while self.frames.len() >= depth_before && self.frames.len() > 1 {
             let top_is_ours = self

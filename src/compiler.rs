@@ -568,9 +568,10 @@ impl Compiler {
             }
             StmtNode::DoWhile { body, cond } => {
                 let loop_start = self.chunk.code.len();
-                // continue jumps to the condition test.
-                let cond_ip_placeholder = loop_start;
-                self.begin_loop(cond_ip_placeholder);
+                // continue target is the condition test, which is after the
+                // body. Use usize::MAX as placeholder; set_continue_target
+                // patches it once the condition IP is known.
+                self.begin_loop(usize::MAX);
                 self.compile_stmt(body)?;
                 let cond_ip = self.chunk.code.len();
                 self.set_continue_target(cond_ip);
