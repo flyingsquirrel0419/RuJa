@@ -1092,8 +1092,30 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         .map(|v| vm.to_string(v).unwrap_or_else(|_| Arc::from("")))
         .unwrap_or_else(|| Arc::from(""));
     // Use the `this` provided by `construct` (already linked to <Error>.prototype).
+    // When called as a plain function (Error(msg) without `new`), `this` is
+    // undefined (strict) or the global object (sloppy). In sloppy mode we
+    // detect the global object by checking its class_name; in strict mode
+    // `this` is None. Both cases create a fresh object. But `construct`
+    // passes a fresh object with class_name=None, so we must NOT treat
+    // that as "not an error" — only reject the global object.
     let idx = match this {
-        Some(Value::Object(i)) => i,
+        Some(Value::Object(i)) => {
+            // Check if `this` is the global object (sloppy-mode plain call).
+            // The global object has class_name "global". A fresh object from
+            // `construct` has class_name None.
+            let is_global = vm.heap.with_obj(i.0, |obj| {
+                if let HeapObj::Object(o) = obj {
+                    o.class_name.as_deref() == Some("global")
+                } else {
+                    false
+                }
+            });
+            if is_global {
+                vm.new_object()?
+            } else {
+                i
+            }
+        }
         _ => vm.new_object()?,
     };
     // Inherit `name` from the prototype (each Error subclass proto sets it),
