@@ -936,6 +936,7 @@ impl<'a> Lexer<'a> {
                 | TokenKind::This
                 | TokenKind::RParen
                 | TokenKind::RBracket
+                | TokenKind::RBrace
                 | TokenKind::Regex(_, _)
         );
         let mut tok = Token::new(kind, line, col);
