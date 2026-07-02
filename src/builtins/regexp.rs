@@ -35,14 +35,16 @@ pub(crate) fn regexp_constructor(
             _ => vm.object_proto.clone(),
         }
     };
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(regex_proto_val)),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("RegExp")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let obj_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(regex_proto_val)),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("RegExp")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     let mut props = IndexMap::new();
     props.insert(
         PropertyKey::from("source"),
@@ -272,14 +274,16 @@ pub(crate) fn generator_next(
         })
     };
     // return {value, done}
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let obj_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
             obj.props
@@ -315,14 +319,16 @@ pub(crate) fn gen_result(
     done: bool,
     is_async_gen: bool,
 ) -> error::Result<Value> {
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let obj_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
             obj.props
@@ -555,7 +561,7 @@ pub fn setup_collections(vm: &mut Vm) {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj));
+    let sym_proto_idx = GcIdx(vm.heap.allocate_unchecked(sym_proto_obj));
     vm.symbol_proto = Value::Object(sym_proto_idx);
 }
 
@@ -578,7 +584,7 @@ pub(crate) fn make_builtin_constructor_with(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+    let proto_idx = GcIdx(vm.heap.allocate_unchecked(proto_obj));
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
@@ -593,7 +599,7 @@ pub(crate) fn make_builtin_constructor_with(
         }),
         props: Mutex::new(IndexMap::new()),
     };
-    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    let ctor_idx = GcIdx(vm.heap.allocate_unchecked(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),

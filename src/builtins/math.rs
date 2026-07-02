@@ -254,7 +254,7 @@ pub(crate) fn build_math(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate(obj)))
+    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
 }
 
 // =========================================================================
@@ -355,5 +355,5 @@ pub(crate) fn build_console(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate(obj)))
+    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
 }

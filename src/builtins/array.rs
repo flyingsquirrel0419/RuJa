@@ -224,7 +224,7 @@ pub(crate) fn array_map(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+        return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
     }
     Ok(Value::Undefined)
 }
@@ -263,7 +263,7 @@ pub(crate) fn array_filter(
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+        return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
     }
     Ok(Value::Undefined)
 }
@@ -309,12 +309,14 @@ pub(crate) fn array_reduce(
 }
 /// Build a heap array from a Vec of values.
 pub(crate) fn make_array(vm: &mut Vm, items: Vec<Value>) -> Value {
-    let idx = vm.heap.allocate(HeapObj::Array(crate::value::ArrayData {
-        items: Mutex::new(items),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    }));
+    let idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Array(crate::value::ArrayData {
+            items: Mutex::new(items),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.array_proto.clone())),
+            sparse_max: Mutex::new(None),
+        }));
     Value::Object(GcIdx(idx))
 }
 
@@ -752,7 +754,7 @@ pub(crate) fn array_slice(
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+        return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
     }
     Ok(Value::Undefined)
 }
@@ -796,7 +798,7 @@ pub(crate) fn array_concat(
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
 }
 
 pub(crate) fn array_reverse(
@@ -1279,7 +1281,7 @@ pub(crate) fn array_constructor(
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
 }
 
 pub(crate) fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

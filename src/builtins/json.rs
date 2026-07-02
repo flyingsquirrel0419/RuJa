@@ -378,7 +378,7 @@ fn apply_reviver(
                         new_items.push(w);
                     }
                 }
-                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Array(
+                Value::Object(GcIdx(vm.heap.allocate_unchecked(HeapObj::Array(
                     crate::value::ArrayData {
                         items: Mutex::new(new_items),
                         props: Mutex::new(IndexMap::new()),
@@ -399,7 +399,7 @@ fn apply_reviver(
                         }
                     }
                 }
-                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(
+                Value::Object(GcIdx(vm.heap.allocate_unchecked(HeapObj::Object(
                     crate::value::ObjectData {
                         props: Mutex::new(new_props),
                         proto: Mutex::new(Some(vm.object_proto.clone())),
@@ -532,7 +532,7 @@ fn parse_json_obj(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(obj))))
 }
 fn parse_json_arr(
     vm: &mut Vm,
@@ -571,7 +571,7 @@ fn parse_json_arr(
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(obj))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(obj))))
 }
 fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {
     let mut s = String::new();
@@ -820,7 +820,7 @@ pub(crate) fn build_reflect(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate(obj)))
+    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
 }
 
 pub(crate) fn build_json(vm: &mut Vm) -> Value {
@@ -837,5 +837,5 @@ pub(crate) fn build_json(vm: &mut Vm) -> Value {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate(obj)))
+    Value::Object(GcIdx(vm.heap.allocate_unchecked(obj)))
 }

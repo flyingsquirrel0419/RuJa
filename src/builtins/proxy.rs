@@ -28,13 +28,15 @@ pub(crate) fn proxy_constructor(
         |o| o.proto().lock().clone(),
     );
 
-    let idx = vm.heap.allocate(HeapObj::Proxy(crate::value::ProxyData {
-        target,
-        handler,
-        revoked: Mutex::new(false),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(proto),
-    }));
+    let idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Proxy(crate::value::ProxyData {
+            target,
+            handler,
+            revoked: Mutex::new(false),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(proto),
+        }));
     Ok(Value::Object(GcIdx(idx)))
 }
 
@@ -51,7 +53,7 @@ pub(crate) fn proxy_revocable(
     };
 
     // Create a revoke function that sets revoked = true.
-    let revoke_fn_idx = vm.heap.allocate(HeapObj::Function(FunctionData {
+    let revoke_fn_idx = vm.heap.allocate_unchecked(HeapObj::Function(FunctionData {
         name: Some(Arc::from("")),
         kind: FunctionKind::Native {
             func: proxy_revoke,

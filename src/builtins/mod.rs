@@ -190,7 +190,7 @@ pub(crate) fn make_builtin_constructor(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+    let proto_idx = GcIdx(vm.heap.allocate_unchecked(proto_obj));
 
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
@@ -206,7 +206,7 @@ pub(crate) fn make_builtin_constructor(
         }),
         props: Mutex::new(IndexMap::new()),
     };
-    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    let ctor_idx = GcIdx(vm.heap.allocate_unchecked(HeapObj::Function(ctor_func)));
     // constructor.prototype
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
@@ -243,7 +243,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) 
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let proto_idx = GcIdx(vm.heap.allocate(proto_obj));
+    let proto_idx = GcIdx(vm.heap.allocate_unchecked(proto_obj));
 
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
@@ -259,7 +259,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> (GcIdx, GcIdx) 
         }),
         props: Mutex::new(IndexMap::new()),
     };
-    let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func)));
+    let ctor_idx = GcIdx(vm.heap.allocate_unchecked(HeapObj::Function(ctor_func)));
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
@@ -475,7 +475,7 @@ pub(crate) fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> Value {
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate(arr)))
+    Value::Object(GcIdx(vm.heap.allocate_unchecked(arr)))
 }
 pub(crate) fn norm_idx(n: f64, len: f64) -> f64 {
     if n < 0.0 {
@@ -493,7 +493,7 @@ pub(crate) fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> Value {
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Value::Object(GcIdx(vm.heap.allocate(arr)))
+    Value::Object(GcIdx(vm.heap.allocate_unchecked(arr)))
 }
 
 fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -516,7 +516,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
 }
 
 fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -531,7 +531,7 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
             proto: Mutex::new(Some(vm.array_proto.clone())),
             sparse_max: Mutex::new(None),
         });
-        pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair))));
+        pairs.push(Value::Object(GcIdx(vm.heap.allocate_unchecked(pair))));
     }
     let arr = HeapObj::Array(ArrayData {
         items: Mutex::new(pairs),
@@ -539,7 +539,7 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
 }
 
 fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -574,14 +574,16 @@ fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
 }
 fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let entries = args.first().cloned().unwrap_or(Value::Undefined);
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let obj_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     // Accept an array (or array-like) of [key, value] pairs.
     if let Value::Object(arr_idx) = &entries {
         let pairs: Vec<Value> = vm.heap.with_obj(arr_idx.0, |o| {
@@ -633,14 +635,16 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
 }
 fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let proto = args.first().cloned().unwrap_or(Value::Undefined);
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(if proto.is_null() { None } else { Some(proto) }),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let obj_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(if proto.is_null() { None } else { Some(proto) }),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 fn object_get_own_property_names(
@@ -772,14 +776,16 @@ fn object_get_own_property_descriptors(
     _: Option<Value>,
 ) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let result_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let result_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     if let Value::Object(idx) = &obj {
         let keys = own_string_keys(vm, &obj);
         let descs: Vec<(String, crate::value::PropertyDescriptor)> = keys
@@ -794,14 +800,16 @@ fn object_get_own_property_descriptors(
             .collect();
         let mut p = IndexMap::new();
         for (key, d) in descs {
-            let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.object_proto.clone())),
-                extensible: AtomicBool::new(true),
-                class_name: None,
-                private_fields: Mutex::new(std::collections::HashMap::new()),
-                primitive: Mutex::new(None),
-            }));
+            let desc_obj = vm
+                .heap
+                .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+                    props: Mutex::new(IndexMap::new()),
+                    proto: Mutex::new(Some(vm.object_proto.clone())),
+                    extensible: AtomicBool::new(true),
+                    class_name: None,
+                    private_fields: Mutex::new(std::collections::HashMap::new()),
+                    primitive: Mutex::new(None),
+                }));
             let mut dp = IndexMap::new();
             if d.is_accessor {
                 dp.insert(
@@ -889,14 +897,16 @@ fn object_get_own_property_descriptor(
                 .cloned()
         });
         if let Some(d) = desc {
-            let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.object_proto.clone())),
-                extensible: AtomicBool::new(true),
-                class_name: None,
-                private_fields: Mutex::new(std::collections::HashMap::new()),
-                primitive: Mutex::new(None),
-            }));
+            let desc_obj = vm
+                .heap
+                .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+                    props: Mutex::new(IndexMap::new()),
+                    proto: Mutex::new(Some(vm.object_proto.clone())),
+                    extensible: AtomicBool::new(true),
+                    class_name: None,
+                    private_fields: Mutex::new(std::collections::HashMap::new()),
+                    primitive: Mutex::new(None),
+                }));
             let mut p = IndexMap::new();
             if d.is_accessor {
                 p.insert(
@@ -1490,14 +1500,16 @@ pub fn setup_full(vm: &mut Vm) {
     define_global(vm, "BigInt", Value::Object(bigint_idx));
     // BigInt prototype with minimal members.
     {
-        let bp_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
-            extensible: AtomicBool::new(true),
-            class_name: Some(Arc::from("BigInt")),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }));
+        let bp_idx = vm
+            .heap
+            .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(Some(vm.object_proto.clone())),
+                extensible: AtomicBool::new(true),
+                class_name: Some(Arc::from("BigInt")),
+                private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
+            }));
         let bproto = Value::Object(GcIdx(bp_idx));
         vm.bigint_proto = bproto.clone();
         {
@@ -1524,14 +1536,16 @@ pub fn setup_full(vm: &mut Vm) {
     }
     // globalThis: an object whose property accesses route to the global
     // environment record. Marked via class_name so VM get/set can detect it.
-    let globalthis_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("global")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }));
+    let globalthis_idx = vm
+        .heap
+        .allocate_unchecked(HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("global")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }));
     vm.global_this = Value::Object(GcIdx(globalthis_idx));
     define_global(vm, "globalThis", vm.global_this.clone());
     // Promise
@@ -1582,7 +1596,7 @@ pub fn setup_full(vm: &mut Vm) {
     });
     define_global(vm, "RegExp", Value::Object(regex_ctor));
     // Generator prototype with next(). Generator instances inherit this proto.
-    let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+    let generator_proto_idx = vm.heap.allocate_unchecked(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.object_proto.clone())),
         extensible: AtomicBool::new(true),

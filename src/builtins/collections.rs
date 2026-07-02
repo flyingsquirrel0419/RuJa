@@ -401,7 +401,7 @@ pub(crate) fn map_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
+    let obj_idx = vm.heap.allocate_unchecked(HeapObj::Map(MapData {
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.map_proto.clone())),
@@ -560,7 +560,7 @@ pub(crate) fn set_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
+    let obj_idx = vm.heap.allocate_unchecked(HeapObj::Set(SetData {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.set_proto.clone())),

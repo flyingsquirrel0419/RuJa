@@ -296,6 +296,12 @@ impl Heap {
             .store((live * 2).max(1024), Ordering::Relaxed);
     }
 
+    /// Allocate without checking the limit. Used by builtins where the
+    /// interpret loop's periodic check catches limit violations.
+    pub fn allocate_unchecked(&self, obj: HeapObj) -> usize {
+        self.allocate(obj)
+    }
+
     pub fn maybe_collect(&self, roots: &[usize]) {
         if self.alloc_since_gc.load(Ordering::Relaxed) >= self.gc_threshold.load(Ordering::Relaxed)
         {

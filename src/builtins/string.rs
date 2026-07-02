@@ -298,7 +298,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 proto: Mutex::new(Some(vm.array_proto.clone())),
                 sparse_max: Mutex::new(None),
             });
-            return Ok(Value::Object(GcIdx(vm.heap.allocate(arr))));
+            return Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))));
         }
     }
     let sep = args.first().map(crate::value::value_to_debug_string);
@@ -324,7 +324,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         proto: Mutex::new(Some(vm.array_proto.clone())),
         sparse_max: Mutex::new(None),
     });
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr))))
+    Ok(Value::Object(GcIdx(vm.heap.allocate_unchecked(arr))))
 }
 pub(crate) fn str_replace(
     vm: &mut Vm,
