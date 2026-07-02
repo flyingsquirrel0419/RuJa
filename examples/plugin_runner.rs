@@ -119,15 +119,13 @@ fn run_plugin(name: &str, source: &str, fuel: Option<i64>, heap: Option<usize>) 
 
     match vm.run(source) {
         Ok(result) => println!("  Result: {:?}\n", result),
-        Err(e) => {
-            match e.kind {
-                ruja::ErrorKind::Fuel => {
-                    println!("  BLOCKED: fuel exhausted (infinite loop detected)\n");
-                }
-                _ => {
-                    println!("  Plugin error: {} ({:?})\n", e.message, e.kind);
-                }
+        Err(e) => match e.kind {
+            ruja::ErrorKind::Fuel => {
+                println!("  BLOCKED: fuel exhausted (infinite loop detected)\n");
             }
-        }
+            _ => {
+                println!("  Plugin error: {} ({:?})\n", e.message, e.kind);
+            }
+        },
     }
 }
