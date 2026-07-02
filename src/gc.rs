@@ -25,6 +25,9 @@ pub struct Heap {
     free_list: Mutex<Vec<usize>>,
     alloc_since_gc: AtomicUsize,
     gc_threshold: AtomicUsize,
+    /// Maximum number of live heap objects allowed. When this is exceeded,
+    /// `allocate` returns `HeapLimitExceeded`. `0` means unlimited.
+    max_objects: AtomicUsize,
 }
 
 /// Push reachable child indices of `obj` onto `worklist`. Called while NOT
@@ -171,6 +174,7 @@ impl Heap {
             free_list: Mutex::new(Vec::new()),
             alloc_since_gc: AtomicUsize::new(0),
             gc_threshold: AtomicUsize::new(1024),
+            max_objects: AtomicUsize::new(0),
         }
     }
 }
@@ -183,6 +187,25 @@ impl Default for Heap {
 
 impl Heap {
     pub fn allocate(&self, obj: HeapObj) -> usize {
+        // Check heap object count limit before allocating.
+        let max = self.max_objects.load(Ordering::Relaxed);
+        if max > 0 {
+            let cells = self.cells.lock();
+            let free = self.free_list.lock();
+            let live = cells.len() - free.len();
+            if live >= max {
+                // Trigger a GC to reclaim dead objects before giving up.
+                drop(cells);
+                drop(free);
+                self.collect(&[]);
+                let cells = self.cells.lock();
+                let free = self.free_list.lock();
+                let live = cells.len() - free.len();
+                if live >= max {
+                    return usize::MAX;
+                }
+            }
+        }
         let idx = {
             let mut free = self.free_list.lock();
             if let Some(idx) = free.pop() {
@@ -305,6 +328,14 @@ impl Heap {
         let free = self.free_list.lock();
         let cells = self.cells.lock();
         cells.len() - free.len()
+    }
+
+    pub fn set_max_objects(&self, max: usize) {
+        self.max_objects.store(max, Ordering::Relaxed);
+    }
+
+    pub fn max_objects(&self) -> usize {
+        self.max_objects.load(Ordering::Relaxed)
     }
 
     pub fn with_obj<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {

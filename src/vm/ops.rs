@@ -969,8 +969,8 @@ impl Vm {
                         private_fields: Mutex::new(std::collections::HashMap::new()),
                         primitive: Mutex::new(None),
                     });
-                    let idx = self.heap.allocate(obj);
-                    self.stack.push(Value::Object(GcIdx(idx)));
+                    let idx = self.alloc_checked(obj)?;
+                    self.stack.push(Value::Object(idx));
                 }
                 Op::NewArray(count) => {
                     let mut items = Vec::with_capacity(count);
@@ -984,8 +984,8 @@ impl Vm {
                         proto: Mutex::new(Some(self.array_proto.clone())),
                         sparse_max: Mutex::new(None),
                     });
-                    let idx = self.heap.allocate(obj);
-                    self.stack.push(Value::Object(GcIdx(idx)));
+                    let idx = self.alloc_checked(obj)?;
+                    self.stack.push(Value::Object(idx));
                 }
                 Op::ArrayPush => {
                     // stack: [array, value]; append value to the array's items.
@@ -1629,7 +1629,7 @@ impl Vm {
                 }
                 Op::New(arg_count) => self.op_new(arg_count)?,
                 Op::NewSpread => self.op_new_spread()?,
-                Op::MakeClosure(func_idx) => self.op_make_closure(func_idx),
+                Op::MakeClosure(func_idx) => self.op_make_closure(func_idx)?,
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     let t = if let Value::Object(idx) = &v {
@@ -1748,8 +1748,8 @@ impl Vm {
                         proto: Mutex::new(Some(self.array_proto.clone())),
                         sparse_max: Mutex::new(None),
                     });
-                    self.stack
-                        .push(Value::Object(GcIdx(self.heap.allocate(arr))));
+                    let val = Value::Object(self.alloc_checked(arr)?);
+                    self.stack.push(val);
                 }
                 _ => {
                     panic!("unimplemented bytecode op: {:?}", op);
@@ -1904,7 +1904,7 @@ impl Vm {
 
     /// `Op::MakeClosure(func_idx)`: build a function object capturing the
     /// current environment, with a `.prototype` for non-arrow functions.
-    fn op_make_closure(&mut self, func_idx: usize) {
+    fn op_make_closure(&mut self, func_idx: usize) -> error::Result<()> {
         if let Some(fdef) = self.functions.get(func_idx).cloned() {
             let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
             let is_arrow = fdef.is_arrow;
@@ -1918,7 +1918,7 @@ impl Vm {
                     private_fields: Mutex::new(std::collections::HashMap::new()),
                     primitive: Mutex::new(None),
                 });
-                Value::Object(GcIdx(self.heap.allocate(proto)))
+                Value::Object(self.alloc_checked(proto)?)
             } else {
                 Value::Undefined
             };
@@ -1937,22 +1937,22 @@ impl Vm {
                 }),
                 props: Mutex::new(IndexMap::new()),
             };
-            let idx = self.heap.allocate(HeapObj::Function(fd));
+            let idx = self.alloc_checked(HeapObj::Function(fd))?;
             // link prototype.constructor back to the function
             if let Value::Object(pidx) = &proto_val {
                 self.heap.with_obj(pidx.0, |obj| {
-                    let mut desc =
-                        crate::value::PropertyDescriptor::data(Value::Object(GcIdx(idx)));
+                    let mut desc = crate::value::PropertyDescriptor::data(Value::Object(idx));
                     desc.enumerable = false;
                     obj.props()
                         .lock()
                         .insert(crate::value::PropertyKey::from("constructor"), desc);
                 });
             }
-            self.stack.push(Value::Object(GcIdx(idx)));
+            self.stack.push(Value::Object(idx));
         } else {
             self.stack.push(Value::Undefined);
         }
+        Ok(())
     }
 
     #[allow(dead_code)]

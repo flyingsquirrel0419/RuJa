@@ -85,6 +85,8 @@ pub struct Vm {
     /// code. Coarse and non-preemptive: a single native call (e.g. a long
     /// regex) is not subdivided.
     pub(crate) fuel: Option<i64>,
+    /// Maximum number of live heap objects. `0` means unlimited.
+    pub(crate) max_heap_objects: usize,
 }
 
 pub struct WellKnownSymbols {
@@ -252,6 +254,7 @@ impl Vm {
             global_constants: Vec::new(),
             functions: Vec::new(),
             fuel: None,
+            max_heap_objects: 0,
         };
         crate::builtins::setup_full(&mut vm);
         vm
@@ -264,6 +267,15 @@ impl Vm {
     /// between ticks. Coarse and cooperative, not preemption.
     pub fn set_fuel(&mut self, fuel: Option<i64>) {
         self.fuel = fuel;
+    }
+
+    /// Set the maximum number of live heap objects. When this limit is
+    /// exceeded, allocation throws a `RangeError("heap limit exceeded")`.
+    /// `Some(0)` or `None` means unlimited.
+    pub fn set_max_heap_objects(&mut self, max: Option<usize>) {
+        let limit = max.unwrap_or(0);
+        self.max_heap_objects = limit;
+        self.heap.set_max_objects(limit);
     }
 
     /// Remaining fuel, or `None` if unbounded.
@@ -2349,7 +2361,30 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        GcIdx(self.heap.allocate(obj))
+        self.alloc(obj)
+    }
+
+    /// Allocate a heap object, returning a sentinel GcIdx(0) if the
+    /// heap limit is exceeded. Callers that can propagate errors should
+    /// use `alloc_checked` instead.
+    pub(crate) fn alloc(&mut self, obj: HeapObj) -> GcIdx {
+        let idx = self.heap.allocate(obj);
+        if idx == usize::MAX {
+            GcIdx(0)
+        } else {
+            GcIdx(idx)
+        }
+    }
+
+    /// Allocate a heap object, returning a RangeError if the heap
+    /// limit is exceeded.
+    pub(crate) fn alloc_checked(&mut self, obj: HeapObj) -> error::Result<GcIdx> {
+        let idx = self.heap.allocate(obj);
+        if idx == usize::MAX {
+            Err(Error::range("heap limit exceeded"))
+        } else {
+            Ok(GcIdx(idx))
+        }
     }
 
     /// Set the wrapped primitive on an object (for `new Number(5)`,
