@@ -361,7 +361,13 @@ impl Vm {
                         call_env,
                         name,
                         Value::Object(idx),
-                        crate::value::BindingKind::Const,
+                        // Function name binding: const in strict mode,
+                        // var-like (mutable but non-deletable) in sloppy.
+                        if func.chunk.is_strict {
+                            crate::value::BindingKind::Const
+                        } else {
+                            crate::value::BindingKind::Var
+                        },
                     );
                 }
                 let arr = HeapObj::Array(crate::value::ArrayData {
@@ -375,7 +381,7 @@ impl Vm {
                     call_env,
                     "arguments",
                     Value::Object(GcIdx(self.heap.allocate(arr)?)),
-                    crate::value::BindingKind::Const,
+                    crate::value::BindingKind::Var,
                 );
                 // In sloppy (non-strict) mode, an unbound `this` (plain
                 // function call with no receiver) defaults to the global
