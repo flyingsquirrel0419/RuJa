@@ -30,6 +30,13 @@ serde = ["serde_json"]
 name = "ruja"
 path = "src/lib.rs"
 
+[[bench]]
+name = "basic"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5"
+
 [[bin]]
 name = "ruja"
 path = "src/bin/ruja.rs"
