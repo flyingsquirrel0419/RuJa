@@ -755,7 +755,7 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        Value::Object(GcIdx(self.heap.allocate(obj)))
+        Value::Object(GcIdx(self.heap.allocate_unchecked(obj)))
     }
 
     /// Run the dispatch loop, routing runtime errors to an active try/catch
@@ -2382,7 +2382,7 @@ impl Vm {
                 return Err(Error::range("heap limit exceeded"));
             }
         }
-        Ok(GcIdx(self.heap.allocate(obj)))
+        Ok(GcIdx(self.heap.allocate_unchecked(obj)))
     }
 
     /// Set the wrapped primitive on an object (for `new Number(5)`,
@@ -2432,7 +2432,7 @@ impl Vm {
             }),
             props: Mutex::new(IndexMap::new()),
         };
-        GcIdx(self.heap.allocate(HeapObj::Function(fdef)))
+        GcIdx(self.heap.allocate_unchecked(HeapObj::Function(fdef)))
     }
 
     /// Define a global binding (visible to JS as a top-level variable).
@@ -2585,7 +2585,7 @@ impl Vm {
                         &self.heap,
                         call_env,
                         rest_name,
-                        Value::Object(GcIdx(self.heap.allocate(arr))),
+                        Value::Object(GcIdx(self.heap.allocate_unchecked(arr))),
                         crate::value::BindingKind::Const,
                     );
                 }
@@ -2609,7 +2609,7 @@ impl Vm {
                     &self.heap,
                     call_env,
                     "arguments",
-                    Value::Object(GcIdx(self.heap.allocate(arr))),
+                    Value::Object(GcIdx(self.heap.allocate_unchecked(arr))),
                     crate::value::BindingKind::Const,
                 );
                 // In sloppy (non-strict) mode, an unbound `this` (plain
@@ -2645,7 +2645,7 @@ impl Vm {
                 if is_gen {
                     // Lazy generator: don't run the body yet. Create a suspended
                     // generator object; the body runs incrementally via next().
-                    let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
+                    let g_idx = self.heap.allocate_unchecked(HeapObj::LazyGenerator(
                         crate::value::LazyGeneratorData {
                             fdef: func.clone(),
                             closure: call_env,
@@ -2675,7 +2675,7 @@ impl Vm {
                         // reason) rather than propagating as a hard error.
                         match result {
                             Ok(value) => {
-                                let p_idx = self.heap.allocate(HeapObj::Promise(
+                                let p_idx = self.heap.allocate_unchecked(HeapObj::Promise(
                                     crate::value::PromiseData {
                                         state: Mutex::new(PromiseStatus::Fulfilled),
                                         result: Mutex::new(value),
@@ -2693,7 +2693,7 @@ impl Vm {
                                     Some(v) => v.clone(),
                                     None => Value::String(Arc::from(err.to_string().as_str())),
                                 };
-                                let p_idx = self.heap.allocate(HeapObj::Promise(
+                                let p_idx = self.heap.allocate_unchecked(HeapObj::Promise(
                                     crate::value::PromiseData {
                                         state: Mutex::new(PromiseStatus::Rejected),
                                         result: Mutex::new(reason),
@@ -2746,7 +2746,7 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });
-        let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)));
+        let this_obj = Value::Object(GcIdx(self.heap.allocate_unchecked(new_obj)));
         self.pending_new_target = Some(constructor.clone());
         let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
         if matches!(result, Value::Object(_)) {
@@ -2853,7 +2853,7 @@ impl Vm {
                                 proto: Mutex::new(Some(array_proto.clone())),
                                 sparse_max: Mutex::new(None),
                             });
-                            Value::Object(GcIdx(self.heap.allocate(pair)))
+                            Value::Object(GcIdx(self.heap.allocate_unchecked(pair)))
                         })
                         .collect::<Vec<_>>()
                 } else if is_set {
@@ -2953,7 +2953,7 @@ impl Vm {
             generator: Mutex::new(None),
             done: std::sync::atomic::AtomicBool::new(false),
         });
-        Value::Object(GcIdx(self.heap.allocate(it)))
+        Value::Object(GcIdx(self.heap.allocate_unchecked(it)))
     }
 
     /// Build a *lazy* iterator wrapping a JS iterator object (one returned by a
@@ -2967,7 +2967,7 @@ impl Vm {
             generator: Mutex::new(None),
             done: std::sync::atomic::AtomicBool::new(false),
         });
-        Value::Object(GcIdx(self.heap.allocate(it)))
+        Value::Object(GcIdx(self.heap.allocate_unchecked(it)))
     }
 
     /// Build a lazy iterator wrapping a generator object. Each `next()` resumes
@@ -2981,7 +2981,7 @@ impl Vm {
             generator: Mutex::new(Some(gen)),
             done: std::sync::atomic::AtomicBool::new(false),
         });
-        Value::Object(GcIdx(self.heap.allocate(it)))
+        Value::Object(GcIdx(self.heap.allocate_unchecked(it)))
     }
 
     pub fn iterator_next(&mut self, it: &Value) -> error::Result<(Value, bool)> {

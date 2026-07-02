@@ -303,7 +303,7 @@ pub(crate) fn function_constructor(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
-    let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)));
+    let proto_val = Value::Object(GcIdx(vm.heap.allocate_unchecked(proto)));
     let fd = FunctionData {
         name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
@@ -315,7 +315,7 @@ pub(crate) fn function_constructor(
         }),
         props: Mutex::new(IndexMap::new()),
     };
-    let f_idx = vm.heap.allocate(HeapObj::Function(fd));
+    let f_idx = vm.heap.allocate_unchecked(HeapObj::Function(fd));
     // link prototype.constructor back to the function
     if let Value::Object(pidx) = &proto_val {
         vm.heap.with_obj(pidx.0, |obj| {

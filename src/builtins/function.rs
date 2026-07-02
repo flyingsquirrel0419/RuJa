@@ -149,7 +149,7 @@ pub(crate) fn function_bind(
         }),
         props: Mutex::new(IndexMap::new()),
     };
-    let fidx = vm.heap.allocate(HeapObj::Function(bound));
+    let fidx = vm.heap.allocate_unchecked(HeapObj::Function(bound));
     Ok(Value::Object(GcIdx(fidx)))
 }
 

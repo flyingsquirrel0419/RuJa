@@ -16,7 +16,7 @@ pub fn new_env(heap: &Heap, parent: Option<GcIdx>, is_function_scope: bool) -> G
         is_function_scope,
         with_object: Mutex::new(None),
     });
-    GcIdx(heap.allocate(env))
+    GcIdx(heap.allocate_unchecked(env))
 }
 
 /// Create a per-iteration child environment for a `for (let ...)` loop: copy
@@ -111,7 +111,7 @@ pub fn new_with_env(heap: &Heap, parent: GcIdx, object: crate::value::Value) -> 
         is_function_scope: false,
         with_object: Mutex::new(Some(object)),
     });
-    GcIdx(heap.allocate(env))
+    GcIdx(heap.allocate_unchecked(env))
 }
 
 /// True if `env` has a binding for `name` that is NOT a `var` (i.e. a
