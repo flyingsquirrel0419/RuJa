@@ -351,6 +351,27 @@ pub fn set_checked(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutc
                     *b.value.lock() = value.clone();
                     return (SetOutcome::Set, None);
                 }
+                // With environment: if the with-object has this property as a
+                // data property, set it there (ES5 with-statement semantics).
+                // Accessor properties are handled by the VM's property-set path.
+                if let Some(crate::value::Value::Object(wi)) = e.with_object.lock().clone() {
+                    let pkey = crate::value::PropertyKey::from(name);
+                    let found = heap.with_obj(wi.0, |o| {
+                        o.props()
+                            .lock()
+                            .get(&pkey)
+                            .map(|d| !d.is_accessor)
+                            .unwrap_or(false)
+                    });
+                    if found {
+                        heap.with_obj(wi.0, |o| {
+                            if let Some(d) = o.props().lock().get_mut(&pkey) {
+                                d.value = value.clone();
+                            }
+                        });
+                        return (SetOutcome::Set, None);
+                    }
+                }
                 return (SetOutcome::NotFound, *e.parent.lock());
             }
             (SetOutcome::NotFound, None)
@@ -402,7 +423,68 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
 }
 
 pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
+    // Always declare/hoist at the function-scope root first.
     let root = function_scope_root(heap, env);
+    let already_exists = heap.with_obj(root.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.lock().contains_key(name)
+        } else {
+            false
+        }
+    });
+    if !already_exists {
+        heap.with_obj(root.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                e.vars.lock().insert(
+                    Arc::from(name),
+                    crate::value::Binding {
+                        value: Mutex::new(Value::Undefined),
+                        kind: BindingKind::Var,
+                        initialized: AtomicBool::new(true),
+                    },
+                );
+            }
+        });
+    }
+    // If a `with` environment's object has this property as a data property,
+    // set it there (ES5 with-statement semantics). Otherwise set it at the
+    // function-scope root.
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (with_obj, parent, is_fn) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                return (
+                    e.with_object.lock().clone(),
+                    *e.parent.lock(),
+                    e.is_function_scope,
+                );
+            }
+            (None, None, false)
+        });
+        if let Some(crate::value::Value::Object(wi)) = &with_obj {
+            let pkey = crate::value::PropertyKey::from(name);
+            let has_data_prop = heap.with_obj(wi.0, |o| {
+                o.props()
+                    .lock()
+                    .get(&pkey)
+                    .map(|d| !d.is_accessor)
+                    .unwrap_or(false)
+            });
+            if has_data_prop {
+                heap.with_obj(wi.0, |o| {
+                    if let Some(d) = o.props().lock().get_mut(&pkey) {
+                        d.value = value.clone();
+                    }
+                });
+                return;
+            }
+        }
+        if is_fn {
+            break;
+        }
+        cur = parent;
+    }
+    // Set at function-scope root.
     // Check existence first (drop the borrow) before mutating.
     let exists = heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
