@@ -891,17 +891,17 @@ impl Vm {
                             "Right-hand side of 'instanceof' is not callable".to_string(),
                         ));
                     }
-                    let ctor_proto = if let Value::Object(ci) = &ctor {
-                        self.heap.with_obj(ci.0, |o| {
-                            if let HeapObj::Function(f) = o {
-                                f.prototype.lock().clone().unwrap_or(Value::Undefined)
-                            } else {
-                                Value::Undefined
-                            }
-                        })
-                    } else {
-                        Value::Undefined
-                    };
+                    // ES spec: call [[Get]](ctor, "prototype") — this honors
+                    // user-set .prototype and getters, not just the internal
+                    // field.
+                    let ctor_proto = self.get_property(&ctor, "prototype")?;
+                    // ES spec: if F.prototype is not an object, throw TypeError.
+                    if !matches!(ctor_proto, Value::Object(_) | Value::Null) {
+                        return Err(Error::type_err(
+                            "Function has non-object prototype 'undefined' in instanceof check"
+                                .to_string(),
+                        ));
+                    }
                     let mut cur = obj;
                     let mut result = false;
                     while let Value::Object(oi) = &cur {
@@ -916,6 +916,8 @@ impl Vm {
                             break;
                         }
                     }
+                    // ES spec: if O is not an object, return false.
+                    // (Already handled: the while loop only enters for Object.)
                     let _ = ctor;
                     self.stack.push(Value::Bool(result));
                 }
