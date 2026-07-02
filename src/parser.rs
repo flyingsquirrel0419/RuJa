@@ -133,6 +133,39 @@ impl Parser {
         }
     }
 
+    /// ES spec: these are FutureReservedWords that cannot be used as
+    /// BindingIdentifier (variable name, parameter name, etc.).
+    fn is_future_reserved(name: &str) -> bool {
+        matches!(
+            name,
+            "enum"
+                | "implements"
+                | "interface"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+        )
+    }
+
+    /// Check that an identifier name is a valid binding name (not a
+    /// FutureReservedWord). Returns the name on success, SyntaxError on failure.
+    fn check_binding_name(&self, name: &str) -> error::Result<()> {
+        if Self::is_future_reserved(name) {
+            return Err(error::Error::syntax(format!(
+                "'{}' is a reserved word and cannot be used as a binding name",
+                name
+            )));
+        }
+        if self.is_strict_context && matches!(name, "eval" | "arguments") {
+            return Err(error::Error::syntax(format!(
+                "'{}' cannot be used as a binding name in strict mode",
+                name
+            )));
+        }
+        Ok(())
+    }
+
     fn expect_semi(&mut self) -> error::Result<()> {
         // ASI: semicolon optional before } or EOF or after newline
         if self.check(&TokenKind::Semicolon) {
@@ -429,6 +462,7 @@ impl Parser {
                     break;
                 }
                 if let TokenKind::Ident(s) = self.advance() {
+                    self.check_binding_name(&s)?;
                     self.cur_rest_param = Some(Arc::from(s.as_str()));
                 } else {
                     return Err(error::Error::syntax(
@@ -440,6 +474,7 @@ impl Parser {
             match self.peek().clone() {
                 TokenKind::Ident(s) => {
                     self.advance();
+                    self.check_binding_name(&s)?;
                     params.push(Arc::from(s.as_str()));
                     let default = if self.eat(&TokenKind::Assign) {
                         Some(self.parse_assign()?)
@@ -740,18 +775,18 @@ impl Parser {
                     )))
                 }
             };
-            // Strict mode: `eval` and `arguments` cannot be used as binding names.
-            if self.is_strict_context && matches!(&*name, "eval" | "arguments") {
-                return Err(error::Error::syntax(format!(
-                    "'{}' cannot be used as a binding name in strict mode",
-                    name
-                )));
-            }
+            self.check_binding_name(&name)?;
             let init = if self.eat(&TokenKind::Assign) {
                 let mut e = self.parse_assign()?;
                 Self::name_function_from_ident(&mut e, &name);
                 Some(e)
             } else {
+                // ES6: `const` declarations must have an initializer.
+                if kind == VarKind::Const {
+                    return Err(error::Error::syntax(
+                        "Missing initializer in const declaration".to_string(),
+                    ));
+                }
                 None
             };
             decls.push((name, init));
@@ -1475,6 +1510,7 @@ impl Parser {
                     self.arrow_rest = None;
                     self.advance(); // ident
                     self.advance(); // =>
+                    self.check_binding_name(&s)?;
                     return self.parse_arrow_body(vec![Arc::from(s.as_str())]);
                 }
                 self.advance();

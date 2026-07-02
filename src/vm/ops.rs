@@ -1246,6 +1246,32 @@ impl Vm {
                     };
                     self.stack.push(result);
                 }
+                Op::DeleteVar(name_idx) => {
+                    // `delete x` (identifier, non-strict mode): check if the
+                    // binding is deletable. var/function = false, unbound = true.
+                    let name = {
+                        let frame = self.current_frame()?;
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let deleted = crate::environment::delete_binding(&self.heap, cur_env, &name);
+                    // If not found in scope chain, check global environment
+                    if !deleted && !crate::environment::has(&self.heap, cur_env, &name) {
+                        // Unresolvable reference: delete returns true
+                        self.stack.push(Value::Bool(true));
+                    } else {
+                        self.stack.push(Value::Bool(deleted));
+                    }
+                }
                 Op::SetProto => {
                     // stack (top->bottom): [proto, obj]; set obj's [[Prototype]] to proto.
                     let proto = self.stack.pop().unwrap_or(Value::Undefined);

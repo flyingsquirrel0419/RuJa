@@ -422,6 +422,39 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
     false
 }
 
+/// Try to delete a binding from the environment chain. Returns:
+/// - `true` if the binding was removed or doesn't exist.
+/// - `false` if the binding exists but is non-configurable (var/function).
+pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (result, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                let mut vars = e.vars.lock();
+                if let Some(b) = vars.get(name) {
+                    // var and function declarations are non-configurable
+                    if b.kind == BindingKind::Var {
+                        return (false, None);
+                    }
+                    // let/const can be deleted (they're block-scoped)
+                    vars.shift_remove(name);
+                    return (true, None);
+                }
+                return (true, *e.parent.lock());
+            }
+            (true, None)
+        });
+        if !result {
+            return false;
+        }
+        match parent {
+            Some(p) => cur = Some(p),
+            None => return true,
+        }
+    }
+    true
+}
+
 pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     // Always declare/hoist at the function-scope root first.
     let root = function_scope_root(heap, env);

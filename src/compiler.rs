@@ -1078,7 +1078,14 @@ impl Compiler {
                 if let Some((name, _)) = decls.first() {
                     self.declare(name, *kind)?;
                     let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
-                    self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
+                    match kind {
+                        VarKind::Const => {
+                            self.chunk.emit(Op::DeclareConst(name_idx), self.current_line);
+                        }
+                        _ => {
+                            self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
+                        }
+                    }
                 } else {
                     self.chunk.emit(Op::Pop, self.current_line);
                 }
@@ -1858,7 +1865,10 @@ impl Compiler {
                                         name
                                     )));
                                 }
-                                self.chunk.emit(Op::True, self.current_line);
+                                let name_idx = self
+                                    .chunk
+                                    .add_constant(Value::String(Arc::from(&**name)));
+                                self.chunk.emit(Op::DeleteVar(name_idx), self.current_line);
                             }
                             Expr::Member {
                                 object,
