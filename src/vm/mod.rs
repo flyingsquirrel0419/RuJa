@@ -2401,6 +2401,24 @@ impl Vm {
     }
 
     /// Allocate a function with native impl.
+    /// Register a Rust function as a global JS function. The function is
+    /// callable from JS by `name` with the given `length` (arity).
+    ///
+    /// ```no_run
+    /// use ruja::{Vm, Value};
+    ///
+    /// let mut vm = Vm::new();
+    /// vm.register_fn("double", |vm, args, _| {
+    ///     let n = vm.to_number(&args[0])?;
+    ///     Ok(Value::Number(n * 2.0))
+    /// }, 1);
+    /// vm.run("double(21);"); // -> 42
+    /// ```
+    pub fn register_fn(&mut self, name: &str, func: NativeFn, length: usize) {
+        let idx = self.new_native_function(name, func, length);
+        crate::builtins::define_global(self, name, Value::Object(idx));
+    }
+
     pub fn new_native_function(&mut self, name: &str, func: NativeFn, length: usize) -> GcIdx {
         let fdef = crate::value::FunctionData {
             name: Some(Arc::from(name)),
