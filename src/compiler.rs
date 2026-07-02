@@ -29,6 +29,9 @@ pub struct Compiler {
     /// will be) patched to the finally body's start ip. Used to detect whether
     /// a break/continue is inside an active try/finally so it can divert.
     finally_stack: Vec<Vec<usize>>,
+    /// When inside a switch body, the env index of `#sw_val` so that
+    /// expression statements store their value instead of popping it.
+    switch_val_depth: Option<usize>,
     /// Current source line being compiled; emitted onto each `Op` so runtime
     /// errors can report `(at line N)`. Updated as `compile_stmt` enters a stmt.
     current_line: usize,
@@ -67,7 +70,7 @@ impl Default for Compiler {
 
 /// A loop-stack frame: (continue_target, pending break jumps,
 /// pending continue jumps, optional label).
-type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>);
+type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool);
 
 impl Compiler {
     pub fn new() -> Self {
@@ -86,6 +89,7 @@ impl Compiler {
             loop_stack: Vec::new(),
             pending_label: None,
             finally_stack: Vec::new(),
+            switch_val_depth: None,
             current_line: 0,
         }
     }
@@ -226,7 +230,7 @@ impl Compiler {
         // `break label` / `continue label` can target this loop.
         let label = self.pending_label.take();
         self.loop_stack
-            .push((continue_target, Vec::new(), Vec::new(), label));
+            .push((continue_target, Vec::new(), Vec::new(), label, false));
     }
 
     /// Like `begin_loop` but tags the loop with a label so `break label` /
@@ -234,13 +238,13 @@ impl Compiler {
     #[allow(dead_code)]
     fn begin_labeled_loop(&mut self, continue_target: usize, label: Arc<str>) {
         self.loop_stack
-            .push((continue_target, Vec::new(), Vec::new(), Some(label)));
+            .push((continue_target, Vec::new(), Vec::new(), Some(label), false));
     }
 
     /// Patch the current loop's continue target (used when the continue target is
     /// only known after the body, e.g. the update block of a C-style for).
     fn set_continue_target(&mut self, target: usize) {
-        if let Some((cont, _, cont_jumps, _)) = self.loop_stack.last_mut() {
+        if let Some((cont, _, cont_jumps, _, _)) = self.loop_stack.last_mut() {
             *cont = target;
             // patch already-emitted continue jumps to the real target
             for j in cont_jumps.drain(..) {
@@ -277,7 +281,7 @@ impl Compiler {
 
     /// End a loop: patch all pending `break` jumps to `end`.
     fn end_loop(&mut self, end: usize) {
-        if let Some((cont, breaks, _, _)) = self.loop_stack.pop() {
+        if let Some((cont, breaks, _, _, _)) = self.loop_stack.pop() {
             // any un-patched continue jumps fall back to the loop start/cond.
             let _ = cont;
             for j in breaks {
@@ -448,7 +452,13 @@ impl Compiler {
             StmtNode::Empty => {}
             StmtNode::ExprStmt(e) => {
                 self.compile_expr(e)?;
-                self.chunk.emit(Op::Pop, self.current_line);
+                if let Some(sv) = self.switch_val_depth {
+                    // Inside a switch: store the expression value as the
+                    // switch completion value instead of discarding it.
+                    self.chunk.emit(Op::StoreEnvName(sv), self.current_line);
+                } else {
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
             }
             StmtNode::VarDecl { kind, decls } => {
                 for (name, init) in decls {
@@ -882,7 +892,9 @@ impl Compiler {
                 let target = if let Some(l) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, _, _, lbl)| lbl.as_ref().is_some_and(|x| x == l))
+                        .rposition(|(_, _, _, lbl, _): &LoopFrame| {
+                            lbl.as_ref().is_some_and(|x| x == l)
+                        })
                 } else {
                     if self.loop_stack.is_empty() {
                         None
@@ -897,7 +909,7 @@ impl Compiler {
                         self.chunk.emit(Op::DivertBreak(0), self.current_line);
                         self.finally_stack.last_mut().unwrap().push(divert_ip);
                     }
-                    let (_, breaks, _, _) = &mut self.loop_stack[i];
+                    let (_, breaks, _, _, _) = &mut self.loop_stack[i];
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
                     breaks.push(j);
@@ -908,12 +920,22 @@ impl Compiler {
                 let target = if let Some(l) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, _, _, lbl)| lbl.as_ref().is_some_and(|x| x == l))
+                        .rposition(|(_, _, _, lbl, _): &LoopFrame| {
+                            lbl.as_ref().is_some_and(|x| x == l)
+                        })
                 } else {
                     if self.loop_stack.is_empty() {
                         None
                     } else {
-                        Some(self.loop_stack.len() - 1)
+                        // Find innermost non-switch loop (switch uses
+                        // begin_loop for break support, but continue must
+                        // target the enclosing real loop).
+                        self.loop_stack
+                            .iter()
+                            .enumerate()
+                            .rev()
+                            .find(|(_, (_, _, _, _, is_switch))| !is_switch)
+                            .map(|(i, _)| i)
                     }
                 };
                 if let Some(i) = target {
@@ -959,11 +981,16 @@ impl Compiler {
                 } else {
                     // Non-loop labeled statement: push a frame that only honors
                     // `break label`. continue is invalid here; mark as MAX.
-                    self.loop_stack
-                        .push((usize::MAX, Vec::new(), Vec::new(), Some(label.clone())));
+                    self.loop_stack.push((
+                        usize::MAX,
+                        Vec::new(),
+                        Vec::new(),
+                        Some(label.clone()),
+                        false,
+                    ));
                     let result = self.compile_stmt(body);
                     // break jumps patch to here (after the body).
-                    if let Some((_, breaks, _, _)) = self.loop_stack.pop() {
+                    if let Some((_, breaks, _, _, _)) = self.loop_stack.pop() {
                         let end = self.chunk.code.len();
                         for j in breaks {
                             self.chunk.patch_jump(j, end);
@@ -978,7 +1005,17 @@ impl Compiler {
                 self.compile_expr(disc)?;
                 let sw_idx = self.intern("#switch");
                 self.chunk.emit(Op::DeclareEnv(sw_idx), self.current_line);
-                self.begin_loop(usize::MAX);
+                // Track the switch completion value: the last non-empty
+                // expression value seen before a break or end. Initialized
+                // to undefined; each expression statement updates it.
+                let sw_val_idx = self.intern("#sw_val");
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk
+                    .emit(Op::DeclareEnv(sw_val_idx), self.current_line);
+                // Switch uses a loop frame for break support, but marks
+                // is_switch=true so continue targets the enclosing loop.
+                self.loop_stack
+                    .push((usize::MAX, Vec::new(), Vec::new(), None, true));
                 // Tests: for each case, load disc, compare, jump to body on match.
                 let mut match_jumps: Vec<(usize, usize)> = Vec::new(); // (case_idx, jump_pos)
                 let mut default_idx: Option<usize> = None;
@@ -999,12 +1036,15 @@ impl Compiler {
                 self.chunk.emit(Op::Jump(0), self.current_line);
                 // Bodies compile sequentially; fall-through is automatic.
                 let mut body_starts: Vec<Option<usize>> = vec![None; cases.len()];
+                let saved_sw_val = self.switch_val_depth;
+                self.switch_val_depth = Some(sw_val_idx);
                 for (i, case) in cases.iter().enumerate() {
                     body_starts[i] = Some(self.chunk.code.len());
                     for s in &case.body {
                         self.compile_stmt(s)?;
                     }
                 }
+                self.switch_val_depth = saved_sw_val;
                 let end = self.chunk.code.len();
                 for (i, j) in &match_jumps {
                     if let Some(pos) = body_starts[*i] {
@@ -1018,6 +1058,8 @@ impl Compiler {
                 } else {
                     self.chunk.patch_jump(no_match, end);
                 }
+                // Push the tracked completion value onto the stack.
+                self.chunk.emit(Op::LoadEnv(sw_val_idx), self.current_line);
                 self.end_loop(end);
             }
             #[allow(unreachable_patterns)]
