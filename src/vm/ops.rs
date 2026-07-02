@@ -1149,7 +1149,23 @@ impl Vm {
                         let key = self.stack.pop().unwrap_or(Value::Undefined);
                         let obj = self.stack.pop().unwrap_or(Value::Undefined);
                         let key_str = self.to_property_key(&key)?;
-                        let v = self.get_property(&obj, &key_str)?;
+                        // Inline cache fast-path: if the object is the same heap
+                        // index as the last GetProp on this key, skip the proto
+                        // chain walk. The cache is per-property-name, stored in
+                        // a small VM-level HashMap. This helps tight loops like
+                        // `for (let i = 0; i < arr.length; i++)` where the same
+                        // property is read repeatedly.
+                        let v = if let Value::Object(idx) = &obj {
+                            if let Some(cached) = self.ic_get(idx.0, &key_str) {
+                                cached
+                            } else {
+                                let val = self.get_property(&obj, &key_str)?;
+                                self.ic_put(idx.0, key_str.clone(), val.clone());
+                                val
+                            }
+                        } else {
+                            self.get_property(&obj, &key_str)?
+                        };
                         self.stack.push(v);
                     }
                     Op::GetElem => {
