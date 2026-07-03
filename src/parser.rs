@@ -1737,6 +1737,12 @@ impl Parser {
                 self.parse_class_body().map(Expr::Class)
             }
             TokenKind::Ident(s) => {
+                // Strict mode: FutureReservedWords cannot be used as identifiers.
+                if self.is_strict_context && Self::is_future_reserved(&s) {
+                    return Err(error::Error::syntax(format!(
+                        "'{}' is a reserved word in strict mode", s
+                    )));
+                }
                 // Could be arrow: x => ...
                 if let TokenKind::Arrow = self.peek_at_tok(1).kind {
                     self.arrow_defaults = Vec::new();
