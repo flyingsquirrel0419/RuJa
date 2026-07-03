@@ -2885,7 +2885,7 @@ impl Compiler {
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
                             self.chunk
-                                .emit(Op::DefineAccessor(akind), self.current_line);
+                                .emit(Op::DefineClassAccessor(akind), self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor, ctor]
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                         } else {
@@ -2902,7 +2902,7 @@ impl Compiler {
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
                             self.chunk
-                                .emit(Op::DefineAccessor(akind), self.current_line);
+                                .emit(Op::DefineClassAccessor(akind), self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor, proto]
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                         }

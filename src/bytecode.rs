@@ -160,6 +160,7 @@ pub enum Op {
     ObjSpread,          // pop [src, dest]; copy src's enumerable own props into dest
     ObjRest(usize),     // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
     DefineAccessor(u8), // pop [fn, key, obj]; define getter(0)/setter(1)
+    DefineClassAccessor(u8), // same but enumerable=false (for class methods)
     GetProp,
     SetProp,
     DefineMethod, // define non-enumerable method property: stack [obj, key, value]

@@ -1188,6 +1188,46 @@ impl Vm {
                     }
                     self.stack.push(obj);
                 }
+                Op::DefineClassAccessor(kind) => {
+                    // Same as DefineAccessor but enumerable=false (class methods).
+                    let func = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_val = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        let pkey = match &key_val {
+                            Value::String(s) => crate::value::PropertyKey::Str(s.clone()),
+                            Value::Number(n) => crate::value::PropertyKey::Str(Arc::from(
+                                crate::value::num_to_string(*n).as_str(),
+                            )),
+                            Value::Symbol(s) => crate::value::PropertyKey::Symbol(*s),
+                            _ => crate::value::PropertyKey::Str(Arc::from("undefined")),
+                        };
+                        self.heap.with_obj(idx.0, |o| {
+                            let props = o.props();
+                            let mut props = props.lock();
+                            let entry = props.entry(pkey).or_insert_with(|| {
+                                crate::value::PropertyDescriptor {
+                                    value: Value::Undefined,
+                                    writable: false,
+                                    enumerable: false,
+                                    configurable: true,
+                                    get: None,
+                                    set: None,
+                                    is_accessor: true,
+                                }
+                            });
+                            entry.is_accessor = true;
+                            entry.writable = false;
+                            entry.enumerable = false;
+                            if kind == 0 {
+                                entry.get = Some(func.clone());
+                            } else {
+                                entry.set = Some(func.clone());
+                            }
+                        });
+                    }
+                    self.stack.push(obj);
+                }
                 Op::NewTarget => {
                     let nt = self
                         .frames
@@ -1834,13 +1874,19 @@ impl Vm {
                 Op::MakeClosure(func_idx) => self.op_make_closure(func_idx)?,
                 Op::MakeClass(func_idx) => {
                     self.op_make_closure(func_idx)?;
-                    // Mark the function on top of the stack as a class constructor.
-                    // Calling it without `new` is a TypeError (spec: class
-                    // constructors have [[Construct]] but no [[Call]]).
+                    // Mark the function on top of the stack as a class constructor
+                    // and make its .prototype non-writable (per spec: class
+                    // constructors have a non-writable prototype).
                     if let Some(&Value::Object(idx)) = self.stack.last() {
                         self.heap.with_obj(idx.0, |obj| {
                             if let HeapObj::Function(f) = obj {
                                 f.is_class_ctor.store(true, std::sync::atomic::Ordering::Relaxed);
+                                // Class prototype: non-writable, non-enumerable, non-configurable.
+                                if let Some(pd) = f.props.lock().get_mut(
+                                    &crate::value::PropertyKey::from("prototype")
+                                ) {
+                                    pd.writable = false;
+                                }
                             }
                         });
                     }
