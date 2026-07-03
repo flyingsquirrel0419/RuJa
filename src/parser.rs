@@ -161,13 +161,7 @@ impl Parser {
     fn is_future_reserved(name: &str) -> bool {
         matches!(
             name,
-            "enum"
-                | "implements"
-                | "interface"
-                | "package"
-                | "private"
-                | "protected"
-                | "public"
+            "enum" | "implements" | "interface" | "package" | "private" | "protected" | "public"
         )
     }
 
@@ -183,8 +177,8 @@ impl Parser {
         if self.is_strict_context && matches!(name, "eval" | "arguments") {
             return Err(error::Error::syntax(format!(
                 "'{}' cannot be used as a binding name in strict mode",
-               name
-           )));
+                name
+            )));
         }
         Ok(())
     }
@@ -202,9 +196,7 @@ impl Parser {
         // identifier (the start of a binding pattern or name) ON THE SAME LINE.
         // If a newline separates `let` from the next token, ASI applies and
         // `let` is treated as an identifier (expression statement).
-        if self.pos + 1 < self.tokens.len()
-            && self.tokens[self.pos + 1].preceded_by_newline
-        {
+        if self.pos + 1 < self.tokens.len() && self.tokens[self.pos + 1].preceded_by_newline {
             return false;
         }
         match self.peek_at_tok(1).kind {
@@ -320,22 +312,26 @@ impl Parser {
         // Labeled statement: `ident:` followed by any statement. Detect by
         // peeking two tokens so a leading identifier isn't misread as an
         // expression statement.
-       if let TokenKind::Ident(s) = self.peek().clone() {
-           if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
-              let label = Arc::from(s.as_str());
-              let label: Arc<str> = label;
-              self.advance(); // ident
-               self.advance(); // ':'
-                // Peek the body's first token to determine if it's a loop.
+        if let TokenKind::Ident(s) = self.peek().clone() {
+            if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
+                let label = Arc::from(s.as_str());
+                let label: Arc<str> = label;
+                self.advance(); // ident
+                self.advance(); // ':'
+                                // Peek the body's first token to determine if it's a loop.
                 let is_loop = matches!(
                     self.peek(),
                     TokenKind::While | TokenKind::Do | TokenKind::For
                 );
                 // ES spec: lexical declarations (let/const/class) cannot be
                 // the body of a labelled statement.
-                if matches!(self.peek(), TokenKind::Let | TokenKind::Const | TokenKind::Class) {
+                if matches!(
+                    self.peek(),
+                    TokenKind::Let | TokenKind::Const | TokenKind::Class
+                ) {
                     return Err(error::Error::syntax(
-                        "Lexical declaration cannot be the body of a labelled statement".to_string()
+                        "Lexical declaration cannot be the body of a labelled statement"
+                            .to_string(),
                     ));
                 }
                 self.label_stack.push((label.clone(), is_loop));
@@ -375,17 +371,12 @@ impl Parser {
                 self.expect_semi()?;
                 // `break` (unlabelled) is only valid inside a loop or switch.
                 if l.is_none() && self.loop_depth == 0 && self.switch_depth == 0 {
-                    return Err(error::Error::syntax(
-                        "Illegal break statement".to_string(),
-                    ));
+                    return Err(error::Error::syntax("Illegal break statement".to_string()));
                 }
                 // `break label` must target a visible label.
                 if let Some(ref label) = l {
                     if !self.label_stack.iter().any(|(name, _)| name == label) {
-                        return Err(error::Error::syntax(format!(
-                            "Undefined label '{}'",
-                            label
-                        )));
+                        return Err(error::Error::syntax(format!("Undefined label '{}'", label)));
                     }
                 }
                 Ok(self.stmt(StmtNode::Break(l)))
@@ -529,7 +520,7 @@ impl Parser {
             is_generator,
             param_decls: Vec::new(),
             is_strict,
-                is_method: false,
+            is_method: false,
         })))
     }
 
@@ -684,7 +675,8 @@ impl Parser {
             // Check recursively through nested labels.
             StmtNode::Labeled(_, body) if is_labelled_function(&stmt.node) => {
                 return Err(error::Error::syntax(
-                    "Labelled function declaration cannot be used as a single statement body".to_string(),
+                    "Labelled function declaration cannot be used as a single statement body"
+                        .to_string(),
                 ));
             }
             // ES6: function declarations are not allowed as the body of
@@ -775,12 +767,20 @@ impl Parser {
         // Collect head bound names.
         let mut head_names = Vec::new();
         match head {
-            StmtNode::VarDecl { kind: VarKind::Let | VarKind::Const, decls, .. } => {
+            StmtNode::VarDecl {
+                kind: VarKind::Let | VarKind::Const,
+                decls,
+                ..
+            } => {
                 for (name, _) in decls {
                     head_names.push(name.clone());
                 }
             }
-            StmtNode::Destructure { kind: VarKind::Let | VarKind::Const, pattern, .. } => {
+            StmtNode::Destructure {
+                kind: VarKind::Let | VarKind::Const,
+                pattern,
+                ..
+            } => {
                 collect_pattern_names(pattern, &mut head_names);
             }
             _ => return Ok(()), // var heads don't trigger this rule
@@ -804,12 +804,19 @@ impl Parser {
 
     fn collect_var_names_in_stmt(node: &StmtNode, out: &mut Vec<Arc<str>>) {
         match node {
-            StmtNode::VarDecl { kind: VarKind::Var, decls } => {
+            StmtNode::VarDecl {
+                kind: VarKind::Var,
+                decls,
+            } => {
                 for (name, _) in decls {
                     out.push(name.clone());
                 }
             }
-            StmtNode::Destructure { kind: VarKind::Var, pattern, .. } => {
+            StmtNode::Destructure {
+                kind: VarKind::Var,
+                pattern,
+                ..
+            } => {
                 collect_pattern_names(pattern, out);
             }
             StmtNode::Block(body) => {
@@ -838,7 +845,12 @@ impl Parser {
                     }
                 }
             }
-            StmtNode::TryCatch { try_body, catch_body, finally_body, .. } => {
+            StmtNode::TryCatch {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 Self::collect_var_names_in_stmt(&try_body.node, out);
                 if let Some(cb) = catch_body {
                     Self::collect_var_names_in_stmt(&cb.node, out);
@@ -860,11 +872,8 @@ impl Parser {
         // init
         let init: Option<Box<Stmt>> = if self.check(&TokenKind::Semicolon) {
             None
-        } else if matches!(
-            self.peek(),
-            TokenKind::Var | TokenKind::Const
-        ) || (matches!(self.peek(), TokenKind::Let)
-            && self.is_let_lexical_position())
+        } else if matches!(self.peek(), TokenKind::Var | TokenKind::Const)
+            || (matches!(self.peek(), TokenKind::Let) && self.is_let_lexical_position())
         {
             // could be for-in / for-of; set no_in so the initializer
             // expression doesn't consume the `in` as a binary operator.
@@ -873,28 +882,26 @@ impl Parser {
             self.no_in = false;
             // Check for duplicate bound names in for-in/for-of declarations.
             self.check_for_dup_bound_names(&stmt.node)?;
-           if self.check(&TokenKind::In) {
-               // for-in/for-of head declarations must not have an initializer.
-               match &stmt.node {
-                   StmtNode::VarDecl { decls, .. } => {
-                       if decls.iter().any(|d| d.1.is_some()) {
-                           return Err(error::Error::syntax(
-                               "for-in head declaration must not have an initializer".to_string()
-                           ));
-                       }
-                   }
-                   StmtNode::Destructure { init, .. } => {
-                       if init.is_some() {
-                           return Err(error::Error::syntax(
-                               "for-in head declaration must not have an initializer".to_string()
-                           ));
-                       }
-                   }
-                   _ => {}
-               }
-               self.advance();
-               let right = self.parse_expr()?;
-               self.expect(&TokenKind::RParen, ")")?;
+            if self.check(&TokenKind::In) {
+                // for-in/for-of head declarations must not have an initializer.
+                match &stmt.node {
+                    StmtNode::VarDecl { decls, .. } => {
+                        if decls.iter().any(|d| d.1.is_some()) {
+                            return Err(error::Error::syntax(
+                                "for-in head declaration must not have an initializer".to_string(),
+                            ));
+                        }
+                    }
+                    StmtNode::Destructure { init, .. } if init.is_some() => {
+                        return Err(error::Error::syntax(
+                            "for-in head declaration must not have an initializer".to_string(),
+                        ));
+                    }
+                    _ => {}
+                }
+                self.advance();
+                let right = self.parse_expr()?;
+                self.expect(&TokenKind::RParen, ")")?;
                 self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
                 self.loop_depth -= 1;
@@ -906,24 +913,22 @@ impl Parser {
                 }));
             }
             if self.check(&TokenKind::Of) {
-               // for-of head declarations must not have an initializer.
-               match &stmt.node {
-                   StmtNode::VarDecl { decls, .. } => {
-                       if decls.iter().any(|d| d.1.is_some()) {
-                           return Err(error::Error::syntax(
-                               "for-of head declaration must not have an initializer".to_string()
-                           ));
-                       }
-                   }
-                   StmtNode::Destructure { init, .. } => {
-                       if init.is_some() {
-                           return Err(error::Error::syntax(
-                               "for-of head declaration must not have an initializer".to_string()
-                           ));
-                       }
-                   }
-                   _ => {}
-               }
+                // for-of head declarations must not have an initializer.
+                match &stmt.node {
+                    StmtNode::VarDecl { decls, .. } => {
+                        if decls.iter().any(|d| d.1.is_some()) {
+                            return Err(error::Error::syntax(
+                                "for-of head declaration must not have an initializer".to_string(),
+                            ));
+                        }
+                    }
+                    StmtNode::Destructure { init, .. } if init.is_some() => {
+                        return Err(error::Error::syntax(
+                            "for-of head declaration must not have an initializer".to_string(),
+                        ));
+                    }
+                    _ => {}
+                }
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
@@ -955,7 +960,7 @@ impl Parser {
                 && matches!(self.peek_at_tok(1).kind, TokenKind::Of)
             {
                 return Err(error::Error::syntax(
-                    "let followed by of in for-of head is not valid".to_string()
+                    "let followed by of in for-of head is not valid".to_string(),
                 ));
             }
             self.no_in = true;
@@ -964,13 +969,16 @@ impl Parser {
             if self.check(&TokenKind::In) {
                 // Validate that the LHS is a valid assignment target.
                 let is_valid_target = match &e {
-                    Expr::Ident(_) | Expr::Member { .. } | Expr::Array(_) | Expr::Object(_)
+                    Expr::Ident(_)
+                    | Expr::Member { .. }
+                    | Expr::Array(_)
+                    | Expr::Object(_)
                     | Expr::PrivateGet { .. } => true,
                     _ => false,
                 };
                 if !is_valid_target {
                     return Err(error::Error::syntax(
-                        "Invalid left-hand side in for-in".to_string()
+                        "Invalid left-hand side in for-in".to_string(),
                     ));
                 }
                 self.advance();
@@ -988,13 +996,16 @@ impl Parser {
             if self.check(&TokenKind::Of) {
                 // Validate that the LHS is a valid assignment target.
                 let is_valid_target = match &e {
-                    Expr::Ident(_) | Expr::Member { .. } | Expr::Array(_) | Expr::Object(_)
+                    Expr::Ident(_)
+                    | Expr::Member { .. }
+                    | Expr::Array(_)
+                    | Expr::Object(_)
                     | Expr::PrivateGet { .. } => true,
                     _ => false,
                 };
                 if !is_valid_target {
                     return Err(error::Error::syntax(
-                        "Invalid left-hand side in for-of".to_string()
+                        "Invalid left-hand side in for-of".to_string(),
                     ));
                 }
                 self.advance();
@@ -1112,9 +1123,7 @@ impl Parser {
     fn parse_return(&mut self) -> error::Result<Stmt> {
         // `return` at the top level (outside any function) is a SyntaxError.
         if self.function_depth == 0 {
-            return Err(error::Error::syntax(
-                "Illegal return statement".to_string(),
-            ));
+            return Err(error::Error::syntax("Illegal return statement".to_string()));
         }
         self.advance();
         if self.check(&TokenKind::Semicolon)
@@ -1177,7 +1186,7 @@ impl Parser {
             } else if self.eat(&TokenKind::Default) {
                 if seen_default {
                     return Err(error::Error::syntax(
-                        "Duplicate default clause in switch".to_string()
+                        "Duplicate default clause in switch".to_string(),
                     ));
                 }
                 seen_default = true;
@@ -1196,8 +1205,8 @@ impl Parser {
             }
             cases.push(SwitchCase { test, body });
         }
-       self.expect(&TokenKind::RBrace, "}")?;
-       self.switch_depth -= 1;
+        self.expect(&TokenKind::RBrace, "}")?;
+        self.switch_depth -= 1;
         // Static semantic early errors: detect duplicate lexical names
         // and lexical/var name clashes within a single switch CaseBlock.
         // (ES2025: LexicallyDeclaredNames of CaseBlock must not contain
@@ -1206,7 +1215,12 @@ impl Parser {
         let mut var_names: Vec<Arc<str>> = Vec::new();
         for case in &cases {
             for stmt in &case.body {
-                collect_decl_names(&stmt.node, &mut lexical_names, &mut var_names, self.is_strict_context);
+                collect_decl_names(
+                    &stmt.node,
+                    &mut lexical_names,
+                    &mut var_names,
+                    self.is_strict_context,
+                );
             }
         }
         for n in &lexical_names {
@@ -1223,7 +1237,7 @@ impl Parser {
                 )));
             }
         }
-       Ok(self.stmt(StmtNode::Switch { disc, cases }))
+        Ok(self.stmt(StmtNode::Switch { disc, cases }))
     }
 
     // ---- Expressions (Pratt) ----
@@ -1506,15 +1520,15 @@ impl Parser {
         if self.check(&TokenKind::StarStar) {
             self.advance();
             let right = self.parse_exponent()?; // right-assoc
-            // ES spec: unary operators cannot be the base of ** unless
-            // parenthesized. If the left is a Unary and the first token
-            // we parsed was a unary operator (not LParen), it is a syntax error.
+                                                // ES spec: unary operators cannot be the base of ** unless
+                                                // parenthesized. If the left is a Unary and the first token
+                                                // we parsed was a unary operator (not LParen), it is a syntax error.
             if let Expr::Unary(_, _) = &left {
                 let first_tok = self.tokens.get(pos_before).map(|t| &t.kind);
                 // If the first token was LParen, the unary was inside parens.
                 if !matches!(first_tok, Some(TokenKind::LParen)) {
                     return Err(error::Error::syntax(
-                        "Unary operator used before exponentiation operator".to_string()
+                        "Unary operator used before exponentiation operator".to_string(),
                     ));
                 }
             }
@@ -1551,7 +1565,10 @@ impl Parser {
             let e = self.parse_unary()?;
             // Validate: only identifiers and member expressions are valid
             // update targets. Call expressions, literals, etc. are not.
-            if !matches!(&e, Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }) {
+            if !matches!(
+                &e,
+                Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }
+            ) {
                 return Err(error::Error::syntax(
                     "Invalid left-hand side expression in prefix update operation".to_string(),
                 ));
@@ -1593,7 +1610,10 @@ impl Parser {
         if matches!(self.peek(), TokenKind::Inc | TokenKind::Dec) {
             // Validate: only identifiers and member expressions are valid
             // update targets. Call expressions, literals, etc. are not.
-            if !matches!(&e, Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }) {
+            if !matches!(
+                &e,
+                Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }
+            ) {
                 return Err(error::Error::syntax(
                     "Invalid left-hand side expression in postfix operation".to_string(),
                 ));
@@ -1615,7 +1635,12 @@ impl Parser {
                 UpdateOp::Dec
             };
             // Postfix update: no LineTerminator allowed between operand and operator.
-            if self.tokens.get(self.pos).map(|t| t.preceded_by_newline).unwrap_or(false) {
+            if self
+                .tokens
+                .get(self.pos)
+                .map(|t| t.preceded_by_newline)
+                .unwrap_or(false)
+            {
                 return Ok(e);
             }
             self.advance();
@@ -1862,9 +1887,7 @@ impl Parser {
             }
             TokenKind::Super => {
                 if self.super_depth == 0 {
-                    return Err(error::Error::syntax(
-                        "super keyword unexpected here"
-                    ));
+                    return Err(error::Error::syntax("super keyword unexpected here"));
                 }
                 self.advance();
                 Ok(Expr::Super)
@@ -1877,7 +1900,8 @@ impl Parser {
                 // Strict mode: FutureReservedWords cannot be used as identifiers.
                 if self.is_strict_context && Self::is_future_reserved(&s) {
                     return Err(error::Error::syntax(format!(
-                        "'{}' is a reserved word in strict mode", s
+                        "'{}' is a reserved word in strict mode",
+                        s
                     )));
                 }
                 // Could be arrow: x => ...
@@ -2184,7 +2208,7 @@ impl Parser {
                         is_generator: false,
                         param_decls: Vec::new(),
                         is_strict,
-                            is_method: false,
+                        is_method: false,
                     }),
                     computed,
                     method: false,
@@ -2355,7 +2379,7 @@ impl Parser {
             is_generator,
             param_decls: Vec::new(),
             is_strict,
-                is_method: false,
+            is_method: false,
         }))
     }
 
@@ -2593,7 +2617,7 @@ impl Parser {
                 is_generator: false,
                 param_decls: Vec::new(),
                 is_strict,
-                    is_method: false,
+                is_method: false,
             }))
         } else {
             let e = self.parse_assign()?;
@@ -2631,7 +2655,7 @@ impl Parser {
                 param_decls: Vec::new(),
                 // Arrow with expression body has no directive prologue; inherit.
                 is_strict: self.is_strict_context,
-            is_method: false,
+                is_method: false,
             }))
         }
     }
@@ -2829,7 +2853,7 @@ impl Parser {
             let method_name = if is_constructor {
                 self.advance();
                 Arc::from("constructor")
-            } else if let Some(_) = computed_name {
+            } else if computed_name.is_some() {
                 // Placeholder name; the compiler uses computed_name for the actual key.
                 Arc::from("")
             } else {
@@ -2844,7 +2868,7 @@ impl Parser {
                         self.advance();
                         Arc::from(s.as_str())
                     }
-                    _ => Arc::from(self.read_property_name()?.as_str())
+                    _ => Arc::from(self.read_property_name()?.as_str()),
                 }
             };
             let params = self.parse_params()?;

@@ -292,7 +292,9 @@ impl Vm {
                         Some(FuncCallInfo::Interpreted {
                             func: func.clone(),
                             closure: f.closure,
-                            is_class_ctor: f.is_class_ctor.load(std::sync::atomic::Ordering::Relaxed),
+                            is_class_ctor: f
+                                .is_class_ctor
+                                .load(std::sync::atomic::Ordering::Relaxed),
                             is_arrow: func.is_arrow,
                             is_async: func.is_async,
                         })
@@ -332,20 +334,21 @@ impl Vm {
                             // Object.prototype (class_name "Object") and
                             // the receiver itself has no own toString.
                             let inherits_default = self.heap.with_obj(tidx.0, |o| {
-                                let has_own = o.props().lock().contains_key(
-                                    &crate::value::PropertyKey::from("toString")
-                                );
-                                if has_own { return false; }
+                                let has_own = o
+                                    .props()
+                                    .lock()
+                                    .contains_key(&crate::value::PropertyKey::from("toString"));
+                                if has_own {
+                                    return false;
+                                }
                                 if let Some(Value::Object(pidx)) = o.proto().lock().as_ref() {
-                                    self.heap.with_obj(pidx.0, |p| {
-                                        p.class_name() == "Object"
-                                    })
-                                } else { false }
+                                    self.heap.with_obj(pidx.0, |p| p.class_name() == "Object")
+                                } else {
+                                    false
+                                }
                             });
                             if inherits_default {
-                                return crate::builtins::object_to_string(
-                                    self, this.clone(), None,
-                                );
+                                return crate::builtins::object_to_string(self, this.clone(), None);
                             }
                         }
                     }
@@ -365,7 +368,7 @@ impl Vm {
                 // calls also go through `call_function` but are valid.
                 if is_class_ctor && self.pending_new_target.is_none() {
                     return Err(Error::type_err(
-                        "Class constructor cannot be invoked without 'new'"
+                        "Class constructor cannot be invoked without 'new'",
                     ));
                 }
                 let call_env = env::new_env(&self.heap, Some(closure), true)?;
@@ -434,7 +437,8 @@ impl Vm {
                     self.heap.with_obj(arg_idx.0, |obj| {
                         if let HeapObj::Array(a) = obj {
                             let mut props = a.props.lock();
-                            let mut callee_desc = crate::value::PropertyDescriptor::data(Value::Object(idx));
+                            let mut callee_desc =
+                                crate::value::PropertyDescriptor::data(Value::Object(idx));
                             callee_desc.writable = true;
                             callee_desc.enumerable = false;
                             callee_desc.configurable = true;
@@ -466,9 +470,9 @@ impl Vm {
                 // Arrow functions capture `this` lexically from their
                 // enclosing scope, so they must NOT redeclare `this` in
                 // their own call environment (which would shadow the
-               // captured binding). Non-arrow functions bind `this` to the
-               // caller-supplied value (or `undefined`).
-               if !is_arrow {
+                // captured binding). Non-arrow functions bind `this` to the
+                // caller-supplied value (or `undefined`).
+                if !is_arrow {
                     // Derived class constructors leave `this` in the TDZ
                     // until `super()` initializes it.
                     if func.is_derived {
@@ -487,7 +491,7 @@ impl Vm {
                             crate::value::BindingKind::Const,
                         );
                     }
-               }
+                }
                 // For object literal methods, bind #super to this.__proto__
                 // so super property access works. Class methods already have
                 // #super bound by the compiler in the closure environment
@@ -535,9 +539,9 @@ impl Vm {
                         },
                     ))?;
                     Ok(Value::Object(GcIdx(g_idx)))
-               } else {
-                   // execute the compiled function chunk
-                   let result = self.execute_chunk_func(func.clone(), call_env, this_val, args);
+                } else {
+                    // execute the compiled function chunk
+                    let result = self.execute_chunk_func(func.clone(), call_env, this_val, args);
                     // For derived class constructors, check that `super()` was
                     // called (i.e. `this` is no longer in the TDZ). If the
                     // constructor returned without calling super, throw a
@@ -551,13 +555,15 @@ impl Vm {
                             let is_object = matches!(rv, Value::Object(_) | Value::Undefined);
                             if !is_object {
                                 return Err(Error::type_err(
-                                    "Derived constructor may only return an object or undefined"
+                                    "Derived constructor may only return an object or undefined",
                                 ));
                             }
                             if !matches!(rv, Value::Object(_)) {
                                 let initialized = self.heap.with_obj(call_env.0, |obj| {
                                     if let HeapObj::Environment(e) = obj {
-                                        e.vars.lock().get("this")
+                                        e.vars
+                                            .lock()
+                                            .get("this")
                                             .map(|b| b.initialized.load(Ordering::Relaxed))
                                             .unwrap_or(false)
                                     } else {
@@ -572,7 +578,7 @@ impl Vm {
                             }
                         }
                     }
-                   if is_async {
+                    if is_async {
                         // async functions return a Promise. An uncaught throw
                         // inside the async body must settle the returned
                         // Promise to Rejected (with the thrown value as the
@@ -635,7 +641,8 @@ impl Vm {
         // Read prototype from the function's own properties first (it may
         // have been reassigned via `fn.prototype = newProto`), falling back
         // to the internal FunctionData.prototype field.
-        let proto = self.get_property_by_key(constructor, &crate::value::PropertyKey::from("prototype"))
+        let proto = self
+            .get_property_by_key(constructor, &crate::value::PropertyKey::from("prototype"))
             .unwrap_or(Value::Undefined);
         let proto = if matches!(proto, Value::Object(_) | Value::Null) {
             proto

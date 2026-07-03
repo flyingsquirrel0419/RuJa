@@ -435,9 +435,7 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
                 // (not the environment binding).
                 if let Some(crate::value::Value::Object(wi)) = e.with_object.lock().clone() {
                     let pkey = crate::value::PropertyKey::from(name);
-                    let has_prop = heap.with_obj(wi.0, |o| {
-                        o.props().lock().contains_key(&pkey)
-                    });
+                    let has_prop = heap.with_obj(wi.0, |o| o.props().lock().contains_key(&pkey));
                     if has_prop {
                         // Delete from the with-object
                         let deleted = heap.with_obj(wi.0, |o| {

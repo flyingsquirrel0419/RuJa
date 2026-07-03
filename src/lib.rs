@@ -10,6 +10,20 @@
 //! (RuJa is `0.x` and not yet on crates.io). Embed against the re-exports,
 //! not the module internals.
 
+#![allow(clippy::items_after_test_module)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::match_like_matches_macro)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::bool_to_int_with_if)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(unused_mut)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+
 pub mod ast;
 pub mod bytecode;
 pub mod compiler;

@@ -60,8 +60,6 @@ impl Vm {
                         }
                     }
                     let r = o.props().lock().get(&pkey).map(|d| d.value.clone());
-                    if key == "toString" && r.is_some() {
-                    }
                     r
                 });
                 if let Some(v) = val {
@@ -239,7 +237,11 @@ impl Vm {
                 //   None               — no accessor found: proceed to data.
                 match self.find_setter(*idx, &pkey) {
                     Some(Some(setter)) => {
-                        self.call_function(&setter, std::slice::from_ref(&value), Some(obj.clone()))?;
+                        self.call_function(
+                            &setter,
+                            std::slice::from_ref(&value),
+                            Some(obj.clone()),
+                        )?;
                         return Ok(());
                     }
                     Some(None) => {
@@ -283,9 +285,9 @@ impl Vm {
                         true // arrays, functions, etc. are extensible by default
                     }
                 });
-                let has_own = self.heap.with_obj(idx.0, |o| {
-                    o.props().lock().contains_key(&pkey)
-                });
+                let has_own = self
+                    .heap
+                    .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey));
                 if !is_extensible && !has_own {
                     if self.current_strict() {
                         return Err(Error::type_err(format!(

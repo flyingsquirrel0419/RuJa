@@ -130,7 +130,7 @@ impl Compiler {
         if let Some(top) = self.scopes.last_mut() {
             top.is_strict = program.is_strict;
         }
-        let n = program.body.len();
+        let _n = program.body.len();
         // Hoist function declarations: compile them first so they're available
         // before any statement in the body runs.
         let mut fn_decl_names: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -175,7 +175,7 @@ impl Compiler {
         self.chunk.emit(Op::DeclareEnv(comp_idx), self.current_line);
         let saved_comp = self.switch_val_depth;
         self.switch_val_depth = Some(comp_idx);
-        for (i, stmt) in program.body.iter().enumerate() {
+        for stmt in &program.body {
             // Function declarations were hoisted above; skip them in the body pass.
             if matches!(&stmt.node, StmtNode::FunctionDecl(_)) {
                 continue;
@@ -838,11 +838,11 @@ impl Compiler {
                     if let Some(param) = catch_param {
                         match param {
                             crate::ast::Pattern::Ident(name) => {
-                                self.declare(&name, VarKind::Let)?;
-                                let name_idx = self.intern(&name);
+                                self.declare(name, VarKind::Let)?;
+                                let name_idx = self.intern(name);
                                 self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
                             }
-                            ref pat => {
+                            pat => {
                                 // Destructuring catch parameter: the thrown
                                 // value is on the stack. Store it in a temp
                                 // then destructure.
@@ -1165,7 +1165,8 @@ impl Compiler {
                 self.chunk.emit(Op::LoadEnv(sw_val_idx), self.current_line);
                 if let Some(cv) = saved_sw_val {
                     let comp_idx = cv;
-                    self.chunk.emit(Op::StoreEnvName(comp_idx), self.current_line);
+                    self.chunk
+                        .emit(Op::StoreEnvName(comp_idx), self.current_line);
                     self.chunk.emit(Op::Pop, self.current_line);
                 }
                 self.chunk.emit(Op::PopScope, self.current_line);
@@ -1190,7 +1191,8 @@ impl Compiler {
                     let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
                     match kind {
                         VarKind::Const => {
-                            self.chunk.emit(Op::DeclareConst(name_idx), self.current_line);
+                            self.chunk
+                                .emit(Op::DeclareConst(name_idx), self.current_line);
                         }
                         _ => {
                             self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
@@ -1838,7 +1840,10 @@ impl Compiler {
             Expr::Update(op, prefix, target) => {
                 // `x++`/`++x`/`x--`/`--x`. Stash the old value in a temp env binding
                 // so the store can use a clean [obj, key, value] without fighting it.
-                let inc_op = || match op { UpdateOp::Inc => Op::Inc, UpdateOp::Dec => Op::Dec };
+                let inc_op = || match op {
+                    UpdateOp::Inc => Op::Inc,
+                    UpdateOp::Dec => Op::Dec,
+                };
                 match target.as_ref() {
                     Expr::Member {
                         object,
@@ -2008,9 +2013,8 @@ impl Compiler {
                                         name
                                     )));
                                 }
-                                let name_idx = self
-                                    .chunk
-                                    .add_constant(Value::String(Arc::from(&**name)));
+                                let name_idx =
+                                    self.chunk.add_constant(Value::String(Arc::from(&**name)));
                                 self.chunk.emit(Op::DeleteVar(name_idx), self.current_line);
                             }
                             Expr::Member {
@@ -2218,16 +2222,16 @@ impl Compiler {
             } => {
                 // check if method call
                 // `super(args)`: call the parent constructor with `this`.
-               if matches!(callee.as_ref(), Expr::Super) {
+                if matches!(callee.as_ref(), Expr::Super) {
                     // Push a placeholder for `this`. In derived constructors,
                     // `this` is in the TDZ until super() runs, so we cannot
                     // LoadEnv("this"). The CallSuperCtor opcode uses the
                     // frame's this_val directly.
                     self.chunk.emit(Op::Undefined, self.current_line); // [placeholder]
-                   let superctor_idx = self.intern("#superctor");
+                    let superctor_idx = self.intern("#superctor");
                     self.chunk
                         .emit(Op::LoadEnv(superctor_idx), self.current_line); // [this, superCtor]
-                    // Check if all args are a single spread (super(...args))
+                                                                              // Check if all args are a single spread (super(...args))
                     let is_single_spread = args.len() == 1 && matches!(args[0], Expr::Spread(_));
                     if is_single_spread {
                         if let Expr::Spread(inner) = &args[0] {
@@ -2629,7 +2633,7 @@ impl Compiler {
                 // For derived classes without an explicit constructor, synthesize
                 // one that forwards all arguments via super(...rest).
                 let rest_name: Arc<str> = Arc::from("#rest");
-                let synthetic_params: Vec<Arc<str>> = if cls.superclass.is_some() && !has_ctor {
+                let _synthetic_params: Vec<Arc<str>> = if cls.superclass.is_some() && !has_ctor {
                     vec![rest_name.clone()]
                 } else {
                     Vec::new()
@@ -2714,7 +2718,7 @@ impl Compiler {
                                     is_generator: false,
                                     param_decls: Vec::new(),
                                     is_strict: true,
-                                is_method: false,
+                                    is_method: false,
                                 }))),
                             })
                             .collect();
@@ -2759,12 +2763,11 @@ impl Compiler {
                     is_async: false,
                     is_generator: false,
                     length: Self::fn_length(&ctor_fn),
-                is_method: false,
-                is_derived: cls.superclass.is_some(),
+                    is_method: false,
+                    is_derived: cls.superclass.is_some(),
                 };
                 self.funcs.push(Arc::new(fdef));
-                self.chunk
-                    .emit(Op::MakeClass(func_idx), self.current_line);
+                self.chunk.emit(Op::MakeClass(func_idx), self.current_line);
                 // If there is a superclass, evaluate it and wire up the prototype chain.
                 // The parent prototype is exposed to methods as the `#super` binding so that
                 // `super.m(...)` can look up methods on the parent prototype.
@@ -2859,8 +2862,8 @@ impl Compiler {
                         is_async: false,
                         is_generator: false,
                         length: Self::fn_length(&m_fn),
-                    is_method: true,
-                    is_derived: false,
+                        is_method: true,
+                        is_derived: false,
                     };
                     self.funcs.push(Arc::new(mdef));
                     let is_accessor = matches!(
@@ -2911,7 +2914,8 @@ impl Compiler {
                             self.compile_expr(ce)?;
                             self.chunk.emit(Op::ToString, self.current_line);
                         } else {
-                            let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                            let key_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
                         self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
@@ -2929,7 +2933,8 @@ impl Compiler {
                             self.compile_expr(ce)?;
                             self.chunk.emit(Op::ToString, self.current_line);
                         } else {
-                            let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                            let key_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
                         self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
@@ -2961,7 +2966,7 @@ impl Compiler {
                         is_generator: false,
                         param_decls: Vec::new(),
                         is_strict: true,
-                    is_method: false,
+                        is_method: false,
                     };
                     let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
                     let sb_idx = self.funcs.len();
@@ -2976,8 +2981,8 @@ impl Compiler {
                         is_async: false,
                         is_generator: false,
                         length: 0,
-                    is_method: false,
-                    is_derived: false,
+                        is_method: false,
+                        is_derived: false,
                     };
                     self.funcs.push(Arc::new(sbdef));
                     // stack: [ctor]. Dup ctor for `this`, then MakeClosure.
@@ -3133,7 +3138,7 @@ impl Compiler {
                 property,
                 computed,
                 ..
-           } => {
+            } => {
                 // Evaluate obj+key ONCE, then Dup2 so the same pair is
                 // available for both the load and the store. This matches
                 // the spec requirement that ToPropertyKey is called only
@@ -3380,7 +3385,12 @@ fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
                 }
             }
         }
-        StmtNode::TryCatch { try_body, catch_body, finally_body, .. } => {
+        StmtNode::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
             collect_var_names_recursive(&try_body.node, out);
             if let Some(cb) = catch_body {
                 collect_var_names_recursive(&cb.node, out);

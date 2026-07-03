@@ -154,23 +154,23 @@ pub enum Op {
 
     // Objects/arrays
     NewObject,
-    NewArray(usize),    // count of elements already on stack
-    ArrayPush,          // pop [value, array]; append value to the array's items
-    SpreadPush,         // pop [iterable, array]; spread iterable's values into the array
-    ObjSpread,          // pop [src, dest]; copy src's enumerable own props into dest
-    ObjRest(usize),     // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
-    DefineAccessor(u8), // pop [fn, key, obj]; define getter(0)/setter(1)
+    NewArray(usize),         // count of elements already on stack
+    ArrayPush,               // pop [value, array]; append value to the array's items
+    SpreadPush,              // pop [iterable, array]; spread iterable's values into the array
+    ObjSpread,               // pop [src, dest]; copy src's enumerable own props into dest
+    ObjRest(usize),          // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
+    DefineAccessor(u8),      // pop [fn, key, obj]; define getter(0)/setter(1)
     DefineClassAccessor(u8), // same but enumerable=false (for class methods)
     GetProp,
     SetProp,
     DefineMethod, // define non-enumerable method property: stack [obj, key, value]
-    GetElem, // computed member
+    GetElem,      // computed member
     SetElem,
     DeleteProp,
-    SetProto, // pop [proto, obj]; set obj's [[Prototype]] to proto
+    SetProto,        // pop [proto, obj]; set obj's [[Prototype]] to proto
     ValidateExtends, // pop [parentCtor]; throw TypeError if not a constructor or prototype is invalid
-    Inc, // pop [val]; push val+1 (Number or BigInt)
-    Dec, // pop [val]; push val-1 (Number or BigInt)
+    Inc,             // pop [val]; push val+1 (Number or BigInt)
+    Dec,             // pop [val]; push val-1 (Number or BigInt)
 
     // Functions
     MakeFunction(usize),  // function index in a function table

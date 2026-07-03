@@ -292,8 +292,8 @@ pub(crate) fn function_constructor(
         is_async: false,
         is_generator: false,
         length: crate::compiler::Compiler::fn_length(&f),
-    is_method: false,
-    is_derived: false,
+        is_method: false,
+        is_derived: false,
     });
     vm.functions.push(fdef.clone());
     let func_idx = vm.functions.len() - 1;

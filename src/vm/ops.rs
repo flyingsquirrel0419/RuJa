@@ -125,10 +125,7 @@ impl Vm {
                             // Strict mode: assigning to an undeclared variable
                             // throws ReferenceError (not auto-global).
                             if self.current_strict() {
-                                return Err(Error::reference(format!(
-                                    "{} is not defined",
-                                    name
-                                )));
+                                return Err(Error::reference(format!("{} is not defined", name)));
                             }
                             crate::environment::declare(
                                 &self.heap,
@@ -720,7 +717,7 @@ impl Vm {
                     // Per spec, with(null) and with(undefined) throw TypeError.
                     if matches!(object, Value::Null | Value::Undefined) {
                         return Err(Error::type_err(
-                            "with statement requires an object".to_string()
+                            "with statement requires an object".to_string(),
                         ));
                     }
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
@@ -1318,7 +1315,9 @@ impl Vm {
                         // Array element deletion: delete arr[i] sets the
                         // element to undefined (creates a hole), and
                         // delete arr.length returns false (non-configurable).
-                        let is_array = self.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
+                        let is_array = self
+                            .heap
+                            .with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
                         if is_array {
                             if let crate::value::PropertyKey::Str(ref s) = &pkey {
                                 if s.as_ref() == "length" {
@@ -1327,7 +1326,9 @@ impl Vm {
                                     let exists = self.heap.with_obj(idx.0, |o| {
                                         if let HeapObj::Array(a) = o {
                                             i < a.items.lock().len()
-                                        } else { false }
+                                        } else {
+                                            false
+                                        }
                                     });
                                     if exists {
                                         self.heap.with_obj(idx.0, |o| {
@@ -1340,68 +1341,84 @@ impl Vm {
                                 } else {
                                     // Non-index string key on array: use props
                                     let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
-                                        o.props().lock().get(&pkey)
+                                        o.props()
+                                            .lock()
+                                            .get(&pkey)
                                             .map_or((false, true), |d| (true, d.configurable))
                                     });
                                     if exists && !configurable {
                                         if self.current_strict() {
-                                            return Err(Error::type_err("Cannot delete non-configurable property"));
+                                            return Err(Error::type_err(
+                                                "Cannot delete non-configurable property",
+                                            ));
                                         }
                                         Value::Bool(false)
                                     } else if exists {
-                                        self.heap.with_obj(idx.0, |o| { o.props().lock().shift_remove(&pkey); });
+                                        self.heap.with_obj(idx.0, |o| {
+                                            o.props().lock().shift_remove(&pkey);
+                                        });
                                         Value::Bool(true)
-                                    } else { Value::Bool(true) }
+                                    } else {
+                                        Value::Bool(true)
+                                    }
                                 }
                             } else {
                                 // Symbol key on array: use props
                                 let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
-                                    o.props().lock().get(&pkey)
+                                    o.props()
+                                        .lock()
+                                        .get(&pkey)
                                         .map_or((false, true), |d| (true, d.configurable))
                                 });
                                 if exists && !configurable {
                                     if self.current_strict() {
-                                        return Err(Error::type_err("Cannot delete non-configurable property"));
+                                        return Err(Error::type_err(
+                                            "Cannot delete non-configurable property",
+                                        ));
                                     }
                                     Value::Bool(false)
                                 } else if exists {
-                                    self.heap.with_obj(idx.0, |o| { o.props().lock().shift_remove(&pkey); });
+                                    self.heap.with_obj(idx.0, |o| {
+                                        o.props().lock().shift_remove(&pkey);
+                                    });
                                     Value::Bool(true)
-                                } else { Value::Bool(true) }
+                                } else {
+                                    Value::Bool(true)
+                                }
                             }
                         } else {
-                        // Check configurability first: deleting a
-                        // non-configurable own property must fail (`false`,
-                        // or a TypeError in strict mode), not actually remove
-                        // the property.
-                        let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
-                            o.props()
-                                .lock()
-                                .get(&pkey)
-                                .map_or((false, true), |d| (true, d.configurable))
-                        });
-                        if exists && !configurable {
-                            if self.current_strict() {
-                                return Err(Error::type_err(
-                                    "Cannot delete non-configurable property",
-                                ));
-                            }
-                            Value::Bool(false)
-                        } else if exists {
-                            self.heap.with_obj(idx.0, |o| {
-                                o.props().lock().shift_remove(&pkey);
+                            // Check configurability first: deleting a
+                            // non-configurable own property must fail (`false`,
+                            // or a TypeError in strict mode), not actually remove
+                            // the property.
+                            let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
+                                o.props()
+                                    .lock()
+                                    .get(&pkey)
+                                    .map_or((false, true), |d| (true, d.configurable))
                             });
-                            Value::Bool(true)
-                        } else {
-                            // Non-existent own property: delete returns true.
-                            Value::Bool(true)
-                        }
+                            if exists && !configurable {
+                                if self.current_strict() {
+                                    return Err(Error::type_err(
+                                        "Cannot delete non-configurable property",
+                                    ));
+                                }
+                                Value::Bool(false)
+                            } else if exists {
+                                self.heap.with_obj(idx.0, |o| {
+                                    o.props().lock().shift_remove(&pkey);
+                                });
+                                Value::Bool(true)
+                            } else {
+                                // Non-existent own property: delete returns true.
+                                Value::Bool(true)
+                            }
                         }
                     } else {
                         // null/undefined receiver: ToObject throws TypeError.
                         if matches!(obj, Value::Null | Value::Undefined) {
                             return Err(Error::type_err(
-                                "Cannot convert undefined or null to object"
+                                "Cannot convert undefined or null to object",
                             ));
                         }
                         // Other primitives (number, string, boolean): delete is
@@ -1447,17 +1464,16 @@ impl Vm {
                     };
                     if !is_ctor {
                         self.stack.push(parent);
-                        return Err(Error::type_err(
-                            "Class extends value is not a constructor"
-                        ));
+                        return Err(Error::type_err("Class extends value is not a constructor"));
                     }
                     // Check parent.prototype is an object or null.
-                    let proto = self.get_property_by_key(&parent, &crate::value::PropertyKey::from("prototype"))
+                    let proto = self
+                        .get_property_by_key(&parent, &crate::value::PropertyKey::from("prototype"))
                         .unwrap_or(Value::Undefined);
                     if !matches!(proto, Value::Object(_) | Value::Null) {
                         self.stack.push(parent);
                         return Err(Error::type_err(
-                            "Class extends value's prototype is not an object or null"
+                            "Class extends value's prototype is not an object or null",
                         ));
                     }
                     self.stack.push(parent);
@@ -1815,51 +1831,59 @@ impl Vm {
                     }
                 }
                 Op::CallSuperCtor(arg_count) => {
-                   // stack: [this, superCtor, args...]; call superCtor with this.
-                   // Calling super() twice is a ReferenceError.
-                   if self.current_frame()?.super_called.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                       return Err(Error::reference("super() has already been called"));
-                   }
-                   let mut args = Vec::with_capacity(arg_count);
-                   for _ in 0..arg_count {
-                       args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                   }
-                   args.reverse();
-                   let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    // stack: [this, superCtor, args...]; call superCtor with this.
+                    // Calling super() twice is a ReferenceError.
+                    if self
+                        .current_frame()?
+                        .super_called
+                        .swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return Err(Error::reference("super() has already been called"));
+                    }
+                    let mut args = Vec::with_capacity(arg_count);
+                    for _ in 0..arg_count {
+                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                    }
+                    args.reverse();
+                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
                     // Use the frame's this_val (the object created by the
                     // outer `construct` call), not the environment's `this`
                     // which is in the TDZ for derived constructors.
                     let this_val = self.current_frame()?.this_val.clone();
-                   // Call the parent constructor. Set pending_new_target so
-                   // that class constructors accept this as a [[Construct]] call.
-                   self.pending_new_target = Some(super_ctor.clone());
-                   let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
+                    // Call the parent constructor. Set pending_new_target so
+                    // that class constructors accept this as a [[Construct]] call.
+                    self.pending_new_target = Some(super_ctor.clone());
+                    let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     // If the parent constructor returned an object, use it as the new `this`.
                     let new_this = if matches!(result, Value::Object(_)) {
                         result
                     } else {
                         this_val
                     };
-                   // Rebind `this` in the current environment to the (possibly updated) value.
-                   let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    // Rebind `this` in the current environment to the (possibly updated) value.
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     // Use `initialize` (not `set`) so the TDZ flag is lifted
                     // for derived constructors where `this` was declared
                     // uninitialized until `super()` ran.
                     crate::environment::initialize(&self.heap, cur_env, "this", new_this.clone());
-                   self.current_frame_mut()?.this_val = new_this.clone();
-                   self.stack.push(new_this);
-               }
-               Op::CallSuperCtorSpread => {
-                   // stack: [this, superCtor, argsArray]
-                   if self.current_frame()?.super_called.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                       return Err(Error::reference("super() has already been called"));
-                   }
-                   let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
-                   let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.current_frame_mut()?.this_val = new_this.clone();
+                    self.stack.push(new_this);
+                }
+                Op::CallSuperCtorSpread => {
+                    // stack: [this, superCtor, argsArray]
+                    if self
+                        .current_frame()?
+                        .super_called
+                        .swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return Err(Error::reference("super() has already been called"));
+                    }
+                    let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
                     let this_val = self.current_frame()?.this_val.clone();
-                   // Expand the array into individual args.
+                    // Expand the array into individual args.
                     let args = if let Value::Object(idx) = &args_arr {
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {
@@ -1940,17 +1964,20 @@ impl Vm {
                     if let Some(&Value::Object(idx)) = self.stack.last() {
                         self.heap.with_obj(idx.0, |obj| {
                             if let HeapObj::Function(f) = obj {
-                                f.is_class_ctor.store(true, std::sync::atomic::Ordering::Relaxed);
+                                f.is_class_ctor
+                                    .store(true, std::sync::atomic::Ordering::Relaxed);
                                 // Class prototype: non-writable, non-enumerable, non-configurable.
-                                if let Some(pd) = f.props.lock().get_mut(
-                                    &crate::value::PropertyKey::from("prototype")
-                                ) {
+                                if let Some(pd) = f
+                                    .props
+                                    .lock()
+                                    .get_mut(&crate::value::PropertyKey::from("prototype"))
+                                {
                                     pd.writable = false;
                                 }
                             }
                         });
                     }
-                },
+                }
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     let t = if let Value::Object(idx) = &v {
@@ -2266,21 +2293,23 @@ impl Vm {
             self.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Function(f) = obj {
                     let mut props = f.props.lock();
-                    let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(fn_length as f64));
+                    let mut len_desc =
+                        crate::value::PropertyDescriptor::data(Value::Number(fn_length as f64));
                     len_desc.writable = false;
                     len_desc.enumerable = false;
                     len_desc.configurable = true;
                     props.insert(crate::value::PropertyKey::from("length"), len_desc);
-                    let mut name_desc = crate::value::PropertyDescriptor::data(
-                        Value::String(fn_name.clone().unwrap_or_else(|| Arc::from(""))),
-                    );
+                    let mut name_desc = crate::value::PropertyDescriptor::data(Value::String(
+                        fn_name.clone().unwrap_or_else(|| Arc::from("")),
+                    ));
                     name_desc.writable = false;
                     name_desc.enumerable = false;
                     name_desc.configurable = true;
                     props.insert(crate::value::PropertyKey::from("name"), name_desc);
                     // prototype: writable, non-enumerable, non-configurable
                     if !is_arrow {
-                        let mut proto_desc = crate::value::PropertyDescriptor::data(proto_val.clone());
+                        let mut proto_desc =
+                            crate::value::PropertyDescriptor::data(proto_val.clone());
                         proto_desc.writable = true;
                         proto_desc.enumerable = false;
                         proto_desc.configurable = false;

@@ -396,7 +396,11 @@ fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
 
 /// `Number.prototype.valueOf` / `Boolean.prototype.valueOf` /
 /// `String.prototype.valueOf`: return the wrapped primitive of `this`.
-fn string_proto_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+fn string_proto_to_string(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
     match this {
         Some(Value::String(s)) => Ok(Value::String(s)),
         Some(Value::Object(idx)) => {
@@ -434,15 +438,17 @@ fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
 fn boolean_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let val = match &this {
         Some(Value::Bool(b)) => *b,
-        Some(Value::Object(idx)) => {
-            _vm.heap.with_obj(idx.0, |o| {
+        Some(Value::Object(idx)) => _vm
+            .heap
+            .with_obj(idx.0, |o| {
                 if let HeapObj::Object(od) = o {
                     od.primitive.lock().clone()
                 } else {
                     None
                 }
-            }).map(|v| v.is_truthy()).unwrap_or(false)
-        }
+            })
+            .map(|v| v.is_truthy())
+            .unwrap_or(false),
         _ => false,
     };
     Ok(Value::String(Arc::from(if val { "true" } else { "false" })))
@@ -450,19 +456,21 @@ fn boolean_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> erro
 
 /// `Number.prototype.toString(radix)`: convert number to string in given radix.
 fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let radix = if args.is_empty() { 10.0 } else { vm.to_number(&args[0]).unwrap_or(10.0) };
+    let radix = if args.is_empty() {
+        10.0
+    } else {
+        vm.to_number(&args[0]).unwrap_or(10.0)
+    };
     let n = match &this {
         Some(Value::Number(n)) => *n,
-        Some(Value::Object(idx)) => {
-            vm.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Object(od) = o {
-                    if let Some(Value::Number(n)) = od.primitive.lock().clone() {
-                        return n;
-                    }
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                if let Some(Value::Number(n)) = od.primitive.lock().clone() {
+                    return n;
                 }
-                f64::NAN
-            })
-        }
+            }
+            f64::NAN
+        }),
         _ => f64::NAN,
     };
     if radix == 10.0 {
@@ -470,13 +478,17 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
         return Ok(Value::String(s));
     }
     let radix = radix as u32;
-    if radix < 2 || radix > 36 {
+    if !(2..=36).contains(&radix) {
         return Err(Error::range("toString() radix must be between 2 and 36"));
     }
     let s = if n.is_nan() {
         "NaN".to_string()
     } else if n.is_infinite() {
-        if n > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() }
+        if n > 0.0 {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        }
     } else {
         format_radix(n, radix)
     };
@@ -506,7 +518,7 @@ fn format_radix(n: f64, radix: u32) -> String {
         return "0".to_string();
     }
     let neg = n < 0.0;
-    let mut n = n.abs();
+    let n = n.abs();
     let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut int_part = n.trunc() as u64;
     let frac_part = n.fract();
@@ -1875,6 +1887,9 @@ fn error_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::
     if msg_str.is_empty() {
         Ok(Value::String(Arc::from(name_str)))
     } else {
-        Ok(Value::String(Arc::from(format!("{}: {}", name_str, msg_str))))
+        Ok(Value::String(Arc::from(format!(
+            "{}: {}",
+            name_str, msg_str
+        ))))
     }
 }

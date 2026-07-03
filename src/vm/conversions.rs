@@ -135,7 +135,9 @@ impl Vm {
                         }
                     }
                     // Default: [object <className>]
-                    let name = self.heap.with_obj(idx.0, |obj| obj.class_name().to_string());
+                    let name = self
+                        .heap
+                        .with_obj(idx.0, |obj| obj.class_name().to_string());
                     Arc::from(format!("[object {}]", name).as_str())
                 }
             }

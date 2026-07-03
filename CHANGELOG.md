@@ -2,7 +2,39 @@
 
 ## [Unreleased]
 
-### test262 conformance improvements
+### test262 conformance improvements (84.8% subset, up from 83.6%)
+
+- **Switch lexical scope**: `switch` now creates a lexical environment
+  (like a block). Function declarations, `var`, and `let`/`const` in case
+  bodies are hoisted into the switch scope instead of leaking to the
+  enclosing scope.
+- **Catch parameter scope**: `catch (x)` now uses block scope
+  (`push_scope(false)` + `PushScope`/`PopScope`) instead of function scope,
+  so catch bindings are properly lexically scoped.
+- **Escaped get/set**: `Token` gains `had_escape` field; escaped identifiers
+  like `\u0067et` are treated as regular property names, not getter keywords.
+- **For-of destructuring init errors**: `for (const [x] = 1 of [])` now
+  throws `SyntaxError`.
+- **For-of/for-in head-body name clash**: `for (let x of []) { var x; }`
+  now throws `SyntaxError` per spec EarlyErrors.
+- **Class constructor call check**: class constructors throw `TypeError`
+  when called without `new`. `CallSuperCtor` sets `pending_new_target`
+  so `super()` is treated as a construct call.
+- **Derived constructor return override**: returning a non-object value
+  from a derived constructor throws `TypeError` per spec.
+- **Class accessor enumerability**: class getter/setter accessors now use
+  `DefineClassAccessor` with `enumerable=false`.
+- **Class prototype writability**: class constructor `.prototype` is now
+  non-writable per spec.
+- **Double super() check**: a second `super()` call throws `ReferenceError`.
+- **Class extends validation**: `ValidateExtends` opcode checks superclass
+  is a constructor with valid prototype.
+- **BigInt increment/decrement**: `Inc`/`Dec` opcodes handle both Number and
+  BigInt types.
+- **Delete on null/undefined**: `delete null[0]` throws `TypeError`.
+- **Object.prototype.toString**: returns `[object Object]` for plain objects.
+- **String.prototype.toString/valueOf**: added missing methods to
+  `String.prototype`.
 
 - **for-in/for-of non-declaration parsing**: `for (x in obj)` and
   `for ((x) in obj)` now parse and assign correctly (was: SyntaxError or
