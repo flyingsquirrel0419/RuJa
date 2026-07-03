@@ -2276,6 +2276,10 @@ impl Parser {
             }
             if self.check(&TokenKind::Comma) {
                 self.advance();
+                // Trailing comma: `(a, b,) => ...`
+                if self.check(&TokenKind::RParen) {
+                    break;
+                }
                 continue;
             }
             break;
