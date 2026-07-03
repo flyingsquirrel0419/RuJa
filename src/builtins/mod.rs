@@ -396,6 +396,24 @@ fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
 
 /// `Number.prototype.valueOf` / `Boolean.prototype.valueOf` /
 /// `String.prototype.valueOf`: return the wrapped primitive of `this`.
+fn string_proto_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    match this {
+        Some(Value::String(s)) => Ok(Value::String(s)),
+        Some(Value::Object(idx)) => {
+            // Boxed string: extract the primitive value.
+            _vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        return Ok(Value::String(s));
+                    }
+                }
+                Ok(Value::String(Arc::from("")))
+            })
+        }
+        _ => Ok(Value::String(Arc::from(""))),
+    }
+}
+
 fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = &this {
         let prim = vm.heap.with_obj(idx.0, |o| {
@@ -1537,6 +1555,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("codePointAt", str_code_point_at, 1),
             ("concat", str_concat, 1),
             ("search", str_search, 1),
+            ("toString", string_proto_to_string, 0),
+            ("valueOf", boxed_value_of, 0),
         ],
     )?;
     vm.string_proto = Value::Object(str_proto);
