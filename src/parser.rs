@@ -2626,6 +2626,7 @@ impl Parser {
                     }
                     methods.push(ClassMethod {
                         name: Arc::from(name.as_str()),
+                        computed_name: None,
                         params,
                         param_defaults,
                         rest_param,
@@ -2669,9 +2670,21 @@ impl Parser {
             let is_constructor = !is_getter
                 && !is_setter
                 && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
+            // Computed method name: [expr]
+            let computed_name = if !is_getter && !is_setter && self.check(&TokenKind::LBracket) {
+                self.advance();
+                let e = self.parse_assign()?;
+                self.expect(&TokenKind::RBracket, "]")?;
+                Some(Box::new(e))
+            } else {
+                None
+            };
             let method_name = if is_constructor {
                 self.advance();
                 Arc::from("constructor")
+            } else if let Some(_) = computed_name {
+                // Placeholder name; the compiler uses computed_name for the actual key.
+                Arc::from("")
             } else {
                 // Class method names can be identifiers, keywords, numbers,
                 // strings, or computed expressions.
@@ -2698,6 +2711,7 @@ impl Parser {
             }
             methods.push(ClassMethod {
                 name: method_name,
+                computed_name,
                 params,
                 param_defaults,
                 rest_param,

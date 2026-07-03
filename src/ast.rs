@@ -17,6 +17,9 @@ pub struct ClassExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassMethod {
     pub name: Arc<str>,
+    /// Computed property name expression (when `name` is from `[expr]`).
+    /// None means the name is a static string.
+    pub computed_name: Option<Box<Expr>>,
     pub params: Vec<Arc<str>>,
     pub param_defaults: Vec<Option<Expr>>,
     pub rest_param: Option<Arc<str>>,
