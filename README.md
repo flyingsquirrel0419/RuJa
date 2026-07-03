@@ -41,6 +41,11 @@ claim full ES conformance — conformance is scoped to this subset. See
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
 
+**Supported-subset pass rate: 84.8%** (4,176 tests in `language/statements`
++ `language/expressions`, unsupported-feature tests skipped). The
+full-suite rate is 33.2% — see [test262 conformance](docs/test262.md)
+for why these numbers differ.
+
 ```sh
 $ cargo run --release -- examples/fib.js
 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55

@@ -7,15 +7,30 @@ and `compareArray.js`) rather than a hand-rolled stub, so tests relying on
 `verifyProperty`, `compareArray`, etc. are exercised correctly. It also
 parses `negative:` metadata so a test that expects a `SyntaxError`/
 `TypeError` (parse or runtime phase) passes when RuJa raises the matching
-error. The full suite is run in CI via a parallel matrix workflow
-(`.github/workflows/test262-full.yml`); `intl402` and `staging` are
-excluded.
+error.
 
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
-[Supported Subset](#supported-subset) below). Tests requiring unsupported
+[Supported subset](#supported-subset) below). Tests requiring unsupported
 features (modules, TypedArrays, Atomics, Intl, etc.) are skipped via the
 runner's `SKIP_FEATURES` set.
+
+## Three pass-rate scopes
+
+There are three distinct pass-rate numbers. Each measures a different
+scope, so they are not comparable to each other:
+
+| Scope | What it measures | Current rate | Where to verify |
+|-------|-----------------|-------------|-----------------|
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 84.8% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
+
+**The number to cite in README and public-facing material is the
+supported-subset rate (84.8%).** It reflects the portion of the spec
+RuJa actively targets. The full-suite number is published for
+transparency but is dominated by unsupported features. The CI-subset
+number is a narrow regression gate, not a conformance claim.
 
 ## Supported subset
 
@@ -54,37 +69,20 @@ cd test262 && git sparse-checkout set harness test/language
 # Build a release binary (the runner expects target/release/ruja):
 cargo build --release
 
-# Run one or more subtrees:
+# Run the supported subset (statements + expressions):
+TEST262=/path/to/test262 python3 tools/test262_runner.py language/statements language/expressions
+
+# Or run a narrower subtree:
 TEST262=/path/to/test262 python3 tools/test262_runner.py language/identifiers language/keywords
 ```
 
 For failure-bucket analysis with error samples, use the sibling analyzer:
 
 ```sh
-python3 tools/test262_analyze.py language/expressions/arrow-function
+python3 tools/analyze_failures.py
 ```
 
-## Subset results (latest — post conformance fixes)
-
-Measured locally against `test/language/` with `SKIP_FEATURES` applied.
-These are the areas RuJa actively targets:
-
-| Suite | Ran | Pass | Fail | Pass rate |
-|-------|-----|------|------|-----------|
-| identifiers + keywords + types + comments + whitespace + punctuators | 436 | 335 | 101 | 76.8% |
-| expressions (all) | 2,745 | 1,658 | 1,087 | 60.4% |
-| statements (all) | 1,428 | 708 | 720 | 49.6% |
-
-**Subset aggregate**: ~4,612 tests ran, ~3,233 passed (~70.1%). Up from
-~56% at the start of the conformance improvement round. Major fixes:
-for-in parsing, with-statement var semantics, strict-mode enforcement,
-try-finally continue/break, eval stack corruption, do-while continue,
-switch completion value, and assignment target validation.
-
-(Numbers move as bugs are fixed; the CI job summary is the source of
-truth for the current commit.)
-
-## Full-suite results (CI)
+## Full-suite baseline
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Baseline from the first full run:
@@ -98,139 +96,56 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 | Skip | 15,481 |
 | **Pass rate (of run)** | **33.2%** |
 
-Longest jobs: `language/expressions` (~22 min), `language/statements`
-(~25 min). Numbers move as bugs are fixed; the CI job summary is the
-source of truth for the current commit. The full-suite number includes
-tests for features outside the supported subset; see [Supported Subset](#supported-subset).
+This number is dominated by tests for features RuJa does not support.
+It is published for transparency and regression tracking, not as a
+conformance claim. The CI job summary is the source of truth for the
+current commit.
 
-## What was fixed to get here
+## CI subset detail
 
-A round of test262-driven bug fixes raised the subset pass rate
-substantially from the prior ~20% baseline:
+The `ci.yml` workflow runs a narrow 9-directory subset on every push.
+This is a regression gate, not a conformance metric:
 
-- **Lexer: Unicode identifiers.** `IdentifierStart`/`IdentifierContinue`
-  now accept Unicode letters (not just ASCII) and the `\uXXXX` /
-  `\u{XXXX}` escape forms inside identifiers, so `\u{63}ase` parses as the
-  keyword `case` and `café`/`π`/CJK names lex correctly. Stray non-id
-  Unicode bytes and invalid escapes advance the cursor instead of
-  looping forever. NEL/LS/PS are recognized as line terminators.
-- **Parser: destructuring parameters.** Arrow functions and ordinary
-  functions now accept destructuring parameters (`([a, b]) =>`, `function
-  f({x, y})`), including nested patterns and defaults
-  (`[[x, y, z] = [4, 5, 6]]) =>`). Each destructuring param is bound from
-  a synthesized positional temp via a `let <pattern> = __argN;` prelude.
-- **Parser: object-literal methods.** Generator methods (`*foo() {}`)
-  and async methods (`async foo() {}`, `async *foo() {}`) now parse, and
-  reserved words (`return`, `class`, `default`, ...) are accepted as
-  property keys.
-- **Harness: negative tests.** `negative: { phase, type }` metadata is
-  honored, and the runner executes via a temp file instead of `-e` argv
-  so long sources and non-ASCII survive intact.
-
-## Why the rate is not higher
-
-RuJa targets a pragmatic ES5.1 + selected ES2015+ subset, not full ES2024
-conformance. The remaining failures cluster around a few areas: iterator
-protocol edge cases in destructuring, `$DONOTEVALUATE`-style negative
-parse tests for reserved words (`enum`/`export`/`import` as identifiers),
-WeakRef/TypedArray/Intl features that are skipped entirely, and a long
-tail of property-descriptor checks (`verifyProperty`) for builtin
-attributes. Improving the rate is an ongoing goal; the runner makes
-regressions visible on every push.
-
-## Running
-
-```sh
-# Clone test262 (shallow, sparse checkout keeps it small):
-git clone --depth 1 --filter=blob:none --sparse https://github.com/tc39/test262.git
-cd test262 && git sparse-checkout set harness test/language
-
-# Build a release binary (the runner expects target/release/ruja):
-cargo build --release
-
-# Run one or more subtrees:
-TEST262=/path/to/test262 python3 tools/test262_runner.py language/identifiers language/keywords
-```
-
-For failure-bucket analysis with error samples, use the sibling analyzer:
-
-```sh
-python3 tools/test262_analyze.py language/expressions/arrow-function
-```
-
-## CI subset results
-
-Measured on a representative subset of `language/` (arrow-function,
-function, object, identifiers, keywords, types, comments, white-space,
-punctuators). The subset is what the `ci.yml` job runs, so the number in
-the job summary matches what is below.
-
-| Suite            | Ran  | Pass | Fail | Pass rate |
-|------------------|------|------|------|----------|
-| identifiers      | 266  | 159  | 107  | 59.8%    |
-| punctuators       | 11   | 11   | 0    | 100.0%   |
-| white-space       | 67   | 49   | 18   | 73.1%    |
-| keywords          | 25   | 24   | 1    | 96.0%    |
-| types             | 113  | 80   | 33   | 70.8%    |
-| comments          | 23   | 17   | 6    | 73.9%    |
-| expressions/arrow-function | 343 | 245 | 98  | 71.4%    |
-| expressions/function        | 264 | 159 | 105 | 60.2%    |
-| expressions/object          | 946 | 506 | 440 | 53.5%    |
-| **subset total**  | 2058 | 1250 | 808 | ~60.8%    |
+| Suite | Ran | Pass | Fail | Pass rate |
+|-------|-----|------|------|-----------|
+| identifiers | 266 | 159 | 107 | 59.8% |
+| punctuators | 11 | 11 | 0 | 100.0% |
+| white-space | 67 | 49 | 18 | 73.1% |
+| keywords | 25 | 24 | 1 | 96.0% |
+| types | 113 | 80 | 33 | 70.8% |
+| comments | 23 | 17 | 6 | 73.9% |
+| expressions/arrow-function | 343 | 245 | 98 | 71.4% |
+| expressions/function | 264 | 159 | 105 | 60.2% |
+| expressions/object | 946 | 506 | 440 | 53.5% |
+| **Total** | 2,058 | 1,250 | 808 | 60.8% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
 
-## Full-suite results (CI)
-
-The `test262-full` CI workflow runs the entire test262 tree (excluding
-`intl402`/`staging`) in parallel. Baseline from the first full run:
-
-| Metric | Count |
-|--------|-------|
-| Total tests | 76,397 |
-| Actually run | 60,178 |
-| Pass | 19,987 |
-| Fail | 40,191 |
-| Skip | 15,481 |
-| **Pass rate (of run)** | **33.2%** |
-
-Longest jobs: `language/expressions` (~22 min), `language/statements`
-(~25 min). Numbers move as bugs are fixed; the CI job summary is the
-source of truth for the current commit. RuJa does not assert ES
-conformance; this only tracks regressions.
-
 ## What was fixed to get here
 
-A round of test262-driven bug fixes raised the subset pass rate
-substantially from the prior ~20% baseline:
+Key test262-driven bug fixes that raised the supported-subset rate from
+~56% to 84.8%:
 
-- **Lexer: Unicode identifiers.** `IdentifierStart`/`IdentifierContinue`
-  now accept Unicode letters (not just ASCII) and the `\uXXXX` /
-  `\u{XXXX}` escape forms inside identifiers, so `\u{63}ase` parses as the
-  keyword `case` and `café`/`π`/CJK names lex correctly. Stray non-id
-  Unicode bytes and invalid escapes advance the cursor instead of
-  looping forever. NEL/LS/PS are recognized as line terminators.
-- **Parser: destructuring parameters.** Arrow functions and ordinary
-  functions now accept destructuring parameters (`([a, b]) =>`, `function
-  f({x, y})`), including nested patterns and defaults
-  (`[[x, y, z] = [4, 5, 6]]) =>`). Each destructuring param is bound from
-  a synthesized positional temp via a `let <pattern> = __argN;` prelude.
-- **Parser: object-literal methods.** Generator methods (`*foo() {}`)
-  and async methods (`async foo() {}`, `async *foo() {}`) now parse, and
-  reserved words (`return`, `class`, `default`, ...) are accepted as
-  property keys.
-- **Harness: negative tests.** `negative: { phase, type }` metadata is
-  honored, and the runner executes via a temp file instead of `-e` argv
-  so long sources and non-ASCII survive intact.
+- **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
+  Unicode letters, NEL/LS/PS line terminators.
+- **Parser: destructuring parameters, object-literal methods, reserved
+  words as property keys, `negative:` harness metadata.**
+- **Switch/catch lexical scope** — `let`/`const` in case bodies and
+  catch parameters are properly block-scoped.
+- **Escaped get/set** — `\u0067et` is not treated as a getter keyword.
+- **Class constructors** — `TypeError` when called without `new`;
+  non-object return from derived constructor throws; double `super()`
+  throws; `extends` validates the parent is a constructor.
+- **BigInt increment/decrement** — `x++` on BigInt returns BigInt.
+- **Object.prototype.toString** — returns `[object Object]` for plain
+  objects; `String.prototype.toString` added.
 
 ## Why the rate is not higher
 
-RuJa targets a pragmatic ES5.1 + selected ES2015+ subset, not full ES2024
-conformance. The remaining failures cluster around a few areas: iterator
-protocol edge cases in destructuring, `$DONOTEVALUATE`-style negative
-parse tests for reserved words (`enum`/`export`/`import` as identifiers),
-WeakRef/TypedArray/Intl features that are skipped entirely, and a long
-tail of property-descriptor checks (`verifyProperty`) for builtin
-attributes. Improving the rate is an ongoing goal; the runner makes
-regressions visible on every push.
+The remaining ~633 failures in the supported subset cluster around:
+`with`-statement + compound-assignment reference semantics (~130, needs
+VM reference type), class builtin subclassing (~57), switch/try
+completion-value edge cases (~38), arrow-function early errors (~16),
+and tagged-template caching/`raw` property (~25). These are tracked in
+`HANDOFF.md` and will be addressed in subsequent rounds.

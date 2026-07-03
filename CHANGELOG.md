@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
-### test262 conformance improvements (84.8% subset, up from 83.6%)
+### test262 conformance improvements
+
+Supported-subset pass rate: **84.8%** (up from 83.6%).
+See [docs/test262.md](docs/test262.md#three-pass-rate-scopes) for the
+three distinct pass-rate scopes and what each measures.
 
 - **Switch lexical scope**: `switch` now creates a lexical environment
   (like a block). Function declarations, `var`, and `let`/`const` in case
