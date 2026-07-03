@@ -1191,9 +1191,10 @@ impl Parser {
     }
 
     /// Extract the property name for SetFunctionName from an assignment
-    /// target: `o.p` -> Some("p"), `o[computed]` -> None, identifier -> None.
+    /// target: `o.p` -> Some("p"), `o[computed]` -> None, identifier -> Some(name).
     fn assign_target_name(target: &Expr) -> Option<Arc<str>> {
         match target {
+            Expr::Ident(s) => Some(s.clone()),
             Expr::Member {
                 property,
                 computed: false,
