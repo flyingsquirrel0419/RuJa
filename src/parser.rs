@@ -1706,6 +1706,10 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Super)
             }
+            TokenKind::Class => {
+                // Class expression: `var C = class C { ... }`
+                self.parse_class_body().map(Expr::Class)
+            }
             TokenKind::Ident(s) => {
                 // Could be arrow: x => ...
                 if let TokenKind::Arrow = self.peek_at_tok(1).kind {
