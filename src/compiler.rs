@@ -833,7 +833,8 @@ impl Compiler {
                     if let Op::PushTry(ref mut h) = self.chunk.code[try_guard_ip] {
                         *h = catch_start;
                     }
-                    self.push_scope(true);
+                    self.push_scope(false);
+                    self.chunk.emit(Op::PushScope, self.current_line);
                     if let Some(param) = catch_param {
                         match param {
                             crate::ast::Pattern::Ident(name) => {
@@ -854,6 +855,7 @@ impl Compiler {
                         }
                     }
                     self.compile_stmt(catch_body.as_ref().unwrap())?;
+                    self.chunk.emit(Op::PopScope, self.current_line);
                     self.pop_scope();
                     if has_finally {
                         self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
@@ -1066,6 +1068,41 @@ impl Compiler {
                 // Evaluate the discriminant once into a temp env binding, so tests can
                 // re-load it without stack gymnastics. Supports fall-through and break.
                 self.compile_expr(disc)?;
+                // Switch introduces a new lexical environment (like a block).
+                self.push_scope(false);
+                self.chunk.emit(Op::PushScope, self.current_line);
+                // Hoist function declarations from all case bodies.
+                for case in cases.iter() {
+                    for s in &case.body {
+                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                            self.compile_stmt(s)?;
+                        }
+                    }
+                }
+                // Hoist `var` declarations from all case bodies.
+                {
+                    let all_body: Vec<Stmt> =
+                        cases.iter().flat_map(|c| c.body.iter().cloned()).collect();
+                    let var_names = Self::collect_var_names(&all_body);
+                    for name in &var_names {
+                        self.declare(name, VarKind::Var)?;
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        if self.scopes.len() == 2 {
+                            self.chunk.emit(Op::Const(name_idx), self.current_line);
+                            self.chunk.emit(Op::StoreGlobal, self.current_line);
+                        } else {
+                            self.chunk.emit(Op::Undefined, self.current_line);
+                            self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
+                        }
+                    }
+                }
+                // Hoist lexical declarations (let/const) into TDZ at switch entry.
+                {
+                    let all_body: Vec<Stmt> =
+                        cases.iter().flat_map(|c| c.body.iter().cloned()).collect();
+                    let lex = Self::collect_lexical_names(&all_body);
+                    self.emit_lexical_hoist(&lex)?;
+                }
                 let sw_idx = self.intern("#switch");
                 self.chunk.emit(Op::DeclareEnv(sw_idx), self.current_line);
                 // Track the switch completion value: the last non-empty
@@ -1104,6 +1141,9 @@ impl Compiler {
                 for (i, case) in cases.iter().enumerate() {
                     body_starts[i] = Some(self.chunk.code.len());
                     for s in &case.body {
+                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                            continue;
+                        }
                         self.compile_stmt(s)?;
                     }
                 }
@@ -1128,6 +1168,8 @@ impl Compiler {
                     self.chunk.emit(Op::StoreEnvName(comp_idx), self.current_line);
                     self.chunk.emit(Op::Pop, self.current_line);
                 }
+                self.chunk.emit(Op::PopScope, self.current_line);
+                self.pop_scope();
                 self.end_loop(end);
             }
             #[allow(unreachable_patterns)]
