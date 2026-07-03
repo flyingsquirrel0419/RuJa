@@ -1410,6 +1410,10 @@ impl Parser {
             } else {
                 UpdateOp::Dec
             };
+            // Postfix update: no LineTerminator allowed between operand and operator.
+            if self.tokens.get(self.pos).map(|t| t.preceded_by_newline).unwrap_or(false) {
+                return Ok(e);
+            }
             self.advance();
             e = Expr::Update(op, false, Box::new(e));
         }

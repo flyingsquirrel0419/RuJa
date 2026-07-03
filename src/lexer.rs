@@ -139,6 +139,15 @@ impl<'a> Lexer<'a> {
                 self.line += 1;
                 self.col = 1;
                 self.saw_newline = true;
+            } else if b == b'\r' {
+                // CR is a line terminator. Skip a following LF so that
+                // CRLF counts as a single line break.
+                if self.peek() == Some(b'\n') {
+                    self.pos += 1;
+                }
+                self.line += 1;
+                self.col = 1;
+                self.saw_newline = true;
             } else if b == 0x85 && self.pos >= 2 && self.src.get(self.pos - 2) == Some(&0xC2) {
                 // NEL (U+0085) is a line terminator.
                 self.line += 1;
