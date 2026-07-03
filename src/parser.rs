@@ -457,15 +457,6 @@ impl Parser {
                 )))
             }
         };
-        // Strict mode: function name cannot be `eval` or `arguments`.
-        if let Some(ref n) = name {
-            if self.is_strict_context && matches!(&**n, "eval" | "arguments") {
-                return Err(error::Error::syntax(format!(
-                    "'{}' cannot be used as a function name in strict mode",
-                    n
-                )));
-            }
-        }
         let params = self.parse_params()?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
@@ -479,6 +470,14 @@ impl Parser {
         // Strict mode (inherited or from body directive): validate that no
         // parameter name is `eval` or `arguments`, and no duplicate params.
         if is_strict {
+            if let Some(ref n) = name {
+                if matches!(&**n, "eval" | "arguments") {
+                    return Err(error::Error::syntax(format!(
+                        "'{}' cannot be used as a function name in strict mode",
+                        n
+                    )));
+                }
+            }
             for p in &params {
                 if matches!(&**p, "eval" | "arguments") {
                     return Err(error::Error::syntax(format!(
@@ -582,6 +581,14 @@ impl Parser {
 
     fn parse_fn_body(&mut self) -> error::Result<Vec<Stmt>> {
         self.expect(&TokenKind::LBrace, "{")?;
+        // Detect a leading "use strict" directive BEFORE parsing body
+        // statements, so strict-mode early errors (e.g. assignment to `eval`)
+        // are caught during parsing.
+        let body_is_strict = self.peek_use_strict_directive();
+        let saved_strict = self.is_strict_context;
+        if body_is_strict {
+            self.is_strict_context = true;
+        }
         self.function_depth += 1;
         let mut body = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
@@ -589,6 +596,7 @@ impl Parser {
         }
         self.expect(&TokenKind::RBrace, "}")?;
         self.function_depth -= 1;
+        self.is_strict_context = saved_strict;
         Ok(body)
     }
 
@@ -2058,6 +2066,14 @@ impl Parser {
         let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
         // Strict mode: validate parameter names and duplicates (same as decl).
         if is_strict {
+            if let Some(ref n) = name {
+                if matches!(&**n, "eval" | "arguments") {
+                    return Err(error::Error::syntax(format!(
+                        "'{}' cannot be used as a function name in strict mode",
+                        n
+                    )));
+                }
+            }
             for p in &params {
                 if matches!(&**p, "eval" | "arguments") {
                     return Err(error::Error::syntax(format!(

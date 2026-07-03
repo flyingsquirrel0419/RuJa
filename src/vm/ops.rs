@@ -2007,6 +2007,8 @@ impl Vm {
         if let Some(fdef) = self.functions.get(func_idx).cloned() {
             let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
             let is_arrow = fdef.is_arrow;
+            let fn_length = fdef.length;
+            let fn_name = fdef.name.clone();
             // create a .prototype object for non-arrow functions
             let proto_val = if !fdef.is_arrow {
                 let proto = HeapObj::Object(crate::value::ObjectData {
@@ -2037,6 +2039,24 @@ impl Vm {
                 props: Mutex::new(IndexMap::new()),
             };
             let idx = self.alloc(HeapObj::Function(fd))?;
+            // Set function.length and function.name as own properties.
+            self.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Function(f) = obj {
+                    let mut props = f.props.lock();
+                    let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(fn_length as f64));
+                    len_desc.writable = false;
+                    len_desc.enumerable = false;
+                    len_desc.configurable = true;
+                    props.insert(crate::value::PropertyKey::from("length"), len_desc);
+                    let mut name_desc = crate::value::PropertyDescriptor::data(
+                        Value::String(fn_name.clone().unwrap_or_else(|| Arc::from(""))),
+                    );
+                    name_desc.writable = false;
+                    name_desc.enumerable = false;
+                    name_desc.configurable = true;
+                    props.insert(crate::value::PropertyKey::from("name"), name_desc);
+                }
+            });
             // link prototype.constructor back to the function
             if let Value::Object(pidx) = &proto_val {
                 self.heap.with_obj(pidx.0, |obj| {
