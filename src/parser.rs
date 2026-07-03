@@ -811,18 +811,18 @@ impl Parser {
             self.no_in = true;
             let e = self.parse_assign()?;
             self.no_in = false;
-            // Validate that the LHS is a valid assignment target.
-            let is_valid_target = match &e {
-                Expr::Ident(_) | Expr::Member { .. } | Expr::Array(_) | Expr::Object(_)
-                | Expr::PrivateGet { .. } => true,
-                _ => false,
-            };
-            if !is_valid_target {
-                return Err(error::Error::syntax(
-                    "Invalid left-hand side in for-in/for-of".to_string()
-                ));
-            }
             if self.check(&TokenKind::In) {
+                // Validate that the LHS is a valid assignment target.
+                let is_valid_target = match &e {
+                    Expr::Ident(_) | Expr::Member { .. } | Expr::Array(_) | Expr::Object(_)
+                    | Expr::PrivateGet { .. } => true,
+                    _ => false,
+                };
+                if !is_valid_target {
+                    return Err(error::Error::syntax(
+                        "Invalid left-hand side in for-in".to_string()
+                    ));
+                }
                 self.advance();
                 let right = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
@@ -836,6 +836,17 @@ impl Parser {
                 }));
             }
             if self.check(&TokenKind::Of) {
+                // Validate that the LHS is a valid assignment target.
+                let is_valid_target = match &e {
+                    Expr::Ident(_) | Expr::Member { .. } | Expr::Array(_) | Expr::Object(_)
+                    | Expr::PrivateGet { .. } => true,
+                    _ => false,
+                };
+                if !is_valid_target {
+                    return Err(error::Error::syntax(
+                        "Invalid left-hand side in for-of".to_string()
+                    ));
+                }
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
