@@ -199,7 +199,14 @@ impl Parser {
             return true;
         }
         // Non-strict: `let` is lexical only when followed by `[`, `{`, or an
-        // identifier (the start of a binding pattern or name).
+        // identifier (the start of a binding pattern or name) ON THE SAME LINE.
+        // If a newline separates `let` from the next token, ASI applies and
+        // `let` is treated as an identifier (expression statement).
+        if self.pos + 1 < self.tokens.len()
+            && self.tokens[self.pos + 1].preceded_by_newline
+        {
+            return false;
+        }
         match self.peek_at_tok(1).kind {
             TokenKind::LBracket | TokenKind::LBrace => true,
             TokenKind::Ident(_) => true,
@@ -339,7 +346,8 @@ impl Parser {
         }
         match self.peek().clone() {
             TokenKind::LBrace => self.parse_block(),
-            TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl(),
+            TokenKind::Var | TokenKind::Const => self.parse_var_decl(),
+            TokenKind::Let if self.is_let_lexical_position() => self.parse_var_decl(),
             TokenKind::Function => self.parse_function_decl(),
             TokenKind::Async => {
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
