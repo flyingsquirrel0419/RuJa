@@ -2521,6 +2521,14 @@ impl Parser {
             TokenKind::Await => "await".to_string(),
             TokenKind::Yield => "yield".to_string(),
             TokenKind::Super => "super".to_string(),
+            TokenKind::Number(n) => {
+                self.advance();
+                return Ok(format!("{}", n));
+            }
+            TokenKind::String(s) => {
+                self.advance();
+                return Ok(s);
+            }
             other => {
                 return Err(error::Error::syntax(format!(
                     "Expected property name after ., got {:?}",
