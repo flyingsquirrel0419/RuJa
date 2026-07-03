@@ -892,8 +892,12 @@ impl Vm {
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
-                    let v = self.get_property(&obj, &key_str)?;
-                    self.stack.push(Value::Bool(!v.is_undefined()));
+                    // Use has_property (existence check) instead of get_property
+                    // to avoid triggering poisoned accessors (e.g. strict-mode
+                    // function's 'caller'/'arguments' throw on [[Get]] but
+                    // 'in' should return true).
+                    let has = self.has_property(&obj, &key_str)?;
+                    self.stack.push(Value::Bool(has));
                 }
                 Op::InstanceOf => {
                     // stack: [obj, ctor]; walk obj's proto chain for ctor.prototype.

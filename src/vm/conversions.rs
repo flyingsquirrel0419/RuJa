@@ -390,6 +390,23 @@ impl Vm {
     /// a property whose value is `undefined` is still "present" (per spec
     /// `[[HasProperty]]`). Used by the `with` statement.
     pub fn has_property(&mut self, obj: &Value, name: &str) -> error::Result<bool> {
+        // Strict-mode functions have poisoned 'caller' and 'arguments' properties
+        // that exist (for 'in' operator) but throw on access.
+        if matches!(name, "caller" | "arguments") {
+            if let Value::Object(idx) = obj {
+                let is_strict_fn = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Function(f) = o {
+                        if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
+                            return func.chunk.is_strict;
+                        }
+                    }
+                    false
+                });
+                if is_strict_fn {
+                    return Ok(true);
+                }
+            }
+        }
         // Fast path: objects with a props map walk own + proto for the key.
         let pkey = crate::value::PropertyKey::from(name);
         if self.has_property_key(obj, &pkey) {
