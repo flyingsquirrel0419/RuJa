@@ -168,6 +168,7 @@ pub enum Op {
     SetElem,
     DeleteProp,
     SetProto, // pop [proto, obj]; set obj's [[Prototype]] to proto
+    ValidateExtends, // pop [parentCtor]; throw TypeError if not a constructor or prototype is invalid
 
     // Functions
     MakeFunction(usize),  // function index in a function table

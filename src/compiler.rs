@@ -2775,6 +2775,8 @@ impl Compiler {
                 if let Some(super_expr) = &cls.superclass {
                     // stack: [ctor]
                     self.compile_expr(super_expr)?;
+                    // Validate the superclass is a constructor with valid prototype.
+                    self.chunk.emit(Op::ValidateExtends, self.current_line);
                     // stack: [ctor, parentCtor]
                     // Bind parentCtor as `#superctor` so `super(...)` calls can find it.
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, parentCtor, parentCtor]

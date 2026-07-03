@@ -1429,6 +1429,31 @@ impl Vm {
                         self.stack.push(Value::Bool(deleted));
                     }
                 }
+                Op::ValidateExtends => {
+                    // Pop the superclass value and validate it's a constructor
+                    // whose .prototype is an object or null.
+                    let parent = self.stack.pop().unwrap_or(Value::Undefined);
+                    let is_ctor = match &parent {
+                        Value::Object(idx) => self.heap.with_obj(idx.0, |o| o.is_function()),
+                        _ => false,
+                    };
+                    if !is_ctor {
+                        self.stack.push(parent);
+                        return Err(Error::type_err(
+                            "Class extends value is not a constructor"
+                        ));
+                    }
+                    // Check parent.prototype is an object or null.
+                    let proto = self.get_property_by_key(&parent, &crate::value::PropertyKey::from("prototype"))
+                        .unwrap_or(Value::Undefined);
+                    if !matches!(proto, Value::Object(_) | Value::Null) {
+                        self.stack.push(parent);
+                        return Err(Error::type_err(
+                            "Class extends value's prototype is not an object or null"
+                        ));
+                    }
+                    self.stack.push(parent);
+                }
                 Op::SetProto => {
                     // stack (top->bottom): [proto, obj]; set obj's [[Prototype]] to proto.
                     let proto = self.stack.pop().unwrap_or(Value::Undefined);
