@@ -1582,7 +1582,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     ));
     static_props.push((Arc::from("EPSILON"), Value::Number(f64::EPSILON)));
     static_props.push((Arc::from("MAX_VALUE"), Value::Number(f64::MAX)));
-    static_props.push((Arc::from("MIN_VALUE"), Value::Number(f64::MIN_POSITIVE)));
+    static_props.push((Arc::from("MIN_VALUE"), Value::Number(5e-324f64)));
     static_props.push((Arc::from("POSITIVE_INFINITY"), Value::Number(f64::INFINITY)));
     static_props.push((
         Arc::from("NEGATIVE_INFINITY"),
