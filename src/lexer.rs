@@ -285,9 +285,9 @@ impl<'a> Lexer<'a> {
             }
             return TokenKind::Number(v as f64);
         }
+        let mut seen_dot = false;
         while let Some(c) = self.peek() {
             if c.is_ascii_digit()
-                || c == b'.'
                 || c == b'e'
                 || c == b'E'
                 || c == b'_'
@@ -295,6 +295,11 @@ impl<'a> Lexer<'a> {
                     && (self.src.get(self.pos.wrapping_sub(1)) == Some(&b'e')
                         || self.src.get(self.pos.wrapping_sub(1)) == Some(&b'E'))
             {
+                self.advance();
+            } else if c == b'.' && !seen_dot {
+                // Only consume the first dot as part of the number.
+                // A second dot is a property access (e.g. 1.1.toFixed).
+                seen_dot = true;
                 self.advance();
             } else {
                 break;
