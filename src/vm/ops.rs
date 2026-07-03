@@ -717,6 +717,12 @@ impl Vm {
                 }
                 Op::PushWithEnv => {
                     let object = self.stack.pop().unwrap_or(Value::Undefined);
+                    // Per spec, with(null) and with(undefined) throw TypeError.
+                    if matches!(object, Value::Null | Value::Undefined) {
+                        return Err(Error::type_err(
+                            "with statement requires an object".to_string()
+                        ));
+                    }
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let new_env = env::new_with_env(&self.heap, cur_env, object)?;
                     self.current_frame_mut()?.env = new_env;

@@ -430,6 +430,32 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
     while let Some(e_idx) = cur {
         let (result, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
+                // With environment: check the with-object's properties first.
+                // If the with-object has the property, the delete targets it
+                // (not the environment binding).
+                if let Some(crate::value::Value::Object(wi)) = e.with_object.lock().clone() {
+                    let pkey = crate::value::PropertyKey::from(name);
+                    let has_prop = heap.with_obj(wi.0, |o| {
+                        o.props().lock().contains_key(&pkey)
+                    });
+                    if has_prop {
+                        // Delete from the with-object
+                        let deleted = heap.with_obj(wi.0, |o| {
+                            let mut props = o.props().lock();
+                            if let Some(d) = props.get(&pkey) {
+                                if d.configurable {
+                                    props.shift_remove(&pkey);
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                true
+                            }
+                        });
+                        return (deleted, None);
+                    }
+                }
                 let mut vars = e.vars.lock();
                 if let Some(b) = vars.get(name) {
                     // var and function declarations are non-configurable
@@ -479,45 +505,10 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
             }
         });
     }
-    // If a `with` environment's object has this property as a data property,
-    // set it there (ES5 with-statement semantics). Otherwise set it at the
-    // function-scope root.
-    let mut cur = Some(env);
-    while let Some(e_idx) = cur {
-        let (with_obj, parent, is_fn) = heap.with_obj(e_idx.0, |obj| {
-            if let HeapObj::Environment(e) = obj {
-                return (
-                    e.with_object.lock().clone(),
-                    *e.parent.lock(),
-                    e.is_function_scope,
-                );
-            }
-            (None, None, false)
-        });
-        if let Some(crate::value::Value::Object(wi)) = &with_obj {
-            let pkey = crate::value::PropertyKey::from(name);
-            let has_data_prop = heap.with_obj(wi.0, |o| {
-                o.props()
-                    .lock()
-                    .get(&pkey)
-                    .map(|d| !d.is_accessor)
-                    .unwrap_or(false)
-            });
-            if has_data_prop {
-                heap.with_obj(wi.0, |o| {
-                    if let Some(d) = o.props().lock().get_mut(&pkey) {
-                        d.value = value.clone();
-                    }
-                });
-                return;
-            }
-        }
-        if is_fn {
-            break;
-        }
-        cur = parent;
-    }
-    // Set at function-scope root.
+    // Set at function-scope root. var declarations always create/update
+    // the function-scoped binding, not the with object's property.
+    // (Per spec, var declarations use the variable environment, not the
+    // lexical environment that `with` modifies.)
     // Check existence first (drop the borrow) before mutating.
     let exists = heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
