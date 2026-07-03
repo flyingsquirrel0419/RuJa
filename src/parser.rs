@@ -767,6 +767,90 @@ impl Parser {
         Ok(())
     }
 
+    /// Check that no var-declared name in `body` shadows a lexical binding
+    /// declared in the for-in/for-of `head`. Per spec: "It is a Syntax Error
+    /// if any element of the BoundNames of ForDeclaration also occurs in the
+    /// VarDeclaredNames of Statement."
+    fn check_for_head_body_clash(&self, head: &StmtNode, body: &Stmt) -> error::Result<()> {
+        // Collect head bound names.
+        let mut head_names = Vec::new();
+        match head {
+            StmtNode::VarDecl { kind: VarKind::Let | VarKind::Const, decls, .. } => {
+                for (name, _) in decls {
+                    head_names.push(name.clone());
+                }
+            }
+            StmtNode::Destructure { kind: VarKind::Let | VarKind::Const, pattern, .. } => {
+                collect_pattern_names(pattern, &mut head_names);
+            }
+            _ => return Ok(()), // var heads don't trigger this rule
+        }
+        if head_names.is_empty() {
+            return Ok(());
+        }
+        // Collect body var-declared names.
+        let mut body_vars = Vec::new();
+        Self::collect_var_names_in_stmt(&body.node, &mut body_vars);
+        for name in &head_names {
+            if body_vars.contains(name) {
+                return Err(error::Error::syntax(format!(
+                    "Variable '{}' declared in for-of/for-in head is redeclared with var in body",
+                    name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_var_names_in_stmt(node: &StmtNode, out: &mut Vec<Arc<str>>) {
+        match node {
+            StmtNode::VarDecl { kind: VarKind::Var, decls } => {
+                for (name, _) in decls {
+                    out.push(name.clone());
+                }
+            }
+            StmtNode::Destructure { kind: VarKind::Var, pattern, .. } => {
+                collect_pattern_names(pattern, out);
+            }
+            StmtNode::Block(body) => {
+                for s in body {
+                    Self::collect_var_names_in_stmt(&s.node, out);
+                }
+            }
+            StmtNode::If { then, else_, .. } => {
+                Self::collect_var_names_in_stmt(&then.node, out);
+                if let Some(e) = else_ {
+                    Self::collect_var_names_in_stmt(&e.node, out);
+                }
+            }
+            StmtNode::While { body, .. }
+            | StmtNode::DoWhile { body, .. }
+            | StmtNode::For { body, .. }
+            | StmtNode::ForIn { body, .. }
+            | StmtNode::ForOf { body, .. }
+            | StmtNode::Labeled(_, body) => {
+                Self::collect_var_names_in_stmt(&body.node, out);
+            }
+            StmtNode::Switch { cases, .. } => {
+                for case in cases {
+                    for s in &case.body {
+                        Self::collect_var_names_in_stmt(&s.node, out);
+                    }
+                }
+            }
+            StmtNode::TryCatch { try_body, catch_body, finally_body, .. } => {
+                Self::collect_var_names_in_stmt(&try_body.node, out);
+                if let Some(cb) = catch_body {
+                    Self::collect_var_names_in_stmt(&cb.node, out);
+                }
+                if let Some(fb) = finally_body {
+                    Self::collect_var_names_in_stmt(&fb.node, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn parse_for(&mut self) -> error::Result<Stmt> {
         self.advance();
         // `for await (x of asyncIterable)` — async iteration. Only the for-of
@@ -791,12 +875,22 @@ impl Parser {
             self.check_for_dup_bound_names(&stmt.node)?;
            if self.check(&TokenKind::In) {
                // for-in/for-of head declarations must not have an initializer.
-               if let StmtNode::VarDecl { decls, .. } = &stmt.node {
-                   if decls.iter().any(|d| d.1.is_some()) {
-                       return Err(error::Error::syntax(
-                           "for-in head declaration must not have an initializer".to_string()
-                       ));
+               match &stmt.node {
+                   StmtNode::VarDecl { decls, .. } => {
+                       if decls.iter().any(|d| d.1.is_some()) {
+                           return Err(error::Error::syntax(
+                               "for-in head declaration must not have an initializer".to_string()
+                           ));
+                       }
                    }
+                   StmtNode::Destructure { init, .. } => {
+                       if init.is_some() {
+                           return Err(error::Error::syntax(
+                               "for-in head declaration must not have an initializer".to_string()
+                           ));
+                       }
+                   }
+                   _ => {}
                }
                self.advance();
                let right = self.parse_expr()?;
@@ -804,6 +898,7 @@ impl Parser {
                 self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
                 self.loop_depth -= 1;
+                self.check_for_head_body_clash(&stmt.node, &body)?;
                 return Ok(self.stmt(StmtNode::ForIn {
                     left: Box::new(stmt),
                     right,
@@ -812,12 +907,22 @@ impl Parser {
             }
             if self.check(&TokenKind::Of) {
                // for-of head declarations must not have an initializer.
-               if let StmtNode::VarDecl { decls, .. } = &stmt.node {
-                   if decls.iter().any(|d| d.1.is_some()) {
-                       return Err(error::Error::syntax(
-                           "for-of head declaration must not have an initializer".to_string()
-                       ));
+               match &stmt.node {
+                   StmtNode::VarDecl { decls, .. } => {
+                       if decls.iter().any(|d| d.1.is_some()) {
+                           return Err(error::Error::syntax(
+                               "for-of head declaration must not have an initializer".to_string()
+                           ));
+                       }
                    }
+                   StmtNode::Destructure { init, .. } => {
+                       if init.is_some() {
+                           return Err(error::Error::syntax(
+                               "for-of head declaration must not have an initializer".to_string()
+                           ));
+                       }
+                   }
+                   _ => {}
                }
                 self.advance();
                 let right = self.parse_assign()?;
@@ -825,6 +930,7 @@ impl Parser {
                 self.loop_depth += 1;
                 let body = Box::new(self.parse_single_stmt()?);
                 self.loop_depth -= 1;
+                self.check_for_head_body_clash(&stmt.node, &body)?;
                 return Ok(self.stmt(StmtNode::ForOf {
                     left: Box::new(stmt),
                     right,
@@ -1986,10 +2092,13 @@ impl Parser {
             if is_async_method {
                 self.advance(); // consume `async`
             }
-            // Getter/setter: `get prop() {}` / `set prop(v) {}`
+            // Getter/setter: `get prop() {}` / `set prop(v) {}`.
+            // An escaped identifier (e.g. `\u0067et`) is NOT treated as the
+            // contextual keyword `get`/`set`.
             let (is_getter, is_setter) = match self.peek().clone() {
                 TokenKind::Ident(s)
                     if (s == "get" || s == "set")
+                        && !self.tokens[self.pos].had_escape
                         && !matches!(
                             self.peek_at_tok(1).kind,
                             TokenKind::Colon
@@ -2692,6 +2801,7 @@ impl Parser {
             let (is_getter, is_setter) = match self.peek().clone() {
                 TokenKind::Ident(s)
                     if (s == "get" || s == "set")
+                        && !self.tokens[self.pos].had_escape
                         && !matches!(
                             self.peek_at_tok(1).kind,
                             TokenKind::LParen | TokenKind::Assign | TokenKind::Semicolon

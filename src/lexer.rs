@@ -109,6 +109,8 @@ pub struct Lexer<'a> {
     /// 0 = normal, 1 = emit TemplateExprStart next, 2 = inside interpolation expr,
     /// 3 = read next segment after an interpolation closed.
     pub template_state: u8,
+    /// Whether the last identifier token had a Unicode escape.
+    last_ident_had_escape: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -121,6 +123,7 @@ impl<'a> Lexer<'a> {
             saw_newline: true,
             prev_value_ending: false,
             template_state: 0,
+            last_ident_had_escape: false,
         }
     }
 
@@ -510,6 +513,7 @@ impl<'a> Lexer<'a> {
             }
             first = false;
         }
+        self.last_ident_had_escape = had_escape;
         let s: &str = if had_escape {
             // Owned by the TokenKind::Ident below.
             Box::leak(buf.into_boxed_str())
@@ -955,6 +959,7 @@ impl<'a> Lexer<'a> {
         );
         let mut tok = Token::new(kind, line, col);
         tok.preceded_by_newline = preceded_by_newline;
+        tok.had_escape = self.last_ident_had_escape;
         tok
     }
 

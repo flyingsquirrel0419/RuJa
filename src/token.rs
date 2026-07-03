@@ -136,6 +136,8 @@ pub struct Token {
     pub col: usize,
     /// True when a newline appeared immediately before this token.
     pub preceded_by_newline: bool,
+    /// True when the identifier contained a Unicode escape sequence.
+    pub had_escape: bool,
 }
 
 impl Token {
@@ -145,6 +147,7 @@ impl Token {
             line,
             col,
             preceded_by_newline: false,
+            had_escape: false,
         }
     }
 }
