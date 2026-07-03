@@ -518,9 +518,15 @@ impl Vm {
                                 }
                             }
                             if !set_on_with {
+                                if self.current_strict() {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )));
+                                }
                                 crate::environment::declare(
                                     &self.heap,
-                                    cur_env,
+                                    self.global,
                                     &name,
                                     value,
                                     crate::value::BindingKind::Var,
@@ -665,7 +671,7 @@ impl Vm {
                                 }
                                 crate::environment::declare(
                                     &self.heap,
-                                    env,
+                                    self.global,
                                     &name,
                                     value,
                                     crate::value::BindingKind::Var,
