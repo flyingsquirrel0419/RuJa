@@ -1310,10 +1310,25 @@ impl Parser {
     }
 
     fn parse_exponent(&mut self) -> error::Result<Expr> {
+        // Record position before parsing the left operand so we can detect
+        // whether a unary operator was used directly (not parenthesized).
+        let pos_before = self.pos;
         let left = self.parse_unary()?;
         if self.check(&TokenKind::StarStar) {
             self.advance();
             let right = self.parse_exponent()?; // right-assoc
+            // ES spec: unary operators cannot be the base of ** unless
+            // parenthesized. If the left is a Unary and the first token
+            // we parsed was a unary operator (not LParen), it is a syntax error.
+            if let Expr::Unary(_, _) = &left {
+                let first_tok = self.tokens.get(pos_before).map(|t| &t.kind);
+                // If the first token was LParen, the unary was inside parens.
+                if !matches!(first_tok, Some(TokenKind::LParen)) {
+                    return Err(error::Error::syntax(
+                        "Unary operator used before exponentiation operator".to_string()
+                    ));
+                }
+            }
             return Ok(Expr::Binary(BinOp::Pow, Box::new(left), Box::new(right)));
         }
         Ok(left)

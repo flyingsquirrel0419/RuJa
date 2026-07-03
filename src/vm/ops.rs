@@ -815,8 +815,8 @@ impl Vm {
                 )?,
                 Op::Pow => self.num_bin_bigint(
                     |a, b| {
-                        // ES spec: (-1) ** ±Infinity = NaN
-                        if a == -1.0 && b.is_infinite() {
+                        // ES spec: abs(base)==1 and exponent is ±Infinity → NaN
+                        if a.abs() == 1.0 && b.is_infinite() {
                             f64::NAN
                         } else {
                             a.powf(b)
