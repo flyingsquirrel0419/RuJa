@@ -1098,6 +1098,11 @@ impl Compiler {
                 }
                 // Push the tracked completion value onto the stack.
                 self.chunk.emit(Op::LoadEnv(sw_val_idx), self.current_line);
+                if let Some(cv) = saved_sw_val {
+                    let comp_idx = cv;
+                    self.chunk.emit(Op::StoreEnvName(comp_idx), self.current_line);
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
                 self.end_loop(end);
             }
             #[allow(unreachable_patterns)]
