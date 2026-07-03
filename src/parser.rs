@@ -824,6 +824,16 @@ impl Parser {
             // Parse the left-hand side with `no_in` so that `in` is not
             // consumed as a binary operator, allowing us to detect the
             // for-in form.
+            // 'let of' in for-of head is a SyntaxError: 'let' is treated as
+            // a ForDeclaration but 'of' is not a valid binding name.
+            if matches!(self.peek(), TokenKind::Let)
+                && !self.is_strict_context
+                && matches!(self.peek_at_tok(1).kind, TokenKind::Of)
+            {
+                return Err(error::Error::syntax(
+                    "let followed by of in for-of head is not valid".to_string()
+                ));
+            }
             self.no_in = true;
             let e = self.parse_assign()?;
             self.no_in = false;
