@@ -376,11 +376,26 @@ impl Vm {
                     proto: Mutex::new(Some(self.array_proto.clone())),
                     sparse_max: Mutex::new(None),
                 });
+                let arg_idx = GcIdx(self.heap.allocate(arr)?);
+                // In non-strict mode, arguments has a `callee` property
+                // pointing to the executing function. (Strict mode forbids it.)
+                if !func.chunk.is_strict {
+                    self.heap.with_obj(arg_idx.0, |obj| {
+                        if let HeapObj::Array(a) = obj {
+                            let mut props = a.props.lock();
+                            let mut callee_desc = crate::value::PropertyDescriptor::data(Value::Object(idx));
+                            callee_desc.writable = true;
+                            callee_desc.enumerable = false;
+                            callee_desc.configurable = true;
+                            props.insert(crate::value::PropertyKey::from("callee"), callee_desc);
+                        }
+                    });
+                }
                 env::declare(
                     &self.heap,
                     call_env,
                     "arguments",
-                    Value::Object(GcIdx(self.heap.allocate(arr)?)),
+                    Value::Object(arg_idx),
                     crate::value::BindingKind::Var,
                 );
                 // In sloppy (non-strict) mode, an unbound `this` (plain
