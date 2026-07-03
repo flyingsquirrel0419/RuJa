@@ -499,16 +499,26 @@ impl Vm {
             Value::Object(idx) => *idx,
             _ => return Err(Error::type_err("not a constructor".to_string())),
         };
-        let proto = self.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Function(f) = obj {
-                f.prototype
-                    .lock()
-                    .clone()
-                    .unwrap_or(self.object_proto.clone())
-            } else {
-                self.object_proto.clone()
-            }
-        });
+        // Read prototype from the function's own properties first (it may
+        // have been reassigned via `fn.prototype = newProto`), falling back
+        // to the internal FunctionData.prototype field.
+        let proto = self.get_property_by_key(constructor, &crate::value::PropertyKey::from("prototype"))
+            .unwrap_or(Value::Undefined);
+        let proto = if matches!(proto, Value::Object(_) | Value::Null) {
+            proto
+        } else {
+            // Fall back to internal field or default object proto.
+            self.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Function(f) = obj {
+                    f.prototype
+                        .lock()
+                        .clone()
+                        .unwrap_or(self.object_proto.clone())
+                } else {
+                    self.object_proto.clone()
+                }
+            })
+        };
         let new_obj = HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),

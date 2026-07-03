@@ -1296,6 +1296,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         &[
             ("toString", object_to_string_native, 0),
             ("hasOwnProperty", object_has_own_property, 1),
+            ("isPrototypeOf", object_is_prototype_of, 1),
             ("valueOf", object_value_of, 0),
         ],
     )?;
@@ -1787,3 +1788,34 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
 }
 
 // =========================================================================
+
+fn object_is_prototype_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    let arg = args.first().cloned().unwrap_or(Value::Undefined);
+    // Walk the prototype chain of `arg` looking for `this`.
+    let mut cur = arg;
+    let this_idx = match &this {
+        Value::Object(idx) => Some(*idx),
+        _ => return Ok(Value::Bool(false)),
+    };
+    let mut depth = 0;
+    while let Value::Object(idx) = &cur {
+        if depth > 1024 {
+            break;
+        }
+        depth += 1;
+        if *idx == this_idx.unwrap_or(GcIdx(0)) {
+            return Ok(Value::Bool(true));
+        }
+        let proto = vm.heap.with_obj(idx.0, |o| o.proto().lock().clone());
+        cur = proto.unwrap_or(Value::Undefined);
+        if cur.is_undefined() {
+            break;
+        }
+    }
+    Ok(Value::Bool(false))
+}
