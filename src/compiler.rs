@@ -868,10 +868,13 @@ impl Compiler {
                     // (which would loop back into this same finally).
                     self.chunk.emit(Op::PopFinally, self.current_line);
                     self.finally_stack.pop();
+                    let saved_sv_depth = self.switch_val_depth;
+                    self.switch_val_depth = None;
                     self.compile_stmt(fin)?;
                     // Re-raise the pending completion (return/break/continue/throw)
                     // that diverted here. A normal completion falls through.
                     self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
+                    self.switch_val_depth = saved_sv_depth;
                 }
             }
             StmtNode::FunctionDecl(f) => {
