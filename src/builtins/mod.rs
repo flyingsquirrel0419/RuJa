@@ -1376,6 +1376,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         vm.new_native_function("Function.prototype", function_proto_noop, 0)?;
     vm.function_proto = Value::Object(function_proto_idx);
     setup(vm)?;
+    // Per spec, Function.prototype's [[Prototype]] is Object.prototype.
+    // (Function.prototype is itself a function, but it inherits Object.prototype
+    // methods like isPrototypeOf, hasOwnProperty, toString, etc.)
+    vm.heap.with_obj(function_proto_idx.0, |obj| {
+        *obj.proto().lock() = Some(vm.object_proto.clone());
+    });
     // Math
     let math = build_math(vm)?;
     define_global(vm, "Math", math);
