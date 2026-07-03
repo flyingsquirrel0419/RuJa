@@ -216,35 +216,35 @@ pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
     }
     props.insert(
         PropertyKey::from("PI"),
-        data_prop(Value::Number(std::f64::consts::PI)),
+        const_prop(Value::Number(std::f64::consts::PI)),
     );
     props.insert(
         PropertyKey::from("E"),
-        data_prop(Value::Number(std::f64::consts::E)),
+        const_prop(Value::Number(std::f64::consts::E)),
     );
     props.insert(
         PropertyKey::from("LN2"),
-        data_prop(Value::Number(std::f64::consts::LN_2)),
+        const_prop(Value::Number(std::f64::consts::LN_2)),
     );
     props.insert(
         PropertyKey::from("LN10"),
-        data_prop(Value::Number(std::f64::consts::LN_10)),
+        const_prop(Value::Number(std::f64::consts::LN_10)),
     );
     props.insert(
         PropertyKey::from("LOG2E"),
-        data_prop(Value::Number(std::f64::consts::LOG2_E)),
+        const_prop(Value::Number(std::f64::consts::LOG2_E)),
     );
     props.insert(
         PropertyKey::from("LOG10E"),
-        data_prop(Value::Number(std::f64::consts::LOG10_E)),
+        const_prop(Value::Number(std::f64::consts::LOG10_E)),
     );
     props.insert(
         PropertyKey::from("SQRT2"),
-        data_prop(Value::Number(std::f64::consts::SQRT_2)),
+        const_prop(Value::Number(std::f64::consts::SQRT_2)),
     );
     props.insert(
         PropertyKey::from("SQRT1_2"),
-        data_prop(Value::Number(std::f64::consts::FRAC_1_SQRT_2)),
+        const_prop(Value::Number(std::f64::consts::FRAC_1_SQRT_2)),
     );
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(props),

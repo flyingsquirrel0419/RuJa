@@ -78,6 +78,20 @@ pub(crate) fn data_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
+/// Create a non-writable, non-enumerable, non-configurable data property
+/// descriptor (for built-in constants like Number.MAX_VALUE).
+pub(crate) fn const_prop(value: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value,
+        writable: false,
+        enumerable: false,
+        configurable: false,
+        get: None,
+        set: None,
+        is_accessor: false,
+    }
+}
+
 pub(crate) fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Arc<str>, Value)]) {
     if let Value::Object(idx) = proto {
         vm.heap.with_obj(idx.0, |obj| {
@@ -1601,7 +1615,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             for (name, val) in &static_props {
                 f.props
                     .lock()
-                    .insert(PropertyKey::from(name.clone()), data_prop(val.clone()));
+                    .insert(PropertyKey::from(name.clone()), const_prop(val.clone()));
             }
         }
     });
