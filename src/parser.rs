@@ -322,6 +322,13 @@ impl Parser {
                     self.peek(),
                     TokenKind::While | TokenKind::Do | TokenKind::For
                 );
+                // ES spec: lexical declarations (let/const/class) cannot be
+                // the body of a labelled statement.
+                if matches!(self.peek(), TokenKind::Let | TokenKind::Const | TokenKind::Class) {
+                    return Err(error::Error::syntax(
+                        "Lexical declaration cannot be the body of a labelled statement".to_string()
+                    ));
+                }
                 self.label_stack.push((label.clone(), is_loop));
                 let body = self.parse_stmt_inner()?;
                 self.label_stack.pop();
