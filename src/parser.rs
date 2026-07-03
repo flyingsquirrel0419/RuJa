@@ -902,6 +902,8 @@ impl Parser {
             }
             let name = match self.advance() {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
+                TokenKind::Of => Arc::from("of"),
+                TokenKind::Let if !self.is_strict_context => Arc::from("let"),
                 other => {
                     return Err(error::Error::syntax(format!(
                         "Expected identifier, got {:?}",
@@ -1700,6 +1702,12 @@ impl Parser {
                 // (e.g. `for (let in obj)` or `let = 1`).
                 self.advance();
                 Ok(Expr::Ident(Arc::from("let")))
+            }
+            TokenKind::Of => {
+                // `of` is a contextual keyword, usable as an identifier
+                // outside of for-of heads.
+                self.advance();
+                Ok(Expr::Ident(Arc::from("of")))
             }
             TokenKind::LParen => {
                 // Could be arrow: (a, b) => ...
