@@ -3028,6 +3028,10 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
+                    // Convert the key to a property key string ONCE, so that
+                    // ToPropertyKey (and thus toString) is called only once
+                    // per spec. Both GetElem and SetElem use this string.
+                    self.chunk.emit(Op::ToString, self.current_line);
                 } else {
                     let key = if let Expr::String(s) = property.as_ref() {
                         s.to_string()
@@ -3096,6 +3100,10 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
+                    // Convert the key to a property key string ONCE, so that
+                    // ToPropertyKey (and thus toString) is called only once
+                    // per spec. Both GetElem and SetElem use this string.
+                    self.chunk.emit(Op::ToString, self.current_line);
                 } else {
                     let key = if let Expr::String(s) = property.as_ref() {
                         s.to_string()
