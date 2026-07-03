@@ -415,17 +415,28 @@ impl Vm {
                 // Arrow functions capture `this` lexically from their
                 // enclosing scope, so they must NOT redeclare `this` in
                 // their own call environment (which would shadow the
-                // captured binding). Non-arrow functions bind `this` to the
-                // caller-supplied value (or `undefined`).
-                if !is_arrow {
-                    env::declare(
-                        &self.heap,
-                        call_env,
-                        "this",
-                        this_val.clone(),
-                        crate::value::BindingKind::Const,
-                    );
-                }
+               // captured binding). Non-arrow functions bind `this` to the
+               // caller-supplied value (or `undefined`).
+               if !is_arrow {
+                    // Derived class constructors leave `this` in the TDZ
+                    // until `super()` initializes it.
+                    if func.is_derived {
+                        env::declare_uninit(
+                            &self.heap,
+                            call_env,
+                            "this",
+                            crate::value::BindingKind::Const,
+                        );
+                    } else {
+                        env::declare(
+                            &self.heap,
+                            call_env,
+                            "this",
+                            this_val.clone(),
+                            crate::value::BindingKind::Const,
+                        );
+                    }
+               }
                 // For object literal methods, bind #super to this.__proto__
                 // so super property access works. Class methods already have
                 // #super bound by the compiler in the closure environment
@@ -473,10 +484,34 @@ impl Vm {
                         },
                     ))?;
                     Ok(Value::Object(GcIdx(g_idx)))
-                } else {
-                    // execute the compiled function chunk
-                    let result = self.execute_chunk_func(func.clone(), call_env, this_val, args);
-                    if is_async {
+               } else {
+                   // execute the compiled function chunk
+                   let result = self.execute_chunk_func(func.clone(), call_env, this_val, args);
+                    // For derived class constructors, check that `super()` was
+                    // called (i.e. `this` is no longer in the TDZ). If the
+                    // constructor returned without calling super, throw a
+                    // ReferenceError per spec.
+                    if func.is_derived {
+                        if let Ok(ref rv) = result {
+                            if !matches!(rv, Value::Object(_)) {
+                                let initialized = self.heap.with_obj(call_env.0, |obj| {
+                                    if let HeapObj::Environment(e) = obj {
+                                        e.vars.lock().get("this")
+                                            .map(|b| b.initialized.load(Ordering::Relaxed))
+                                            .unwrap_or(false)
+                                    } else {
+                                        false
+                                    }
+                                });
+                                if !initialized {
+                                    return Err(Error::reference(
+                                        "must call super constructor before accessing 'this' or returning"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                   if is_async {
                         // async functions return a Promise. An uncaught throw
                         // inside the async body must settle the returned
                         // Promise to Rejected (with the thrown value as the

@@ -22,4 +22,5 @@ pub struct FunctionDef {
     pub length: usize,
     /// True for object/class methods (enables super property access).
     pub is_method: bool,
+    pub is_derived: bool,
 }

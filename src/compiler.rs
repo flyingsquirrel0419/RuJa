@@ -916,6 +916,7 @@ impl Compiler {
                     is_generator: f.is_generator,
                     length: Self::fn_length(f),
                     is_method: f.is_method,
+                    is_derived: false,
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2179,10 +2180,13 @@ impl Compiler {
             } => {
                 // check if method call
                 // `super(args)`: call the parent constructor with `this`.
-                if matches!(callee.as_ref(), Expr::Super) {
-                    let this_idx = self.intern("this");
-                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line); // [this]
-                    let superctor_idx = self.intern("#superctor");
+               if matches!(callee.as_ref(), Expr::Super) {
+                    // Push a placeholder for `this`. In derived constructors,
+                    // `this` is in the TDZ until super() runs, so we cannot
+                    // LoadEnv("this"). The CallSuperCtor opcode uses the
+                    // frame's this_val directly.
+                    self.chunk.emit(Op::Undefined, self.current_line); // [placeholder]
+                   let superctor_idx = self.intern("#superctor");
                     self.chunk
                         .emit(Op::LoadEnv(superctor_idx), self.current_line); // [this, superCtor]
                     // Check if all args are a single spread (super(...args))
@@ -2574,6 +2578,7 @@ impl Compiler {
                     is_generator: f.is_generator,
                     length: Self::fn_length(f),
                     is_method: f.is_method,
+                    is_derived: false,
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2717,6 +2722,7 @@ impl Compiler {
                     is_generator: false,
                     length: Self::fn_length(&ctor_fn),
                 is_method: false,
+                is_derived: cls.superclass.is_some(),
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2814,6 +2820,7 @@ impl Compiler {
                         is_generator: false,
                         length: Self::fn_length(&m_fn),
                     is_method: true,
+                    is_derived: false,
                     };
                     self.funcs.push(Arc::new(mdef));
                     let is_accessor = matches!(
@@ -2930,6 +2937,7 @@ impl Compiler {
                         is_generator: false,
                         length: 0,
                     is_method: false,
+                    is_derived: false,
                     };
                     self.funcs.push(Arc::new(sbdef));
                     // stack: [ctor]. Dup ctor for `this`, then MakeClosure.

@@ -1722,34 +1722,42 @@ impl Vm {
                     }
                 }
                 Op::CallSuperCtor(arg_count) => {
-                    // stack: [this, superCtor, args...]; call superCtor with this.
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
-                    let this_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    // Call the parent constructor with `this` (not `new`, just call).
-                    let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
+                   // stack: [this, superCtor, args...]; call superCtor with this.
+                   let mut args = Vec::with_capacity(arg_count);
+                   for _ in 0..arg_count {
+                       args.push(self.stack.pop().unwrap_or(Value::Undefined));
+                   }
+                   args.reverse();
+                   let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
+                    // Use the frame's this_val (the object created by the
+                    // outer `construct` call), not the environment's `this`
+                    // which is in the TDZ for derived constructors.
+                    let this_val = self.current_frame()?.this_val.clone();
+                   // Call the parent constructor with `this` (not `new`, just call).
+                   let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     // If the parent constructor returned an object, use it as the new `this`.
                     let new_this = if matches!(result, Value::Object(_)) {
                         result
                     } else {
                         this_val
                     };
-                    // Rebind `this` in the current environment to the (possibly updated) value.
-                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::set(&self.heap, cur_env, "this", new_this.clone());
-                    self.current_frame_mut()?.this_val = new_this.clone();
-                    self.stack.push(new_this);
-                }
-                Op::CallSuperCtorSpread => {
-                    // stack: [this, superCtor, argsArray]
-                    let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
-                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
-                    let this_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    // Expand the array into individual args.
+                   // Rebind `this` in the current environment to the (possibly updated) value.
+                   let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    // Use `initialize` (not `set`) so the TDZ flag is lifted
+                    // for derived constructors where `this` was declared
+                    // uninitialized until `super()` ran.
+                    crate::environment::initialize(&self.heap, cur_env, "this", new_this.clone());
+                   self.current_frame_mut()?.this_val = new_this.clone();
+                   self.stack.push(new_this);
+               }
+               Op::CallSuperCtorSpread => {
+                   // stack: [this, superCtor, argsArray]
+                   let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+                   let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
+                    let this_val = self.current_frame()?.this_val.clone();
+                   // Expand the array into individual args.
                     let args = if let Value::Object(idx) = &args_arr {
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {
@@ -1768,7 +1776,7 @@ impl Vm {
                         this_val
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::set(&self.heap, cur_env, "this", new_this.clone());
+                    crate::environment::initialize(&self.heap, cur_env, "this", new_this.clone());
                     self.current_frame_mut()?.this_val = new_this.clone();
                     self.stack.push(new_this);
                 }
