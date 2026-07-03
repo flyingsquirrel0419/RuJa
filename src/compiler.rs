@@ -1729,8 +1729,9 @@ impl Compiler {
                 self.chunk.emit(Op::LoadEnv(name_idx), self.current_line);
             }
             Expr::Super => {
-                // `super` resolves to the parent prototype bound as `#super` in the
-                // method's closure environment. Used as a callee in `super.m(...)`.
+                // `super` resolves to the parent prototype. In class methods,
+                // it's bound as `#super` in the closure environment. In object
+                // literal methods, fall back to `this.__proto__`.
                 let name_idx = self.intern("#super");
                 self.chunk.emit(Op::LoadEnv(name_idx), self.current_line);
             }

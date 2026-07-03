@@ -1046,10 +1046,17 @@ impl Parser {
         self.expect(&TokenKind::LBrace, "{")?;
         self.switch_depth += 1;
         let mut cases = Vec::new();
+        let mut seen_default = false;
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let test = if self.eat(&TokenKind::Case) {
                 Some(self.parse_expr()?)
             } else if self.eat(&TokenKind::Default) {
+                if seen_default {
+                    return Err(error::Error::syntax(
+                        "Duplicate default clause in switch".to_string()
+                    ));
+                }
+                seen_default = true;
                 None
             } else {
                 return Err(error::Error::syntax("Expected case or default".to_string()));
