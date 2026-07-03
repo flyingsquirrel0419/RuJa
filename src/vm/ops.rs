@@ -1763,6 +1763,10 @@ impl Vm {
                 }
                 Op::CallSuperCtor(arg_count) => {
                    // stack: [this, superCtor, args...]; call superCtor with this.
+                   // Calling super() twice is a ReferenceError.
+                   if self.current_frame()?.super_called.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                       return Err(Error::reference("super() has already been called"));
+                   }
                    let mut args = Vec::with_capacity(arg_count);
                    for _ in 0..arg_count {
                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
@@ -1795,6 +1799,9 @@ impl Vm {
                }
                Op::CallSuperCtorSpread => {
                    // stack: [this, superCtor, argsArray]
+                   if self.current_frame()?.super_called.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                       return Err(Error::reference("super() has already been called"));
+                   }
                    let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);

@@ -119,6 +119,9 @@ pub struct CallFrame {
     /// In derived constructors, returning a non-object value after super()
     /// is a TypeError.
     pub is_derived_ctor: bool,
+    /// True after `super()` has been called in this frame. A second `super()`
+    /// call throws a ReferenceError.
+    pub super_called: std::sync::atomic::AtomicBool,
 }
 
 impl CallFrame {
@@ -142,6 +145,7 @@ impl CallFrame {
             finally_completion_val: Mutex::new(Value::Undefined),
             finally_stack: Vec::new(),
             is_derived_ctor: false,
+            super_called: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
