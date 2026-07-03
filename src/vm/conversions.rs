@@ -134,17 +134,9 @@ impl Vm {
                             return self.to_string(&r);
                         }
                     }
-                    // No usable toString: use the default class tag.
-                    self.heap.with_obj(idx.0, |obj| match obj {
-                        HeapObj::Object(o) => {
-                            if let Some(cn) = &o.class_name {
-                                cn.clone()
-                            } else {
-                                Arc::from("[object Object]")
-                            }
-                        }
-                        _ => Arc::from("[object Object]"),
-                    })
+                    // Default: [object <className>]
+                    let name = self.heap.with_obj(idx.0, |obj| obj.class_name().to_string());
+                    Arc::from(format!("[object {}]", name).as_str())
                 }
             }
             Value::Symbol(_) => {

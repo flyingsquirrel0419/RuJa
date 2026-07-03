@@ -144,37 +144,10 @@ pub(crate) fn object_to_string(
         let class = if let Some(hint) = class_hint {
             hint.to_string()
         } else {
-            vm.heap.with_obj(idx.0, |obj| {
-                let name = obj.class_name();
-                if name == "Object" {
-                    // check constructor name via prototype
-                    if let Some(Value::Object(pidx)) = obj.proto().lock().as_ref().cloned() {
-                        let constructor = vm.heap.with_obj(pidx.0, |p| {
-                            p.props()
-                                .lock()
-                                .get(&crate::value::PropertyKey::from("constructor"))
-                                .map(|d| d.value.clone())
-                        });
-                        if let Some(Value::Object(fidx)) = constructor {
-                            let fname = vm.heap.with_obj(fidx.0, |f| {
-                                if let HeapObj::Function(fd) = f {
-                                    fd.name.clone()
-                                } else {
-                                    None
-                                }
-                            });
-                            if let Some(n) = fname {
-                                return n.to_string();
-                            }
-                        }
-                    }
-                }
-                name.to_string()
-            })
+            vm.heap.with_obj(idx.0, |obj| obj.class_name().to_string())
         };
-        return Ok(Value::String(Arc::from(
-            format!("[object {}]", class).as_str(),
-        )));
+        let result = format!("[object {}]", class);
+        return Ok(Value::String(Arc::from(result.as_str())));
     }
     Ok(Value::String(Arc::from("[object Object]")))
 }

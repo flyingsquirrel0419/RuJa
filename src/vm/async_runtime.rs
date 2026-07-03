@@ -312,7 +312,46 @@ impl Vm {
             }
         });
         match kind_info {
-            Some(FuncCallInfo::Native(f)) => f(self, args, this),
+            Some(FuncCallInfo::Native(f)) => {
+                // Workaround: in release builds, the function pointer for
+                // Object.prototype.toString doesn't dispatch correctly.
+                // When the callee is named "toString" and the receiver's
+                // prototype is Object.prototype (i.e., it inherits the
+                // default toString), call object_to_string directly.
+                let is_default_tostring = self.heap.with_obj(idx.0, |obj| {
+                    if let HeapObj::Function(fd) = obj {
+                        fd.name.as_deref() == Some("toString")
+                    } else {
+                        false
+                    }
+                });
+                if is_default_tostring {
+                    if let Some(ref tv) = &this {
+                        if let Value::Object(tidx) = tv {
+                            // Check if the receiver's direct proto is
+                            // Object.prototype (class_name "Object") and
+                            // the receiver itself has no own toString.
+                            let inherits_default = self.heap.with_obj(tidx.0, |o| {
+                                let has_own = o.props().lock().contains_key(
+                                    &crate::value::PropertyKey::from("toString")
+                                );
+                                if has_own { return false; }
+                                if let Some(Value::Object(pidx)) = o.proto().lock().as_ref() {
+                                    self.heap.with_obj(pidx.0, |p| {
+                                        p.class_name() == "Object"
+                                    })
+                                } else { false }
+                            });
+                            if inherits_default {
+                                return crate::builtins::object_to_string(
+                                    self, this.clone(), None,
+                                );
+                            }
+                        }
+                    }
+                }
+                f(self, args, this)
+            }
             Some(FuncCallInfo::Interpreted {
                 func,
                 closure,

@@ -59,7 +59,10 @@ impl Vm {
                             );
                         }
                     }
-                    o.props().lock().get(&pkey).map(|d| d.value.clone())
+                    let r = o.props().lock().get(&pkey).map(|d| d.value.clone());
+                    if key == "toString" && r.is_some() {
+                    }
+                    r
                 });
                 if let Some(v) = val {
                     return Ok(v);
