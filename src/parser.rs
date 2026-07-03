@@ -957,10 +957,12 @@ impl Parser {
         let mut finally_body = None;
         if self.eat(&TokenKind::Catch) {
             if self.eat(&TokenKind::LParen) {
-                if let TokenKind::Ident(s) = self.advance() {
-                    catch_param = Some(Arc::from(s.as_str()));
+                let pat = self.parse_destructure_pattern()?;
+                if self.is_strict_context {
+                    check_pattern_strict(&pat)?;
                 }
                 self.expect(&TokenKind::RParen, ")")?;
+                catch_param = Some(pat);
             }
             catch_body = Some(Box::new(self.parse_block()?));
         }
@@ -2921,4 +2923,18 @@ fn collect_pattern_names(pattern: &Pattern, names: &mut Vec<Arc<str>>) {
         Pattern::Assign(p, _) => collect_pattern_names(p, names),
         Pattern::Rest(p) => collect_pattern_names(p, names),
     }
+}
+
+fn check_pattern_strict(pattern: &Pattern) -> error::Result<()> {
+    let mut names = Vec::new();
+    collect_pattern_names(pattern, &mut names);
+    for n in &names {
+        if matches!(&**n, "eval" | "arguments") {
+            return Err(error::Error::syntax(format!(
+                "'{}' cannot be used as a binding name in strict mode",
+                n
+            )));
+        }
+    }
+    Ok(())
 }

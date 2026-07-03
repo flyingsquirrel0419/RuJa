@@ -296,7 +296,7 @@ pub enum StmtNode {
     Throw(Expr),
     TryCatch {
         try_body: Box<Stmt>,
-        catch_param: Option<Arc<str>>,
+        catch_param: Option<Pattern>,
         catch_body: Option<Box<Stmt>>,
         finally_body: Option<Box<Stmt>>,
     },

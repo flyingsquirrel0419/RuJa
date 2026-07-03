@@ -812,9 +812,23 @@ impl Compiler {
                     }
                     self.push_scope(true);
                     if let Some(param) = catch_param {
-                        self.declare(param, VarKind::Let)?;
-                        let name_idx = self.intern(param);
-                        self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
+                        match param {
+                            crate::ast::Pattern::Ident(name) => {
+                                self.declare(&name, VarKind::Let)?;
+                                let name_idx = self.intern(&name);
+                                self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
+                            }
+                            ref pat => {
+                                // Destructuring catch parameter: the thrown
+                                // value is on the stack. Store it in a temp
+                                // then destructure.
+                                let temp_name: Arc<str> = Arc::from("#catchval");
+                                self.declare(&temp_name, VarKind::Let)?;
+                                let name_idx = self.intern(&temp_name);
+                                self.chunk.emit(Op::DeclareEnv(name_idx), self.current_line);
+                                self.compile_pattern(pat, name_idx, &[], VarKind::Let)?;
+                            }
+                        }
                     }
                     self.compile_stmt(catch_body.as_ref().unwrap())?;
                     self.pop_scope();
