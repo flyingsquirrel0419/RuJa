@@ -53,6 +53,7 @@ pub struct Parser {
     /// Current function nesting depth. 0 = top-level program code.
     /// `return` at depth 0 is a SyntaxError.
     function_depth: usize,
+    super_depth: usize,
 }
 
 impl Parser {
@@ -76,6 +77,7 @@ impl Parser {
             switch_depth: 0,
             label_stack: Vec::new(),
             function_depth: 0,
+            super_depth: 0,
         }
     }
 
@@ -467,7 +469,7 @@ impl Parser {
         let params = self.parse_params()?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body()?;
+        let mut body = self.parse_fn_body(false)?;
         {
             let mut pre = self.take_dstr_prelude();
             pre.append(&mut body);
@@ -587,7 +589,7 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_fn_body(&mut self) -> error::Result<Vec<Stmt>> {
+    fn parse_fn_body(&mut self, super_allowed: bool) -> error::Result<Vec<Stmt>> {
         self.expect(&TokenKind::LBrace, "{")?;
         // Detect a leading "use strict" directive BEFORE parsing body
         // statements, so strict-mode early errors (e.g. assignment to `eval`)
@@ -597,6 +599,12 @@ impl Parser {
         if body_is_strict {
             self.is_strict_context = true;
         }
+        let saved_super = self.super_depth;
+        if super_allowed {
+            self.super_depth += 1;
+        } else {
+            self.super_depth = 0;
+        }
         self.function_depth += 1;
         let mut body = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
@@ -605,6 +613,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "}")?;
         self.function_depth -= 1;
         self.is_strict_context = saved_strict;
+        self.super_depth = saved_super;
         Ok(body)
     }
 
@@ -1738,6 +1747,11 @@ impl Parser {
                 Ok(Expr::This)
             }
             TokenKind::Super => {
+                if self.super_depth == 0 {
+                    return Err(error::Error::syntax(
+                        "super keyword unexpected here"
+                    ));
+                }
                 self.advance();
                 Ok(Expr::Super)
             }
@@ -2029,7 +2043,7 @@ impl Parser {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
-                let mut body = self.parse_fn_body()?;
+                let mut body = self.parse_fn_body(true)?;
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
@@ -2069,7 +2083,7 @@ impl Parser {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
-                let mut body = self.parse_fn_body()?;
+                let mut body = self.parse_fn_body(true)?;
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
@@ -2178,7 +2192,7 @@ impl Parser {
         let params = self.parse_params()?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body()?;
+        let mut body = self.parse_fn_body(false)?;
         {
             let mut pre = self.take_dstr_prelude();
             pre.append(&mut body);
@@ -2410,7 +2424,7 @@ impl Parser {
             .collect();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
-            let mut body = self.parse_fn_body()?;
+            let mut body = self.parse_fn_body(false)?;
             {
                 let mut pre = self.take_dstr_prelude();
                 pre.append(&mut body);
@@ -2618,7 +2632,7 @@ impl Parser {
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
                 self.advance(); // static
-                let block = self.parse_fn_body()?;
+                let block = self.parse_fn_body(false)?;
                 static_blocks.push(block);
                 continue;
             }
@@ -2633,7 +2647,7 @@ impl Parser {
                     let params = self.parse_params()?;
                     let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                     let rest_param = self.cur_rest_param.take();
-                    let mut body = self.parse_fn_body()?;
+                    let mut body = self.parse_fn_body(true)?;
                     {
                         let mut pre = self.take_dstr_prelude();
                         pre.append(&mut body);
@@ -2718,7 +2732,7 @@ impl Parser {
             let params = self.parse_params()?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
             let rest_param = self.cur_rest_param.take();
-            let mut body = self.parse_fn_body()?;
+            let mut body = self.parse_fn_body(true)?;
             {
                 let mut pre = self.take_dstr_prelude();
                 pre.append(&mut body);
