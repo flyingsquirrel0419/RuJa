@@ -727,7 +727,30 @@ impl Compiler {
                 self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
                 // Bind the value into the loop variable, then run the body.
                 self.compile_for_var(left)?;
+                // For let/const declarations: create a fresh binding per
+                // iteration so closures capture distinct values.
+                let (per_iteration_let, loop_names) = match &left.node {
+                    StmtNode::VarDecl { kind, decls } => {
+                        let names: Vec<Arc<str>> = decls.iter().map(|(n, _)| n.clone()).collect();
+                        (*kind == VarKind::Let || *kind == VarKind::Const, names)
+                    }
+                    _ => (false, Vec::new()),
+                };
+                let loop_names_idx = if loop_names.is_empty() {
+                    usize::MAX
+                } else {
+                    let idx = self.chunk.let_names.len();
+                    self.chunk.let_names.push(loop_names);
+                    idx
+                };
+                if per_iteration_let {
+                    self.chunk
+                        .emit(Op::CloneLetNames(loop_names_idx), self.current_line);
+                }
                 self.compile_stmt(body)?;
+                if per_iteration_let {
+                    self.chunk.emit(Op::RestoreParentEnv, self.current_line);
+                }
                 self.chunk.emit(Op::Pop, self.current_line); // discard body's expr result
                 self.chunk.emit(Op::Jump(loop_start), self.current_line);
                 let end = self.chunk.code.len();
