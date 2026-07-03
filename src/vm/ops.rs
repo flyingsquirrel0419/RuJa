@@ -2045,7 +2045,7 @@ impl Vm {
                 props: Mutex::new(IndexMap::new()),
             };
             let idx = self.alloc(HeapObj::Function(fd))?;
-            // Set function.length and function.name as own properties.
+            // Set function.length, function.name, and function.prototype as own properties.
             self.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Function(f) = obj {
                     let mut props = f.props.lock();
@@ -2061,6 +2061,14 @@ impl Vm {
                     name_desc.enumerable = false;
                     name_desc.configurable = true;
                     props.insert(crate::value::PropertyKey::from("name"), name_desc);
+                    // prototype: writable, non-enumerable, non-configurable
+                    if !is_arrow {
+                        let mut proto_desc = crate::value::PropertyDescriptor::data(proto_val.clone());
+                        proto_desc.writable = true;
+                        proto_desc.enumerable = false;
+                        proto_desc.configurable = false;
+                        props.insert(crate::value::PropertyKey::from("prototype"), proto_desc);
+                    }
                 }
             });
             // link prototype.constructor back to the function
