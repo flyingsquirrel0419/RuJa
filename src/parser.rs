@@ -2120,6 +2120,14 @@ impl Parser {
                 self.advance();
                 Some(Arc::from(s.as_str()))
             }
+            TokenKind::Await if !self.is_strict_context => {
+                self.advance();
+                Some(Arc::from("await"))
+            }
+            TokenKind::Yield if !self.is_strict_context => {
+                self.advance();
+                Some(Arc::from("yield"))
+            }
             _ => None,
         };
         let params = self.parse_params()?;
@@ -2536,6 +2544,14 @@ impl Parser {
             TokenKind::Ident(s) => {
                 self.advance();
                 Some(Arc::from(s.as_str()))
+            }
+            TokenKind::Await if !self.is_strict_context => {
+                self.advance();
+                Some(Arc::from("await"))
+            }
+            TokenKind::Yield if !self.is_strict_context => {
+                self.advance();
+                Some(Arc::from("yield"))
             }
             _ => None,
         };
