@@ -1202,6 +1202,12 @@ impl Compiler {
                 .unwrap_or(param_slots.len());
             param_slots.push(slot);
         }
+        // Declare the rest parameter in the compiler's scope table so that
+        // references to it resolve to a local slot. The VM declares the
+        // actual binding (with the array value) at call time.
+        if let Some(rest) = &f.rest_param {
+            self.declare_param(rest, f.is_strict)?;
+        }
         // Initialize every parameter binding left-to-right. In the VM all
         // parameter bindings are declared *uninitialized* (TDZ), so a default
         // expression that references a parameter to its right throws
@@ -2110,6 +2116,15 @@ impl Compiler {
                     let superctor_idx = self.intern("#superctor");
                     self.chunk
                         .emit(Op::LoadEnv(superctor_idx), self.current_line); // [this, superCtor]
+                    // Check if all args are a single spread (super(...args))
+                    let is_single_spread = args.len() == 1 && matches!(args[0], Expr::Spread(_));
+                    if is_single_spread {
+                        if let Expr::Spread(inner) = &args[0] {
+                            self.compile_expr(inner)?;
+                        }
+                        self.chunk.emit(Op::CallSuperCtorSpread, self.current_line);
+                        return Ok(());
+                    }
                     for a in args {
                         if let Expr::Spread(_) = a {
                         } else {
@@ -2498,12 +2513,11 @@ impl Compiler {
                 // Build a constructor function from the class.
                 // Methods become prototype properties (or static on the constructor).
                 let has_ctor = cls.methods.iter().any(|m| m.is_constructor);
-                // For derived classes without an explicit constructor, synthesize one
-                // that forwards all arguments to `super(...)`.
+                // For derived classes without an explicit constructor, synthesize
+                // one that forwards all arguments via super(...rest).
+                let rest_name: Arc<str> = Arc::from("#rest");
                 let synthetic_params: Vec<Arc<str>> = if cls.superclass.is_some() && !has_ctor {
-                    (0..16)
-                        .map(|i| Arc::from(format!("#a{}", i).as_str()))
-                        .collect()
+                    vec![rest_name.clone()]
                 } else {
                     Vec::new()
                 };
@@ -2516,7 +2530,8 @@ impl Compiler {
                         .map(|m| m.params.clone())
                         .or_else(|| {
                             if cls.superclass.is_some() {
-                                Some(synthetic_params.clone())
+                                // No positional params; only a rest param.
+                                Some(vec![])
                             } else {
                                 None
                             }
@@ -2532,7 +2547,14 @@ impl Compiler {
                         .methods
                         .iter()
                         .find(|m| m.is_constructor)
-                        .and_then(|m| m.rest_param.clone()),
+                        .and_then(|m| m.rest_param.clone())
+                        .or_else(|| {
+                            if cls.superclass.is_some() && !has_ctor {
+                                Some(rest_name.clone())
+                            } else {
+                                None
+                            }
+                        }),
                     body: {
                         let body = cls
                             .methods
@@ -2541,11 +2563,10 @@ impl Compiler {
                             .map(|m| m.body.clone())
                             .or_else(|| {
                                 if cls.superclass.is_some() {
-                                    // super(#a0, #a1, ... #a15)
-                                    let args: Vec<Expr> = synthetic_params
-                                        .iter()
-                                        .map(|n| Expr::Ident(n.clone()))
-                                        .collect();
+                                    // super(...#rest)
+                                    let args: Vec<Expr> = vec![Expr::Spread(Box::new(
+                                        Expr::Ident(rest_name.clone()),
+                                    ))];
                                     Some(vec![Stmt {
                                         line: 0,
                                         node: StmtNode::ExprStmt(Expr::Call {

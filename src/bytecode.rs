@@ -177,6 +177,7 @@ pub enum Op {
     /// Stack: [src, argCount-extras...]; uses the current frame's env + this.
     CallDirectEval(usize), // arg count
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
+    CallSuperCtorSpread,  // super(...args): stack [this, superCtor, argsArray]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
     New(usize),           // constructor call, arg count
     NewSpread,            // constructor call with spread args (argsArr on stack)
