@@ -2805,15 +2805,15 @@ impl Compiler {
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                         }
                     } else if method.is_static {
-                        // Constructor.method = fn
+                        // Constructor.method = fn (non-enumerable)
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                         let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);
                         self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
-                        self.chunk.emit(Op::SetProp, self.current_line);
+                        self.chunk.emit(Op::DefineMethod, self.current_line);
                         self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     } else {
-                        // Constructor.prototype.method = fn
+                        // Constructor.prototype.method = fn (non-enumerable)
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                         let proto_key = self
                             .chunk
@@ -2823,7 +2823,7 @@ impl Compiler {
                         let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);
                         self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
-                        self.chunk.emit(Op::SetProp, self.current_line);
+                        self.chunk.emit(Op::DefineMethod, self.current_line);
                         self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     }
                 }

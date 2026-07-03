@@ -1235,6 +1235,26 @@ impl Vm {
                     }
                     self.stack.push(value);
                 }
+                Op::DefineMethod => {
+                    // stack (bottom->top): [obj, key, value]
+                    // Define a non-enumerable, configurable, writable data property.
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            let mut props = o.props().lock();
+                            let mut desc = crate::value::PropertyDescriptor::data(value.clone());
+                            desc.enumerable = false;
+                            desc.configurable = true;
+                            desc.writable = true;
+                            props.insert(crate::value::PropertyKey::from(key_str.as_str()), desc);
+                        });
+                        self.ic_invalidate(idx.0, &key_str);
+                    }
+                    self.stack.push(value);
+                }
                 Op::SetElem => {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);

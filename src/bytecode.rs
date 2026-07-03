@@ -162,6 +162,7 @@ pub enum Op {
     DefineAccessor(u8), // pop [fn, key, obj]; define getter(0)/setter(1)
     GetProp,
     SetProp,
+    DefineMethod, // define non-enumerable method property: stack [obj, key, value]
     GetElem, // computed member
     SetElem,
     DeleteProp,
