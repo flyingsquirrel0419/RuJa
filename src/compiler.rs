@@ -1838,11 +1838,7 @@ impl Compiler {
             Expr::Update(op, prefix, target) => {
                 // `x++`/`++x`/`x--`/`--x`. Stash the old value in a temp env binding
                 // so the store can use a clean [obj, key, value] without fighting it.
-                let delta = match op {
-                    UpdateOp::Inc => 1.0,
-                    UpdateOp::Dec => -1.0,
-                };
-                let c = self.chunk.add_constant(Value::Number(delta));
+                let inc_op = || match op { UpdateOp::Inc => Op::Inc, UpdateOp::Dec => Op::Dec };
                 match target.as_ref() {
                     Expr::Member {
                         object,
@@ -1888,8 +1884,10 @@ impl Compiler {
                             // [obj, key]
                         }
                         self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [obj, key, oldNum]
-                        self.chunk.emit(Op::Const(c), self.current_line); // [obj, key, oldNum, delta]
-                        self.chunk.emit(Op::Add, self.current_line); // [obj, key, newNum]
+                        self.chunk.emit(Op::Dup, self.current_line); // [obj, key, oldNum, oldNum]
+                        self.chunk.emit(inc_op(), self.current_line); // [obj, key, oldNum, newNum]
+                        self.chunk.emit(Op::Swap, self.current_line); // [obj, key, newNum, oldNum]
+                        self.chunk.emit(Op::Pop, self.current_line); // [obj, key, newNum]
                         if *computed {
                             self.chunk.emit(Op::SetElem, self.current_line);
                         } else {
@@ -1899,8 +1897,7 @@ impl Compiler {
                                                                      // Result: oldNum (postfix) or newNum (prefix).
                         if *prefix {
                             self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [oldNum]
-                            self.chunk.emit(Op::Const(c), self.current_line); // [oldNum, delta]
-                            self.chunk.emit(Op::Add, self.current_line); // [newNum]
+                            self.chunk.emit(inc_op(), self.current_line); // [newNum]
                         } else {
                             self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
                             // [oldNum]
@@ -1920,14 +1917,15 @@ impl Compiler {
                                                                                          // Build [obj, newNum] and store.
                             self.compile_expr(object)?; // [obj]
                             self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [obj, oldNum]
-                            self.chunk.emit(Op::Const(c), self.current_line); // [obj, oldNum, delta]
-                            self.chunk.emit(Op::Add, self.current_line); // [obj, newNum]
+                            self.chunk.emit(Op::Dup, self.current_line); // [obj, oldNum, oldNum]
+                            self.chunk.emit(inc_op(), self.current_line); // [obj, oldNum, newNum]
+                            self.chunk.emit(Op::Swap, self.current_line); // [obj, newNum, oldNum]
+                            self.chunk.emit(Op::Pop, self.current_line); // [obj, newNum]
                             self.chunk.emit(Op::SetPrivate(name_idx), self.current_line); // [newVal]
                             self.chunk.emit(Op::Pop, self.current_line); // []
                             if *prefix {
                                 self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
-                                self.chunk.emit(Op::Const(c), self.current_line);
-                                self.chunk.emit(Op::Add, self.current_line); // [newNum]
+                                self.chunk.emit(inc_op(), self.current_line); // [newNum]
                             } else {
                                 self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
                                 // [oldNum]
@@ -1937,14 +1935,12 @@ impl Compiler {
                         self.compile_expr(target)?; // [old]
                         self.chunk.emit(Op::TypeCoerce, self.current_line); // [oldNum]
                         self.chunk.emit(Op::Dup, self.current_line); // [oldNum, oldNum]
-                        self.chunk.emit(Op::Const(c), self.current_line); // [oldNum, oldNum, delta]
-                        self.chunk.emit(Op::Add, self.current_line); // [oldNum, newNum]
+                        self.chunk.emit(inc_op(), self.current_line); // [oldNum, newNum]
                         self.compile_assign_target(target)?;
                         self.chunk.emit(Op::Pop, self.current_line); // [oldNum]
                         if *prefix {
                             self.chunk.emit(Op::Dup, self.current_line); // [oldNum, oldNum]
-                            self.chunk.emit(Op::Const(c), self.current_line); // [oldNum, oldNum, delta]
-                            self.chunk.emit(Op::Add, self.current_line); // [oldNum, newNum]
+                            self.chunk.emit(inc_op(), self.current_line); // [oldNum, newNum]
                             self.chunk.emit(Op::Swap, self.current_line); // [newNum, oldNum]
                             self.chunk.emit(Op::Pop, self.current_line); // [newNum]
                         }

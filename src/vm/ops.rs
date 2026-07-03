@@ -1454,6 +1454,26 @@ impl Vm {
                     }
                     self.stack.push(parent);
                 }
+                Op::Inc => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    match v {
+                        Value::BigInt(n) => self.stack.push(Value::BigInt(n + 1)),
+                        _ => {
+                            let n = self.to_number(&v)?;
+                            self.stack.push(Value::Number(n + 1.0));
+                        }
+                    }
+                }
+                Op::Dec => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    match v {
+                        Value::BigInt(n) => self.stack.push(Value::BigInt(n - 1)),
+                        _ => {
+                            let n = self.to_number(&v)?;
+                            self.stack.push(Value::Number(n - 1.0));
+                        }
+                    }
+                }
                 Op::SetProto => {
                     // stack (top->bottom): [proto, obj]; set obj's [[Prototype]] to proto.
                     let proto = self.stack.pop().unwrap_or(Value::Undefined);
