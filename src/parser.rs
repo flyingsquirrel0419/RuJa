@@ -2124,7 +2124,9 @@ impl Parser {
                 // SetFunctionName: assigning a function/arrow to a property
                 // sets its `name` to the property key (when the function has
                 // no explicit name). Computed keys use "".
-                if !computed {
+                // Exception: __proto__ is a special property that does NOT
+                // trigger SetFunctionName per spec.
+                if !computed && Self::prop_key_name(&key).as_deref() != Some("__proto__") {
                     if let Expr::Function(f) = &mut value {
                         if f.name.is_none() {
                             f.name = Self::prop_key_name(&key);
