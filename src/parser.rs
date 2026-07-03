@@ -772,6 +772,14 @@ impl Parser {
             // Check for duplicate bound names in for-in/for-of declarations.
             self.check_for_dup_bound_names(&stmt.node)?;
            if self.check(&TokenKind::In) {
+               // for-in/for-of head declarations must not have an initializer.
+               if let StmtNode::VarDecl { decls, .. } = &stmt.node {
+                   if decls.iter().any(|d| d.1.is_some()) {
+                       return Err(error::Error::syntax(
+                           "for-in head declaration must not have an initializer".to_string()
+                       ));
+                   }
+               }
                self.advance();
                let right = self.parse_expr()?;
                self.expect(&TokenKind::RParen, ")")?;
@@ -785,6 +793,14 @@ impl Parser {
                 }));
             }
             if self.check(&TokenKind::Of) {
+               // for-of head declarations must not have an initializer.
+               if let StmtNode::VarDecl { decls, .. } = &stmt.node {
+                   if decls.iter().any(|d| d.1.is_some()) {
+                       return Err(error::Error::syntax(
+                           "for-of head declaration must not have an initializer".to_string()
+                       ));
+                   }
+               }
                 self.advance();
                 let right = self.parse_assign()?;
                 self.expect(&TokenKind::RParen, ")")?;
