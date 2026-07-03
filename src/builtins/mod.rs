@@ -229,6 +229,7 @@ pub(crate) fn make_builtin_constructor(
         );
     });
     // prototype.constructor
+    let ts_fn = vm.new_native_function("toString", error_to_string, 0)?;
     vm.heap.with_obj(proto_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("constructor"),
@@ -241,6 +242,10 @@ pub(crate) fn make_builtin_constructor(
         obj.props().lock().insert(
             PropertyKey::from("message"),
             data_prop(Value::String(Arc::from(""))),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("toString"),
+            data_prop(Value::Object(ts_fn)),
         );
     });
 
@@ -280,6 +285,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             data_prop(Value::Object(proto_idx)),
         );
     });
+    let ts_fn = vm.new_native_function("toString", error_to_string, 0)?;
     vm.heap.with_obj(proto_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("constructor"),
@@ -292,6 +298,10 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
         obj.props().lock().insert(
             PropertyKey::from("message"),
             data_prop(Value::String(Arc::from(""))),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("toString"),
+            data_prop(Value::Object(ts_fn)),
         );
     });
 
@@ -1243,7 +1253,20 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
                 i
             }
         }
-        _ => vm.new_object()?,
+        _ => {
+            // Called as Error(msg) without new: create a new object with
+            // error_proto as its prototype (not Object.prototype).
+            let proto = vm.error_proto.clone();
+            let obj = HeapObj::Object(ObjectData {
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(Some(proto)),
+                extensible: AtomicBool::new(true),
+                class_name: None,
+                private_fields: Mutex::new(std::collections::HashMap::new()),
+                primitive: Mutex::new(None),
+            });
+            GcIdx(vm.heap.allocate(obj)?)
+        }
     };
     // Inherit `name` from the prototype (each Error subclass proto sets it),
     // falling back to "Error".
@@ -1838,4 +1861,25 @@ fn object_is_prototype_of(
         }
     }
     Ok(Value::Bool(false))
+}
+
+fn error_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    let name = vm.get_property(&this, "name")?;
+    let name_str = if name.is_undefined() {
+        "Error".to_string()
+    } else {
+        vm.to_string(&name)?.to_string()
+    };
+    let msg = vm.get_property(&this, "message")?;
+    let msg_str = if msg.is_undefined() {
+        String::new()
+    } else {
+        vm.to_string(&msg)?.to_string()
+    };
+    if msg_str.is_empty() {
+        Ok(Value::String(Arc::from(name_str)))
+    } else {
+        Ok(Value::String(Arc::from(format!("{}: {}", name_str, msg_str))))
+    }
 }
