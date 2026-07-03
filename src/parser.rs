@@ -1695,6 +1695,12 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Ident(Arc::from(s.as_str())))
             }
+            TokenKind::Let if !self.is_strict_context => {
+                // In non-strict mode, `let` can be used as an identifier
+                // (e.g. `for (let in obj)` or `let = 1`).
+                self.advance();
+                Ok(Expr::Ident(Arc::from("let")))
+            }
             TokenKind::LParen => {
                 // Could be arrow: (a, b) => ...
                 self.advance();
