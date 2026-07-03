@@ -519,6 +519,7 @@ impl Parser {
             is_generator,
             param_decls: Vec::new(),
             is_strict,
+                is_method: false,
         })))
     }
 
@@ -2052,6 +2053,7 @@ impl Parser {
                         is_generator: false,
                         param_decls: Vec::new(),
                         is_strict,
+                            is_method: false,
                     }),
                     computed,
                     method: false,
@@ -2088,6 +2090,7 @@ impl Parser {
                         is_generator: is_generator_method,
                         param_decls: Vec::new(),
                         is_strict,
+                        is_method: true,
                     }),
                     computed,
                     method: true,
@@ -2221,6 +2224,7 @@ impl Parser {
             is_generator,
             param_decls: Vec::new(),
             is_strict,
+                is_method: false,
         }))
     }
 
@@ -2458,6 +2462,7 @@ impl Parser {
                 is_generator: false,
                 param_decls: Vec::new(),
                 is_strict,
+                    is_method: false,
             }))
         } else {
             let e = self.parse_assign()?;
@@ -2495,6 +2500,7 @@ impl Parser {
                 param_decls: Vec::new(),
                 // Arrow with expression body has no directive prologue; inherit.
                 is_strict: self.is_strict_context,
+            is_method: false,
             }))
         }
     }

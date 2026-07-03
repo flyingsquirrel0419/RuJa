@@ -156,6 +156,8 @@ pub struct FunctionExpr {
     /// inherited strictness from an enclosing strict context). Drives
     /// strict-mode enforcement: `with` rejection, duplicate params, etc.
     pub is_strict: bool,
+    /// True for object literal methods and class methods (enables super).
+    pub is_method: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -277,6 +277,7 @@ pub(crate) fn function_constructor(
         is_generator: false,
         param_decls: Vec::new(),
         is_strict,
+        is_method: false,
     };
     let mut compiler = crate::compiler::Compiler::new();
     let (chunk, param_slots) = compiler.compile_function(&f)?;
@@ -291,6 +292,7 @@ pub(crate) fn function_constructor(
         is_async: false,
         is_generator: false,
         length: crate::compiler::Compiler::fn_length(&f),
+    is_method: false,
     });
     vm.functions.push(fdef.clone());
     let func_idx = vm.functions.len() - 1;

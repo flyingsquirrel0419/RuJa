@@ -892,6 +892,7 @@ impl Compiler {
                     is_async: f.is_async,
                     is_generator: f.is_generator,
                     length: Self::fn_length(f),
+                    is_method: f.is_method,
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2527,6 +2528,7 @@ impl Compiler {
                     is_async: f.is_async,
                     is_generator: f.is_generator,
                     length: Self::fn_length(f),
+                    is_method: f.is_method,
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2624,6 +2626,7 @@ impl Compiler {
                                     is_generator: false,
                                     param_decls: Vec::new(),
                                     is_strict: true,
+                                is_method: false,
                                 }))),
                             })
                             .collect();
@@ -2653,6 +2656,7 @@ impl Compiler {
                     is_generator: false,
                     param_decls: Vec::new(),
                     is_strict: true, // classes are always strict
+                    is_method: true,
                 };
                 let (func_chunk, param_slots) = self.compile_function(&ctor_fn)?;
                 let func_idx = self.funcs.len();
@@ -2667,6 +2671,7 @@ impl Compiler {
                     is_async: false,
                     is_generator: false,
                     length: Self::fn_length(&ctor_fn),
+                is_method: false,
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
@@ -2748,6 +2753,7 @@ impl Compiler {
                         is_generator: false,
                         param_decls: Vec::new(),
                         is_strict: true, // class methods are always strict
+                        is_method: true,
                     };
                     let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
                     let m_idx = self.funcs.len();
@@ -2762,6 +2768,7 @@ impl Compiler {
                         is_async: false,
                         is_generator: false,
                         length: Self::fn_length(&m_fn),
+                    is_method: true,
                     };
                     self.funcs.push(Arc::new(mdef));
                     let is_accessor = matches!(
@@ -2862,6 +2869,7 @@ impl Compiler {
                         is_generator: false,
                         param_decls: Vec::new(),
                         is_strict: true,
+                    is_method: false,
                     };
                     let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
                     let sb_idx = self.funcs.len();
@@ -2876,6 +2884,7 @@ impl Compiler {
                         is_async: false,
                         is_generator: false,
                         length: 0,
+                    is_method: false,
                     };
                     self.funcs.push(Arc::new(sbdef));
                     // stack: [ctor]. Dup ctor for `this`, then MakeClosure.

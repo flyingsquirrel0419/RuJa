@@ -20,4 +20,6 @@ pub struct FunctionDef {
     /// ES function `length`: number of params before the first default or
     /// the rest parameter.
     pub length: usize,
+    /// True for object/class methods (enables super property access).
+    pub is_method: bool,
 }

@@ -426,6 +426,28 @@ impl Vm {
                         crate::value::BindingKind::Const,
                     );
                 }
+                // For object literal methods, bind #super to this.__proto__
+                // so super property access works. Class methods already have
+                // #super bound by the compiler in the closure environment
+                // (to the correct superclass prototype), so we only bind if
+                // #super is not already present in the scope chain.
+                if func.is_method && !is_arrow {
+                    let has_super = crate::environment::has(&self.heap, call_env, "#super");
+                    if !has_super {
+                        let proto = if let Value::Object(ti) = &this_val {
+                            self.heap.with_obj(ti.0, |o| o.proto().lock().clone())
+                        } else {
+                            None
+                        };
+                        env::declare(
+                            &self.heap,
+                            call_env,
+                            "#super",
+                            proto.unwrap_or(Value::Null),
+                            crate::value::BindingKind::Const,
+                        );
+                    }
+                }
                 let _ = &this_val;
                 let is_gen = func.is_generator;
                 if is_gen {
