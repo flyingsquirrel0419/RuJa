@@ -2521,14 +2521,6 @@ impl Parser {
             TokenKind::Await => "await".to_string(),
             TokenKind::Yield => "yield".to_string(),
             TokenKind::Super => "super".to_string(),
-            TokenKind::Number(n) => {
-                self.advance();
-                return Ok(format!("{}", n));
-            }
-            TokenKind::String(s) => {
-                self.advance();
-                return Ok(s);
-            }
             other => {
                 return Err(error::Error::syntax(format!(
                     "Expected property name after ., got {:?}",
@@ -2648,7 +2640,19 @@ impl Parser {
                 self.advance();
                 Arc::from("constructor")
             } else {
-                Arc::from(self.read_property_name()?.as_str())
+                // Class method names can be identifiers, keywords, numbers,
+                // strings, or computed expressions.
+                match self.peek().clone() {
+                    TokenKind::Number(n) => {
+                        self.advance();
+                        Arc::from(format!("{}", n))
+                    }
+                    TokenKind::String(s) => {
+                        self.advance();
+                        Arc::from(s.as_str())
+                    }
+                    _ => Arc::from(self.read_property_name()?.as_str())
+                }
             };
             let params = self.parse_params()?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
