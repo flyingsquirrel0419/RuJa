@@ -1398,7 +1398,15 @@ impl Vm {
                         }
                         }
                     } else {
-                        // Primitive receiver: delete is a no-op that returns true.
+                        // null/undefined receiver: ToObject throws TypeError.
+                        if matches!(obj, Value::Null | Value::Undefined) {
+                            return Err(Error::type_err(
+                                "Cannot convert undefined or null to object"
+                            ));
+                        }
+                        // Other primitives (number, string, boolean): delete is
+                        // a no-op that returns true (ToObject wraps in a wrapper
+                        // object, which has no own configurable properties).
                         Value::Bool(true)
                     };
                     self.stack.push(result);
