@@ -115,6 +115,10 @@ pub struct CallFrame {
     /// non-local transfer (return/break/continue/throw) that hits an active
     /// finally diverts to the finally target after recording its completion.
     pub finally_stack: Vec<(usize, u32)>,
+    /// True when this frame is a derived class constructor (extends ...).
+    /// In derived constructors, returning a non-object value after super()
+    /// is a TypeError.
+    pub is_derived_ctor: bool,
 }
 
 impl CallFrame {
@@ -137,6 +141,7 @@ impl CallFrame {
             finally_completion_tag: AtomicU8::new(0),
             finally_completion_val: Mutex::new(Value::Undefined),
             finally_stack: Vec::new(),
+            is_derived_ctor: false,
         }
     }
 }
@@ -812,6 +817,7 @@ enum FuncCallInfo {
         closure: GcIdx,
         is_arrow: bool,
         is_async: bool,
+        is_class_ctor: bool,
     },
     Bound {
         target: GcIdx,

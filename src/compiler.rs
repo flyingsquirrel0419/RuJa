@@ -2768,7 +2768,7 @@ impl Compiler {
                 };
                 self.funcs.push(Arc::new(fdef));
                 self.chunk
-                    .emit(Op::MakeClosure(func_idx), self.current_line);
+                    .emit(Op::MakeClass(func_idx), self.current_line);
                 // If there is a superclass, evaluate it and wire up the prototype chain.
                 // The parent prototype is exposed to methods as the `#super` binding so that
                 // `super.m(...)` can look up methods on the parent prototype.

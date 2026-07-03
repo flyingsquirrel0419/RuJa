@@ -142,6 +142,7 @@ pub(crate) fn function_bind(
             bound_args,
         },
         closure: vm.global,
+        is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(None),
         proto: Mutex::new(match vm.function_proto {
             Value::Object(_) => Some(vm.function_proto.clone()),

@@ -415,6 +415,8 @@ pub struct FunctionData {
     pub name: Option<Arc<str>>,
     pub kind: FunctionKind,
     pub closure: GcIdx,
+    /// True for class constructors: calling them without `new` is a TypeError.
+    pub is_class_ctor: std::sync::atomic::AtomicBool,
     pub prototype: Mutex<Option<Value>>,
     /// The function's [[Prototype]] (`__proto__`), normally
     /// `Function.prototype`. Kept separate from `prototype` (which is the

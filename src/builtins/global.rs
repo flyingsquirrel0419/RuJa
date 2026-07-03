@@ -311,6 +311,7 @@ pub(crate) fn function_constructor(
         name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
         closure: vm.global,
+        is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(proto_val.clone())),
         proto: Mutex::new(match vm.function_proto {
             Value::Object(_) => Some(vm.function_proto.clone()),

@@ -187,6 +187,7 @@ impl Vm {
             name: Some(Arc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
             closure: self.global,
+            is_class_ctor: std::sync::atomic::AtomicBool::new(false),
             // Native functions have no `prototype` property (they are not
             // constructors). Their [[Prototype]] (`__proto__`) is
             // `Function.prototype` once it has been allocated.
@@ -291,6 +292,7 @@ impl Vm {
                         Some(FuncCallInfo::Interpreted {
                             func: func.clone(),
                             closure: f.closure,
+                            is_class_ctor: f.is_class_ctor.load(std::sync::atomic::Ordering::Relaxed),
                             is_arrow: func.is_arrow,
                             is_async: func.is_async,
                         })
@@ -316,7 +318,17 @@ impl Vm {
                 closure,
                 is_arrow,
                 is_async,
+                is_class_ctor,
             }) => {
+                // Class constructors cannot be called without `new`.
+                // `construct()` sets `pending_new_target` before calling us;
+                // it is consumed later by `execute_chunk_func`. Super()
+                // calls also go through `call_function` but are valid.
+                if is_class_ctor && self.pending_new_target.is_none() {
+                    return Err(Error::type_err(
+                        "Class constructor cannot be invoked without 'new'"
+                    ));
+                }
                 let call_env = env::new_env(&self.heap, Some(closure), true)?;
                 // Declare every parameter binding as *uninitialized* (TDZ). The raw
                 // argument still lives in `locals[i]`, which the compiled
@@ -493,6 +505,16 @@ impl Vm {
                     // ReferenceError per spec.
                     if func.is_derived {
                         if let Ok(ref rv) = result {
+                            // Per spec [[Construct]] step 13: if a derived
+                            // constructor returns a value, it must be an
+                            // object (or undefined). Returning a primitive
+                            // (number, string, boolean, null) is a TypeError.
+                            let is_object = matches!(rv, Value::Object(_) | Value::Undefined);
+                            if !is_object {
+                                return Err(Error::type_err(
+                                    "Derived constructor may only return an object or undefined"
+                                ));
+                            }
                             if !matches!(rv, Value::Object(_)) {
                                 let initialized = self.heap.with_obj(call_env.0, |obj| {
                                     if let HeapObj::Environment(e) = obj {

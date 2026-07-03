@@ -1734,7 +1734,9 @@ impl Vm {
                     // outer `construct` call), not the environment's `this`
                     // which is in the TDZ for derived constructors.
                     let this_val = self.current_frame()?.this_val.clone();
-                   // Call the parent constructor with `this` (not `new`, just call).
+                   // Call the parent constructor. Set pending_new_target so
+                   // that class constructors accept this as a [[Construct]] call.
+                   self.pending_new_target = Some(super_ctor.clone());
                    let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     // If the parent constructor returned an object, use it as the new `this`.
                     let new_this = if matches!(result, Value::Object(_)) {
@@ -1769,6 +1771,7 @@ impl Vm {
                     } else {
                         Vec::new()
                     };
+                    self.pending_new_target = Some(super_ctor.clone());
                     let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     let new_this = if matches!(result, Value::Object(_)) {
                         result
@@ -1829,6 +1832,19 @@ impl Vm {
                 Op::New(arg_count) => self.op_new(arg_count)?,
                 Op::NewSpread => self.op_new_spread()?,
                 Op::MakeClosure(func_idx) => self.op_make_closure(func_idx)?,
+                Op::MakeClass(func_idx) => {
+                    self.op_make_closure(func_idx)?;
+                    // Mark the function on top of the stack as a class constructor.
+                    // Calling it without `new` is a TypeError (spec: class
+                    // constructors have [[Construct]] but no [[Call]]).
+                    if let Some(&Value::Object(idx)) = self.stack.last() {
+                        self.heap.with_obj(idx.0, |obj| {
+                            if let HeapObj::Function(f) = obj {
+                                f.is_class_ctor.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        });
+                    }
+                },
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     let t = if let Value::Object(idx) = &v {
@@ -2127,6 +2143,7 @@ impl Vm {
                 name: fdef.name.clone(),
                 kind: crate::value::FunctionKind::Interpreted { func: fdef },
                 closure: env_idx,
+                is_class_ctor: std::sync::atomic::AtomicBool::new(false),
                 prototype: Mutex::new(if !is_arrow {
                     Some(proto_val.clone())
                 } else {
