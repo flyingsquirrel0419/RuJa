@@ -429,6 +429,12 @@ impl Parser {
     }
 
     fn parse_opt_label(&mut self) -> Option<Arc<str>> {
+        // Per spec, `break` and `continue` must not have a line terminator
+        // between the keyword and the label. If a newline precedes the next
+        // token, ASI applies and the statement is unlabelled.
+        if self.peek_at_tok(0).preceded_by_newline {
+            return None;
+        }
         if let TokenKind::Ident(s) = self.peek().clone() {
             self.advance();
             Some(Arc::from(s.as_str()))
