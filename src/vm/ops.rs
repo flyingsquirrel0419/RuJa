@@ -800,15 +800,15 @@ impl Vm {
                     |a, b| Value::Number(a + b),
                     |a, b| Value::String(Arc::from(format!("{}{}", a, b).as_str())),
                 )?,
-                Op::Sub => self.num_bin_bigint(|a, b| a - b, |x, y| x - y)?,
-                Op::Mul => self.num_bin_bigint(|a, b| a * b, |x, y| x * y)?,
+                Op::Sub => self.num_bin_bigint(|a, b| a - b, |x, y| Ok(x - y))?,
+                Op::Mul => self.num_bin_bigint(|a, b| a * b, |x, y| Ok(x * y))?,
                 Op::Div => self.num_bin_bigint(
                     |a, b| a / b,
                     |x, y| {
                         if y.is_zero() {
-                            num_bigint::BigInt::from(0)
+                            Err(Error::range("Division by zero".to_string()))
                         } else {
-                            x / y
+                            Ok(x / y)
                         }
                     },
                 )?,
@@ -816,9 +816,9 @@ impl Vm {
                     |a, b| a % b,
                     |x, y| {
                         if y.is_zero() {
-                            num_bigint::BigInt::from(0)
+                            Err(Error::range("Division by zero".to_string()))
                         } else {
-                            x % y
+                            Ok(x % y)
                         }
                     },
                 )?,
@@ -833,11 +833,13 @@ impl Vm {
                     },
                     |x, y| {
                         if y.is_negative() {
-                            num_bigint::BigInt::from(0)
+                            Ok(num_bigint::BigInt::from(0))
                         } else {
-                            // Use BigInt's own pow (exponent is a u64).
-                            let exp = num_traits::ToPrimitive::to_u32(&y).unwrap_or(0);
-                            x.pow(exp)
+                            // Use BigInt's own pow (exponent is a u32).
+                            let exp = num_traits::ToPrimitive::to_u32(&y).ok_or_else(|| {
+                                Error::range("BigInt exponent is too large".to_string())
+                            })?;
+                            Ok(x.pow(exp))
                         }
                     },
                 )?,
@@ -2359,10 +2361,12 @@ impl Vm {
     }
 
     /// Like `num_bin`, but if both operands are `BigInt`, keep the result a
-    /// `BigInt` (arbitrary precision via num-bigint).
+    /// `BigInt` (arbitrary precision via num-bigint). The BigInt closure may
+    /// return an error so that operations like division by zero can throw a
+    /// `RangeError` per spec.
     fn num_bin_bigint<
         F: Fn(f64, f64) -> f64,
-        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> num_bigint::BigInt,
+        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
     >(
         &mut self,
         numf: F,
@@ -2371,7 +2375,7 @@ impl Vm {
         let (a, b) = self.pop2();
         match (&a, &b) {
             (Value::BigInt(x), Value::BigInt(y)) => {
-                self.stack.push(Value::BigInt(bigf(x.clone(), y.clone())));
+                self.stack.push(Value::BigInt(bigf(x.clone(), y.clone())?));
             }
             (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
                 // Mixing BigInt with non-bigint numbers is a TypeError per spec.

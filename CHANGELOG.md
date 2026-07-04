@@ -45,6 +45,13 @@ three distinct pass-rate scopes and what each measures.
   so that subsequent `GetProp` reads the freshly written value instead of
   a stale cached value.
 
+- **BigInt divide/modulo by zero**: `1n / 0n` and `1n % 0n` now throw a
+  `RangeError` instead of returning `0n`.
+
+- **BigInt exponent overflow**: `BigInt` exponentiation with an exponent
+  that does not fit in a `u32` now throws a `RangeError` instead of
+  silently clamping to zero and returning the wrong value.
+
 - **for-in/for-of non-declaration parsing**: `for (x in obj)` and
   `for ((x) in obj)` now parse and assign correctly (was: SyntaxError or
   undefined). Added `no_in` flag to prevent `in` being consumed as a binary
