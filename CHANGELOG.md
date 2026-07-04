@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.0%** (up from 88.6%).
-Current supported subset count: **3887 pass / 291 fail / 2 timeout**.
+Supported-subset pass rate: **93.1%** (up from 88.6%).
+Current supported subset count: **3889 pass / 289 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -65,6 +65,12 @@ Current supported subset count: **3887 pass / 291 fail / 2 timeout**.
   evaluating a lexical `for...in` right-hand side. This preserves closures
   created before, during, and after the loop head expression and brings the
   `for...in` subset to **74 pass / 0 fail**.
+- **Ordinary object `[[Set]]` own-property precedence**: assignment now handles
+  an object's own accessor/data descriptor before consulting inherited
+  setters or non-writable data properties. This lets ordinary function
+  `.prototype` and `prototype.constructor` own data properties remain writable
+  even when `Function.prototype`/`Object.prototype` define same-named accessors,
+  reducing the `function` statement subset to **8 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

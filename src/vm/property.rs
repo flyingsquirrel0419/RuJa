@@ -384,7 +384,53 @@ impl Vm {
                 // --- Ordinary object [[Set]] ---
                 let pkey = crate::value::PropertyKey::from(key);
 
-                // 1. Look for an accessor `set` up the prototype chain.
+                // 1. Own property descriptors take precedence over inherited
+                // setters/non-writable data descriptors.
+                let own_desc = self
+                    .heap
+                    .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned());
+                if let Some(desc) = own_desc {
+                    if desc.is_accessor {
+                        if let Some(setter) = desc.set {
+                            self.call_function(
+                                &setter,
+                                std::slice::from_ref(&value),
+                                Some(obj.clone()),
+                            )?;
+                            return Ok(());
+                        }
+                        if self.current_strict() {
+                            return Err(Error::type_err(format!(
+                                "Cannot set property '{}' which has only a getter",
+                                key
+                            )));
+                        }
+                        return Ok(());
+                    }
+                    if !desc.writable {
+                        if self.current_strict() {
+                            return Err(Error::type_err(format!(
+                                "Cannot assign to read only property '{}' of object",
+                                key
+                            )));
+                        }
+                        return Ok(());
+                    }
+                    self.heap.with_obj(idx.0, |o| {
+                        if let Some(existing) = o.props().lock().get_mut(&pkey) {
+                            existing.value = value;
+                        }
+                    });
+                    self.mirror_global_property_to_binding(
+                        *idx,
+                        key,
+                        route_global_this,
+                        is_global_this,
+                    );
+                    return Ok(());
+                }
+
+                // 2. Look for an accessor `set` up the prototype chain.
                 // find_setter returns:
                 //   Some(Some(setter)) — accessor with setter: call it.
                 //   Some(None)          — accessor without setter: throw in strict.
@@ -411,26 +457,8 @@ impl Vm {
                     None => {} // No accessor found; continue to data property checks.
                 }
 
-                // 2. Reject writes to a non-writable own or inherited data
-                // property. A writable inherited data property permits
-                // creating an own property on the receiver; a non-writable
-                // one blocks assignment.
-                let non_writable_own = self.heap.with_obj(idx.0, |o| {
-                    o.props()
-                        .lock()
-                        .get(&pkey)
-                        .is_some_and(|d| !d.is_accessor && !d.writable)
-                });
-                if non_writable_own {
-                    if self.current_strict() {
-                        return Err(Error::type_err(format!(
-                            "Cannot assign to read only property '{}' of object",
-                            key
-                        )));
-                    }
-                    // non-strict: silently ignore
-                    return Ok(());
-                }
+                // 3. A writable inherited data property permits creating an own
+                // property on the receiver; a non-writable one blocks assignment.
                 if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
                     if self.current_strict() {
                         return Err(Error::type_err(format!(
@@ -441,7 +469,7 @@ impl Vm {
                     return Ok(());
                 }
 
-                // 3. Define/overwrite an own writable data property.
+                // 4. Define a new own writable data property.
                 // Check extensibility: adding a new property to a
                 // non-extensible object throws TypeError in strict mode.
                 let is_extensible = self.heap.with_obj(idx.0, |o| {
@@ -489,25 +517,40 @@ impl Vm {
                         props.insert(pkey, crate::value::PropertyDescriptor::data(value));
                     }
                 });
-                if route_global_this
-                    && is_global_this
-                    && crate::environment::has(&self.heap, self.global, key)
-                {
-                    let final_value = self.heap.with_obj(idx.0, |o| {
-                        o.props()
-                            .lock()
-                            .get(&crate::value::PropertyKey::from(key))
-                            .map(|d| d.value.clone())
-                    });
-                    if let Some(final_value) = final_value {
-                        crate::environment::set(&self.heap, self.global, key, final_value);
-                    }
-                }
+                self.mirror_global_property_to_binding(
+                    *idx,
+                    key,
+                    route_global_this,
+                    is_global_this,
+                );
                 Ok(())
             }
             _ => Err(Error::type_err(
                 "Cannot set property of primitive".to_string(),
             )),
+        }
+    }
+
+    fn mirror_global_property_to_binding(
+        &self,
+        idx: GcIdx,
+        key: &str,
+        route_global_this: bool,
+        is_global_this: bool,
+    ) {
+        if route_global_this
+            && is_global_this
+            && crate::environment::has(&self.heap, self.global, key)
+        {
+            let final_value = self.heap.with_obj(idx.0, |o| {
+                o.props()
+                    .lock()
+                    .get(&crate::value::PropertyKey::from(key))
+                    .map(|d| d.value.clone())
+            });
+            if let Some(final_value) = final_value {
+                crate::environment::set(&self.heap, self.global, key, final_value);
+            }
         }
     }
 

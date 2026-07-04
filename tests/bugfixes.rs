@@ -163,6 +163,44 @@ fn inherited_writable_true_creates_own_property() {
 }
 
 #[test]
+fn own_data_property_shadows_inherited_setter_on_assignment() {
+    let v = run(r#"var log = [];
+           var proto = {};
+           Object.defineProperty(proto, 'x', {
+             set: function (v) { log.push(v); },
+             configurable: true
+           });
+           var o = Object.create(proto);
+           Object.defineProperty(o, 'x', {
+             value: 1,
+             writable: true,
+             configurable: true
+           });
+           o.x = 99;
+           o.x + ':' + log.length"#);
+    assert_eq!(v, Value::String(Arc::from("99:0")));
+}
+
+#[test]
+fn own_data_property_shadows_inherited_non_writable_on_assignment() {
+    let v = run(r#"var proto = {};
+           Object.defineProperty(proto, 'x', {
+             value: 1,
+             writable: false,
+             configurable: true
+           });
+           var o = Object.create(proto);
+           Object.defineProperty(o, 'x', {
+             value: 2,
+             writable: true,
+             configurable: true
+           });
+           o.x = 99;
+           o.x + ':' + proto.x"#);
+    assert_eq!(v, Value::String(Arc::from("99:1")));
+}
+
+#[test]
 fn object_literal_defines_own_property_over_inherited_read_only() {
     let v = run(r#"Object.defineProperty(Object.prototype, 'x', {
              value: 1,

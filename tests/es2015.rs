@@ -637,6 +637,19 @@ fn ordinary_functions_and_generator_methods_keep_own_prototype() {
 }
 
 #[test]
+fn ordinary_function_prototype_descriptors_are_writable_own_data_properties() {
+    assert_eq!(
+        run("var data = 'data'; Object.defineProperty(Object.prototype, 'constructor', { set: function(v) { data = v; }, configurable: true }); var f = function() {}; f.prototype.constructor = 1; var d = Object.getOwnPropertyDescriptor(f.prototype, 'constructor'); delete Object.prototype.constructor; [f.prototype.constructor, data, d.writable, d.enumerable, d.configurable].join(',');"),
+        Value::String(Arc::from("1,data,true,false,true"))
+    );
+
+    assert_eq!(
+        run("var data = 'data'; Object.defineProperty(Function.prototype, 'prototype', { set: function(v) { data = v; }, configurable: true }); var f = function() {}; f.prototype = {}; var d = Object.getOwnPropertyDescriptor(f, 'prototype'); delete Function.prototype.prototype; [Object.prototype.toString.call(f.prototype), data, d.writable, d.enumerable, d.configurable].join(',');"),
+        Value::String(Arc::from("[object Object],data,true,false,false"))
+    );
+}
+
+#[test]
 fn object_accessors_bind_super() {
     let src = r#"
         let proto = {
