@@ -408,6 +408,26 @@ fn computed_key_in_object_literal() {
 }
 
 #[test]
+fn object_literal_computed_key_before_value() {
+    let src = r#"
+        let value = "bad";
+        let key = { toString() { value = "ok"; return "p"; } };
+        let obj = { [key]: value };
+        obj.p;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("ok")));
+}
+
+#[test]
+fn computed_accessor_key_to_property_key_errors() {
+    let err = common::run_err("let badKey = Object.create(null); ({ get [badKey]() {} });");
+    assert!(
+        err.contains("Cannot convert object to primitive value") || err.contains("TypeError"),
+        "expected ToPropertyKey TypeError, got {err}"
+    );
+}
+
+#[test]
 fn array_prototype_iterator_override_honored() {
     let src = r#"
         Array.prototype[Symbol.iterator] = function() {

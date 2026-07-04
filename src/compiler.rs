@@ -2249,6 +2249,7 @@ impl Compiler {
                             }
                             PropertyKey::Computed(e) => {
                                 self.compile_expr(e)?;
+                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             }
                             PropertyKey::Spread(_) => unreachable!(),
                         }
@@ -2261,8 +2262,10 @@ impl Compiler {
                     match &p.key {
                         PropertyKey::Computed(e) => {
                             // Computed key: evaluate the expression and define an
-                            // own data property (supports Symbol keys).
+                            // own data property. ToPropertyKey runs before the
+                            // value expression and preserves Symbol keys.
                             self.compile_expr(e)?;
+                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             self.compile_expr(&p.value)?;
                             self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }

@@ -284,19 +284,32 @@ impl Vm {
         }
     }
 
+    /// Coerce a `Value` with ES `ToPropertyKey`, preserving Symbol keys.
+    pub fn to_property_key_value(&mut self, v: &Value) -> error::Result<Value> {
+        match v {
+            Value::Symbol(_) => Ok(v.clone()),
+            _ => {
+                let prim = self.to_primitive_hint(v, true)?;
+                match prim {
+                    Value::Symbol(_) => Ok(prim),
+                    _ => Ok(Value::String(self.to_string(&prim)?)),
+                }
+            }
+        }
+    }
+
     /// Coerce a `Value` to a property key as a `String`.
     ///
     /// Symbols cannot be converted to a string key and return `Err` (a Symbol
     /// must be looked up via [`get_property_key`] / [`set_property_key`] using
     /// the `Value::Symbol` directly).
     pub fn to_property_key(&mut self, v: &Value) -> error::Result<String> {
-        match v {
+        match self.to_property_key_value(v)? {
             Value::String(s) => Ok(s.to_string()),
-            Value::Number(n) => Ok(crate::value::num_to_string(*n)),
             Value::Symbol(_) => Err(Error::type_err(
                 "Cannot convert a Symbol value to a string key".to_string(),
             )),
-            _ => Ok(self.to_string(v)?.to_string()),
+            _ => unreachable!("ToPropertyKey returns only String or Symbol"),
         }
     }
 

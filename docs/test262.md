@@ -162,10 +162,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Update-expression Reference semantics** — prefix/postfix
   increment/decrement evaluate targets once, preserve the original Reference
   through `GetValue`/`PutValue`, and keep BigInt update results as BigInt.
+- **Object literal computed property keys** — computed data/accessor names run
+  `ToPropertyKey` before value/function evaluation and preserve Symbol keys.
 
 ## Why the rate is not higher
 
-The remaining 355 failure/timeout entries in the supported subset cluster
+The remaining 352 failure/timeout entries in the supported subset cluster
 around object literal/method-definition semantics, for-of/for-in iteration,
 super/class behavior, try completion edges, and destructuring assignment.
 These are tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

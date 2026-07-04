@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **91.6%** (up from 88.6%).
-Current supported subset count: **3825 pass / 353 fail / 2 timeout**.
+Current supported subset count: **3828 pass / 350 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -173,6 +173,13 @@ Current supported subset count: **3825 pass / 353 fail / 2 timeout**.
   results stay BigInt, and call computed property-key coercion only once.
   The four increment/decrement test262 directories now pass **130/130** run
   tests.
+- **Object literal computed property keys**: computed data and accessor
+  property names now perform `ToPropertyKey` immediately after evaluating the
+  key expression, before evaluating the property value or creating the
+  accessor function, while preserving Symbol keys. The
+  `language/expressions/object` subset improves to
+  **250 pass / 35 fail / 285 ran**, and the supported subset rises to
+  **3828 pass / 350 fail / 2 timeout**.
 - **test262 metadata parser indentation**: the local runner now accepts
   `negative:` metadata with arbitrary YAML indentation, matching current
   test262 files such as update-expression early-error tests.

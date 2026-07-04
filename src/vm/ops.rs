@@ -60,6 +60,11 @@ impl Vm {
                     let s = self.to_string(&prim)?;
                     self.stack.push(Value::String(s));
                 }
+                Op::ToPropertyKey => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key = self.to_property_key_value(&v)?;
+                    self.stack.push(key);
+                }
                 Op::CheckNullBase => {
                     // Stack: [obj, key]. Check obj (second from top) for
                     // null/undefined per spec ToObject, which throws TypeError

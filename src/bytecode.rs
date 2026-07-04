@@ -311,6 +311,8 @@ pub enum Op {
     // Coerce top-of-stack to a string via ToPrimitive(string) + ToString
     // (used by template-literal interpolation).
     ToString,
+    // Coerce top-of-stack via ToPropertyKey, preserving Symbol keys.
+    ToPropertyKey,
     CheckNullBase, // pop obj; throw TypeError if null/undefined; push obj back
 
     // Halt
