@@ -1208,6 +1208,8 @@ fn object_define_property(
         let mut set = None;
         let mut has_value = false;
         let mut has_writable = false;
+        let mut has_enumerable = false;
+        let mut has_configurable = false;
         let mut has_get = false;
         let mut has_set = false;
         // ToPropertyDescriptor: the descriptor must be an Object, else a
@@ -1263,11 +1265,13 @@ fn object_define_property(
             if vm.has_own(&desc, "enumerable") {
                 if let Ok(v) = vm.get_property(&desc, "enumerable") {
                     enumerable = v.is_truthy();
+                    has_enumerable = true;
                 }
             }
             if vm.has_own(&desc, "configurable") {
                 if let Ok(v) = vm.get_property(&desc, "configurable") {
                     configurable = v.is_truthy();
+                    has_configurable = true;
                 }
             }
         }
@@ -1281,7 +1285,77 @@ fn object_define_property(
                 "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
             ));
         }
-        let descriptor = if is_accessor {
+        let current = vm.heap.with_obj(idx.0, |obj| {
+            obj.props()
+                .lock()
+                .get(&PropertyKey::from(key.as_str()))
+                .cloned()
+        });
+        if current.is_none() {
+            let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
+            if !extensible {
+                return Err(Error::type_err(format!(
+                    "Cannot define property '{}', object is not extensible",
+                    key
+                )));
+            }
+        }
+        let descriptor = if let Some(mut current) = current {
+            if !current.configurable {
+                if has_configurable && configurable {
+                    return Err(Error::type_err("Cannot redefine non-configurable property"));
+                }
+                if has_enumerable && enumerable != current.enumerable {
+                    return Err(Error::type_err("Cannot redefine non-configurable property"));
+                }
+                if is_accessor != current.is_accessor && (is_accessor || is_data) {
+                    return Err(Error::type_err("Cannot redefine non-configurable property"));
+                }
+                if current.is_accessor {
+                    if has_get && get != current.get {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                    if has_set && set != current.set {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                } else if is_data && !current.writable {
+                    if has_writable && writable {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                    if has_value && value != current.value {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                }
+            }
+            if has_enumerable {
+                current.enumerable = enumerable;
+            }
+            if has_configurable {
+                current.configurable = configurable;
+            }
+            if is_accessor {
+                current.value = Value::Undefined;
+                current.writable = false;
+                if has_get {
+                    current.get = get;
+                }
+                if has_set {
+                    current.set = set;
+                }
+                current.is_accessor = true;
+            } else if is_data {
+                if has_value {
+                    current.value = value;
+                }
+                if has_writable {
+                    current.writable = writable;
+                }
+                current.get = None;
+                current.set = None;
+                current.is_accessor = false;
+            }
+            current
+        } else if is_accessor {
             PropertyDescriptor {
                 value: Value::Undefined,
                 writable: false,

@@ -64,6 +64,18 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         if let Some(lazy) = it.lazy_iter.lock().as_ref() {
             push_value(lazy, worklist);
         }
+        if let Some(gen) = it.generator.lock().as_ref() {
+            push_value(gen, worklist);
+        }
+        if let Some(source) = it.array_like.lock().as_ref() {
+            push_value(source, worklist);
+        }
+        if let Some(source) = it.for_in_source.lock().as_ref() {
+            push_value(source, worklist);
+        }
+        for source in it.for_in_key_sources.lock().iter() {
+            push_value(source, worklist);
+        }
         return;
     }
     if let HeapObj::Environment(e) = obj {
@@ -183,6 +195,12 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(gen, worklist);
             }
             if let Some(source) = it.array_like.lock().as_ref() {
+                push_value(source, worklist);
+            }
+            if let Some(source) = it.for_in_source.lock().as_ref() {
+                push_value(source, worklist);
+            }
+            for source in it.for_in_key_sources.lock().iter() {
                 push_value(source, worklist);
             }
         }

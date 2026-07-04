@@ -653,6 +653,13 @@ pub struct IteratorData {
     /// reads `length` plus the current integer property on each pull, so array
     /// growth, contraction, accessors, and arguments object mapping are visible.
     pub array_like: Mutex<Option<Value>>,
+    /// Lazy `for...in` mode. `items` stores the initial key list, while this
+    /// keeps the enumerated object alive and lets each key be revalidated
+    /// immediately before it is yielded.
+    pub for_in_source: Mutex<Option<Value>>,
+    /// Object where each `for...in` key was discovered. This is aligned with
+    /// `items` for for-in iterators and empty for all other iterator kinds.
+    pub for_in_key_sources: Mutex<Vec<Value>>,
     pub done: AtomicBool,
 }
 

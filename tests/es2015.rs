@@ -180,6 +180,57 @@ fn for_in_object() {
 }
 
 #[test]
+fn for_in_enumeration_descriptor_edges() {
+    assert_eq!(
+        run("var proto = { prop: 1 }; function C(){} C.prototype = proto; var child = new C(); Object.defineProperty(child, 'prop', { value: 2, enumerable: false }); var seen = false; for (var k in child) { if (k === 'prop') seen = true; } seen;"),
+        Value::Bool(false)
+    );
+
+    assert_eq!(
+        run("var obj = Object.create(null); obj.aa = 1; obj.ba = 2; obj.ca = 3; var out = ''; for (var k in obj) { delete obj.ba; out += k + obj[k]; } out;"),
+        Value::String(Arc::from("aa1ca3"))
+    );
+
+    assert_eq!(
+        run("var obj = {}; obj.a = 1; obj.b = 2; Object.defineProperty(obj, 'a', { value: 11 }); var keys = []; for (var k in obj) keys.push(k); keys.join(',') + ':' + Object.prototype.propertyIsEnumerable.call(obj, 'a');"),
+        Value::String(Arc::from("a,b:true"))
+    );
+
+    assert_eq!(
+        run("var obj = {}; Object.defineProperty(obj, 'a', { get: function(){ return 1; }, enumerable: true, configurable: true }); obj.b = 2; Object.defineProperty(obj, 'a', { get: function(){ return 2; } }); var keys = []; for (var k in obj) keys.push(k); keys.join(',') + ':' + obj.a;"),
+        Value::String(Arc::from("a,b:2"))
+    );
+
+    assert_eq!(
+        run("var proto = { x: 1 }; var obj = Object.create(proto); obj.a = 1; obj.b = 2; var keys = []; for (var k in obj) { if (k === 'a') Object.defineProperty(obj, 'x', { value: 2, enumerable: false }); keys.push(k); } keys.join(',');"),
+        Value::String(Arc::from("a,b,x"))
+    );
+
+    assert_eq!(
+        run("var arr = [1, 2]; Object.defineProperty(arr, '0', { enumerable: false }); var keys = []; for (var k in arr) keys.push(k); keys.join(',');"),
+        Value::String(Arc::from("1"))
+    );
+}
+
+#[test]
+fn define_property_redefinition_validation_edges() {
+    assert_eq!(
+        run("var obj = Object.freeze({ x: 1 }); var threw = false; try { Object.defineProperty(obj, 'x', { value: 2 }); } catch (e) { threw = true; } threw + ':' + obj.x;"),
+        Value::String(Arc::from("true:1"))
+    );
+
+    assert_eq!(
+        run("var obj = {}; Object.preventExtensions(obj); var threw = false; try { Object.defineProperty(obj, 'x', { value: 1 }); } catch (e) { threw = true; } threw + ':' + ('x' in obj);"),
+        Value::String(Arc::from("true:false"))
+    );
+
+    assert_eq!(
+        run("var get1 = function(){ return 1; }; var get2 = function(){ return 2; }; var obj = {}; Object.defineProperty(obj, 'x', { get: get1, configurable: false }); var threw = false; try { Object.defineProperty(obj, 'x', { get: get2 }); } catch (e) { threw = true; } threw + ':' + obj.x;"),
+        Value::String(Arc::from("true:1"))
+    );
+}
+
+#[test]
 fn array_spread_literal() {
     assert_eq!(run("[1, ...[2,3], 4].length;"), Value::Number(4.0));
     assert_eq!(

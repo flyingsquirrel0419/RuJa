@@ -191,10 +191,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `for`/`for...in`/`for...of` now unwinds only real runtime environment
   records, preserving direct-eval completion values instead of over-popping the
   eval environment.
+- **`for...in` enumeration and descriptor preservation** — non-enumerable own
+  properties now shadow prototype keys during enumeration, deleted
+  not-yet-visited keys are skipped, and `Object.defineProperty` preserves
+  unspecified fields when redefining an existing descriptor while rejecting
+  invalid non-configurable/non-extensible redefinitions.
 
 ## Why the rate is not higher
 
-The remaining 298 failures plus 2 timeouts in the supported subset cluster
+The remaining 295 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, for-of/for-in iteration,
 super/class behavior, try completion edges, and destructuring assignment.
 These are tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **92.9%** (up from 88.6%).
-Current supported subset count: **3880 pass / 298 fail / 2 timeout**.
+Current supported subset count: **3883 pass / 295 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -45,6 +45,15 @@ Current supported subset count: **3880 pass / 298 fail / 2 timeout**.
   `UpdateEmpty` completion values for `for...in` and `for...of` labelled
   continue paths and reduces the `for...in` subset to **69 pass / 5 fail** and
   the `for...of` subset to **81 pass / 1 fail**.
+- **`for...in` enumeration and descriptor preservation**: `for...in`
+  enumeration now treats non-enumerable own string properties as visited so
+  they shadow prototype properties, and rechecks a key's current
+  enumerability before yielding so deleted not-yet-visited properties are
+  skipped. `Object.defineProperty` now preserves existing descriptor fields
+  that are absent from a redefinition descriptor and rejects invalid
+  non-configurable/non-extensible redefinitions, keeping property order and
+  enumerability intact for cases like `{ a, b }` followed by redefining `a`.
+  The `for...in` subset improves to **72 pass / 2 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

@@ -866,35 +866,43 @@ impl Vm {
 
     /// Build an iterator over an object's enumerable string keys (for `for...in`).
     pub fn make_for_in_keys(&mut self, obj: &Value) -> error::Result<Value> {
-        let mut keys: Vec<Value> = Vec::new();
+        let mut keys: Vec<(Arc<str>, Value)> = Vec::new();
+        let mut visited: Vec<Arc<str>> = Vec::new();
         let mut cur = obj.clone();
         while let Value::Object(idx) = &cur {
             let (own, proto) = self.heap.with_obj(idx.0, |o| {
                 let mut own = Vec::new();
                 if let HeapObj::Array(a) = o {
+                    let props = a.props.lock();
                     for i in 0..a.items.lock().len() {
-                        own.push(Value::String(Arc::from(i.to_string().as_str())));
+                        let key = i.to_string();
+                        let enumerable = props
+                            .get(&crate::value::PropertyKey::from(key.as_str()))
+                            .is_none_or(|desc| desc.enumerable);
+                        own.push((Arc::from(key.as_str()), enumerable));
                     }
                 }
                 if let HeapObj::Map(m) = o {
                     for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
                         if let Value::String(s) = k {
-                            own.push(Value::String(s.clone()));
+                            own.push((s.clone(), true));
                         }
                     }
                 }
                 for (k, desc) in o.props().lock().iter() {
-                    if desc.enumerable {
-                        if let crate::value::PropertyKey::Str(s) = k {
-                            own.push(Value::String(s.clone()));
-                        }
+                    if let crate::value::PropertyKey::Str(s) = k {
+                        own.push((s.clone(), desc.enumerable));
                     }
                 }
                 (own, o.proto().lock().clone())
             });
-            for k in own {
-                if !keys.contains(&k) {
-                    keys.push(k);
+            for (k, enumerable) in own {
+                if visited.iter().any(|seen| seen.as_ref() == k.as_ref()) {
+                    continue;
+                }
+                visited.push(k.clone());
+                if enumerable {
+                    keys.push((k, cur.clone()));
                 }
             }
             cur = proto.unwrap_or(Value::Undefined);
@@ -902,7 +910,7 @@ impl Vm {
                 break;
             }
         }
-        self.new_iterator(keys)
+        self.new_for_in_iterator(obj.clone(), keys)
     }
 
     pub(crate) fn new_iterator(&mut self, items: Vec<Value>) -> error::Result<Value> {
@@ -912,6 +920,8 @@ impl Vm {
             lazy_iter: Mutex::new(None),
             generator: Mutex::new(None),
             array_like: Mutex::new(None),
+            for_in_source: Mutex::new(None),
+            for_in_key_sources: Mutex::new(Vec::new()),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -927,6 +937,8 @@ impl Vm {
             lazy_iter: Mutex::new(Some(iter_obj)),
             generator: Mutex::new(None),
             array_like: Mutex::new(None),
+            for_in_source: Mutex::new(None),
+            for_in_key_sources: Mutex::new(Vec::new()),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -942,6 +954,8 @@ impl Vm {
             lazy_iter: Mutex::new(None),
             generator: Mutex::new(Some(gen)),
             array_like: Mutex::new(None),
+            for_in_source: Mutex::new(None),
+            for_in_key_sources: Mutex::new(Vec::new()),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -954,9 +968,66 @@ impl Vm {
             lazy_iter: Mutex::new(None),
             generator: Mutex::new(None),
             array_like: Mutex::new(Some(source)),
+            for_in_source: Mutex::new(None),
+            for_in_key_sources: Mutex::new(Vec::new()),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
+    }
+
+    pub(crate) fn new_for_in_iterator(
+        &mut self,
+        source: Value,
+        keys: Vec<(Arc<str>, Value)>,
+    ) -> error::Result<Value> {
+        let (keys, key_sources): (Vec<_>, Vec<_>) = keys.into_iter().unzip();
+        let it = HeapObj::Iterator(crate::value::IteratorData {
+            items: Mutex::new(keys.into_iter().map(Value::String).collect()),
+            index: std::sync::atomic::AtomicUsize::new(0),
+            lazy_iter: Mutex::new(None),
+            generator: Mutex::new(None),
+            array_like: Mutex::new(None),
+            for_in_source: Mutex::new(Some(source)),
+            for_in_key_sources: Mutex::new(key_sources),
+            done: std::sync::atomic::AtomicBool::new(false),
+        });
+        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
+    }
+
+    fn for_in_key_is_enumerable(&self, source: &Value, origin: &Value, key: &str) -> bool {
+        let mut cur = if origin == source {
+            source.clone()
+        } else {
+            origin.clone()
+        };
+        while let Value::Object(idx) = &cur {
+            let (found, enumerable, proto) = self.heap.with_obj(idx.0, |o| {
+                let pkey = crate::value::PropertyKey::from(key);
+                if let HeapObj::Array(a) = o {
+                    if key.parse::<usize>().is_ok_and(|i| i < a.items.lock().len()) {
+                        let enumerable =
+                            a.props.lock().get(&pkey).is_none_or(|desc| desc.enumerable);
+                        return (true, enumerable, o.proto().lock().clone());
+                    }
+                }
+                let desc = o.props().lock().get(&pkey).cloned();
+                match desc {
+                    Some(desc) => (true, desc.enumerable, o.proto().lock().clone()),
+                    None => (false, false, o.proto().lock().clone()),
+                }
+            });
+            if found {
+                return enumerable;
+            }
+            if origin != source {
+                break;
+            }
+            cur = proto.unwrap_or(Value::Undefined);
+            if cur.is_undefined() {
+                break;
+            }
+        }
+        false
     }
 
     pub fn iterator_next(&mut self, it: &Value) -> error::Result<(Value, bool)> {
@@ -971,17 +1042,18 @@ impl Vm {
         it: &Value,
         resume: Value,
     ) -> error::Result<(Value, bool)> {
-        let (lazy, is_gen, is_array_like, already_done) = match it {
+        let (lazy, is_gen, is_array_like, is_for_in, already_done) = match it {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(it) = o {
                     (
                         it.lazy_iter.lock().is_some(),
                         it.generator.lock().is_some(),
                         it.array_like.lock().is_some(),
+                        it.for_in_source.lock().is_some(),
                         it.done.load(Ordering::Relaxed),
                     )
                 } else {
-                    (false, false, false, true)
+                    (false, false, false, false, true)
                 }
             }),
             _ => return Err(Error::type_err("not an iterator".to_string())),
@@ -1066,6 +1138,55 @@ impl Vm {
                 }
             }
             return Ok((value, done));
+        }
+        if is_for_in {
+            let source = self.heap.with_obj(
+                match it {
+                    Value::Object(idx) => idx.0,
+                    _ => return Err(Error::type_err("not an iterator".to_string())),
+                },
+                |o| {
+                    if let HeapObj::Iterator(it) = o {
+                        it.for_in_source.lock().clone()
+                    } else {
+                        None
+                    }
+                },
+            );
+            let source = source.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
+            let idx = match it {
+                Value::Object(idx) => idx.0,
+                _ => return Err(Error::type_err("not an iterator".to_string())),
+            };
+            loop {
+                let next_key = self.heap.with_obj(idx, |o| {
+                    if let HeapObj::Iterator(it) = o {
+                        let i = it.index.load(Ordering::Relaxed);
+                        let key = it.items.lock().get(i).cloned();
+                        it.index.store(i + 1, Ordering::Relaxed);
+                        let origin = it
+                            .for_in_key_sources
+                            .lock()
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| source.clone());
+                        key.map(|key| (key, origin))
+                    } else {
+                        None
+                    }
+                });
+                let Some((Value::String(key), origin)) = next_key else {
+                    self.heap.with_obj(idx, |o| {
+                        if let HeapObj::Iterator(it) = o {
+                            it.done.store(true, Ordering::Relaxed);
+                        }
+                    });
+                    return Ok((Value::Undefined, true));
+                };
+                if self.for_in_key_is_enumerable(&source, &origin, &key) {
+                    return Ok((Value::String(key), false));
+                }
+            }
         }
         if lazy {
             // Call the JS iterator object's next() method and read {value, done}.
