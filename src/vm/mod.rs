@@ -951,8 +951,22 @@ impl Vm {
                             return Ok(());
                         }
                         // Not found on with-objects: try env bindings.
-                        if env::set(&self.heap, *env_idx, &name, value.clone()) {
-                            return Ok(());
+                        let outcome = env::set_checked(&self.heap, *env_idx, &name, value.clone());
+                        match outcome {
+                            env::SetOutcome::Set => return Ok(()),
+                            env::SetOutcome::Const => {
+                                return Err(Error::type_err(format!(
+                                    "Assignment to constant variable '{}'",
+                                    name
+                                )));
+                            }
+                            env::SetOutcome::Tdz => {
+                                return Err(Error::reference(format!(
+                                    "Cannot access '{}' before initialization",
+                                    name
+                                )));
+                            }
+                            env::SetOutcome::NotFound => {} // fall through
                         }
                         let global_this = self.global_this.clone();
                         let has_global = self.has_property(&global_this, &name)?;

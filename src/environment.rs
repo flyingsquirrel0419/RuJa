@@ -327,6 +327,7 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
 }
 
 /// Outcome of a TDZ-aware assignment to a name.
+#[derive(Debug)]
 pub enum SetOutcome {
     Set,
     Const,
