@@ -2750,49 +2750,15 @@ impl Parser {
         // Accept identifiers and keywords as property names after `.`
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => s,
-            TokenKind::Delete => "delete".to_string(),
-            TokenKind::Typeof => "typeof".to_string(),
-            TokenKind::Void => "void".to_string(),
-            TokenKind::New => "new".to_string(),
-            TokenKind::Of => "of".to_string(),
-            TokenKind::In => "in".to_string(),
-            TokenKind::Instanceof => "instanceof".to_string(),
-            TokenKind::This => "this".to_string(),
-            TokenKind::Null => "null".to_string(),
-            TokenKind::True => "true".to_string(),
-            TokenKind::False => "false".to_string(),
-            TokenKind::Undefined => "undefined".to_string(),
-            TokenKind::Catch => "catch".to_string(),
-            TokenKind::Class => "class".to_string(),
-            TokenKind::Extends => "extends".to_string(),
-            TokenKind::Function => "function".to_string(),
-            TokenKind::Return => "return".to_string(),
-            TokenKind::If => "if".to_string(),
-            TokenKind::Else => "else".to_string(),
-            TokenKind::For => "for".to_string(),
-            TokenKind::While => "while".to_string(),
-            TokenKind::Do => "do".to_string(),
-            TokenKind::Break => "break".to_string(),
-            TokenKind::Continue => "continue".to_string(),
-            TokenKind::Throw => "throw".to_string(),
-            TokenKind::Try => "try".to_string(),
-            TokenKind::Finally => "finally".to_string(),
-            TokenKind::Switch => "switch".to_string(),
-            TokenKind::With => "with".to_string(),
-            TokenKind::Case => "case".to_string(),
-            TokenKind::Default => "default".to_string(),
-            TokenKind::Var => "var".to_string(),
-            TokenKind::Let => "let".to_string(),
-            TokenKind::Const => "const".to_string(),
-            TokenKind::Async => "async".to_string(),
-            TokenKind::Await => "await".to_string(),
-            TokenKind::Yield => "yield".to_string(),
-            TokenKind::Super => "super".to_string(),
             other => {
-                return Err(error::Error::syntax(format!(
-                    "Expected property name after ., got {:?}",
-                    other
-                )))
+                if let Some(keyword) = other.as_keyword_str() {
+                    keyword.into()
+                } else {
+                    return Err(error::Error::syntax(format!(
+                        "Expected property name after ., got {:?}",
+                        other
+                    )));
+                }
             }
         };
         self.advance();

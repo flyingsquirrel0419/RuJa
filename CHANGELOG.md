@@ -130,6 +130,10 @@ Supported-subset pass rate: **90.4%** (up from 88.6%).
   so inherited read-only `Object.prototype` properties do not block object
   initialization; non-computed `__proto__` colon properties still update the
   literal object's prototype.
+- **Keyword IdentifierNames after member `.`**: dot property access now accepts
+  every keyword token covered by the shared `as_keyword_str()` helper, so
+  escaped keyword property names such as `obj.st\u0061tic = 42` parse as
+  `obj.static` instead of throwing a SyntaxError.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,

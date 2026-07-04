@@ -157,6 +157,14 @@ fn assign_member() {
 }
 
 #[test]
+fn assign_member_allows_escaped_keyword_property_name() {
+    assert_eq!(
+        run(r#"var obj = {}; obj.st\u0061tic = 42; obj.static;"#),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
 fn assign_element() {
     assert_eq!(run("var a = [0,0,0]; a[1] = 9; a[1];"), Value::Number(9.0));
 }
