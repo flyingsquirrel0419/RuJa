@@ -53,6 +53,9 @@ struct Scope {
     /// to emit `PopWithEnv` (rather than `PopScope`) when unwinding on
     /// break/continue.
     is_with: bool,
+    /// True when this compiler scope corresponds to a runtime environment
+    /// frame that must be popped during non-local loop unwinding.
+    has_runtime_env: bool,
     /// Whether strict-mode rules apply in this scope (inherited from the
     /// enclosing strict context or set by a `"use strict"` directive).
     is_strict: bool,
@@ -86,6 +89,7 @@ impl Compiler {
                 is_function: true,
                 base: 0,
                 is_with: false,
+                has_runtime_env: true,
                 is_strict: false,
             }],
             funcs: Vec::new(),
@@ -215,7 +219,7 @@ impl Compiler {
         Ok((chunk, funcs))
     }
 
-    fn push_scope(&mut self, is_function: bool) {
+    fn push_scope_with_runtime(&mut self, is_function: bool, has_runtime_env: bool) {
         let base = self
             .scopes
             .last()
@@ -227,8 +231,13 @@ impl Compiler {
             is_function,
             base,
             is_with: false,
+            has_runtime_env,
             is_strict,
         });
+    }
+
+    fn push_scope(&mut self, is_function: bool) {
+        self.push_scope_with_runtime(is_function, false);
     }
 
     /// Push a scope flagged as a `with` environment record.
@@ -244,6 +253,7 @@ impl Compiler {
             is_function: false,
             base,
             is_with: true,
+            has_runtime_env: true,
             is_strict,
         });
     }
@@ -253,6 +263,9 @@ impl Compiler {
     #[allow(dead_code)]
     fn emit_scope_unwind(&mut self, loop_depth: usize) {
         for i in (loop_depth..self.scopes.len()).rev() {
+            if !self.scopes[i].has_runtime_env {
+                continue;
+            }
             if self.scopes[i].is_with {
                 self.chunk.emit(Op::PopWithEnv, self.current_line);
             } else {
@@ -604,7 +617,7 @@ impl Compiler {
                 self.chunk.emit(Op::Return, self.current_line);
             }
             StmtNode::Block(body) => {
-                self.push_scope(false);
+                self.push_scope_with_runtime(false, true);
                 self.chunk.emit(Op::PushScope, self.current_line);
                 // Hoist function declarations within the block.
                 for s in body {
@@ -793,7 +806,7 @@ impl Compiler {
                 if let Some((kind, names)) = &lexical_head {
                     let bindings = Self::lexical_bindings_from_names(*kind, names);
                     self.chunk.emit(Op::PushScope, self.current_line);
-                    self.push_scope(false);
+                    self.push_scope_with_runtime(false, true);
                     self.emit_lexical_hoist(&bindings)?;
                     self.compile_expr(right)?;
                     self.chunk.emit(Op::PopScope, self.current_line);
@@ -826,7 +839,7 @@ impl Compiler {
                 if let Some((kind, names)) = &lexical_head {
                     let bindings = Self::lexical_bindings_from_names(*kind, names);
                     self.chunk.emit(Op::PushScope, self.current_line);
-                    self.push_scope(false);
+                    self.push_scope_with_runtime(false, true);
                     self.emit_lexical_hoist(&bindings)?;
                     self.compile_for_var_existing_lexical(left)?;
                     self.compile_stmt(body)?;
@@ -919,7 +932,7 @@ impl Compiler {
                     if let Op::PushTry(ref mut h) = self.chunk.code[try_guard_ip] {
                         *h = catch_start;
                     }
-                    self.push_scope(false);
+                    self.push_scope_with_runtime(false, true);
                     self.chunk.emit(Op::PushScope, self.current_line);
                     if let Some(param) = catch_param {
                         match param {
@@ -1128,7 +1141,11 @@ impl Compiler {
                 // a synthetic loop frame whose continue target is unreachable.
                 if matches!(
                     &body.node,
-                    StmtNode::While { .. } | StmtNode::DoWhile { .. } | StmtNode::For { .. }
+                    StmtNode::While { .. }
+                        | StmtNode::DoWhile { .. }
+                        | StmtNode::For { .. }
+                        | StmtNode::ForIn { .. }
+                        | StmtNode::ForOf { .. }
                 ) {
                     // Hand the label to the inner loop's begin_loop by stashing
                     // it on a pending-label field that begin_loop consumes.
@@ -1161,7 +1178,7 @@ impl Compiler {
                 // re-load it without stack gymnastics. Supports fall-through and break.
                 self.compile_expr(disc)?;
                 // Switch introduces a new lexical environment (like a block).
-                self.push_scope(false);
+                self.push_scope_with_runtime(false, true);
                 self.chunk.emit(Op::PushScope, self.current_line);
                 // Hoist function declarations from all case bodies.
                 for case in cases.iter() {
@@ -1382,7 +1399,7 @@ impl Compiler {
         if let Some((kind, names)) = &lexical_head {
             let bindings = Self::lexical_bindings_from_names(*kind, names);
             self.chunk.emit(Op::PushScope, self.current_line);
-            self.push_scope(false);
+            self.push_scope_with_runtime(false, true);
             self.emit_lexical_hoist(&bindings)?;
             self.compile_expr(right)?;
             self.chunk.emit(Op::PopScope, self.current_line);
@@ -1404,7 +1421,7 @@ impl Compiler {
         if let Some((kind, names)) = &lexical_head {
             let bindings = Self::lexical_bindings_from_names(*kind, names);
             self.chunk.emit(Op::PushScope, self.current_line);
-            self.push_scope(false);
+            self.push_scope_with_runtime(false, true);
             self.emit_lexical_hoist(&bindings)?;
             self.compile_for_var_existing_lexical(left)?;
             self.compile_stmt(body)?;
@@ -1448,6 +1465,7 @@ impl Compiler {
             is_function: true,
             base: 0,
             is_with: false,
+            has_runtime_env: true,
             is_strict: f.is_strict,
         });
 

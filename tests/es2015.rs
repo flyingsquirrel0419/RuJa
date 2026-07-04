@@ -496,6 +496,26 @@ fn for_in_lexical_head_tdz_and_iteration_scope() {
 }
 
 #[test]
+fn loop_unwind_skips_compile_only_scopes() {
+    assert_eq!(
+        run(
+            "eval('5; outer: do { for (var b in { x: 0 }) { 6; continue outer; } } while (false)')"
+        ),
+        Value::Number(6.0)
+    );
+
+    assert_eq!(
+        run("eval('5; outer: do { for (var b of [0]) { 6; continue outer; } } while (false)')"),
+        Value::Number(6.0)
+    );
+
+    assert_eq!(
+        run("eval('5; outer: do { for (var i = 0; i < 1; i++) { 6; continue outer; } } while (false)')"),
+        Value::Number(6.0)
+    );
+}
+
+#[test]
 fn computed_key_in_object_literal() {
     let src = r#"
         let key = "dynamic";
