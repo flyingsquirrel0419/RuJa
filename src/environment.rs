@@ -437,6 +437,26 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
     false
 }
 
+pub fn binding_env_and_kind(heap: &Heap, env: GcIdx, name: &str) -> Option<(GcIdx, BindingKind)> {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (found, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if let Some(b) = e.vars.lock().get(name) {
+                    return (Some(b.kind), None);
+                }
+                return (None, *e.parent.lock());
+            }
+            (None, None)
+        });
+        if let Some(kind) = found {
+            return Some((e_idx, kind));
+        }
+        cur = parent;
+    }
+    None
+}
+
 /// Try to delete a binding from the environment chain. Returns:
 /// - `true` if the binding was removed or doesn't exist.
 /// - `false` if the binding exists but is non-configurable (var/function).
@@ -471,8 +491,8 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
                 }
                 let mut vars = e.vars.lock();
                 if let Some(b) = vars.get(name) {
-                    // var and function declarations are non-configurable
-                    if b.kind == BindingKind::Var {
+                    // var, function, and parameter bindings are non-configurable.
+                    if matches!(b.kind, BindingKind::Var | BindingKind::Param) {
                         return (false, None);
                     }
                     // let/const can be deleted (they're block-scoped)

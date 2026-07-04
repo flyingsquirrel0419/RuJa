@@ -1713,7 +1713,9 @@ impl Vm {
                         }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let has_env_binding = crate::environment::has(&self.heap, cur_env, &name);
+                    let env_binding =
+                        crate::environment::binding_env_and_kind(&self.heap, cur_env, &name);
+                    let has_env_binding = env_binding.is_some();
                     let has_with_env =
                         !crate::environment::with_objects(&self.heap, cur_env).is_empty();
                     // First try normal delete_binding (handles lexical bindings
@@ -1730,6 +1732,24 @@ impl Vm {
                             }
                         } else {
                             self.stack.push(Value::Bool(true));
+                        }
+                    } else if env_binding
+                        .as_ref()
+                        .is_some_and(|(binding_env, _)| *binding_env == self.global)
+                    {
+                        let global_this = self.global_this.clone();
+                        if self.has_own_property(&global_this, &name) {
+                            let deleted = self.delete_property(&global_this, &name)?;
+                            if deleted {
+                                crate::environment::delete_var_binding(
+                                    &self.heap,
+                                    self.global,
+                                    &name,
+                                );
+                            }
+                            self.stack.push(Value::Bool(deleted));
+                        } else {
+                            self.stack.push(Value::Bool(false));
                         }
                     } else if !has_env_binding {
                         let global_this = self.global_this.clone();
@@ -1863,6 +1883,22 @@ impl Vm {
                         }
                     }
                     return Err(Error::thrown(v, &self.heap));
+                }
+                Op::ThrowReference(msg_idx) => {
+                    let message = {
+                        let frame = self.current_frame()?;
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(msg_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => "ReferenceError".to_string(),
+                        }
+                    };
+                    return Err(Error::reference(message));
                 }
                 Op::PushTry(handler) => {
                     let f = self.current_frame_mut()?;

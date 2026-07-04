@@ -1424,12 +1424,9 @@ impl Compiler {
                 // initializes the binding with the raw argument.
                 let defined_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
-                // Undefined path: the binding is still in the TDZ. Re-declare it
-                // as uninitialized (no-op if already uninit) for clarity, then
-                // evaluate the default and initialize.
+                // Undefined path: the binding is still in the TDZ. Evaluate
+                // the default and initialize the existing parameter binding.
                 self.chunk.emit(Op::Pop, self.current_line);
-                self.chunk
-                    .emit(Op::DeclareLetUninit(name_idx), self.current_line);
                 self.compile_expr(default)?;
                 self.chunk.emit(Op::InitLet(name_idx), self.current_line);
                 // Jump over the defined-path init (stack is empty here).
@@ -2105,6 +2102,21 @@ impl Compiler {
                                 computed,
                                 ..
                             } => {
+                                if matches!(object.as_ref(), Expr::Super) {
+                                    let this_idx = self.intern("this");
+                                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                                    self.chunk.emit(Op::Pop, self.current_line);
+                                    if *computed {
+                                        self.compile_expr(property)?;
+                                        self.chunk.emit(Op::Pop, self.current_line);
+                                    }
+                                    let msg_idx = self.chunk.add_constant(Value::String(
+                                        Arc::from("Cannot delete super property"),
+                                    ));
+                                    self.chunk
+                                        .emit(Op::ThrowReference(msg_idx), self.current_line);
+                                    return Ok(());
+                                }
                                 self.compile_expr(object)?;
                                 if *computed {
                                     self.compile_expr(property)?;
@@ -2124,8 +2136,10 @@ impl Compiler {
                             }
                             #[allow(unreachable_patterns)]
                             _ => {
-                                // delete of a non-reference expression always succeeds (e.g. delete 1).
-
+                                // delete of a non-reference expression still
+                                // evaluates its operand, then succeeds.
+                                self.compile_expr(e)?;
+                                self.chunk.emit(Op::Pop, self.current_line);
                                 self.chunk.emit(Op::True, self.current_line);
                             }
                         }

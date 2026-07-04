@@ -396,7 +396,7 @@ impl Vm {
                         &self.heap,
                         call_env,
                         param,
-                        crate::value::BindingKind::Let,
+                        crate::value::BindingKind::Param,
                     );
                 }
                 // rest parameter: collect remaining args into an array.
@@ -417,7 +417,7 @@ impl Vm {
                         call_env,
                         rest_name,
                         Value::Object(GcIdx(self.heap.allocate(arr)?)),
-                        crate::value::BindingKind::Const,
+                        crate::value::BindingKind::Param,
                     );
                 }
                 // make the function visible to itself by its name (for recursion)

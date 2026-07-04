@@ -507,6 +507,7 @@ pub struct Binding {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindingKind {
     Var,
+    Param,
     Let,
     Const,
 }

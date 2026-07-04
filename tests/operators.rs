@@ -290,6 +290,79 @@ fn strict_script_this_is_global_and_read_only_globals_reject_assignment() {
 }
 
 #[test]
+fn delete_non_reference_evaluates_operand_and_returns_true() {
+    assert_eq!(
+        run(r#"
+            var called = false;
+            function f() { called = true; }
+            var d = delete f();
+            d + ":" + called;
+            "#,),
+        Value::String(Arc::from("true:true"))
+    );
+}
+
+#[test]
+fn delete_global_builtin_uses_global_property_configurable() {
+    assert_eq!(
+        run(r#"
+            var d = delete JSON;
+            d + ":" + typeof JSON;
+            "#,),
+        Value::String(Arc::from("true:undefined"))
+    );
+}
+
+#[test]
+fn delete_function_parameter_returns_false() {
+    assert_eq!(
+        run(r#"
+            function f(a) {
+              return (delete a) + ":" + a;
+            }
+            f(1);
+            "#,),
+        Value::String(Arc::from("false:1"))
+    );
+}
+
+#[test]
+fn delete_super_property_throws_reference_error_before_topropertykey() {
+    let err = run_err(
+        r#"
+        var key = { toString: function() { throw new Error("key coerced"); } };
+        var obj = {
+          m() {
+            delete super[key];
+          }
+        };
+        obj.m();
+        "#,
+    );
+    assert!(err.contains("ReferenceError"), "got: {}", err);
+    assert!(!err.contains("key coerced"), "got: {}", err);
+}
+
+#[test]
+fn delete_super_property_checks_this_before_key_expression() {
+    let err = run_err(
+        r#"
+        class Base {
+          constructor() { throw new Error("base constructor called"); }
+        }
+        class Derived extends Base {
+          constructor() {
+            delete super[(super(), 0)];
+          }
+        }
+        new Derived();
+        "#,
+    );
+    assert!(err.contains("ReferenceError"), "got: {}", err);
+    assert!(!err.contains("base constructor called"), "got: {}", err);
+}
+
+#[test]
 fn strict_parenthesized_eval_arguments_assignment_is_syntax_error() {
     assert!(run_err(r#""use strict"; (eval) = 20;"#).contains("SyntaxError"));
     assert!(run_err(r#""use strict"; (arguments) = 20;"#).contains("SyntaxError"));

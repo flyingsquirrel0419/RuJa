@@ -192,6 +192,7 @@ pub enum Op {
 
     // Control flow (non-local)
     Throw,
+    ThrowReference(usize),
     PushTry(usize), // catch handler ip
     PopTry,
     EnterCatch,

@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 86.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 91.0% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (86.9%).** It reflects the portion of the spec
+supported-subset rate (91.0%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 86.9%:
+~56% to 91.0%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -155,12 +155,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `GetTemplateObject`.
 - **Array exotic descriptors** — `Object.getOwnPropertyDescriptor` now
   returns descriptors for Array `length` and index properties.
+- **Delete reference semantics** — non-reference operands are still evaluated
+  before `delete` returns `true`; function parameters are non-deletable;
+  configurable global object properties such as `JSON` delete correctly; and
+  `delete super.x`/`delete super[x]` throw `ReferenceError` in spec order.
 
 ## Why the rate is not higher
 
-The remaining ~633 failures in the supported subset cluster around:
-`with`-statement + compound-assignment reference semantics (~130, needs
-VM reference type), class builtin subclassing (~57), switch/try
-completion-value edge cases (~38), arrow-function early errors (~16),
-and tagged-template caching/`raw` property (~25). These are tracked in
-`HANDOFF.md` and will be addressed in subsequent rounds.
+The remaining 376 failure/timeout entries in the supported subset cluster
+around object literal/method-definition semantics, for-of/for-in iteration,
+super/class behavior, try completion edges, and destructuring assignment.
+These are tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

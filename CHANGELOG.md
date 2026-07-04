@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **90.9%** (up from 88.6%).
-Current supported subset count: **3799 pass / 379 fail / 2 timeout**.
+Supported-subset pass rate: **91.0%** (up from 88.6%).
+Current supported subset count: **3804 pass / 374 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -159,6 +159,14 @@ Current supported subset count: **3799 pass / 379 fail / 2 timeout**.
   binding. This removes the remaining direct assignment failures, improves
   `language/expressions/delete` to **61 pass / 5 fail**, and raises the
   supported subset to **3799 pass / 379 fail / 2 timeout**.
+- **Delete reference semantics**: `delete` now evaluates non-reference
+  operands before returning `true`, treats function parameter bindings as
+  non-deletable mutable bindings, deletes configurable global object
+  properties such as `JSON` even when mirrored by a global env binding, and
+  throws `ReferenceError` for `delete super.x` / `delete super[x]` in the
+  correct evaluation order. The `language/expressions/delete` subset now
+  passes **66/66** run tests, and the supported subset rises to
+  **3804 pass / 374 fail / 2 timeout**.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,
