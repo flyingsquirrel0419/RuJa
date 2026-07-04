@@ -4,14 +4,22 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **92.1%** (up from 88.6%).
-Current supported subset count: **3850 pass / 328 fail / 2 timeout**.
+Supported-subset pass rate: **92.3%** (up from 88.6%).
+Current supported subset count: **3856 pass / 322 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
   index enumerability, and nullish receiver errors. This unblocks test262
   `propertyHelper.js` descriptor checks for object literal accessor and method
   definitions.
+- **Live array-like `for...of` iteration**: array and arguments-object
+  iterators now read `length` and indexed properties lazily on each pull
+  instead of snapshotting values at iterator creation. Array growth,
+  contraction, accessor-index exceptions, strict arguments mutation, and
+  sloppy mapped-arguments aliasing now match the covered test262 semantics.
+  `Object.defineProperty(array, index, descriptor)` also advances array
+  length for indexed descriptors, and deleting mapped arguments elements
+  breaks the parameter alias as required.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

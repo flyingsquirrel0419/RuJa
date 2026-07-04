@@ -60,6 +60,23 @@ impl Vm {
                             return Some(Value::Number(len.max(sparse) as f64));
                         }
                         if let Some(i) = crate::value::parse_array_index(key) {
+                            if let Some(mapped) = a.arguments_map.lock().as_ref().and_then(|m| {
+                                m.names
+                                    .get(i)
+                                    .and_then(|n| n.as_ref())
+                                    .map(|n| (m.env, n.clone()))
+                            }) {
+                                if let Some(v) =
+                                    crate::environment::get(&self.heap, mapped.0, &mapped.1)
+                                {
+                                    return Some(v);
+                                }
+                            }
+                            if let Some(d) = a.props.lock().get(&pkey) {
+                                if !d.is_accessor {
+                                    return Some(d.value.clone());
+                                }
+                            }
                             if i >= crate::value::MAX_DENSE_ARRAY_LEN {
                                 let pkey = crate::value::PropertyKey::from_string(key.to_string());
                                 if let Some(d) = a.props.lock().get(&pkey) {
@@ -260,6 +277,21 @@ impl Vm {
                     }
                 });
                 if let Some(i) = array_index {
+                    let mapped = self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Array(a) = o {
+                            a.arguments_map.lock().as_ref().and_then(|m| {
+                                m.names
+                                    .get(i)
+                                    .and_then(|n| n.as_ref())
+                                    .map(|n| (m.env, n.clone()))
+                            })
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some((env, name)) = mapped {
+                        crate::environment::set(&self.heap, env, &name, value.clone());
+                    }
                     self.set_array_index(idx.0, i, value)?;
                     return Ok(());
                 }
@@ -695,11 +727,21 @@ impl Vm {
         }
         self.heap.with_obj(idx, |o| {
             if let HeapObj::Array(a) = o {
+                let is_arguments = a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
                 let mut items = a.items.lock();
-                while items.len() <= i {
-                    items.push(Value::Undefined);
+                if !is_arguments {
+                    while items.len() <= i {
+                        items.push(Value::Undefined);
+                    }
                 }
-                items[i] = value;
+                if i < items.len() {
+                    items[i] = value;
+                } else {
+                    let pkey = crate::value::PropertyKey::from_string(i.to_string());
+                    a.props
+                        .lock()
+                        .insert(pkey, crate::value::PropertyDescriptor::data(value));
+                }
             }
         });
         Ok(())

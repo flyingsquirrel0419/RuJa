@@ -702,12 +702,7 @@ pub(crate) fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
 }
 
 pub(crate) fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
-    let arr = HeapObj::Array(ArrayData {
-        items: Mutex::new(items),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    });
+    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 pub(crate) fn norm_idx(n: f64, len: f64) -> f64 {
@@ -720,12 +715,7 @@ pub(crate) fn norm_idx(n: f64, len: f64) -> f64 {
 
 pub(crate) fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> error::Result<Value> {
     let items: Vec<Value> = strs.into_iter().map(Value::String).collect();
-    let arr = HeapObj::Array(ArrayData {
-        items: Mutex::new(items),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    });
+    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
@@ -743,12 +733,7 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
     for k in &keys {
         vals.push(vm.get_property(&obj, k)?);
     }
-    let arr = HeapObj::Array(ArrayData {
-        items: Mutex::new(vals),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    });
+    let arr = HeapObj::Array(ArrayData::new(vals, Some(vm.array_proto.clone())));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
@@ -758,20 +743,13 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
     let mut pairs = Vec::new();
     for k in keys {
         let v = vm.get_property(&obj, &k)?;
-        let pair = HeapObj::Array(ArrayData {
-            items: Mutex::new(vec![Value::String(k.clone()), v]),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.array_proto.clone())),
-            sparse_max: Mutex::new(None),
-        });
+        let pair = HeapObj::Array(ArrayData::new(
+            vec![Value::String(k.clone()), v],
+            Some(vm.array_proto.clone()),
+        ));
         pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair)?)));
     }
-    let arr = HeapObj::Array(ArrayData {
-        items: Mutex::new(pairs),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    });
+    let arr = HeapObj::Array(ArrayData::new(pairs, Some(vm.array_proto.clone())));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
@@ -1336,6 +1314,22 @@ fn object_define_property(
             }
         };
         vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Array(a) = obj {
+                if let Some(i) = crate::value::parse_array_index(&key) {
+                    if i >= a.items.lock().len() {
+                        let new_len = i + 1;
+                        if new_len <= crate::value::MAX_DENSE_ARRAY_LEN {
+                            let mut items = a.items.lock();
+                            while items.len() < new_len {
+                                items.push(Value::Undefined);
+                            }
+                            *a.sparse_max.lock() = None;
+                        } else {
+                            *a.sparse_max.lock() = Some(new_len);
+                        }
+                    }
+                }
+            }
             obj.props()
                 .lock()
                 .insert(PropertyKey::from(key.as_str()), descriptor);

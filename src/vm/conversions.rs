@@ -767,6 +767,23 @@ impl Vm {
                             return Ok::<Value, Error>(Value::Number(len.max(sparse) as f64));
                         }
                         if let Some(i) = crate::value::parse_array_index(key) {
+                            if let Some(mapped) = a.arguments_map.lock().as_ref().and_then(|m| {
+                                m.names
+                                    .get(i)
+                                    .and_then(|n| n.as_ref())
+                                    .map(|n| (m.env, n.clone()))
+                            }) {
+                                if let Some(v) =
+                                    crate::environment::get(&self.heap, mapped.0, &mapped.1)
+                                {
+                                    return Ok(v);
+                                }
+                            }
+                            if let Some(d) = a.props.lock().get(&pkey) {
+                                if !d.is_accessor {
+                                    return Ok(d.value.clone());
+                                }
+                            }
                             // Indices beyond the dense cap are stored as named
                             // properties (sparse array); read them from there.
                             if i >= crate::value::MAX_DENSE_ARRAY_LEN {

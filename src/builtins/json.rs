@@ -380,12 +380,7 @@ fn apply_reviver(
                     }
                 }
                 Value::Object(GcIdx(vm.heap.allocate(HeapObj::Array(
-                    crate::value::ArrayData {
-                        items: Mutex::new(new_items),
-                        props: Mutex::new(IndexMap::new()),
-                        proto: Mutex::new(Some(vm.array_proto.clone())),
-                        sparse_max: Mutex::new(None),
-                    },
+                    crate::value::ArrayData::new(new_items, Some(vm.array_proto.clone())),
                 ))?))
             } else {
                 let mut new_props = IndexMap::new();
@@ -566,12 +561,7 @@ fn parse_json_arr(
             break;
         }
     }
-    let obj = HeapObj::Array(ArrayData {
-        items: Mutex::new(items),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    });
+    let obj = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
     Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
 }
 fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Result<Value> {

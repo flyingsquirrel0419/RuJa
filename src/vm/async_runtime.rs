@@ -406,12 +406,10 @@ impl Vm {
                     } else {
                         Vec::new()
                     };
-                    let arr = HeapObj::Array(crate::value::ArrayData {
-                        items: Mutex::new(rest),
-                        props: Mutex::new(IndexMap::new()),
-                        proto: Mutex::new(Some(self.array_proto.clone())),
-                        sparse_max: Mutex::new(None),
-                    });
+                    let arr = HeapObj::Array(crate::value::ArrayData::new(
+                        rest,
+                        Some(self.array_proto.clone()),
+                    ));
                     env::declare(
                         &self.heap,
                         call_env,
@@ -436,12 +434,25 @@ impl Vm {
                         },
                     );
                 }
-                let arr = HeapObj::Array(crate::value::ArrayData {
-                    items: Mutex::new(args.to_vec()),
-                    props: Mutex::new(IndexMap::new()),
-                    proto: Mutex::new(Some(self.array_proto.clone())),
-                    sparse_max: Mutex::new(None),
-                });
+                let mut arg_array =
+                    crate::value::ArrayData::new(args.to_vec(), Some(self.array_proto.clone()));
+                arg_array
+                    .is_arguments
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                if !func.chunk.is_strict {
+                    let mut seen = std::collections::HashSet::new();
+                    let mut names = vec![None; func.params.len()];
+                    for (i, name) in func.params.iter().enumerate().rev() {
+                        if i < args.len() && seen.insert(name.clone()) {
+                            names[i] = Some(name.clone());
+                        }
+                    }
+                    arg_array.arguments_map = Mutex::new(Some(crate::value::ArgumentsMap {
+                        env: call_env,
+                        names,
+                    }));
+                }
+                let arr = HeapObj::Array(arg_array);
                 let arg_idx = GcIdx(self.heap.allocate(arr)?);
                 // In non-strict mode, arguments has a `callee` property
                 // pointing to the executing function. (Strict mode forbids it.)
@@ -748,6 +759,15 @@ impl Vm {
                 }
             }
         }
+        if let Value::Object(idx) = iterable {
+            let is_array = self
+                .heap
+                .with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
+            if is_array {
+                return self.new_array_like_iterator(iterable.clone());
+            }
+        }
+
         let items: Vec<Value> = match iterable {
             Value::String(s) => crate::value::utf16_code_point_strings(s)
                 .into_iter()
@@ -769,13 +789,7 @@ impl Vm {
                     // generators before the loop even starts.
                     return self.new_generator_iterator(iterable.clone());
                 } else if is_array {
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Array(a) = o {
-                            a.items.lock().clone()
-                        } else {
-                            Vec::new()
-                        }
-                    })
+                    unreachable!("array iterators are handled lazily above")
                 } else if is_map {
                     // Extract (k, v) pairs out of the borrow first; allocate the
                     // pair arrays afterwards so we never call heap.allocate while
@@ -795,12 +809,10 @@ impl Vm {
                     let array_proto = self.array_proto.clone();
                     let mut pair_vals = Vec::with_capacity(pairs.len());
                     for (k, v) in pairs {
-                        let pair = HeapObj::Array(crate::value::ArrayData {
-                            items: Mutex::new(vec![k, v]),
-                            props: Mutex::new(IndexMap::new()),
-                            proto: Mutex::new(Some(array_proto.clone())),
-                            sparse_max: Mutex::new(None),
-                        });
+                        let pair = HeapObj::Array(crate::value::ArrayData::new(
+                            vec![k, v],
+                            Some(array_proto.clone()),
+                        ));
                         pair_vals.push(Value::Object(GcIdx(self.heap.allocate(pair)?)));
                     }
                     pair_vals
@@ -899,6 +911,7 @@ impl Vm {
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
             generator: Mutex::new(None),
+            array_like: Mutex::new(None),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -913,6 +926,7 @@ impl Vm {
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(Some(iter_obj)),
             generator: Mutex::new(None),
+            array_like: Mutex::new(None),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -927,6 +941,19 @@ impl Vm {
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
             generator: Mutex::new(Some(gen)),
+            array_like: Mutex::new(None),
+            done: std::sync::atomic::AtomicBool::new(false),
+        });
+        Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
+    }
+
+    pub(crate) fn new_array_like_iterator(&mut self, source: Value) -> error::Result<Value> {
+        let it = HeapObj::Iterator(crate::value::IteratorData {
+            items: Mutex::new(Vec::new()),
+            index: std::sync::atomic::AtomicUsize::new(0),
+            lazy_iter: Mutex::new(None),
+            generator: Mutex::new(None),
+            array_like: Mutex::new(Some(source)),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -944,22 +971,68 @@ impl Vm {
         it: &Value,
         resume: Value,
     ) -> error::Result<(Value, bool)> {
-        let (lazy, is_gen, already_done) = match it {
+        let (lazy, is_gen, is_array_like, already_done) = match it {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(it) = o {
                     (
                         it.lazy_iter.lock().is_some(),
                         it.generator.lock().is_some(),
+                        it.array_like.lock().is_some(),
                         it.done.load(Ordering::Relaxed),
                     )
                 } else {
-                    (false, false, true)
+                    (false, false, false, true)
                 }
             }),
             _ => return Err(Error::type_err("not an iterator".to_string())),
         };
         if already_done {
             return Ok((Value::Undefined, true));
+        }
+        if is_array_like {
+            let source = self.heap.with_obj(
+                match it {
+                    Value::Object(idx) => idx.0,
+                    _ => return Err(Error::type_err("not an iterator".to_string())),
+                },
+                |o| {
+                    if let HeapObj::Iterator(it) = o {
+                        it.array_like.lock().clone()
+                    } else {
+                        None
+                    }
+                },
+            );
+            let source = source.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
+            let idx = match it {
+                Value::Object(idx) => idx.0,
+                _ => return Err(Error::type_err("not an iterator".to_string())),
+            };
+            let i = self.heap.with_obj(idx, |o| {
+                if let HeapObj::Iterator(it) = o {
+                    let i = it.index.load(Ordering::Relaxed);
+                    it.index.store(i + 1, Ordering::Relaxed);
+                    i
+                } else {
+                    0
+                }
+            });
+            let len = match self.get_property(&source, "length")? {
+                Value::Number(n) if n.is_finite() && n > 0.0 => n.floor() as usize,
+                _ => 0,
+            };
+            if i >= len {
+                if let Value::Object(idx) = it {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Iterator(it) = o {
+                            it.done.store(true, Ordering::Relaxed);
+                        }
+                    });
+                }
+                return Ok((Value::Undefined, true));
+            }
+            let value = self.get_property(&source, &i.to_string())?;
+            return Ok((value, false));
         }
         if is_gen {
             // Resume the wrapped generator with `resume`. The generator's

@@ -292,12 +292,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 .into_iter()
                 .map(|p| Value::String(Arc::from(p.as_str())))
                 .collect();
-            let arr = HeapObj::Array(ArrayData {
-                items: Mutex::new(items),
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.array_proto.clone())),
-                sparse_max: Mutex::new(None),
-            });
+            let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
             return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
         }
     }
@@ -318,12 +313,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         .into_iter()
         .map(|p| Value::String(Arc::from(p.as_str())))
         .collect();
-    let arr = HeapObj::Array(ArrayData {
-        items: Mutex::new(items),
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.array_proto.clone())),
-        sparse_max: Mutex::new(None),
-    });
+    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 pub(crate) fn str_replace(

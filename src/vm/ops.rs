@@ -1277,12 +1277,10 @@ impl Vm {
                         items.push(self.stack.pop().unwrap_or(Value::Undefined));
                     }
                     items.reverse();
-                    let obj = HeapObj::Array(crate::value::ArrayData {
-                        items: Mutex::new(items),
-                        props: Mutex::new(IndexMap::new()),
-                        proto: Mutex::new(Some(self.array_proto.clone())),
-                        sparse_max: Mutex::new(None),
-                    });
+                    let obj = HeapObj::Array(crate::value::ArrayData::new(
+                        items,
+                        Some(self.array_proto.clone()),
+                    ));
                     let idx = self.alloc(obj)?;
                     self.stack.push(Value::Object(idx));
                 }
@@ -1626,6 +1624,7 @@ impl Vm {
                                     let exists = self.heap.with_obj(idx.0, |o| {
                                         if let HeapObj::Array(a) = o {
                                             i < a.items.lock().len()
+                                                || a.props.lock().contains_key(&pkey)
                                         } else {
                                             false
                                         }
@@ -1633,7 +1632,16 @@ impl Vm {
                                     if exists {
                                         self.heap.with_obj(idx.0, |o| {
                                             if let HeapObj::Array(a) = o {
-                                                a.items.lock()[i] = Value::Undefined;
+                                                if let Some(map) = a.arguments_map.lock().as_mut() {
+                                                    if let Some(slot) = map.names.get_mut(i) {
+                                                        *slot = None;
+                                                    }
+                                                }
+                                                a.props.lock().shift_remove(&pkey);
+                                                let mut items = a.items.lock();
+                                                if i < items.len() {
+                                                    items[i] = Value::Undefined;
+                                                }
                                             }
                                         });
                                     }
@@ -2482,12 +2490,10 @@ impl Vm {
                         }
                         items.push(value);
                     }
-                    let arr = HeapObj::Array(crate::value::ArrayData {
-                        items: Mutex::new(items),
-                        props: Mutex::new(IndexMap::new()),
-                        proto: Mutex::new(Some(self.array_proto.clone())),
-                        sparse_max: Mutex::new(None),
-                    });
+                    let arr = HeapObj::Array(crate::value::ArrayData::new(
+                        items,
+                        Some(self.array_proto.clone()),
+                    ));
                     let val = Value::Object(self.alloc(arr)?);
                     self.stack.push(val);
                 }

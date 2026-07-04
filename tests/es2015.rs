@@ -398,6 +398,38 @@ fn builtin_array_still_iterable() {
 }
 
 #[test]
+fn array_for_of_observes_live_length_changes() {
+    assert_eq!(
+        run("var a=[0,1]; var out=''; for (var v of a) { out += v; a.pop(); } out;"),
+        Value::String(Arc::from("0"))
+    );
+    assert_eq!(
+        run("var a=[0]; var out=''; for (var v of a) { out += v; if (v === 0) a.push(1); } out;"),
+        Value::String(Arc::from("01"))
+    );
+}
+
+#[test]
+fn array_for_of_reads_accessor_indices_lazily() {
+    let err = common::run_err(
+        "var a=[]; Object.defineProperty(a, '0', { get: function(){ throw new Error('hit'); }}); for (var v of a) {}",
+    );
+    assert!(err.contains("hit") || err.contains("Error"), "got {err}");
+}
+
+#[test]
+fn arguments_for_of_observes_mutation_and_sloppy_parameter_mapping() {
+    assert_eq!(
+        run("(function(){ 'use strict'; var out=''; var i=0; for (var v of arguments) { out += v; i++; arguments[i] *= 2; } return out; })(1,2,3);"),
+        Value::String(Arc::from("146"))
+    );
+    assert_eq!(
+        run("(function(a,b,c){ var out=''; var i=0; for (var v of arguments) { a=b; b=c; c=i; out += v; i++; } return out; })(1,2,3);"),
+        Value::String(Arc::from("131"))
+    );
+}
+
+#[test]
 fn computed_key_in_object_literal() {
     let src = r#"
         let key = "dynamic";

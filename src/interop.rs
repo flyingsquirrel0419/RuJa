@@ -91,12 +91,10 @@ pub fn from_json_value(vm: &mut Vm, v: &serde_json::Value) -> error::Result<Valu
             for item in arr {
                 items.push(from_json_value(vm, item)?);
             }
-            let obj = HeapObj::Array(crate::value::ArrayData {
-                items: Mutex::new(items),
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.array_proto.clone())),
-                sparse_max: Mutex::new(None),
-            });
+            let obj = HeapObj::Array(crate::value::ArrayData::new(
+                items,
+                Some(vm.array_proto.clone()),
+            ));
             Ok(Value::Object(GcIdx(vm.heap.allocate(obj)?)))
         }
         serde_json::Value::Object(map) => {

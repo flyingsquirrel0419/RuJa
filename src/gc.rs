@@ -96,6 +96,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             for v in a.items.lock().iter() {
                 push_value(v, worklist);
             }
+            if let Some(map) = a.arguments_map.lock().as_ref() {
+                worklist.push(map.env.0);
+            }
         }
         HeapObj::Function(f) => {
             worklist.push(f.closure.0);
@@ -175,6 +178,12 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
             if let Some(lazy) = it.lazy_iter.lock().as_ref() {
                 push_value(lazy, worklist);
+            }
+            if let Some(gen) = it.generator.lock().as_ref() {
+                push_value(gen, worklist);
+            }
+            if let Some(source) = it.array_like.lock().as_ref() {
+                push_value(source, worklist);
             }
         }
         _ => {}

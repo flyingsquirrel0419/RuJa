@@ -458,6 +458,31 @@ pub struct ArrayData {
     /// `None` when no such out-of-band index exists, so `length` equals
     /// `items.len()`. Kept in sync only by `set_array_index`.
     pub sparse_max: Mutex<Option<usize>>,
+    /// Sloppy-mode mapped arguments object support. When present, integer
+    /// indices alias the corresponding parameter binding in `env`.
+    pub arguments_map: Mutex<Option<ArgumentsMap>>,
+    /// RuJa currently represents arguments objects with ArrayData for reuse,
+    /// but arguments are not Array exotic objects: writing past the indexed
+    /// arguments must not grow `length`.
+    pub is_arguments: AtomicBool,
+}
+
+pub struct ArgumentsMap {
+    pub env: GcIdx,
+    pub names: Vec<Option<Arc<str>>>,
+}
+
+impl ArrayData {
+    pub fn new(items: Vec<Value>, proto: Option<Value>) -> Self {
+        ArrayData {
+            items: Mutex::new(items),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(proto),
+            sparse_max: Mutex::new(None),
+            arguments_map: Mutex::new(None),
+            is_arguments: AtomicBool::new(false),
+        }
+    }
 }
 
 pub struct FunctionData {
@@ -624,6 +649,10 @@ pub struct IteratorData {
     /// `next()`. Mutually exclusive with `lazy_iter`. Preserves the
     /// generator's return value (used by `yield*`).
     pub generator: Mutex<Option<Value>>,
+    /// Lazy ArrayIterator mode. Keeps the iterated array-like object alive and
+    /// reads `length` plus the current integer property on each pull, so array
+    /// growth, contraction, accessors, and arguments object mapping are visible.
+    pub array_like: Mutex<Option<Value>>,
     pub done: AtomicBool,
 }
 

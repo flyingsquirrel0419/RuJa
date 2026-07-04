@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 92.1% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 92.3% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (92.1%).** It reflects the portion of the spec
+supported-subset rate (92.3%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -170,10 +170,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Object literal `__proto__` semantics** — duplicate prototype-mutation
   entries are early errors, while computed and shorthand `__proto__` entries
   remain ordinary data properties.
+- **Live array-like `for...of` iteration** — arrays and arguments objects now
+  use lazy indexed iteration so mutations during traversal are observed,
+  accessor-index errors propagate, sloppy mapped arguments stay aliased to
+  parameters until deleted, and `Object.defineProperty` on array indices
+  updates array length.
 
 ## Why the rate is not higher
 
-The remaining 330 failure/timeout entries in the supported subset cluster
+The remaining 326 failure/timeout entries in the supported subset cluster
 around object literal/method-definition semantics, for-of/for-in iteration,
 super/class behavior, try completion edges, and destructuring assignment.
 These are tracked in `HANDOFF.md` and will be addressed in subsequent rounds.
