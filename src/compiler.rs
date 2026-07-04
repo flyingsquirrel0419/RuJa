@@ -2242,23 +2242,33 @@ impl Compiler {
                     self.chunk.emit(Op::Dup, self.current_line);
                     match &p.key {
                         PropertyKey::Computed(e) => {
-                            // Computed key: evaluate the expression and set via SetElem
-                            // (supports Symbol keys, e.g. `[Symbol.iterator]`).
+                            // Computed key: evaluate the expression and define an
+                            // own data property (supports Symbol keys).
                             self.compile_expr(e)?;
                             self.compile_expr(&p.value)?;
-                            self.chunk.emit(Op::SetElem, self.current_line);
+                            self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::Ident(s) => {
+                            if !p.computed && !p.shorthand && s.as_ref() == "__proto__" {
+                                self.compile_expr(&p.value)?;
+                                self.chunk.emit(Op::SetProto, self.current_line);
+                                continue;
+                            }
                             let key_idx = self.chunk.add_constant(Value::String(s.clone()));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
-                            self.chunk.emit(Op::SetProp, self.current_line);
+                            self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::String(s) => {
+                            if !p.computed && !p.shorthand && s.as_ref() == "__proto__" {
+                                self.compile_expr(&p.value)?;
+                                self.chunk.emit(Op::SetProto, self.current_line);
+                                continue;
+                            }
                             let key_idx = self.chunk.add_constant(Value::String(s.clone()));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
-                            self.chunk.emit(Op::SetProp, self.current_line);
+                            self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::Number(n) => {
                             let key = crate::value::num_to_string(*n);
@@ -2267,7 +2277,7 @@ impl Compiler {
                                 .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
-                            self.chunk.emit(Op::SetProp, self.current_line);
+                            self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::Spread(_) => unreachable!("spread handled above"),
                     }

@@ -1308,7 +1308,11 @@ impl Vm {
                             if v.is_undefined() {
                                 v = self.get_property(&src, &k)?;
                             }
-                            self.set_property(&dest, &k, v)?;
+                            self.define_data_property(
+                                &dest,
+                                crate::value::PropertyKey::Str(k.clone()),
+                                v,
+                            )?;
                         }
                     }
                     self.stack.push(dest);
@@ -1474,6 +1478,27 @@ impl Vm {
                     // Invalidate IC entry for this object+key so stale
                     // cached values are not returned on next GetProp.
                     if let Value::Object(idx) = &obj {
+                        self.ic_invalidate(idx.0, &key_str);
+                    }
+                    self.stack.push(value);
+                }
+                Op::DefineDataProperty => {
+                    // stack (bottom->top): [obj, key, value]
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let (pkey, cache_key) = match &key {
+                        Value::Symbol(id) => (crate::value::PropertyKey::Symbol(*id), None),
+                        _ => {
+                            let key_str = self.to_property_key(&key)?;
+                            (
+                                crate::value::PropertyKey::from(key_str.as_str()),
+                                Some(key_str),
+                            )
+                        }
+                    };
+                    self.define_data_property(&obj, pkey, value.clone())?;
+                    if let (Value::Object(idx), Some(key_str)) = (&obj, cache_key) {
                         self.ic_invalidate(idx.0, &key_str);
                     }
                     self.stack.push(value);
@@ -1724,9 +1749,19 @@ impl Vm {
                     let proto = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            *o.proto().lock() = Some(proto);
-                        });
+                        match proto {
+                            Value::Object(_) => {
+                                self.heap.with_obj(idx.0, |o| {
+                                    *o.proto().lock() = Some(proto);
+                                });
+                            }
+                            Value::Null => {
+                                self.heap.with_obj(idx.0, |o| {
+                                    *o.proto().lock() = None;
+                                });
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 Op::Throw => {

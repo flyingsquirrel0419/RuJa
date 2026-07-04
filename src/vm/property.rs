@@ -139,6 +139,26 @@ impl Vm {
         self.set_property_impl(obj, key, value, false)
     }
 
+    pub(crate) fn define_data_property(
+        &mut self,
+        obj: &Value,
+        key: crate::value::PropertyKey,
+        value: Value,
+    ) -> error::Result<()> {
+        if let Value::Object(idx) = obj {
+            self.heap.with_obj(idx.0, |o| {
+                o.props()
+                    .lock()
+                    .insert(key, crate::value::PropertyDescriptor::data(value));
+            });
+            Ok(())
+        } else {
+            Err(Error::type_err(
+                "Cannot set property of primitive".to_string(),
+            ))
+        }
+    }
+
     fn set_property_impl(
         &mut self,
         obj: &Value,
@@ -289,7 +309,10 @@ impl Vm {
                     None => {} // No accessor found; continue to data property checks.
                 }
 
-                // 2. Reject writes to a non-writable own data property.
+                // 2. Reject writes to a non-writable own or inherited data
+                // property. A writable inherited data property permits
+                // creating an own property on the receiver; a non-writable
+                // one blocks assignment.
                 let non_writable_own = self.heap.with_obj(idx.0, |o| {
                     o.props()
                         .lock()
@@ -304,6 +327,15 @@ impl Vm {
                         )));
                     }
                     // non-strict: silently ignore
+                    return Ok(());
+                }
+                if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
+                    if self.current_strict() {
+                        return Err(Error::type_err(format!(
+                            "Cannot assign to read only property '{}' of object",
+                            key
+                        )));
+                    }
                     return Ok(());
                 }
 
@@ -428,6 +460,36 @@ impl Vm {
             }
         }
         None
+    }
+
+    fn has_non_writable_data_property_in_proto(
+        &self,
+        idx: GcIdx,
+        key: &crate::value::PropertyKey,
+    ) -> bool {
+        let mut next = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
+        let mut depth = 0;
+        while depth < 1024 {
+            depth += 1;
+            let proto_idx = match next {
+                Some(Value::Object(proto_idx)) => proto_idx,
+                _ => return false,
+            };
+            let (found_non_writable, proto) = self.heap.with_obj(proto_idx.0, |o| {
+                let found = o
+                    .props()
+                    .lock()
+                    .get(key)
+                    .is_some_and(|d| !d.is_accessor && !d.writable);
+                let proto = o.proto().lock().clone();
+                (found, proto)
+            });
+            if found_non_writable {
+                return true;
+            }
+            next = proto;
+        }
+        false
     }
 
     /// Set an integer-indexed element of an array, extending with

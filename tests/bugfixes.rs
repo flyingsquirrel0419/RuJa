@@ -125,6 +125,76 @@ fn writable_false_silently_ignored_in_non_strict() {
     assert_eq!(v, Value::Number(1.0));
 }
 
+#[test]
+fn inherited_writable_false_rejects_strict_assignment() {
+    let msg = run_err(
+        r#"'use strict';
+           function F() {}
+           Object.defineProperty(F.prototype, 'x', { value: 1, writable: false });
+           var o = new F();
+           o.x = 99;"#,
+    );
+    assert!(
+        msg.contains("read only") || msg.contains("Cannot assign"),
+        "expected read-only error, got: {}",
+        msg
+    );
+}
+
+#[test]
+fn inherited_writable_false_silently_ignored_in_non_strict() {
+    let v = run(r#"function F() {}
+           Object.defineProperty(F.prototype, 'x', { value: 1, writable: false });
+           var o = new F();
+           o.x = 99;
+           o.hasOwnProperty('x') + ':' + o.x"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("false:1")));
+}
+
+#[test]
+fn inherited_writable_true_creates_own_property() {
+    let v = run(r#"function F() {}
+           Object.defineProperty(F.prototype, 'x', { value: 1, writable: true });
+           var o = new F();
+           o.x = 99;
+           o.hasOwnProperty('x') + ':' + o.x + ':' + F.prototype.x"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("true:99:1")));
+}
+
+#[test]
+fn object_literal_defines_own_property_over_inherited_read_only() {
+    let v = run(r#"Object.defineProperty(Object.prototype, 'x', {
+             value: 1,
+             writable: false,
+             configurable: true
+           });
+           var o = { x: 99 };
+           delete Object.prototype.x;
+           o.hasOwnProperty('x') + ':' + o.x"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("true:99")));
+}
+
+#[test]
+fn object_spread_defines_own_property_over_inherited_read_only() {
+    let v = run(r#"Object.defineProperty(Object.prototype, 'x', {
+             value: 1,
+             writable: false,
+             configurable: true
+           });
+           var o = { ...{ x: 99 } };
+           delete Object.prototype.x;
+           o.hasOwnProperty('x') + ':' + o.x"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("true:99")));
+}
+
+#[test]
+fn object_literal_proto_colon_still_sets_prototype() {
+    let v = run(r#"var proto = { x: 1 };
+           var o = { __proto__: proto };
+           o.hasOwnProperty('__proto__') + ':' + o.x"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("false:1")));
+}
+
 // ---------------------------------------------------------------------------
 // #3 call-stack depth limit throws a catchable RangeError
 // ---------------------------------------------------------------------------

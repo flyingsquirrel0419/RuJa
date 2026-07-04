@@ -121,6 +121,15 @@ Supported-subset pass rate: **90.4%** (up from 88.6%).
   References are now represented explicitly, so sloppy `with` assignments to
   names that were absent before `rhs` still create implicit globals rather
   than new with-object properties.
+- **Inherited read-only data properties in `[[Set]]`**: ordinary assignment
+  now rejects writes when the prototype chain contains a non-writable data
+  property. Sloppy assignment fails silently and strict assignment throws
+  `TypeError`, while writable inherited data properties still allow creating
+  an own property on the receiver. Object literal data properties and object
+  spread now use own data-property definition instead of ordinary `[[Set]]`,
+  so inherited read-only `Object.prototype` properties do not block object
+  initialization; non-computed `__proto__` colon properties still update the
+  literal object's prototype.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,
