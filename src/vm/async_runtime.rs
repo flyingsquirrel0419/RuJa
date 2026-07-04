@@ -183,6 +183,18 @@ impl Vm {
         func: NativeFn,
         length: usize,
     ) -> error::Result<GcIdx> {
+        let mut props = IndexMap::new();
+        let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(length as f64));
+        len_desc.writable = false;
+        len_desc.enumerable = false;
+        len_desc.configurable = true;
+        props.insert(crate::value::PropertyKey::from("length"), len_desc);
+        let mut name_desc = crate::value::PropertyDescriptor::data(Value::String(Arc::from(name)));
+        name_desc.writable = false;
+        name_desc.enumerable = false;
+        name_desc.configurable = true;
+        props.insert(crate::value::PropertyKey::from("name"), name_desc);
+
         let fdef = crate::value::FunctionData {
             name: Some(Arc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
@@ -196,7 +208,7 @@ impl Vm {
                 Value::Object(_) => Some(self.function_proto.clone()),
                 _ => None,
             }),
-            props: Mutex::new(IndexMap::new()),
+            props: Mutex::new(props),
         };
         Ok(GcIdx(self.heap.allocate(HeapObj::Function(fdef))?))
     }

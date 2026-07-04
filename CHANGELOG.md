@@ -5,6 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **90.5%** (up from 88.6%).
+Current supported subset count: **3781 pass / 397 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -140,6 +141,12 @@ Supported-subset pass rate: **90.5%** (up from 88.6%).
   targets such as `(fn) = function() {}` no longer infer a name, while
   `cover = (function() {})` still infers `cover` from the bare identifier
   assignment target.
+- **Native function own descriptors**: native functions now install own
+  non-writable, non-enumerable, configurable `length` and `name` data
+  properties when allocated. Strict writes such as `Function.length = 42`
+  now throw `TypeError`, and `Object.getOwnPropertyDescriptor(Function,
+  "length")` reports the expected descriptor. The assignment test262 subset
+  improves to **101 pass / 9 fail**.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,

@@ -185,6 +185,20 @@ fn assign_anonymous_function_name_only_for_bare_identifier_ref() {
 }
 
 #[test]
+fn native_function_length_is_read_only_own_property() {
+    let err = run_err(r#""use strict"; Function.length = 42;"#);
+    assert!(err.contains("TypeError"), "got: {}", err);
+
+    assert_eq!(
+        run(r#"
+            var d = Object.getOwnPropertyDescriptor(Function, "length");
+            [Function.length, d.value, d.writable, d.enumerable, d.configurable].join(",");
+            "#,),
+        Value::String(Arc::from("1,1,false,false,true"))
+    );
+}
+
+#[test]
 fn strict_parenthesized_eval_arguments_assignment_is_syntax_error() {
     assert!(run_err(r#""use strict"; (eval) = 20;"#).contains("SyntaxError"));
     assert!(run_err(r#""use strict"; (arguments) = 20;"#).contains("SyntaxError"));
