@@ -2514,31 +2514,21 @@ impl Compiler {
                 raw,
                 exprs,
             } => {
-                // tag`q0${e0}q1` => tag(strings, e0) where
-                // strings = [q0, q1] and strings.raw = [r0, r1].
+                // tag`q0${e0}q1` => tag(strings, e0, ...).
+                // The VM builds a cached, frozen template object with a frozen
+                // `raw` property per GetTemplateObject.
                 self.compile_expr(tag)?; // [tag]
-                self.chunk.emit(Op::NewArray(0), self.current_line); // [tag, strings]
-                for q in quasis {
-                    let qi = self.chunk.add_constant(Value::String(q.clone()));
-                    self.chunk.emit(Op::Const(qi), self.current_line);
-                    self.chunk.emit(Op::ArrayPush, self.current_line);
-                }
-                // Build strings.raw: dup strings, build raw array, set .raw.
-                self.chunk.emit(Op::Dup, self.current_line); // [tag, strings, strings]
-                self.chunk.emit(Op::NewArray(0), self.current_line); // [tag, strings, strings, rawArr]
-                for r in raw {
-                    let ri = self.chunk.add_constant(Value::String(r.clone()));
-                    self.chunk.emit(Op::Const(ri), self.current_line);
-                    self.chunk.emit(Op::ArrayPush, self.current_line);
-                }
-                // [tag, strings, strings, rawArr]
-                // SetProp wants [obj, key, value]; reorder to [strings, "raw", rawArr].
-                let raw_key = self.chunk.add_constant(Value::String(Arc::from("raw")));
-                self.chunk.emit(Op::Const(raw_key), self.current_line); // [tag, strings, strings, rawArr, "raw"]
-                self.chunk.emit(Op::Swap, self.current_line); // [tag, strings, strings, "raw", rawArr]
-                self.chunk.emit(Op::SetProp, self.current_line); // [tag, strings, rawArr]
-                self.chunk.emit(Op::Pop, self.current_line); // [tag, strings]
-                                                             // Interpolated expressions as additional arguments.
+                let quasi_ids: Vec<usize> = quasis
+                    .iter()
+                    .map(|q| self.chunk.add_constant(Value::String(q.clone())))
+                    .collect();
+                let raw_ids: Vec<usize> = raw
+                    .iter()
+                    .map(|r| self.chunk.add_constant(Value::String(r.clone())))
+                    .collect();
+                self.chunk
+                    .emit(Op::GetTemplateObject(quasi_ids, raw_ids), self.current_line);
+                // Interpolated expressions as additional arguments.
                 for e in exprs {
                     self.compile_expr(e)?;
                 }

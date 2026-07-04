@@ -107,7 +107,13 @@ pub(crate) fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Arc<str>, 
 
 pub(crate) fn is_array(value: &Value, heap: &Heap) -> bool {
     match value {
-        Value::Object(idx) => heap.with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_))),
+        Value::Object(idx) => heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Array(_) => true,
+            // Tagged-template objects are ordinary objects with class_name "Array"
+            // and Array.prototype, so they are recognized as arrays.
+            HeapObj::Object(o) => o.class_name.as_deref() == Some("Array"),
+            _ => false,
+        }),
         _ => false,
     }
 }
@@ -1024,11 +1030,38 @@ fn object_get_own_property_descriptor(
         None => return Ok(Value::Undefined),
     };
     if let Value::Object(idx) = &obj {
+        let pkey = crate::value::PropertyKey::from(key.as_str());
         let desc = vm.heap.with_obj(idx.0, |o| {
-            o.props()
-                .lock()
-                .get(&crate::value::PropertyKey::from(key.as_str()))
-                .cloned()
+            if let crate::value::HeapObj::Array(a) = o {
+                // Array exotic object: synthesize descriptors for 'length' and
+                // index properties so Object.getOwnPropertyDescriptor works.
+                if key == "length" {
+                    return Some(crate::value::PropertyDescriptor {
+                        value: Value::Number(a.items.lock().len() as f64),
+                        writable: true,
+                        enumerable: false,
+                        configurable: false,
+                        get: None,
+                        set: None,
+                        is_accessor: false,
+                    });
+                }
+                if let Ok(i) = key.parse::<usize>() {
+                    let items = a.items.lock();
+                    if i < items.len() {
+                        return Some(crate::value::PropertyDescriptor {
+                            value: items[i].clone(),
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                            get: None,
+                            set: None,
+                            is_accessor: false,
+                        });
+                    }
+                }
+            }
+            o.props().lock().get(&pkey).cloned()
         });
         if let Some(d) = desc {
             let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {

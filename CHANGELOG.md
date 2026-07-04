@@ -57,6 +57,11 @@ three distinct pass-rate scopes and what each measures.
   both sloppy and strict mode, matching the spec's strict-mode parameter
   rules for arrows.
 
+- **Tagged-template objects**: each template-literal site now returns a
+  cached, frozen template object with a frozen `raw` property, matching
+  `GetTemplateObject`. `Object.getOwnPropertyDescriptor` also returns
+  descriptors for Array exotic `length` and index properties.
+
 - **for-in/for-of non-declaration parsing**: `for (x in obj)` and
   `for ((x) in obj)` now parse and assign correctly (was: SyntaxError or
   undefined). Added `no_in` flag to prevent `in` being consumed as a binary

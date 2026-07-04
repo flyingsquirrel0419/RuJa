@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 84.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 85.0% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -150,6 +150,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Arrow function early errors** — arrow functions reject
   `eval`/`arguments` parameter names and duplicate parameter names in
   sloppy as well as strict mode.
+- **Tagged-template objects** — template-literal sites return a cached,
+  frozen template object with a frozen `raw` property per
+  `GetTemplateObject`.
+- **Array exotic descriptors** — `Object.getOwnPropertyDescriptor` now
+  returns descriptors for Array `length` and index properties.
 
 ## Why the rate is not higher
 

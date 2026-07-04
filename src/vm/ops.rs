@@ -2108,6 +2108,19 @@ impl Vm {
                     let val = Value::Object(self.alloc(arr)?);
                     self.stack.push(val);
                 }
+                Op::GetTemplateObject(quasi_ids, raw_ids) => {
+                    let frame = self.current_frame()?;
+                    let chunk_ptr = Arc::as_ptr(&frame.chunk) as usize;
+                    let key = (chunk_ptr, frame.ip.saturating_sub(1));
+                    if let Some(v) = self.template_cache.get(&key) {
+                        self.stack.push(v.clone());
+                    } else {
+                        let obj =
+                            self.make_template_object(quasi_ids.as_slice(), raw_ids.as_slice())?;
+                        self.template_cache.insert(key, obj.clone());
+                        self.stack.push(obj);
+                    }
+                }
                 _ => {
                     panic!("unimplemented bytecode op: {:?}", op);
                 }

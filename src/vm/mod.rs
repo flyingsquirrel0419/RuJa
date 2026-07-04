@@ -69,6 +69,9 @@ pub struct Vm {
     pub(crate) fuel: Option<i64>,
     /// Maximum number of live heap objects. `0` means unlimited.
     pub(crate) max_heap_objects: usize,
+    /// Tagged-template object cache keyed by (chunk ptr, ip). Per spec the
+    /// same template-literal site returns the same frozen template object.
+    pub(crate) template_cache: std::collections::HashMap<(usize, usize), Value>,
 }
 
 pub struct WellKnownSymbols {
@@ -246,6 +249,7 @@ impl Vm {
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,
+            template_cache: std::collections::HashMap::new(),
         };
         crate::builtins::setup_full(&mut vm)?;
         Ok(vm)
@@ -833,5 +837,107 @@ enum FuncCallInfo {
 impl Vm {
     pub fn to_string_pub(&mut self, v: &Value) -> error::Result<String> {
         Ok(self.to_string(v)?.to_string())
+    }
+
+    /// Build a frozen tagged-template object and its frozen `raw` array per
+    /// GetTemplateObject. Both objects are ordinary objects with
+    /// Array.prototype and class_name "Array" so `Array.isArray` recognizes
+    /// them. The template object is cached by (chunk ptr, ip) so each source
+    /// site returns the same instance.
+    pub(crate) fn make_template_object(
+        &mut self,
+        quasi_ids: &[usize],
+        raw_ids: &[usize],
+    ) -> error::Result<Value> {
+        let frame = self.current_frame()?;
+        let raw_strings: Vec<Value> = raw_ids
+            .iter()
+            .map(|i| {
+                frame
+                    .chunk
+                    .constants
+                    .get(*i)
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+            })
+            .collect();
+        let cooked_strings: Vec<Value> = quasi_ids
+            .iter()
+            .map(|i| {
+                frame
+                    .chunk
+                    .constants
+                    .get(*i)
+                    .cloned()
+                    .unwrap_or(Value::Undefined)
+            })
+            .collect();
+
+        let raw_obj = self.new_frozen_arraylike(raw_strings)?;
+        let mut tmpl = crate::value::ObjectData {
+            props: parking_lot::Mutex::new(indexmap::IndexMap::new()),
+            proto: parking_lot::Mutex::new(Some(self.array_proto.clone())),
+            extensible: std::sync::atomic::AtomicBool::new(false),
+            class_name: Some(std::sync::Arc::from("Array")),
+            private_fields: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            primitive: parking_lot::Mutex::new(None),
+        };
+        let len = cooked_strings.len();
+        for (i, v) in cooked_strings.into_iter().enumerate() {
+            let mut desc = crate::value::PropertyDescriptor::data(v);
+            desc.writable = false;
+            desc.configurable = false;
+            // enumerable = true (default)
+            tmpl.props.lock().insert(
+                crate::value::PropertyKey::from(i.to_string().as_str()),
+                desc,
+            );
+        }
+        let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(len as f64));
+        len_desc.writable = false;
+        len_desc.enumerable = false;
+        len_desc.configurable = false;
+        tmpl.props
+            .lock()
+            .insert(crate::value::PropertyKey::from("length"), len_desc);
+        let mut raw_desc = crate::value::PropertyDescriptor::data(raw_obj);
+        raw_desc.writable = false;
+        raw_desc.enumerable = false;
+        raw_desc.configurable = false;
+        tmpl.props
+            .lock()
+            .insert(crate::value::PropertyKey::from("raw"), raw_desc);
+        let idx = self.heap.allocate(crate::value::HeapObj::Object(tmpl))?;
+        Ok(Value::Object(GcIdx(idx)))
+    }
+
+    fn new_frozen_arraylike(&mut self, items: Vec<Value>) -> error::Result<Value> {
+        let mut obj = crate::value::ObjectData {
+            props: parking_lot::Mutex::new(indexmap::IndexMap::new()),
+            proto: parking_lot::Mutex::new(Some(self.array_proto.clone())),
+            extensible: std::sync::atomic::AtomicBool::new(false),
+            class_name: Some(std::sync::Arc::from("Array")),
+            private_fields: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            primitive: parking_lot::Mutex::new(None),
+        };
+        for (i, v) in items.into_iter().enumerate() {
+            let mut desc = crate::value::PropertyDescriptor::data(v);
+            desc.writable = false;
+            desc.configurable = false;
+            obj.props.lock().insert(
+                crate::value::PropertyKey::from(i.to_string().as_str()),
+                desc,
+            );
+        }
+        let len = obj.props.lock().len();
+        let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(len as f64));
+        len_desc.writable = false;
+        len_desc.enumerable = false;
+        len_desc.configurable = false;
+        obj.props
+            .lock()
+            .insert(crate::value::PropertyKey::from("length"), len_desc);
+        let idx = self.heap.allocate(crate::value::HeapObj::Object(obj))?;
+        Ok(Value::Object(GcIdx(idx)))
     }
 }
