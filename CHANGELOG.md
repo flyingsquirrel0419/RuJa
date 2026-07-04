@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **89.8%** (up from 88.6%).
+Supported-subset pass rate: **90.2%** (up from 88.6%).
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -101,6 +101,18 @@ Supported-subset pass rate: **89.8%** (up from 88.6%).
   reference. Object-environment `PutValue` also bypasses the legacy
   global-env write shortcut, preserving sloppy global object property writes
   when a getter deletes the property before the final put.
+- **`with` statement completion values and early errors**: `with` now resets
+  its own completion value before evaluating the body, so empty normal and
+  empty abrupt completions are updated to `undefined` while expression bodies
+  preserve their value. Direct eval now preserves inherited strictness through
+  to the compiled chunk, making `with` inside strict direct eval throw
+  SyntaxError. Expression statements beginning with `let [` are rejected even
+  across a line terminator, matching the grammar lookahead restriction.
+- **Compiled function table index rebasing**: code compiled after previous
+  functions already exist in the VM now rebases `MakeClosure`/`MakeClass`
+  indices before appending function definitions. This prevents direct eval and
+  repeated `Vm::run` calls from accidentally constructing an older function
+  body when the new source creates function expressions.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,

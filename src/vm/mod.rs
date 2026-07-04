@@ -204,6 +204,38 @@ impl Default for Vm {
 }
 
 impl Vm {
+    fn offset_function_indices(chunk: &mut Chunk, base: usize) {
+        if base == 0 {
+            return;
+        }
+        for op in &mut chunk.code {
+            match op {
+                Op::MakeFunction(idx) | Op::MakeClosure(idx) | Op::MakeClass(idx) => {
+                    *idx += base;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn append_compiled_functions(
+        &mut self,
+        mut chunk: Chunk,
+        funcs: Vec<Arc<crate::function::FunctionDef>>,
+    ) -> Chunk {
+        let base = self.functions.len();
+        Self::offset_function_indices(&mut chunk, base);
+        let adjusted = funcs.into_iter().map(|func| {
+            let mut func = (*func).clone();
+            let mut func_chunk = (*func.chunk).clone();
+            Self::offset_function_indices(&mut func_chunk, base);
+            func.chunk = Arc::new(func_chunk);
+            Arc::new(func)
+        });
+        self.functions.extend(adjusted);
+        chunk
+    }
+
     fn current_frame(&self) -> error::Result<&CallFrame> {
         self.frames
             .last()
@@ -292,8 +324,7 @@ impl Vm {
         let program = crate::parser::Parser::parse(src)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let _base = self.functions.len();
-        self.functions.extend(funcs);
+        let chunk = self.append_compiled_functions(chunk, funcs);
         // In sloppy (non-strict) script mode, top-level `this` is the global
         // object. Bind it on the global environment so `LoadEnv("this")` finds it.
         if !program.is_strict {
@@ -385,7 +416,7 @@ impl Vm {
         let program = crate::parser::Parser::parse(src)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        self.functions.extend(funcs);
+        let chunk = self.append_compiled_functions(chunk, funcs);
         let result = self.execute_chunk_scoped(chunk, self.global, Value::Undefined);
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
@@ -407,7 +438,7 @@ impl Vm {
         let program = crate::parser::Parser::parse_strict_inherited(src, caller_strict)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        self.functions.extend(funcs);
+        let chunk = self.append_compiled_functions(chunk, funcs);
         // Per spec, direct eval runs in a dedicated lexical environment whose
         // parent is the caller's environment. `let`/`const`/`class` declared in
         // eval stay local to that environment (they do NOT leak to the caller),

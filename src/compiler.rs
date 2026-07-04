@@ -134,7 +134,7 @@ impl Compiler {
     }
 
     /// Reset the completion value slot to undefined when tracking is active.
-    /// Called at the start of if/while/for/do-while so that the statement's
+    /// Called at the start of compound statements so that the statement's
     /// completion value starts fresh (per ES spec: each statement has its
     /// own completion, not inherited from the previous one).
     fn reset_completion(&mut self) {
@@ -789,6 +789,7 @@ impl Compiler {
                         "'with' statement is not allowed in strict mode".to_string(),
                     ));
                 }
+                self.reset_completion();
                 self.push_with_scope();
                 self.compile_expr(object)?;
                 self.chunk.emit(Op::PushWithEnv, self.current_line);

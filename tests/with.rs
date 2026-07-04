@@ -1,7 +1,7 @@
 //! `with` statement: dynamic object environment records.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -228,4 +228,43 @@ fn with_this_function_reads_property_via_this() {
         r;
     "#;
     assert_eq!(run(src), Value::Number(7.0));
+}
+
+#[test]
+fn with_statement_normal_completion_value() {
+    assert_eq!(run("1; with ({}) { }"), Value::Undefined);
+    assert_eq!(run("2; with ({}) { 3; }"), Value::Number(3.0));
+}
+
+#[test]
+fn with_statement_abrupt_empty_completion_value() {
+    assert_eq!(
+        run("1; do { 2; with ({}) { 3; break; } 4; } while (false);"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("5; do { 6; with ({}) { break; } 7; } while (false);"),
+        Value::Undefined
+    );
+    assert_eq!(
+        run("8; do { 9; with ({}) { 10; continue; } 11; } while (false);"),
+        Value::Number(10.0)
+    );
+    assert_eq!(
+        run("12; do { 13; with ({}) { continue; } 14; } while (false);"),
+        Value::Undefined
+    );
+}
+
+#[test]
+fn with_single_statement_rejects_let_array_expression_start() {
+    let err = run_err(
+        r#"
+        if (false) {
+            with ({}) let
+            [a] = 0;
+        }
+        "#,
+    );
+    assert!(err.contains("SyntaxError"));
 }

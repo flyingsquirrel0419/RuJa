@@ -339,6 +339,7 @@ pub enum VarKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub body: Vec<Stmt>,
-    /// True when the program begins with a `"use strict"` directive prologue.
+    /// True when the program is parsed in strict mode, either from a
+    /// `"use strict"` directive prologue or an inherited strict context.
     pub is_strict: bool,
 }

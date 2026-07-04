@@ -171,3 +171,39 @@ fn sloppy_eval_still_leaks_var() {
     "#;
     assert_eq!(run(src), ruja::Value::Number(7.0));
 }
+
+#[test]
+fn direct_eval_inherits_caller_strictness_for_with() {
+    let src = r#"
+        (function() {
+            'use strict';
+            try {
+                eval("var o = {}; with (o) {}");
+            } catch (e) {
+                return e.name;
+            }
+            return "no error";
+        })();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("SyntaxError")));
+}
+
+#[test]
+fn eval_function_indices_are_offset_from_existing_functions() {
+    assert_eq!(
+        run(r#"
+            var existing = function() { return 0; };
+            eval("var fresh = function() { return 1; }; fresh();");
+        "#),
+        Value::Number(1.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var obj = { p: function() { return 0; } };
+            eval("with (obj) { p = function() { return 1; }; }");
+            obj.p();
+        "#),
+        Value::Number(1.0)
+    );
+}

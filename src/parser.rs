@@ -237,13 +237,16 @@ impl Parser {
         // parsed within the body inherit strictness. A directive prologue is
         // a run of string-literal expression statements; only the leading
         // "use strict" matters here.
-        let is_strict = self.peek_use_strict_directive();
-        self.is_strict_context = is_strict || self.is_strict_context;
+        let has_strict_directive = self.peek_use_strict_directive();
+        self.is_strict_context = has_strict_directive || self.is_strict_context;
         let mut body = Vec::new();
         while !self.check(&TokenKind::Eof) {
             body.push(self.parse_stmt()?);
         }
-        Ok(Program { body, is_strict })
+        Ok(Program {
+            body,
+            is_strict: self.is_strict_context,
+        })
     }
 
     /// Peek the token stream for a leading `"use strict"` string-literal
@@ -344,6 +347,9 @@ impl Parser {
             TokenKind::LBrace => self.parse_block(),
             TokenKind::Var | TokenKind::Const => self.parse_var_decl(),
             TokenKind::Let if self.is_let_lexical_position() => self.parse_var_decl(),
+            TokenKind::Let if matches!(self.peek_at_tok(1).kind, TokenKind::LBracket) => Err(
+                error::Error::syntax("Expression statement cannot start with 'let ['".to_string()),
+            ),
             TokenKind::Function => self.parse_function_decl(),
             TokenKind::Async => {
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
