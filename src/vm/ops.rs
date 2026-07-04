@@ -1301,6 +1301,13 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     self.set_property_key(&obj, &key, value.clone())?;
+                    // Invalidate IC entry for this object+key so that
+                    // subsequent GetProp does not return a stale value.
+                    // Symbol keys are not cached by the IC, so skip them.
+                    if let (Value::Object(idx), Value::String(_)) = (&obj, &key) {
+                        let key_str = self.to_property_key(&key)?;
+                        self.ic_invalidate(idx.0, &key_str);
+                    }
                     self.stack.push(value);
                 }
                 Op::DeleteProp => {

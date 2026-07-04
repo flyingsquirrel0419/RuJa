@@ -1222,6 +1222,7 @@ fn object_define_property(
                 .lock()
                 .insert(PropertyKey::from(key.as_str()), descriptor);
         });
+        vm.ic_invalidate(idx.0, &key);
     }
     Ok(target)
 }

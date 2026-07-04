@@ -40,6 +40,11 @@ three distinct pass-rate scopes and what each measures.
 - **String.prototype.toString/valueOf**: added missing methods to
   `String.prototype`.
 
+- **Inline-cache invalidation**: `SetElem` (`o["x"] = v`) and
+  `Object.defineProperty` now invalidate the monomorphic property cache
+  so that subsequent `GetProp` reads the freshly written value instead of
+  a stale cached value.
+
 - **for-in/for-of non-declaration parsing**: `for (x in obj)` and
   `for ((x) in obj)` now parse and assign correctly (was: SyntaxError or
   undefined). Added `no_in` flag to prevent `in` being consumed as a binary
