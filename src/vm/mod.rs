@@ -917,17 +917,40 @@ impl Vm {
                         // over the lexical scope chain (closest first), per
                         // spec. Check with-objects BEFORE env bindings.
                         let with_objs = env::with_objects(&self.heap, *env_idx);
-                        for obj in &with_objs {
-                            let has = self.has_property(obj, &name)?;
-                            if has {
-                                self.set_property(obj, &name, value.clone())?;
-                                return Ok(());
+                        let mut found_idx: Option<usize> = None;
+                        for (i, obj) in with_objs.iter().enumerate() {
+                            if self.has_property(obj, &name)? {
+                                found_idx = Some(i);
+                                break;
                             }
                         }
-                        // Property was deleted from all with-objects: re-create
-                        // it on the innermost with-object (first in the list).
-                        if let Some(obj) = with_objs.first() {
-                            self.set_property(obj, &name, value.clone())?;
+                        if let Some(i) = found_idx {
+                            let obj = with_objs[i].clone();
+                            self.set_property(&obj, &name, value)?;
+                            return Ok(());
+                        }
+                        // Property not found on any with-object (deleted):
+                        // re-create it on the innermost with-object (index 0)
+                        // using a direct property insertion (not [[Set]], which
+                        // would trigger any setter on the proto chain).
+                        if !with_objs.is_empty() {
+                            let obj = with_objs[0].clone();
+                            if let Value::Object(idx) = &obj {
+                                let pkey = crate::value::PropertyKey::from(name.as_str());
+                                let desc = crate::value::PropertyDescriptor {
+                                    value,
+                                    writable: true,
+                                    enumerable: true,
+                                    configurable: true,
+                                    get: None,
+                                    set: None,
+                                    is_accessor: false,
+                                };
+                                self.heap.with_obj(idx.0, |o| {
+                                    o.props().lock().insert(pkey, desc);
+                                });
+                                self.ic_invalidate(idx.0, &name);
+                            }
                             return Ok(());
                         }
                         // Not found on with-objects: try env bindings.
