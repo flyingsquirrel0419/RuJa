@@ -1301,7 +1301,12 @@ impl Parser {
     }
 
     fn parse_assign_inner(&mut self) -> error::Result<Expr> {
+        let left_start = self.pos;
         let left = self.parse_ternary()?;
+        let left_is_parenthesized_ident = matches!(
+            self.tokens.get(left_start).map(|t| &t.kind),
+            Some(TokenKind::LParen)
+        ) && matches!(left, Expr::Ident(_));
         let op = match self.peek() {
             TokenKind::Assign => AssignOp::Assign,
             TokenKind::PlusAssign => AssignOp::AddAssign,
@@ -1325,17 +1330,10 @@ impl Parser {
         let mut right = self.parse_assign()?;
         // Validate that the left side is a valid assignment target.
         // Invalid: literals, binary ops, unary ops, function calls, etc.
-        match &left {
-            Expr::Ident(_)
-            | Expr::Member { .. }
-            | Expr::PrivateGet { .. }
-            | Expr::Array(_)
-            | Expr::Object(_) => {}
-            _ => {
-                return Err(error::Error::syntax(
-                    "Invalid left-hand side in assignment".to_string(),
-                ));
-            }
+        if !Self::is_assignment_target(&left) {
+            return Err(error::Error::syntax(
+                "Invalid left-hand side in assignment".to_string(),
+            ));
         }
         // Strict mode: assignment to `eval` or `arguments` is a SyntaxError.
         if self.is_strict_context {
@@ -1348,8 +1346,10 @@ impl Parser {
                 }
             }
         }
-        // SetFunctionName for `obj.prop = <anon function>` / `obj[prop] = ...`.
-        if matches!(op, AssignOp::Assign) {
+        // SetFunctionName for assignment applies only when the left side is a
+        // bare IdentifierRef. Member and parenthesized targets must not infer
+        // a name here.
+        if matches!(op, AssignOp::Assign) && !left_is_parenthesized_ident {
             if let Some(key_name) = Self::assign_target_name(&left) {
                 Self::name_function_from_ident(&mut right, &key_name);
             }
@@ -1357,20 +1357,23 @@ impl Parser {
         Ok(Expr::Assign(op, Box::new(left), Box::new(right)))
     }
 
-    /// Extract the property name for SetFunctionName from an assignment
-    /// target: `o.p` -> Some("p"), `o[computed]` -> None, identifier -> Some(name).
+    fn is_assignment_target(target: &Expr) -> bool {
+        match target {
+            Expr::Ident(_)
+            | Expr::Member { .. }
+            | Expr::PrivateGet { .. }
+            | Expr::Array(_)
+            | Expr::Object(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Extract the name used by assignment SetFunctionName. Per spec this is
+    /// only a bare IdentifierRef, not a member expression or parenthesized
+    /// identifier.
     fn assign_target_name(target: &Expr) -> Option<Arc<str>> {
         match target {
             Expr::Ident(s) => Some(s.clone()),
-            Expr::Member {
-                property,
-                computed: false,
-                ..
-            } => match property.as_ref() {
-                Expr::Ident(s) => Some(s.clone()),
-                Expr::String(s) => Some(s.clone()),
-                _ => None,
-            },
             _ => None,
         }
     }

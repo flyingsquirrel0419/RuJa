@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **90.4%** (up from 88.6%).
+Supported-subset pass rate: **90.5%** (up from 88.6%).
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -134,6 +134,12 @@ Supported-subset pass rate: **90.4%** (up from 88.6%).
   every keyword token covered by the shared `as_keyword_str()` helper, so
   escaped keyword property names such as `obj.st\u0061tic = 42` parse as
   `obj.static` instead of throwing a SyntaxError.
+- **Assignment function-name inference**: anonymous function assignment now
+  performs SetFunctionName only for a bare identifier left-hand side. Member
+  targets such as `obj.attr = function() {}` and parenthesized identifier
+  targets such as `(fn) = function() {}` no longer infer a name, while
+  `cover = (function() {})` still infers `cover` from the bare identifier
+  assignment target.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,

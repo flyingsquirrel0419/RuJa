@@ -165,6 +165,32 @@ fn assign_member_allows_escaped_keyword_property_name() {
 }
 
 #[test]
+fn assign_anonymous_function_name_only_for_bare_identifier_ref() {
+    assert_eq!(
+        run("var fn; fn = function() {}; fn.name;"),
+        Value::String(Arc::from("fn"))
+    );
+    assert_eq!(
+        run("var cover; cover = (function() {}); cover.name;"),
+        Value::String(Arc::from("cover"))
+    );
+    assert_eq!(
+        run("var fn; (fn) = function() {}; fn.name;"),
+        Value::String(Arc::from(""))
+    );
+    assert_eq!(
+        run("var obj = {}; obj.attr = function() {}; obj.attr.name;"),
+        Value::String(Arc::from(""))
+    );
+}
+
+#[test]
+fn strict_parenthesized_eval_arguments_assignment_is_syntax_error() {
+    assert!(run_err(r#""use strict"; (eval) = 20;"#).contains("SyntaxError"));
+    assert!(run_err(r#""use strict"; (arguments) = 20;"#).contains("SyntaxError"));
+}
+
+#[test]
 fn assign_element() {
     assert_eq!(run("var a = [0,0,0]; a[1] = 9; a[1];"), Value::Number(9.0));
 }
