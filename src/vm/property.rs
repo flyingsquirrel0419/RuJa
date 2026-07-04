@@ -12,6 +12,7 @@ impl Vm {
         match value {
             Value::Object(idx) => roots.push(idx.0),
             Value::Reference(r) => match &r.base {
+                crate::value::ReferenceBase::Unresolvable => {}
                 crate::value::ReferenceBase::Environment(env_idx) => roots.push(env_idx.0),
                 crate::value::ReferenceBase::ObjectEnvironment(base)
                 | crate::value::ReferenceBase::Value(base) => Self::push_value_roots(roots, base),

@@ -105,6 +105,53 @@ fn assign_ident() {
 }
 
 #[test]
+fn assign_ident_preserves_resolved_reference_across_rhs() {
+    assert_eq!(
+        run(r#"
+            function f() {
+              var x = 0;
+              var scope = { x: 1 };
+              with (scope) {
+                x = (delete scope.x, 2);
+              }
+              return scope.x + ':' + x;
+            }
+            f();
+            "#,),
+        Value::String(Arc::from("2:0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function f() {
+              var x = 0;
+              var inner = (function() {
+                x = (eval('var x;'), 1);
+                return x;
+              })();
+              return String(inner) + ':' + x;
+            }
+            f();
+            "#,),
+        Value::String(Arc::from("undefined:1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            function f() {
+              var scope = {};
+              with (scope) {
+                missing = 2;
+              }
+              return scope.missing + ':' + missing;
+            }
+            f();
+            "#,),
+        Value::String(Arc::from("undefined:2"))
+    );
+}
+
+#[test]
 fn assign_member() {
     assert_eq!(run("var o = {n: 0}; o.n = 7; o.n;"), Value::Number(7.0));
 }

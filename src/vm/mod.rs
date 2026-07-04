@@ -901,6 +901,10 @@ impl Vm {
             Value::Reference(r) => {
                 let r = r.clone();
                 match &r.base {
+                    crate::value::ReferenceBase::Unresolvable => {
+                        let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
+                        Err(Error::reference(format!("{} is not defined", name)))
+                    }
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
                         // Walk the environment chain in order: at each env,
@@ -995,6 +999,14 @@ impl Vm {
             Value::Reference(r) => {
                 let r = r.clone();
                 match &r.base {
+                    crate::value::ReferenceBase::Unresolvable => {
+                        let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
+                        if r.strict {
+                            return Err(Error::reference(format!("{} is not defined", name)));
+                        }
+                        let global_this = self.global_this.clone();
+                        self.set_property(&global_this, &name, value)?;
+                    }
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
                         // Walk the env chain from the reference's env, checking

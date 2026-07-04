@@ -3136,11 +3136,11 @@ impl Compiler {
                 }
             }
             Expr::Ident(name) => {
-                self.compile_expr(value)?;
-                self.chunk.emit(Op::Dup, self.current_line);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::StoreEnv(name_idx), self.current_line);
-                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
             }
             _ => {
                 self.compile_expr(value)?;

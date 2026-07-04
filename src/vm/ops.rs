@@ -811,7 +811,7 @@ impl Vm {
                     let name_str = name.as_str().unwrap_or_default().to_string();
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let strict = self.current_strict();
-                    let mut base = crate::value::ReferenceBase::Environment(env);
+                    let mut base = crate::value::ReferenceBase::Unresolvable;
                     let mut cur_env = Some(env);
                     while let Some(e_idx) = cur_env {
                         let (has_binding, has_with, with_obj_val, parent) =

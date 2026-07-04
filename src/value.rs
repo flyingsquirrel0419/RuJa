@@ -157,9 +157,10 @@ pub enum Value {
     /// An ES Reference record (spec 6.2.4). Used for LHS evaluation so that
     /// `GetValue`/`PutValue` can preserve the original binding even if it is
     /// deleted/recreated between the two steps (e.g. `with` + compound-assignment
-    /// where a getter deletes the property). `base` is the environment record
-    /// (GcIdx) or the property base value; `name` is the referenced name; `strict`
-    /// controls whether unresolved puts throw ReferenceError.
+    /// where a getter deletes the property). `base` is unresolved, an
+    /// environment record (GcIdx), or a property base value; `name` is the
+    /// referenced name; `strict` controls whether unresolved puts throw
+    /// ReferenceError.
     Reference(Box<ReferenceRecord>),
 }
 
@@ -180,6 +181,8 @@ pub struct ReferenceRecord {
 /// references. `Value` is boxed to break the recursive type size.
 #[derive(Clone, Debug)]
 pub enum ReferenceBase {
+    /// No binding/property was found when the reference was created.
+    Unresolvable,
     /// An environment record (heap index of an `EnvironmentData`).
     Environment(GcIdx),
     /// A property reached through an object environment record (`with` or

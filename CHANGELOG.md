@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **90.2%** (up from 88.6%).
+Supported-subset pass rate: **90.4%** (up from 88.6%).
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -113,6 +113,14 @@ Supported-subset pass rate: **90.2%** (up from 88.6%).
   indices before appending function definitions. This prevents direct eval and
   repeated `Vm::run` calls from accidentally constructing an older function
   body when the new source creates function expressions.
+- **Reference type for simple identifier assignment**: `x = rhs` now creates
+  the identifier Reference before evaluating `rhs`, then stores through
+  `PutValue`. This preserves the originally resolved with-object property even
+  if `rhs` deletes it, and prevents direct eval in `rhs` from introducing a
+  nearer `var x` that steals the final store. Unresolvable identifier
+  References are now represented explicitly, so sloppy `with` assignments to
+  names that were absent before `rhs` still create implicit globals rather
+  than new with-object properties.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,
