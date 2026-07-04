@@ -32,6 +32,11 @@ pub struct Compiler {
     /// When inside a switch body, the env index of `#sw_val` so that
     /// expression statements store their value instead of popping it.
     switch_val_depth: Option<usize>,
+    /// Stack of active switch contexts, each entry is `(sw_val_idx,
+    /// saved_sw_val_idx, loop_stack_index)` so that a `continue` which exits
+    /// one or more switches can copy the current switch completion value into
+    /// the enclosing completion slot before jumping.
+    switch_ctx_stack: Vec<(usize, Option<usize>, usize)>,
     /// Current source line being compiled; emitted onto each `Op` so runtime
     /// errors can report `(at line N)`. Updated as `compile_stmt` enters a stmt.
     current_line: usize,
@@ -90,6 +95,7 @@ impl Compiler {
             pending_label: None,
             finally_stack: Vec::new(),
             switch_val_depth: None,
+            switch_ctx_stack: Vec::new(),
             current_line: 0,
         }
     }
@@ -107,6 +113,24 @@ impl Compiler {
     /// strict context or set by a `"use strict"` directive).
     fn is_strict(&self) -> bool {
         self.scopes.last().map(|s| s.is_strict).unwrap_or(false)
+    }
+
+    /// Copy the current completion value of every switch that this
+    /// `continue` exits into the switch's saved completion slot. This mirrors
+    /// the spec's UpdateEmpty step so that abrupt completions from a switch
+    /// carry the last non-empty value (e.g. `do { switch { case: { 6; continue; } } }`).
+    fn propagate_switch_completion_on_continue(&mut self, target_loop_idx: usize) {
+        for idx in (0..self.switch_ctx_stack.len()).rev() {
+            let (sw_val_idx, saved_idx, loop_idx) = self.switch_ctx_stack[idx];
+            if loop_idx <= target_loop_idx {
+                break;
+            }
+            if let Some(saved) = saved_idx {
+                self.chunk
+                    .emit(Op::LoadEnvName(sw_val_idx), self.current_line);
+                self.chunk.emit(Op::StoreEnvName(saved), self.current_line);
+            }
+        }
     }
 
     /// Reset the completion value slot to undefined when tracking is active.
@@ -1004,6 +1028,7 @@ impl Compiler {
                     }
                 };
                 if let Some(i) = target {
+                    self.propagate_switch_completion_on_continue(i);
                     let active = self.finally_active();
                     let cont = self.loop_stack[i].0;
                     if active {
@@ -1114,8 +1139,12 @@ impl Compiler {
                     .emit(Op::DeclareEnv(sw_val_idx), self.current_line);
                 // Switch uses a loop frame for break support, but marks
                 // is_switch=true so continue targets the enclosing loop.
+                let saved_sw_val = self.switch_val_depth;
+                let switch_loop_idx = self.loop_stack.len();
                 self.loop_stack
                     .push((usize::MAX, Vec::new(), Vec::new(), None, true));
+                self.switch_ctx_stack
+                    .push((sw_val_idx, saved_sw_val, switch_loop_idx));
                 // Tests: for each case, load disc, compare, jump to body on match.
                 let mut match_jumps: Vec<(usize, usize)> = Vec::new(); // (case_idx, jump_pos)
                 let mut default_idx: Option<usize> = None;
@@ -1136,7 +1165,6 @@ impl Compiler {
                 self.chunk.emit(Op::Jump(0), self.current_line);
                 // Bodies compile sequentially; fall-through is automatic.
                 let mut body_starts: Vec<Option<usize>> = vec![None; cases.len()];
-                let saved_sw_val = self.switch_val_depth;
                 self.switch_val_depth = Some(sw_val_idx);
                 for (i, case) in cases.iter().enumerate() {
                     body_starts[i] = Some(self.chunk.code.len());
@@ -1172,6 +1200,7 @@ impl Compiler {
                 self.chunk.emit(Op::PopScope, self.current_line);
                 self.pop_scope();
                 self.end_loop(end);
+                self.switch_ctx_stack.pop();
             }
             #[allow(unreachable_patterns)]
             _ => {}

@@ -35,7 +35,7 @@ JavaScriptはスタックベースのバイトコードにコンパイルされ�
 ES5.1 + クラス、async/await、ジェネレーター、Promise、分割代入、
 getter/setter、タグ付きテンプレート、Symbol、Map/Set、WeakMap/WeakSet、
 Reflect、Proxy、Uint8Array、BigInt、Date、正規表現など。
-サポート対象サブセットの test262 合格率: **85.2%** (`language/statements`
+サポート対象サブセットの test262 合格率: **85.5%** (`language/statements`
 + `language/expressions`、非対応機能のテストを除外)。フルスイートとの
 違いは [test262 適合性](../docs/test262.md) を参照してください。
 サポートおよび意図的に非サポートの機能の全リストは
