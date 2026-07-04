@@ -43,7 +43,13 @@ impl Vm {
             self.current_frame_mut()?.ip += 1;
             match op {
                 Op::Halt => {
-                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let stack_base = self.current_frame()?.stack_base;
+                    let v = if self.stack.len() > stack_base {
+                        self.stack.pop().unwrap_or(Value::Undefined)
+                    } else {
+                        Value::Undefined
+                    };
+                    self.stack.truncate(stack_base);
                     return Ok(v);
                 }
                 Op::ToString => {
@@ -837,7 +843,10 @@ impl Vm {
                 Op::True => self.stack.push(Value::Bool(true)),
                 Op::False => self.stack.push(Value::Bool(false)),
                 Op::Pop => {
-                    self.stack.pop();
+                    let stack_base = self.current_frame()?.stack_base;
+                    if self.stack.len() > stack_base {
+                        self.stack.pop();
+                    }
                 }
                 Op::PushScope => {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
@@ -1130,7 +1139,12 @@ impl Vm {
                     }
                 }
                 Op::Return => {
-                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let stack_base = self.current_frame()?.stack_base;
+                    let v = if self.stack.len() > stack_base {
+                        self.stack.pop().unwrap_or(Value::Undefined)
+                    } else {
+                        Value::Undefined
+                    };
                     // If a `finally` is active, suspend the return across it:
                     // record the completion (tag 1) and divert to the finally
                     // target, popping the finally entry so the finally body's
@@ -1143,6 +1157,7 @@ impl Vm {
                             continue;
                         }
                     }
+                    self.stack.truncate(stack_base);
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(v);
@@ -1155,6 +1170,8 @@ impl Vm {
                     self.stack.push(v);
                 }
                 Op::ReturnUndefined => {
+                    let stack_base = self.current_frame()?.stack_base;
+                    self.stack.truncate(stack_base);
                     self.frames.pop();
                     if self.frames.is_empty() {
                         return Ok(Value::Undefined);

@@ -4,8 +4,18 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **89.4%** (up from 88.6%).
+Supported-subset pass rate: **89.5%** (up from 88.6%).
 
+- **Object.prototype.propertyIsEnumerable**: implemented the missing
+  prototype method, including Symbol keys, array index/length behavior, string
+  index enumerability, and nullish receiver errors. This unblocks test262
+  `propertyHelper.js` descriptor checks for object literal accessor and method
+  definitions.
+- **Call frame operand-stack isolation**: each `CallFrame` now records its
+  stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
+  current frame. This prevents nested calls with loop-body cleanup (for
+  example `out.push(f())` where `f` contains `for...in`/`for...of`) from
+  corrupting the caller's method-call receiver stack.
 - **BigInt exact comparison semantics**: BigInt equality and relational
   comparisons now avoid lossy `f64` conversion. BigInt-vs-Number comparison
   handles integer, fractional, `NaN`, and infinity cases separately, while

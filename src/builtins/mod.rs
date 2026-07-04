@@ -397,6 +397,53 @@ fn object_has_own_property(
     }
 }
 
+fn object_property_is_enumerable(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let key = match args.first() {
+        Some(Value::Symbol(id)) => PropertyKey::Symbol(*id),
+        Some(v) => PropertyKey::from(vm.to_property_key(v)?),
+        None => PropertyKey::from(""),
+    };
+    match &this {
+        Value::Object(idx) => {
+            let enumerable = vm.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Array(a) = obj {
+                    if key.as_str() == Some("length") {
+                        return false;
+                    }
+                    if let Some(name) = key.as_str() {
+                        if let Ok(i) = name.parse::<usize>() {
+                            return i < a.items.lock().len();
+                        }
+                    }
+                }
+                obj.props()
+                    .lock()
+                    .get(&key)
+                    .is_some_and(|desc| desc.enumerable)
+            });
+            Ok(Value::Bool(enumerable))
+        }
+        Value::String(s) => {
+            let enumerable = key
+                .as_str()
+                .and_then(|name| name.parse::<usize>().ok())
+                .is_some_and(|i| i < crate::value::utf16_len(s));
+            Ok(Value::Bool(enumerable))
+        }
+        _ => Ok(Value::Bool(false)),
+    }
+}
+
 fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     if let Some(v) = this {
         return Ok(v);
@@ -1377,6 +1424,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
             ("toString", object_to_string_native, 0),
             ("hasOwnProperty", object_has_own_property, 1),
             ("isPrototypeOf", object_is_prototype_of, 1),
+            ("propertyIsEnumerable", object_property_is_enumerable, 1),
             ("valueOf", object_value_of, 0),
         ],
     )?;

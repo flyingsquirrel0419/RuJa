@@ -85,6 +85,7 @@ pub struct WellKnownSymbols {
 pub struct CallFrame {
     pub chunk: Arc<Chunk>,
     pub ip: usize,
+    pub stack_base: usize,
     pub locals: Vec<Value>,
     pub env: GcIdx,
     pub catch_stack: Vec<(usize, u32, GcIdx)>,
@@ -128,10 +129,18 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-    fn new(chunk: Arc<Chunk>, ip: usize, locals: Vec<Value>, env: GcIdx, this_val: Value) -> Self {
+    fn new(
+        chunk: Arc<Chunk>,
+        ip: usize,
+        stack_base: usize,
+        locals: Vec<Value>,
+        env: GcIdx,
+        this_val: Value,
+    ) -> Self {
         CallFrame {
             chunk,
             ip,
+            stack_base,
             locals,
             env,
             new_target: Value::Undefined,
@@ -314,9 +323,11 @@ impl Vm {
 
     fn execute_chunk(&mut self, chunk: Chunk, env: GcIdx, this_val: Value) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
+        let stack_base = self.stack.len();
         self.frames.push(CallFrame::new(
             chunk.clone(),
             0,
+            stack_base,
             vec![Value::Undefined; 256],
             env,
             this_val,
@@ -342,6 +353,7 @@ impl Vm {
         self.frames.push(CallFrame::new(
             chunk.clone(),
             0,
+            stack_depth,
             vec![Value::Undefined; 256],
             env,
             this_val,
@@ -477,8 +489,14 @@ impl Vm {
                 locals[slot] = a.clone();
             }
         }
-        self.frames
-            .push(CallFrame::new(fdef.chunk.clone(), 0, locals, env, this_val));
+        self.frames.push(CallFrame::new(
+            fdef.chunk.clone(),
+            0,
+            self.stack.len(),
+            locals,
+            env,
+            this_val,
+        ));
         // Apply `new.target` if this call was a Construct.
         if let Some(nt) = self.pending_new_target.take() {
             if let Some(frame) = self.frames.last_mut() {
@@ -596,6 +614,7 @@ impl Vm {
         self.frames.push(CallFrame::new(
             fdef.chunk.clone(),
             ip,
+            0,
             locals,
             env,
             this_val.clone(),

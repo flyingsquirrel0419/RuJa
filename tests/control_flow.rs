@@ -57,6 +57,22 @@ fn nested_break() {
     );
 }
 
+#[test]
+fn nested_call_argument_for_in_does_not_corrupt_caller_stack() {
+    assert_eq!(
+        run("var out=[]; function f(obj){ for (var x in obj) {} return 7; } out.push(f({a:1})); out[0];"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
+fn nested_call_argument_for_of_does_not_corrupt_caller_stack() {
+    assert_eq!(
+        run("var out=[]; function f(){ for (var x of [1]) {} return 9; } out.push(f()); out[0];"),
+        Value::Number(9.0)
+    );
+}
+
 // --- switch ---
 
 #[test]

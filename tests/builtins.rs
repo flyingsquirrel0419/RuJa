@@ -123,6 +123,36 @@ fn object_entries() {
 }
 
 #[test]
+fn object_property_is_enumerable() {
+    assert_eq!(run("({a:1}).propertyIsEnumerable('a');"), Value::Bool(true));
+    assert_eq!(
+        run("var o={}; Object.defineProperty(o,'x',{value:1, enumerable:false}); o.propertyIsEnumerable('x');"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("({get m(){ return 1; }}).propertyIsEnumerable('m');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("({a:1}).propertyIsEnumerable('missing');"),
+        Value::Bool(false)
+    );
+    assert_eq!(run("[10].propertyIsEnumerable('0');"), Value::Bool(true));
+    assert_eq!(
+        run("[10].propertyIsEnumerable('length');"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("Object.prototype.propertyIsEnumerable.call('ab', '1');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var s=Symbol(); var o={}; o[s]=1; o.propertyIsEnumerable(s);"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn math_basic() {
     assert_eq!(run("Math.floor(3.7);"), Value::Number(3.0));
     assert_eq!(run("Math.max(1, 5, 3);"), Value::Number(5.0));
