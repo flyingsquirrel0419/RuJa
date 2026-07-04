@@ -142,6 +142,7 @@ fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
             }
         }),
         Value::Symbol(_) => "Symbol".to_string(),
+        Value::Reference(_) => "[reference]".to_string(),
     }
 }
 

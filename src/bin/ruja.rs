@@ -37,6 +37,7 @@ fn print_value(vm: &mut Vm, v: &Value) {
             Err(_) => println!("[object Object]"),
         },
         Value::Symbol(_) => println!("Symbol()"),
+        Value::Reference(_) => println!("[reference]"),
     }
 }
 

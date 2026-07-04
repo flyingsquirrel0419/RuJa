@@ -175,6 +175,7 @@ fn stringify_value(
                 .replace('\t', "\\t")
         )),
         Value::Symbol(_) => None,
+        Value::Reference(_) => None,
         Value::Object(idx) => {
             // Check for toJSON method before any other processing.
             let to_json = vm.heap.with_obj(idx.0, |obj| {

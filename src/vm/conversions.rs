@@ -88,6 +88,7 @@ impl Vm {
                     "Cannot convert Symbol to number".to_string(),
                 ));
             }
+            Value::Reference(_) => f64::NAN,
         })
     }
 
@@ -146,6 +147,7 @@ impl Vm {
                     "Cannot convert Symbol to string".to_string(),
                 ));
             }
+            Value::Reference(_) => Arc::from("[reference]"),
         })
     }
 

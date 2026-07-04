@@ -93,6 +93,12 @@ use num_traits::Zero;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GcIdx(pub usize);
 
+impl std::fmt::Debug for GcIdx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GcIdx({})", self.0)
+    }
+}
+
 /// Maximum number of dense (backing-store) elements an array will hold.
 /// Indices at or above this threshold are stored as named properties
 /// instead of being materialized as `undefined` holes, which prevents a
@@ -148,6 +154,36 @@ pub enum Value {
     String(Arc<str>),
     Object(GcIdx),
     Symbol(u32),
+    /// An ES Reference record (spec 6.2.4). Used for LHS evaluation so that
+    /// `GetValue`/`PutValue` can preserve the original binding even if it is
+    /// deleted/recreated between the two steps (e.g. `with` + compound-assignment
+    /// where a getter deletes the property). `base` is the environment record
+    /// (GcIdx) or the property base value; `name` is the referenced name; `strict`
+    /// controls whether unresolved puts throw ReferenceError.
+    Reference(Box<ReferenceRecord>),
+}
+
+/// A spec Reference record (6.2.4 The Reference Specification Type).
+#[derive(Clone, Debug)]
+pub struct ReferenceRecord {
+    /// The base value: an environment record (GcIdx) for identifier references,
+    /// or a Value (Object/with) for property references.
+    pub base: ReferenceBase,
+    /// The referenced name (string key or Symbol id).
+    pub name: PropertyKey,
+    /// Whether the reference is strict (unresolved puts throw ReferenceError).
+    pub strict: bool,
+}
+
+/// The base of a Reference: either an environment record (for identifier
+/// references) or a value (Object, primitive wrapper, etc.) for property
+/// references. `Value` is boxed to break the recursive type size.
+#[derive(Clone, Debug)]
+pub enum ReferenceBase {
+    /// An environment record (heap index of an `EnvironmentData`).
+    Environment(GcIdx),
+    /// A value base (Object, primitive wrapper, etc.) for property references.
+    Value(Box<Value>),
 }
 
 impl Value {
@@ -188,6 +224,8 @@ impl Value {
             Value::BigInt(n) => !n.is_zero(),
             Value::String(s) => !s.is_empty(),
             Value::Object(_) | Value::Symbol(_) => true,
+            // References should be resolved via GetValue before reaching here.
+            Value::Reference(_) => true,
         }
     }
 
@@ -201,6 +239,7 @@ impl Value {
             Value::String(_) => "string",
             Value::Object(_) => "object",
             Value::Symbol(_) => "symbol",
+            Value::Reference(_) => "object",
         }
     }
 }
@@ -273,6 +312,9 @@ impl std::hash::Hash for MapKey {
                 7u8.hash(state);
                 id.hash(state);
             }
+            Value::Reference(_) => {
+                8u8.hash(state);
+            }
         }
     }
 }
@@ -309,6 +351,7 @@ impl fmt::Debug for Value {
             Value::BigInt(n) => write!(f, "{}n", n),
             Value::Object(_) => write!(f, "[object]"),
             Value::Symbol(_) => write!(f, "[symbol]"),
+            Value::Reference(r) => write!(f, "[reference {:?}]", r),
         }
     }
 }
