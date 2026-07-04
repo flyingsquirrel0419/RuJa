@@ -3204,17 +3204,34 @@ impl Compiler {
                     self.chunk.emit(Op::SetProp, self.current_line);
                 }
             }
+            Expr::Ident(name) => {
+                // Spec-conforming compound assignment: evaluate the reference
+                // ONCE, then GetValue, operate, and PutValue back into the
+                // SAME reference (preserving the original binding even if it
+                // was deleted between GetValue and PutValue, e.g. inside
+                // `with` where a getter deletes the property).
+                let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                // stack: [ref]
+                self.chunk.emit(Op::Dup, self.current_line);
+                // stack: [ref, ref]
+                self.chunk.emit(Op::GetValue, self.current_line);
+                // stack: [ref, currentValue]
+                self.compile_expr(value)?;
+                // stack: [ref, currentValue, rhs]
+                self.chunk.emit(bin, 0);
+                // stack: [ref, result]
+                self.chunk.emit(Op::Swap, self.current_line);
+                // stack: [result, ref]
+                self.chunk.emit(Op::PutValue, self.current_line);
+                // stack: [result]
+            }
             _ => {
                 self.compile_expr(target)?;
                 self.compile_expr(value)?;
                 self.chunk.emit(bin, 0);
                 self.chunk.emit(Op::Dup, self.current_line);
                 self.compile_assign_target(target)?;
-                // `compile_assign_target` for an ident emits StoreEnvName
-                // (which pushes Undefined on top of the duplicated result) or
-                // Const+StoreGlobal (net -1). Drop the leftover Undefined so
-                // the stack ends with exactly the assignment's result value,
-                // matching the simple-assignment codegen (StoreEnv + Pop).
                 self.chunk.emit(Op::Pop, self.current_line);
             }
         }

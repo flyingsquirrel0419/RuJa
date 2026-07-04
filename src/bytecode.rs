@@ -297,6 +297,9 @@ pub enum Op {
     InitEnvConst(usize), // pop value, init-or-declare a const binding in current env (pattern/loop)
     LoadEnvName(usize), // push name const then load from env
     StoreEnvName(usize), // push name const then store to env
+    LoadRef(usize),   // push a Reference record for the named binding
+    GetValue,         // pop a Reference, push its resolved value
+    PutValue,         // pop [Reference, value], store value into the Reference
 
     // Coerce top-of-stack to a string via ToPrimitive(string) + ToString
     // (used by template-literal interpolation).

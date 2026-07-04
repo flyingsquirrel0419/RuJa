@@ -678,6 +678,42 @@ impl Vm {
                     }
                     self.stack.push(Value::Undefined);
                 }
+                Op::LoadRef(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => crate::value::PropertyKey::from_rc(s),
+                            _ => crate::value::PropertyKey::from(""),
+                        }
+                    };
+                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let strict = self.current_strict();
+                    let r#ref = crate::value::ReferenceRecord {
+                        base: crate::value::ReferenceBase::Environment(env),
+                        name,
+                        strict,
+                    };
+                    self.stack.push(Value::Reference(Box::new(r#ref)));
+                }
+                Op::GetValue => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    let resolved = self.get_value(&v)?;
+                    self.stack.push(resolved);
+                }
+                Op::PutValue => {
+                    // Stack: [value, ref] (ref on top). Pop ref, then value.
+                    let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.put_value(&r#ref, value.clone())?;
+                    // Push the stored value back as the expression result.
+                    self.stack.push(value);
+                }
                 Op::LoadLocal(idx) => {
                     let v = self.current_frame()?.locals[idx].clone();
                     self.stack.push(v);

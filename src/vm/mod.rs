@@ -850,38 +850,41 @@ impl Vm {
                 match &r.base {
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
-                        let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                        // Search from the reference's env, not the current env,
-                        // so that the reference captures the scope where it was created.
+                        // `with`-statement object env records take precedence
+                        // over the lexical scope chain (closest first), per
+                        // spec. Check with-objects BEFORE env bindings so that
+                        // a getter on the with-object is invoked.
+                        let with_objs = env::with_objects(&self.heap, *env_idx);
+                        for obj in &with_objs {
+                            let has = self.has_property(obj, &name)?;
+                            if has {
+                                return self.get_property(obj, &name);
+                            }
+                        }
+                        // Not found on with-objects: search env bindings.
                         match env::get_checked(&self.heap, *env_idx, &name) {
                             Ok(Some(val)) => Ok(val),
                             Ok(None) => {
-                                // Binding not found in this env chain; fall
-                                // back to global lookup.
-                                match env::get_checked(&self.heap, self.global, &name) {
-                                    Ok(Some(val)) => Ok(val),
-                                    _ => {
-                                        if r.strict {
-                                            Err(Error::reference(format!(
-                                                "{} is not defined",
-                                                name
-                                            )))
-                                        } else {
-                                            Ok(Value::Undefined)
-                                        }
-                                    }
+                                let global_this = self.global_this.clone();
+                                let has = self.has_property(&global_this, &name)?;
+                                if has {
+                                    self.get_property(&global_this, &name)
+                                } else if r.strict {
+                                    Err(Error::reference(format!("{} is not defined", name)))
+                                } else {
+                                    Ok(Value::Undefined)
                                 }
                             }
-                            Err(true) => {
-                                // TDZ violation.
-                                Err(Error::reference(format!(
-                                    "Cannot access '{}' before initialization",
-                                    name
-                                )))
-                            }
+                            Err(true) => Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            ))),
                             Err(false) => {
-                                // Binding not found.
-                                if r.strict {
+                                let global_this = self.global_this.clone();
+                                let has = self.has_property(&global_this, &name)?;
+                                if has {
+                                    self.get_property(&global_this, &name)
+                                } else if r.strict {
                                     Err(Error::reference(format!("{} is not defined", name)))
                                 } else {
                                     Ok(Value::Undefined)
@@ -914,12 +917,33 @@ impl Vm {
                 match &r.base {
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
-                        // Try to set in the reference's env chain first.
+                        // `with`-statement object env records take precedence
+                        // over the lexical scope chain (closest first), per
+                        // spec. Check with-objects BEFORE env bindings.
+                        let with_objs = env::with_objects(&self.heap, *env_idx);
+                        for obj in &with_objs {
+                            let has = self.has_property(obj, &name)?;
+                            if has {
+                                self.set_property(obj, &name, value.clone())?;
+                                return Ok(());
+                            }
+                        }
+                        // Property was deleted from all with-objects: re-create
+                        // it on the innermost with-object (first in the list).
+                        if let Some(obj) = with_objs.first() {
+                            self.set_property(obj, &name, value.clone())?;
+                            return Ok(());
+                        }
+                        // Not found on with-objects: try env bindings.
                         if env::set(&self.heap, *env_idx, &name, value.clone()) {
                             return Ok(());
                         }
-                        // Not found in env chain: in sloppy mode, create a
-                        // global var; in strict mode, throw ReferenceError.
+                        let global_this = self.global_this.clone();
+                        let has_global = self.has_property(&global_this, &name)?;
+                        if has_global {
+                            self.set_property(&global_this, &name, value)?;
+                            return Ok(());
+                        }
                         if r.strict {
                             return Err(Error::reference(format!("{} is not defined", name)));
                         }
