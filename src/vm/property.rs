@@ -177,6 +177,9 @@ impl Vm {
         // logic below before falling back to ordinary object semantics.
         match obj {
             Value::Object(idx) => {
+                let is_global_this = self.heap.with_obj(idx.0, |o| {
+                    matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
+                });
                 // Proxy trap: if this object is a Proxy, call handler.set.
                 let proxy_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::Proxy(p) = o {
@@ -241,24 +244,6 @@ impl Vm {
                         // non-object, non-null: ignore (spec: no-op in sloppy mode)
                         _ => return Ok(()),
                     }
-                }
-                // globalThis routes property writes to the global environment.
-                let is_global_this = self.heap.with_obj(idx.0, |o| {
-                    matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
-                });
-                if route_global_this && is_global_this {
-                    // Set on the global environment: update if it exists,
-                    // otherwise declare a new global binding.
-                    if !crate::environment::set(&self.heap, self.global, key, value.clone()) {
-                        crate::environment::declare(
-                            &self.heap,
-                            self.global,
-                            key,
-                            value.clone(),
-                            crate::value::BindingKind::Var,
-                        );
-                    }
-                    return Ok(());
                 }
                 // --- Array fast paths ---
                 let is_array_length = self
@@ -387,6 +372,20 @@ impl Vm {
                         props.insert(pkey, crate::value::PropertyDescriptor::data(value));
                     }
                 });
+                if route_global_this
+                    && is_global_this
+                    && crate::environment::has(&self.heap, self.global, key)
+                {
+                    let final_value = self.heap.with_obj(idx.0, |o| {
+                        o.props()
+                            .lock()
+                            .get(&crate::value::PropertyKey::from(key))
+                            .map(|d| d.value.clone())
+                    });
+                    if let Some(final_value) = final_value {
+                        crate::environment::set(&self.heap, self.global, key, final_value);
+                    }
+                }
                 Ok(())
             }
             _ => Err(Error::type_err(
@@ -404,6 +403,48 @@ impl Vm {
             .last()
             .map(|f| f.chunk.is_strict)
             .unwrap_or(false)
+    }
+
+    pub(crate) fn global_property_is_non_writable_data(&self, name: &str) -> bool {
+        let Value::Object(idx) = &self.global_this else {
+            return false;
+        };
+        let pkey = crate::value::PropertyKey::from(name);
+        self.heap.with_obj(idx.0, |obj| {
+            obj.props()
+                .lock()
+                .get(&pkey)
+                .is_some_and(|d| !d.is_accessor && !d.writable)
+        })
+    }
+
+    pub(crate) fn set_global_var_property(&mut self, name: &str, value: Value) {
+        let Value::Object(idx) = &self.global_this else {
+            return;
+        };
+        let pkey = crate::value::PropertyKey::from(name);
+        self.heap.with_obj(idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            if let Some(desc) = props.get_mut(&pkey) {
+                if !desc.is_accessor && desc.writable {
+                    desc.value = value;
+                }
+                return;
+            }
+            props.insert(
+                pkey,
+                crate::value::PropertyDescriptor {
+                    value,
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
     }
 
     /// Does the prototype chain starting at `start` contain an object with

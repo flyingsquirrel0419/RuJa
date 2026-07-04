@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **90.5%** (up from 88.6%).
-Current supported subset count: **3781 pass / 397 fail / 2 timeout**.
+Supported-subset pass rate: **90.9%** (up from 88.6%).
+Current supported subset count: **3799 pass / 379 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -147,6 +147,18 @@ Current supported subset count: **3781 pass / 397 fail / 2 timeout**.
   now throw `TypeError`, and `Object.getOwnPropertyDescriptor(Function,
   "length")` reports the expected descriptor. The assignment test262 subset
   improves to **101 pass / 9 fail**.
+- **Global object property descriptors**: global bindings are now mirrored
+  onto `globalThis` as own properties, with `NaN`/`Infinity`/`undefined`
+  installed as non-writable, non-configurable data properties. Sloppy
+  implicit globals create configurable enumerable global object properties,
+  strict script top-level `this` resolves to `globalThis`, and top-level
+  `var` declarations create non-configurable enumerable global object
+  properties without treating `var x;` as `x = undefined`. Initializers for
+  existing read-only globals such as `var NaN = 42` now respect the global
+  object's non-writable descriptor instead of mutating only the environment
+  binding. This removes the remaining direct assignment failures, improves
+  `language/expressions/delete` to **61 pass / 5 fail**, and raises the
+  supported subset to **3799 pass / 379 fail / 2 timeout**.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,

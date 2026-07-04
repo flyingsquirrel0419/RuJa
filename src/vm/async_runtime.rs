@@ -280,7 +280,7 @@ impl Vm {
         // overflow instead of a catchable RangeError. The limit is generous
         // (well below the Rust default 8 MiB stack) and matches the spirit of
         // V8's "Maximum call stack size exceeded".
-        const MAX_CALL_STACK_DEPTH: usize = 1000;
+        const MAX_CALL_STACK_DEPTH: usize = 850;
         if self.frames.len() >= MAX_CALL_STACK_DEPTH {
             return Err(Error::range("Maximum call stack size exceeded"));
         }

@@ -156,6 +156,20 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
     });
 }
 
+pub fn own_bindings(heap: &Heap, env: GcIdx) -> Vec<(Arc<str>, Value)> {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            return e
+                .vars
+                .lock()
+                .iter()
+                .map(|(name, binding)| (name.clone(), binding.value.lock().clone()))
+                .collect();
+        }
+        Vec::new()
+    })
+}
+
 /// Declare a binding in the TDZ (uninitialized). Reading it before it is
 /// initialized throws a ReferenceError.
 pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {

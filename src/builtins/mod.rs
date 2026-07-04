@@ -290,7 +290,41 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
 }
 
 pub(crate) fn define_global(vm: &mut Vm, name: &str, value: Value) {
-    env::declare(&vm.heap, vm.global, name, value, BindingKind::Var);
+    env::declare(&vm.heap, vm.global, name, value.clone(), BindingKind::Var);
+    define_global_property(vm, name, data_prop(value));
+}
+
+pub(crate) fn define_global_const(vm: &mut Vm, name: &str, value: Value) {
+    env::declare(&vm.heap, vm.global, name, value.clone(), BindingKind::Var);
+    define_global_property(vm, name, const_prop(value));
+}
+
+fn define_global_property(vm: &mut Vm, name: &str, desc: PropertyDescriptor) {
+    if let Value::Object(idx) = &vm.global_this {
+        vm.heap.with_obj(idx.0, |obj| {
+            obj.props()
+                .lock()
+                .insert(PropertyKey::from(name), desc.clone());
+        });
+    }
+}
+
+fn init_global_this(vm: &mut Vm) -> error::Result<()> {
+    let globalthis_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("global")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.global_this = Value::Object(GcIdx(globalthis_idx));
+
+    for (name, value) in env::own_bindings(&vm.heap, vm.global) {
+        define_global_property(vm, &name, data_prop(value));
+    }
+    define_global(vm, "globalThis", vm.global_this.clone());
+    Ok(())
 }
 
 pub(crate) fn get_arg(args: &[Value], idx: usize) -> Value {
@@ -1510,6 +1544,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     vm.heap.with_obj(function_proto_idx.0, |obj| {
         *obj.proto().lock() = Some(vm.object_proto.clone());
     });
+    init_global_this(vm)?;
     // Math
     let math = build_math(vm)?;
     define_global(vm, "Math", math);
@@ -1759,9 +1794,9 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     define_global(vm, "isFinite", Value::Object(idx));
     let eval_idx = vm.new_native_function("eval", global_eval, 1)?;
     define_global(vm, "eval", Value::Object(eval_idx));
-    define_global(vm, "NaN", Value::Number(f64::NAN));
-    define_global(vm, "Infinity", Value::Number(f64::INFINITY));
-    define_global(vm, "undefined", Value::Undefined);
+    define_global_const(vm, "NaN", Value::Number(f64::NAN));
+    define_global_const(vm, "Infinity", Value::Number(f64::INFINITY));
+    define_global_const(vm, "undefined", Value::Undefined);
     // BigInt constructor (function form only; no prototype methods yet).
     let bigint_idx = vm.new_native_function("BigInt", global_bigint, 1)?;
     define_global(vm, "BigInt", Value::Object(bigint_idx));
@@ -1799,18 +1834,6 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             }
         }
     }
-    // globalThis: an object whose property accesses route to the global
-    // environment record. Marked via class_name so VM get/set can detect it.
-    let globalthis_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("global")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    vm.global_this = Value::Object(GcIdx(globalthis_idx));
-    define_global(vm, "globalThis", vm.global_this.clone());
     // Promise
     let (promise_ctor, promise_proto) = make_builtin_constructor_with(
         vm,

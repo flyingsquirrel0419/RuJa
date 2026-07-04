@@ -497,15 +497,14 @@ impl Compiler {
             }
             StmtNode::VarDecl { kind, decls } => {
                 for (name, init) in decls {
-                    if let Some(e) = init {
-                        self.compile_expr(e)?;
-                    } else {
-                        self.chunk.emit(Op::Undefined, self.current_line);
-                    }
                     if *kind == VarKind::Var {
                         // `var` is function-scoped: declare at the function-scope root
                         // (or global at top level), regardless of block nesting.
                         self.declare(name, *kind)?;
+                        let Some(e) = init else {
+                            continue;
+                        };
+                        self.compile_expr(e)?;
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         if self.scopes.len() == 1 {
                             // top-level var: declare as global binding.
@@ -518,6 +517,11 @@ impl Compiler {
                             self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
                         }
                     } else {
+                        if let Some(e) = init {
+                            self.compile_expr(e)?;
+                        } else {
+                            self.chunk.emit(Op::Undefined, self.current_line);
+                        }
                         // Lexical (let/const): already declared uninitialized at scope
                         // entry by `emit_lexical_hoist`. Initialize the binding with the
                         // value now (this lifts the TDZ).

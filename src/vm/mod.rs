@@ -325,17 +325,14 @@ impl Vm {
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions(chunk, funcs);
-        // In sloppy (non-strict) script mode, top-level `this` is the global
-        // object. Bind it on the global environment so `LoadEnv("this")` finds it.
-        if !program.is_strict {
-            crate::environment::declare(
-                &self.heap,
-                self.global,
-                "this",
-                self.global_this.clone(),
-                crate::value::BindingKind::Const,
-            );
-        }
+        // Script top-level `this` is the global object even for strict scripts.
+        crate::environment::declare(
+            &self.heap,
+            self.global,
+            "this",
+            self.global_this.clone(),
+            crate::value::BindingKind::Const,
+        );
         let result = self.execute_chunk(chunk, self.global, Value::Undefined);
         // Drain microtasks (Promise callbacks) after the synchronous run.
         if !self.microtask_queue.is_empty() {
@@ -1016,44 +1013,57 @@ impl Vm {
                         // the current env. If a with-object property was deleted
                         // between GetValue and PutValue, we recreate it on the
                         // closest with-object (non-strict) or throw (strict).
+                        let global_readonly = self.global_property_is_non_writable_data(&name);
                         let mut cur_env = Some(*env_idx);
                         while let Some(e_idx) = cur_env {
-                            let (has_binding, is_const, in_tdz, has_with, with_obj_val, parent) =
-                                self.heap.with_obj(e_idx.0, |obj| {
-                                    if let HeapObj::Environment(e) = obj {
-                                        // Check var/let/const bindings.
-                                        if let Some(b) = e.vars.lock().get(name.as_str()) {
-                                            if !b.initialized.load(Ordering::Relaxed) {
-                                                return (false, false, true, false, None, None);
-                                            }
-                                            if b.kind == crate::value::BindingKind::Const {
-                                                return (false, true, false, false, None, None);
-                                            }
-                                            *b.value.lock() = value.clone();
-                                            return (true, false, false, false, None, None);
+                            let (
+                                has_binding,
+                                is_const,
+                                in_tdz,
+                                global_readonly_binding,
+                                has_with,
+                                with_obj_val,
+                                parent,
+                            ) = self.heap.with_obj(e_idx.0, |obj| {
+                                if let HeapObj::Environment(e) = obj {
+                                    // Check var/let/const bindings.
+                                    if let Some(b) = e.vars.lock().get(name.as_str()) {
+                                        if !b.initialized.load(Ordering::Relaxed) {
+                                            return (false, false, true, false, false, None, None);
                                         }
-                                        // Check with-object.
-                                        if let Some(with_obj) = e.with_object.lock().clone() {
-                                            return (
-                                                false,
-                                                false,
-                                                false,
-                                                true,
-                                                Some(with_obj),
-                                                *e.parent.lock(),
-                                            );
+                                        if e_idx == self.global && global_readonly {
+                                            return (false, false, false, true, false, None, None);
                                         }
+                                        if b.kind == crate::value::BindingKind::Const {
+                                            return (false, true, false, false, false, None, None);
+                                        }
+                                        *b.value.lock() = value.clone();
+                                        return (true, false, false, false, false, None, None);
+                                    }
+                                    // Check with-object.
+                                    if let Some(with_obj) = e.with_object.lock().clone() {
                                         return (
                                             false,
                                             false,
                                             false,
                                             false,
-                                            None,
+                                            true,
+                                            Some(with_obj),
                                             *e.parent.lock(),
                                         );
                                     }
-                                    (false, false, false, false, None, None)
-                                });
+                                    return (
+                                        false,
+                                        false,
+                                        false,
+                                        false,
+                                        false,
+                                        None,
+                                        *e.parent.lock(),
+                                    );
+                                }
+                                (false, false, false, false, false, None, None)
+                            });
                             if in_tdz {
                                 return Err(Error::reference(format!(
                                     "Cannot access '{}' before initialization",
@@ -1065,6 +1075,11 @@ impl Vm {
                                     "Assignment to constant variable '{}'",
                                     name
                                 )));
+                            }
+                            if global_readonly_binding {
+                                let global_this = self.global_this.clone();
+                                self.set_property(&global_this, &name, value)?;
+                                return Ok(());
                             }
                             if has_binding {
                                 return Ok(());

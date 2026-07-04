@@ -99,10 +99,16 @@ impl Vm {
                             match crate::environment::get_checked(&self.heap, self.global, &name) {
                                 Ok(Some(v)) => self.stack.push(v),
                                 Ok(None) => {
-                                    return Err(Error::reference(format!(
-                                        "{} is not defined",
-                                        name
-                                    )))
+                                    let global_this = self.global_this.clone();
+                                    if self.has_property(&global_this, &name)? {
+                                        let v = self.get_property(&global_this, &name)?;
+                                        self.stack.push(v);
+                                    } else {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            name
+                                        )));
+                                    }
                                 }
                                 Err(true) => {
                                     return Err(Error::reference(format!(
@@ -111,10 +117,16 @@ impl Vm {
                                     )))
                                 }
                                 Err(false) => {
-                                    return Err(Error::reference(format!(
-                                        "{} is not defined",
-                                        name
-                                    )))
+                                    let global_this = self.global_this.clone();
+                                    if self.has_property(&global_this, &name)? {
+                                        let v = self.get_property(&global_this, &name)?;
+                                        self.stack.push(v);
+                                    } else {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            name
+                                        )));
+                                    }
                                 }
                             }
                         }
@@ -125,7 +137,13 @@ impl Vm {
                             )))
                         }
                         Err(false) => {
-                            return Err(Error::reference(format!("{} is not defined", name)))
+                            let global_this = self.global_this.clone();
+                            if self.has_property(&global_this, &name)? {
+                                let v = self.get_property(&global_this, &name)?;
+                                self.stack.push(v);
+                            } else {
+                                return Err(Error::reference(format!("{} is not defined", name)));
+                            }
                         }
                     }
                 }
@@ -138,6 +156,12 @@ impl Vm {
                     };
                     // try to set in current scope chain first, else declare in global
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    if cur_env == self.global && self.global_property_is_non_writable_data(&name) {
+                        let global_this = self.global_this.clone();
+                        self.set_property(&global_this, &name, value)?;
+                        self.stack.push(Value::Undefined);
+                        continue;
+                    }
                     match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
                     {
                         crate::environment::SetOutcome::Set => {}
@@ -159,13 +183,8 @@ impl Vm {
                             if self.current_strict() {
                                 return Err(Error::reference(format!("{} is not defined", name)));
                             }
-                            crate::environment::declare(
-                                &self.heap,
-                                self.global,
-                                &name,
-                                value,
-                                crate::value::BindingKind::Var,
-                            );
+                            let global_this = self.global_this.clone();
+                            self.set_property(&global_this, &name, value)?;
                         }
                     }
                     self.stack.push(Value::Undefined);
@@ -210,11 +229,12 @@ impl Vm {
                     };
                     // Hoist the var binding as undefined in the function
                     // scope root, without touching with-object properties.
-                    crate::environment::ensure_var(
-                        &self.heap,
-                        self.frames.last().map(|f| f.env).unwrap_or(self.global),
-                        &name,
-                    );
+                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let root = crate::environment::function_scope_root(&self.heap, env);
+                    crate::environment::ensure_var(&self.heap, env, &name);
+                    if root == self.global {
+                        self.set_global_var_property(&name, Value::Undefined);
+                    }
                 }
                 Op::DeclareVar(name_idx) => {
                     let name = {
@@ -232,6 +252,7 @@ impl Vm {
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let root = crate::environment::function_scope_root(&self.heap, cur_env);
                     // Per spec (ES5 12.2): `var x = expr` is equivalent to
                     // `var x; x = expr`. The `var x` hoisting creates a binding
                     // in the variable environment (function scope) initialized
@@ -249,6 +270,11 @@ impl Vm {
                     // function scope takes precedence over a with-object
                     // property at a parent scope. If no binding is found at
                     // all, declare as a new var (auto-global at top level).
+                    if root == self.global && self.global_property_is_non_writable_data(&name) {
+                        let global_this = self.global_this.clone();
+                        self.set_property(&global_this, &name, value)?;
+                        continue;
+                    }
                     match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
                     {
                         crate::environment::SetOutcome::Set => {}
@@ -265,8 +291,16 @@ impl Vm {
                             )));
                         }
                         crate::environment::SetOutcome::NotFound => {
-                            crate::environment::declare_var(&self.heap, cur_env, &name, value);
+                            crate::environment::declare_var(
+                                &self.heap,
+                                cur_env,
+                                &name,
+                                value.clone(),
+                            );
                         }
+                    }
+                    if root == self.global {
+                        self.set_global_var_property(&name, value);
                     }
                 }
                 Op::DeclareLet(name_idx) => {
@@ -1679,23 +1713,33 @@ impl Vm {
                         }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let has_env_binding = crate::environment::has(&self.heap, cur_env, &name);
+                    let has_with_env =
+                        !crate::environment::with_objects(&self.heap, cur_env).is_empty();
                     // First try normal delete_binding (handles lexical bindings
                     // and with-object properties).
                     let deleted = crate::environment::delete_binding(&self.heap, cur_env, &name);
                     if deleted {
-                        self.stack.push(Value::Bool(true));
-                    } else if !crate::environment::has(&self.heap, cur_env, &name) {
-                        // Unresolvable reference: delete returns true.
-                        self.stack.push(Value::Bool(true));
-                    } else if !self.current_strict() {
-                        // Non-strict: implicit globals (x = 1 without var)
-                        // are stored as var bindings in the global env. Per
-                        // spec they should be configurable properties on the
-                        // global object and thus deletable. Since RuJa uses
-                        // env bindings, we allow deletion from global env.
-                        let deleted_global =
-                            crate::environment::delete_var_binding(&self.heap, self.global, &name);
-                        self.stack.push(Value::Bool(deleted_global));
+                        if !has_env_binding && !has_with_env {
+                            let global_this = self.global_this.clone();
+                            if self.has_own_property(&global_this, &name) {
+                                let deleted = self.delete_property(&global_this, &name)?;
+                                self.stack.push(Value::Bool(deleted));
+                            } else {
+                                self.stack.push(Value::Bool(true));
+                            }
+                        } else {
+                            self.stack.push(Value::Bool(true));
+                        }
+                    } else if !has_env_binding {
+                        let global_this = self.global_this.clone();
+                        if self.has_own_property(&global_this, &name) {
+                            let deleted = self.delete_property(&global_this, &name)?;
+                            self.stack.push(Value::Bool(deleted));
+                        } else {
+                            // Unresolvable reference: delete returns true.
+                            self.stack.push(Value::Bool(true));
+                        }
                     } else {
                         self.stack.push(Value::Bool(false));
                     }
@@ -2279,6 +2323,16 @@ impl Vm {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let val = crate::environment::get(&self.heap, cur_env, &name)
                         .or_else(|| crate::environment::get(&self.heap, self.global, &name));
+                    let val = if val.is_none() {
+                        let global_this = self.global_this.clone();
+                        if self.has_property(&global_this, &name)? {
+                            Some(self.get_property(&global_this, &name)?)
+                        } else {
+                            None
+                        }
+                    } else {
+                        val
+                    };
                     let t = match val {
                         Some(v) => {
                             if let Value::Object(idx) = &v {

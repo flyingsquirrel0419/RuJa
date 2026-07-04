@@ -199,6 +199,97 @@ fn native_function_length_is_read_only_own_property() {
 }
 
 #[test]
+fn implicit_global_assignment_defines_global_object_property() {
+    assert_eq!(
+        run(r#"
+            function f() {
+              implicitGlobalForDescriptor = 42;
+            }
+            f();
+            var d = Object.getOwnPropertyDescriptor(this, "implicitGlobalForDescriptor");
+            [
+              implicitGlobalForDescriptor,
+              d.value,
+              d.writable,
+              d.enumerable,
+              d.configurable
+            ].join(",");
+            "#,),
+        Value::String(Arc::from("42,42,true,true,true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            temporaryImplicitGlobal = 1;
+            var before = temporaryImplicitGlobal;
+            var deleted = delete temporaryImplicitGlobal;
+            before + ":" + deleted + ":" + typeof temporaryImplicitGlobal;
+            "#,),
+        Value::String(Arc::from("1:true:undefined"))
+    );
+}
+
+#[test]
+fn global_var_declaration_defines_non_configurable_global_property() {
+    assert_eq!(
+        run(r#"
+            var declaredGlobalForDescriptor = 7;
+            var d = Object.getOwnPropertyDescriptor(this, "declaredGlobalForDescriptor");
+            [
+              this.declaredGlobalForDescriptor,
+              declaredGlobalForDescriptor,
+              d.value,
+              d.writable,
+              d.enumerable,
+              d.configurable,
+              delete declaredGlobalForDescriptor,
+              delete this.declaredGlobalForDescriptor
+            ].join(",");
+            "#,),
+        Value::String(Arc::from("7,7,7,true,true,false,false,false"))
+    );
+
+    assert_eq!(
+        run(r#"
+            this.hoistedGlobalVar = "balloon";
+            var hoistedGlobalVar;
+            hoistedGlobalVar;
+            "#,),
+        Value::String(Arc::from("balloon"))
+    );
+}
+
+#[test]
+fn strict_script_this_is_global_and_read_only_globals_reject_assignment() {
+    assert_eq!(
+        run(r#""use strict"; this === globalThis;"#),
+        Value::Bool(true)
+    );
+
+    let err = run_err(r#""use strict"; var global = this; global.Infinity = 42;"#);
+    assert!(err.contains("TypeError"), "got: {}", err);
+
+    let err = run_err(r#""use strict"; var global = this; global.undefined = 42;"#);
+    assert!(err.contains("TypeError"), "got: {}", err);
+
+    assert_eq!(
+        run(r#"var NaN = 42; Number.isNaN(NaN);"#),
+        Value::Bool(true)
+    );
+
+    let err = run_err(r#""use strict"; var NaN = 42;"#);
+    assert!(err.contains("TypeError"), "got: {}", err);
+
+    assert_eq!(
+        run(r#"
+            var d = Object.getOwnPropertyDescriptor(this, "undefined");
+            [d.value === undefined, d.writable, d.enumerable, d.configurable].join(",");
+            "#,),
+        Value::String(Arc::from("true,false,false,false"))
+    );
+}
+
+#[test]
 fn strict_parenthesized_eval_arguments_assignment_is_syntax_error() {
     assert!(run_err(r#""use strict"; (eval) = 20;"#).contains("SyntaxError"));
     assert!(run_err(r#""use strict"; (arguments) = 20;"#).contains("SyntaxError"));
