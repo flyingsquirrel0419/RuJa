@@ -869,10 +869,8 @@ impl Vm {
                                 let has = self.has_property(&global_this, &name)?;
                                 if has {
                                     self.get_property(&global_this, &name)
-                                } else if r.strict {
-                                    Err(Error::reference(format!("{} is not defined", name)))
                                 } else {
-                                    Ok(Value::Undefined)
+                                    Err(Error::reference(format!("{} is not defined", name)))
                                 }
                             }
                             Err(true) => Err(Error::reference(format!(
@@ -884,10 +882,8 @@ impl Vm {
                                 let has = self.has_property(&global_this, &name)?;
                                 if has {
                                     self.get_property(&global_this, &name)
-                                } else if r.strict {
-                                    Err(Error::reference(format!("{} is not defined", name)))
                                 } else {
-                                    Ok(Value::Undefined)
+                                    Err(Error::reference(format!("{} is not defined", name)))
                                 }
                             }
                         }

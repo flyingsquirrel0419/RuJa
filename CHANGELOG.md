@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **85.5%** (up from 84.8%).
+Supported-subset pass rate: **86.0%** (up from 84.8%).
 
 - **Template-literal raw/cooked escapes**: template segments now correctly
   handle line continuations (cooked empty, raw preserves `\\` + line
@@ -17,6 +17,11 @@ Supported-subset pass rate: **85.5%** (up from 84.8%).
   now propagated to the enclosing completion slot. This makes
   `do { switch { case: { 6; continue; } } } while (false)` evaluate to `6`
   per spec.
+- **Reference type for compound assignments**: identifier compound
+  assignments (`x += y`) now use spec-conforming LoadRef → GetValue →
+  operate → PutValue, preserving the original binding even if deleted
+  between get and put (the `with` + getter-delete pattern). Unresolved
+  references always throw ReferenceError per spec.
 See [docs/test262.md](docs/test262.md#three-pass-rate-scopes) for the
 three distinct pass-rate scopes and what each measures.
 
