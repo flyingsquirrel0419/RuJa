@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **86.8%** (up from 84.8%).
+Supported-subset pass rate: **87.0%** (up from 84.8%).
 
 - **Template-literal raw/cooked escapes**: template segments now correctly
   handle line continuations (cooked empty, raw preserves `\\` + line

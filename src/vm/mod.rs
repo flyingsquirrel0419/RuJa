@@ -928,9 +928,13 @@ impl Vm {
                             self.set_property(&obj, &name, value)?;
                             return Ok(());
                         }
-                        // Property not found on any with-object (deleted):
-                        // re-create it on the innermost with-object (index 0)
+                        // Property not found on any with-object (deleted).
+                        // Per spec SetMutableBinding: if S (strict) is true and
+                        // the property no longer exists, throw ReferenceError.
                         if !with_objs.is_empty() {
+                            if r.strict {
+                                return Err(Error::reference(format!("{} is not defined", name)));
+                            }
                             let obj = with_objs[0].clone();
                             if let Value::Object(idx) = &obj {
                                 let pkey = crate::value::PropertyKey::from(name.as_str());
