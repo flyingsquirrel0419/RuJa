@@ -213,6 +213,14 @@ fn for_in_enumeration_descriptor_edges() {
 }
 
 #[test]
+fn for_in_member_lhs_array_prototype_setter() {
+    assert_eq!(
+        run("var obj = Object.create(null); var let, value; obj.key = 1; for (let in obj); Object.defineProperty(Array.prototype, '1', { set: function(param) { value = param; }, configurable: true }); for ([let][1] in obj); delete Array.prototype[1]; value;"),
+        Value::String(Arc::from("key"))
+    );
+}
+
+#[test]
 fn define_property_redefinition_validation_edges() {
     assert_eq!(
         run("var obj = Object.freeze({ x: 1 }); var threw = false; try { Object.defineProperty(obj, 'x', { value: 2 }); } catch (e) { threw = true; } threw + ':' + obj.x;"),

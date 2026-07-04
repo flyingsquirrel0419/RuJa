@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **92.9%** (up from 88.6%).
-Current supported subset count: **3883 pass / 295 fail / 2 timeout**.
+Supported-subset pass rate: **93.0%** (up from 88.6%).
+Current supported subset count: **3884 pass / 294 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -54,6 +54,11 @@ Current supported subset count: **3883 pass / 295 fail / 2 timeout**.
   non-configurable/non-extensible redefinitions, keeping property order and
   enumerability intact for cases like `{ a, b }` followed by redefining `a`.
   The `for...in` subset improves to **72 pass / 2 fail**.
+- **Array-index assignment through prototype setters**: writing to a missing
+  array index now observes inherited accessor setters before extending the
+  array, so member-expression `for...in` heads like `for ([let][1] in obj)`
+  route through the same [[Set]] semantics as ordinary element assignment.
+  The `for...in` subset improves to **73 pass / 1 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

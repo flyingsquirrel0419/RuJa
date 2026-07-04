@@ -277,6 +277,91 @@ impl Vm {
                     }
                 });
                 if let Some(i) = array_index {
+                    let pkey = crate::value::PropertyKey::from(key);
+                    let own_desc = self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Array(a) = o {
+                            return a.props.lock().get(&pkey).cloned();
+                        }
+                        None
+                    });
+                    if let Some(desc) = own_desc {
+                        if desc.is_accessor {
+                            if let Some(setter) = desc.set {
+                                self.call_function(
+                                    &setter,
+                                    std::slice::from_ref(&value),
+                                    Some(obj.clone()),
+                                )?;
+                                return Ok(());
+                            }
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Cannot set property '{}' which has only a getter",
+                                    key
+                                )));
+                            }
+                            return Ok(());
+                        }
+                        if !desc.writable {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Cannot assign to read only property '{}' of object",
+                                    key
+                                )));
+                            }
+                            return Ok(());
+                        }
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Array(a) = o {
+                                if let Some(desc) = a.props.lock().get_mut(&pkey) {
+                                    desc.value = value.clone();
+                                }
+                            }
+                        });
+                        return Ok(());
+                    }
+                    let dense_own_index = self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Array(a) = o {
+                            i < a.items.lock().len()
+                        } else {
+                            false
+                        }
+                    });
+                    if !dense_own_index {
+                        match self.find_setter(*idx, &pkey) {
+                            Some(Some(setter)) => {
+                                self.call_function(
+                                    &setter,
+                                    std::slice::from_ref(&value),
+                                    Some(obj.clone()),
+                                )?;
+                                return Ok(());
+                            }
+                            Some(None) => {
+                                if self.current_strict() {
+                                    return Err(Error::type_err(format!(
+                                        "Cannot set property '{}' which has only a getter",
+                                        key
+                                    )));
+                                }
+                                return Ok(());
+                            }
+                            None => {}
+                        }
+                        if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Cannot assign to read only property '{}' of object",
+                                    key
+                                )));
+                            }
+                            return Ok(());
+                        }
+                    } else {
+                        // Dense array elements are own writable data properties,
+                        // so prototype setters/non-writable data properties do
+                        // not participate in this write.
+                    }
                     let mapped = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
                             a.arguments_map.lock().as_ref().and_then(|m| {

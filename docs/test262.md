@@ -196,10 +196,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   not-yet-visited keys are skipped, and `Object.defineProperty` preserves
   unspecified fields when redefining an existing descriptor while rejecting
   invalid non-configurable/non-extensible redefinitions.
+- **Array-index assignment through prototype setters** — missing array-index
+  writes now honor inherited setters before extending the array, fixing
+  member-expression `for...in` assignment heads such as `[let][1]`.
 
 ## Why the rate is not higher
 
-The remaining 295 failures plus 2 timeouts in the supported subset cluster
+The remaining 294 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, for-of/for-in iteration,
 super/class behavior, try completion edges, and destructuring assignment.
 These are tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

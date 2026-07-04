@@ -13,6 +13,7 @@ mod common;
 
 use common::{run, run_err};
 use ruja::Value;
+use std::sync::Arc;
 
 /// Run `src` on a worker thread with a large stack and return the result as
 /// an f64 (panics if the result is not a number). Deep recursion up to the
@@ -253,6 +254,22 @@ fn inherited_setter_is_invoked_through_prototype_chain() {
            o.x = 7;
            log.join(',');"#);
     assert_eq!(v, Value::String(std::sync::Arc::from("7")));
+}
+
+#[test]
+fn array_missing_index_assignment_uses_prototype_setter() {
+    let v = run(r#"
+        var observed;
+        Object.defineProperty(Array.prototype, '1', {
+          set: function(v) { observed = v; },
+          configurable: true
+        });
+        var arr = [0];
+        arr[1] = 42;
+        delete Array.prototype[1];
+        observed + ':' + arr.length + ':' + arr.hasOwnProperty('1');
+        "#);
+    assert_eq!(v, Value::String(Arc::from("42:1:false")));
 }
 
 #[test]
