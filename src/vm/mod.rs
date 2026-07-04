@@ -856,8 +856,7 @@ impl Vm {
                         // a getter on the with-object is invoked.
                         let with_objs = env::with_objects(&self.heap, *env_idx);
                         for obj in &with_objs {
-                            let has = self.has_property(obj, &name)?;
-                            if has {
+                            if self.has_own_property(obj, &name) {
                                 return self.get_property(obj, &name);
                             }
                         }
@@ -919,7 +918,7 @@ impl Vm {
                         let with_objs = env::with_objects(&self.heap, *env_idx);
                         let mut found_idx: Option<usize> = None;
                         for (i, obj) in with_objs.iter().enumerate() {
-                            if self.has_property(obj, &name)? {
+                            if self.has_own_property(obj, &name) {
                                 found_idx = Some(i);
                                 break;
                             }
@@ -931,8 +930,6 @@ impl Vm {
                         }
                         // Property not found on any with-object (deleted):
                         // re-create it on the innermost with-object (index 0)
-                        // using a direct property insertion (not [[Set]], which
-                        // would trigger any setter on the proto chain).
                         if !with_objs.is_empty() {
                             let obj = with_objs[0].clone();
                             if let Value::Object(idx) = &obj {

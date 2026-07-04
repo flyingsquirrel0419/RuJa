@@ -379,6 +379,19 @@ impl Vm {
         false
     }
 
+    /// Does `obj` have an **own** property (not inherited)? Used by the
+    /// `with`-statement HasBinding check, which per spec only considers own
+    /// properties of the binding object.
+    pub fn has_own_property(&self, obj: &Value, name: &str) -> bool {
+        if let Value::Object(idx) = obj {
+            let pkey = crate::value::PropertyKey::from(name);
+            self.heap
+                .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey))
+        } else {
+            false
+        }
+    }
+
     /// Does `obj` (or its prototype chain) have a named property? Used by the
     /// `with` statement to decide whether to assign to a `with` object.
     /// Does `obj` (or its prototype chain) have a named property? Unlike the
