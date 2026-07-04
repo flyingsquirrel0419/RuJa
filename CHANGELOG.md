@@ -4,7 +4,14 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **84.8%** (up from 83.6%).
+Supported-subset pass rate: **85.2%** (up from 84.8%).
+
+- **Template-literal raw/cooked escapes**: template segments now correctly
+  handle line continuations (cooked empty, raw preserves `\\` + line
+  terminator), legacy octal/hex/unicode invalid escapes (SyntaxError for
+  untagged templates, `undefined` cooked for tagged templates), and raw
+  values for invalid escapes per spec. Nested template literals inside
+  interpolations are lexed correctly via a template-context stack.
 See [docs/test262.md](docs/test262.md#three-pass-rate-scopes) for the
 three distinct pass-rate scopes and what each measures.
 

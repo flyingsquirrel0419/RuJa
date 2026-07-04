@@ -7,7 +7,12 @@ pub enum TokenKind {
     BigInt(String),
     String(String),
     TemplateString {
-        cooked: String,
+        /// Cooked template value. `None` when the segment contains an invalid
+        /// escape sequence (allowed in tagged templates; SyntaxError in
+        /// untagged templates).
+        cooked: Option<String>,
+        /// Raw template text including backslashes and escape sequences as
+        /// they appear in source.
         raw: String,
     },
     Ident(String),

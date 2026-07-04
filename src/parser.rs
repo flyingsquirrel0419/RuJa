@@ -1732,7 +1732,7 @@ impl Parser {
                 }
                 TokenKind::TemplateString { cooked, raw } => {
                     // Tagged template: tag`str${expr}str`
-                    let quasi0: Arc<str> = Arc::from(cooked.as_str());
+                    let quasi0: Option<Arc<str>> = cooked.map(|s| Arc::from(s.as_str()));
                     let raw0: Arc<str> = Arc::from(raw.as_str());
                     self.advance(); // consume the TemplateString token
                     let tag = e;
@@ -1946,6 +1946,9 @@ impl Parser {
             TokenKind::New => self.parse_new(),
             TokenKind::TemplateString { cooked, .. } => {
                 self.advance();
+                let cooked = cooked.ok_or_else(|| {
+                    error::Error::syntax("Invalid escape sequence in template literal".to_string())
+                })?;
                 self.parse_template_rest(Arc::from(cooked.as_str()))
             }
             other => Err(error::Error::syntax(format!(
@@ -1972,7 +1975,14 @@ impl Parser {
             exprs.push(e);
             // next quasi
             match self.advance() {
-                TokenKind::TemplateString { cooked, .. } => quasis.push(Arc::from(cooked.as_str())),
+                TokenKind::TemplateString { cooked, .. } => {
+                    let cooked = cooked.ok_or_else(|| {
+                        error::Error::syntax(
+                            "Invalid escape sequence in template literal".to_string(),
+                        )
+                    })?;
+                    quasis.push(Arc::from(cooked.as_str()))
+                }
                 other => {
                     return Err(error::Error::syntax(format!(
                         "Expected template string, got {:?}",
@@ -1991,10 +2001,10 @@ impl Parser {
     fn parse_tagged_template(
         &mut self,
         tag: Expr,
-        first: Arc<str>,
+        first: Option<Arc<str>>,
         first_raw: Arc<str>,
     ) -> error::Result<Expr> {
-        let mut quasis: Vec<Arc<str>> = vec![first];
+        let mut quasis: Vec<Option<Arc<str>>> = vec![first];
         let mut raw: Vec<Arc<str>> = vec![first_raw];
         let mut exprs: Vec<Expr> = Vec::new();
         if !self.check(&TokenKind::TemplateExprStart) {
@@ -2013,7 +2023,7 @@ impl Parser {
             exprs.push(e);
             match self.advance() {
                 TokenKind::TemplateString { cooked, raw: rstr } => {
-                    let c: Arc<str> = Arc::from(cooked.as_str());
+                    let c: Option<Arc<str>> = cooked.map(|s| Arc::from(s.as_str()));
                     let r: Arc<str> = Arc::from(rstr.as_str());
                     quasis.push(c);
                     raw.push(r);

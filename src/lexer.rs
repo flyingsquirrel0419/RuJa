@@ -106,9 +106,17 @@ pub struct Lexer<'a> {
     /// means division rather than a regex literal).
     prev_value_ending: bool,
     /// Template-literal scanner state.
-    /// 0 = normal, 1 = emit TemplateExprStart next, 2 = inside interpolation expr,
+    /// 0 = normal, 1 = emit TemplateExprStart next,
     /// 3 = read next segment after an interpolation closed.
     pub template_state: u8,
+    /// Brace depth inside a template interpolation. When > 0, top-level `}`
+    /// closes the interpolation and returns TemplateExprEnd; nested `{`/`}`
+    /// pairs are tracked as normal braces.
+    pub template_expr_depth: usize,
+    /// Stack of outer template contexts, saved when a nested template literal
+    /// appears inside an interpolation. Each entry is `(template_state,
+    /// template_expr_depth)` to restore after the nested template closes.
+    template_stack: Vec<(u8, usize)>,
     /// Whether the last identifier token had a Unicode escape.
     last_ident_had_escape: bool,
 }
@@ -123,6 +131,8 @@ impl<'a> Lexer<'a> {
             saw_newline: true,
             prev_value_ending: false,
             template_state: 0,
+            template_expr_depth: 0,
+            template_stack: Vec::new(),
             last_ident_had_escape: false,
         }
     }
@@ -797,10 +807,16 @@ impl<'a> Lexer<'a> {
             }
             b'{' => {
                 self.advance();
+                if self.template_state == 2 {
+                    self.template_expr_depth += 1;
+                }
                 Some(TokenKind::LBrace)
             }
             b'}' => {
                 self.advance();
+                if self.template_state == 2 && self.template_expr_depth > 0 {
+                    self.template_expr_depth -= 1;
+                }
                 Some(TokenKind::RBrace)
             }
             b'[' => {
@@ -831,11 +847,14 @@ impl<'a> Lexer<'a> {
         match self.template_state {
             1 => {
                 self.template_state = 2;
+                self.template_expr_depth = 0;
                 return Token::new(TokenKind::TemplateExprStart, line, col);
             }
             2 => {
-                // Inside an interpolation; a top-level `}` closes it.
-                if self.peek() == Some(b'}') {
+                // Inside an interpolation; a top-level `}` closes it, but
+                // nested `{`/`}` pairs from object literals/blocks are tracked
+                // by template_expr_depth.
+                if self.peek() == Some(b'}') && self.template_expr_depth == 0 {
                     self.advance();
                     self.template_state = 3;
                     return Token::new(TokenKind::TemplateExprEnd, line, col);
@@ -857,7 +876,16 @@ impl<'a> Lexer<'a> {
             }
             Some(b'"') => self.read_string(b'"'),
             Some(b'\'') => self.read_string(b'\''),
-            Some(b'`') => return self.read_template_start(line, col, preceded_by_newline),
+            Some(b'`') => {
+                // Nested template literal inside an interpolation: save the
+                // outer context so we can resume it after the inner template
+                // closes.
+                if self.template_state == 2 {
+                    self.template_stack
+                        .push((self.template_state, self.template_expr_depth));
+                }
+                return self.read_template_start(line, col, preceded_by_newline);
+            }
             Some(b'/') => {
                 // Regex literal vs division, decided by the previous token.
                 if self.prev_value_ending {
@@ -1015,6 +1043,244 @@ impl<'a> Lexer<'a> {
         self.read_template_segment(line, col, preceded_by_newline)
     }
 
+    /// True if the current position starts a LineTerminatorSequence.
+    fn is_line_terminator_start(&self) -> bool {
+        match self.peek() {
+            Some(b'\n') | Some(b'\r') => true,
+            Some(0xE2) => {
+                self.peek_at(1) == Some(0x80) && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9))
+            }
+            _ => false,
+        }
+    }
+
+    /// Consume a LineTerminatorSequence and return its source bytes as a UTF-8
+    /// string. Updates line/column tracking like `advance`.
+    fn read_line_terminator_sequence(&mut self) -> String {
+        let mut buf = Vec::new();
+        match self.peek() {
+            Some(b'\r') => {
+                if self.peek_at(1) == Some(b'\n') {
+                    // CRLF: one advance() consumes both bytes.
+                    self.advance();
+                    buf.extend_from_slice(b"\r\n");
+                } else {
+                    buf.push(self.advance().unwrap());
+                }
+            }
+            Some(b'\n') => {
+                buf.push(self.advance().unwrap());
+            }
+            Some(0xE2)
+                if self.peek_at(1) == Some(0x80)
+                    && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
+            {
+                buf.push(self.advance().unwrap());
+                buf.push(self.advance().unwrap());
+                buf.push(self.advance().unwrap());
+            }
+            _ => {}
+        }
+        String::from_utf8(buf).unwrap_or_default()
+    }
+
+    /// Read a hex escape (\xHH) for a template literal. Only advances over valid
+    /// hex digits; returns None if fewer than two hex digits are available.
+    fn read_template_hex_escape(&mut self) -> Option<char> {
+        let mut value = 0u32;
+        for _ in 0..2 {
+            let b = self.peek()?;
+            let d = (b as char).to_digit(16)?;
+            value = value * 16 + d;
+            self.advance();
+        }
+        char::from_u32(value)
+    }
+
+    /// Read a unicode escape (\uXXXX or \u{X...}) for a template literal.
+    /// Returns None for malformed escapes; only valid hex digits and a closing
+    /// brace (for the braced form) are consumed.
+    fn read_template_unicode_escape(&mut self) -> Option<char> {
+        if self.peek() == Some(b'{') {
+            self.advance(); // consume {
+            let mut value = 0u32;
+            let mut count = 0;
+            loop {
+                match self.peek() {
+                    Some(b'}') => {
+                        self.advance();
+                        if count == 0 || count > 6 {
+                            return None;
+                        }
+                        return char::from_u32(value);
+                    }
+                    Some(b) => {
+                        let d = (b as char).to_digit(16)?;
+                        value = value.checked_mul(16)?.checked_add(d)?;
+                        self.advance();
+                        count += 1;
+                        if count > 6 {
+                            return None;
+                        }
+                    }
+                    None => return None,
+                }
+            }
+        } else {
+            let mut value = 0u32;
+            for _ in 0..4 {
+                let b = self.peek()?;
+                let d = (b as char).to_digit(16)?;
+                value = value * 16 + d;
+                self.advance();
+            }
+            char::from_u32(value)
+        }
+    }
+
+    /// Read an escape sequence inside a template literal segment. Valid escapes
+    /// are decoded into `cooked` and recorded in `raw`. Invalid escapes (legacy
+    /// octal, malformed hex/unicode, stray trailing backslash) set `valid` to
+    /// false and append the malformed source text to `raw` without updating
+    /// `cooked`. Line continuations append `\\` + the terminator to `raw` and
+    /// contribute nothing to `cooked`.
+    fn read_template_escape(&mut self, raw: &mut String, cooked: &mut String, valid: &mut bool) {
+        let raw_start = self.pos; // position of the backslash
+        self.advance(); // consume '\\'
+
+        // LineContinuation: \\ LineTerminatorSequence.
+        if self.is_line_terminator_start() {
+            raw.push('\\');
+            raw.push_str(&self.read_line_terminator_sequence());
+            return;
+        }
+
+        match self.peek() {
+            Some(b'n') => {
+                self.advance();
+                cooked.push('\n');
+                raw.push_str("\\n");
+            }
+            Some(b't') => {
+                self.advance();
+                cooked.push('\t');
+                raw.push_str("\\t");
+            }
+            Some(b'r') => {
+                self.advance();
+                cooked.push('\r');
+                raw.push_str("\\r");
+            }
+            Some(b'\\') => {
+                self.advance();
+                cooked.push('\\');
+                raw.push_str("\\\\");
+            }
+            Some(b'\'') => {
+                self.advance();
+                cooked.push('\'');
+                raw.push_str("\\'");
+            }
+            Some(b'"') => {
+                self.advance();
+                cooked.push('"');
+                raw.push_str("\\\"");
+            }
+            Some(b'`') => {
+                self.advance();
+                cooked.push('`');
+                raw.push_str("\\`");
+            }
+            Some(b'$') => {
+                self.advance();
+                cooked.push('$');
+                raw.push_str("\\$");
+            }
+            Some(b'b') => {
+                self.advance();
+                cooked.push('\u{0008}');
+                raw.push_str("\\b");
+            }
+            Some(b'f') => {
+                self.advance();
+                cooked.push('\u{000C}');
+                raw.push_str("\\f");
+            }
+            Some(b'v') => {
+                self.advance();
+                cooked.push('\u{000B}');
+                raw.push_str("\\v");
+            }
+            Some(b'0') => {
+                self.advance();
+                if self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    let d = self.advance().unwrap();
+                    raw.push('\\');
+                    raw.push('0');
+                    raw.push(d as char);
+                    *valid = false;
+                } else {
+                    cooked.push('\0');
+                    raw.push_str("\\0");
+                }
+            }
+            Some(c) if c.is_ascii_digit() => {
+                // Legacy octal / 8 / 9 are not allowed in template literals.
+                self.advance();
+                raw.push('\\');
+                raw.push(c as char);
+                *valid = false;
+            }
+            Some(b'x') => {
+                self.advance();
+                match self.read_template_hex_escape() {
+                    Some(ch) => {
+                        cooked.push(ch);
+                        raw.push_str(
+                            std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
+                        );
+                    }
+                    None => {
+                        raw.push_str(
+                            std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
+                        );
+                        *valid = false;
+                    }
+                }
+            }
+            Some(b'u') => {
+                self.advance();
+                match self.read_template_unicode_escape() {
+                    Some(ch) => {
+                        cooked.push(ch);
+                        raw.push_str(
+                            std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
+                        );
+                    }
+                    None => {
+                        raw.push_str(
+                            std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
+                        );
+                        *valid = false;
+                    }
+                }
+            }
+            Some(c) => {
+                // NonEscapeCharacter (e.g. \\z): represents the char itself.
+                self.advance();
+                cooked.push(c as char);
+                raw.push('\\');
+                raw.push(c as char);
+            }
+            None => {
+                raw.push('\\');
+                *valid = false;
+            }
+        }
+    }
+
+    /// Read the next segment of a template literal, starting at the current position
+    /// (after the opening backtick or after a `}` that closed an interpolation).
     /// Read the next segment of a template literal, starting at the current position
     /// (after the opening backtick or after a `}` that closed an interpolation).
     fn read_template_segment(
@@ -1025,127 +1291,31 @@ impl<'a> Lexer<'a> {
     ) -> Token {
         let mut cooked = String::new();
         let mut raw = String::new();
+        let mut valid = true;
         while let Some(c) = self.peek() {
             if c == b'`' {
                 self.advance();
+                // Restore an outer template context when a nested template
+                // literal inside an interpolation closes.
+                if let Some((state, depth)) = self.template_stack.pop() {
+                    self.template_state = state;
+                    self.template_expr_depth = depth;
+                } else {
+                    self.template_state = 0;
+                }
                 break;
             }
             if c == b'$' && self.peek_at(1) == Some(b'{') {
                 self.advance();
                 self.advance();
                 self.template_state = 1;
+                let cooked = if valid { Some(cooked) } else { None };
                 let mut tok = Token::new(TokenKind::TemplateString { cooked, raw }, line, col);
                 tok.preceded_by_newline = preceded_by_newline;
                 return tok;
             }
             if c == b'\\' {
-                // Record the raw escape sequence verbatim (backslash + the
-                // following chars we consume for this escape), while decoding
-                // the cooked form.
-                let raw_start = self.pos;
-                self.advance(); // consume '\'
-                match self.advance() {
-                    Some(b'n') => {
-                        cooked.push('\n');
-                        raw.push('\\');
-                        raw.push('n');
-                    }
-                    Some(b't') => {
-                        cooked.push('\t');
-                        raw.push('\\');
-                        raw.push('t');
-                    }
-                    Some(b'r') => {
-                        cooked.push('\r');
-                        raw.push('\\');
-                        raw.push('r');
-                    }
-                    Some(b'\\') => {
-                        cooked.push('\\');
-                        raw.push('\\');
-                        raw.push('\\');
-                    }
-                    Some(b'\'') => {
-                        cooked.push('\'');
-                        raw.push('\\');
-                        raw.push('\'');
-                    }
-                    Some(b'"') => {
-                        cooked.push('"');
-                        raw.push('\\');
-                        raw.push('"');
-                    }
-                    Some(b'`') => {
-                        cooked.push('`');
-                        raw.push('\\');
-                        raw.push('`');
-                    }
-                    Some(b'$') => {
-                        cooked.push('$');
-                        raw.push('\\');
-                        raw.push('$');
-                    }
-                    Some(b'0') => {
-                        cooked.push('\0');
-                        raw.push('\\');
-                        raw.push('0');
-                    }
-                    Some(b'b') => {
-                        cooked.push('\u{0008}');
-                        raw.push('\\');
-                        raw.push('b');
-                    }
-                    Some(b'f') => {
-                        cooked.push('\u{000C}');
-                        raw.push('\\');
-                        raw.push('f');
-                    }
-                    Some(b'v') => {
-                        cooked.push('\u{000B}');
-                        raw.push('\\');
-                        raw.push('v');
-                    }
-                    Some(b'x') => match self.read_hex_digits(2) {
-                        Some(n) => {
-                            cooked.push(char::from_u32(n).unwrap_or('\u{FFFD}'));
-                            raw.push_str(
-                                std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
-                            );
-                        }
-                        None => {
-                            let mut tok = Token::new(
-                                TokenKind::LexError("invalid hex escape sequence".to_string()),
-                                line,
-                                col,
-                            );
-                            tok.preceded_by_newline = preceded_by_newline;
-                            return tok;
-                        }
-                    },
-                    Some(b'u') => match self.read_unicode_escape() {
-                        Some(ch) => {
-                            cooked.push(ch);
-                            raw.push_str(
-                                std::str::from_utf8(&self.src[raw_start..self.pos]).unwrap_or(""),
-                            );
-                        }
-                        None => {
-                            let mut tok = Token::new(
-                                TokenKind::LexError("invalid unicode escape sequence".to_string()),
-                                line,
-                                col,
-                            );
-                            tok.preceded_by_newline = preceded_by_newline;
-                            return tok;
-                        }
-                    },
-                    Some(c) => {
-                        cooked.push(c as char);
-                        raw.push('\\');
-                        raw.push(c as char);
-                    }
-                    None => break,
-                }
+                self.read_template_escape(&mut raw, &mut cooked, &mut valid);
             } else {
                 self.advance();
                 if c < 0x80 {
@@ -1174,7 +1344,8 @@ impl<'a> Lexer<'a> {
             }
         }
         // closed the template literal with a backtick: return to normal scanning.
-        self.template_state = 0;
+        // (State was already set when the closing backtick was consumed.)
+        let cooked = if valid { Some(cooked) } else { None };
         let mut tok = Token::new(TokenKind::TemplateString { cooked, raw }, line, col);
         tok.preceded_by_newline = preceded_by_newline;
         tok

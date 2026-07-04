@@ -2520,7 +2520,10 @@ impl Compiler {
                 self.compile_expr(tag)?; // [tag]
                 let quasi_ids: Vec<usize> = quasis
                     .iter()
-                    .map(|q| self.chunk.add_constant(Value::String(q.clone())))
+                    .map(|q| match q {
+                        Some(s) => self.chunk.add_constant(Value::String(s.clone())),
+                        None => self.chunk.add_constant(Value::Undefined),
+                    })
                     .collect();
                 let raw_ids: Vec<usize> = raw
                     .iter()

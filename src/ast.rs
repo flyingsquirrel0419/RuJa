@@ -39,7 +39,10 @@ pub enum Expr {
     /// Tagged template: `tag`...`` — calls tag(strings, raw, ...exprs).
     TaggedTemplate {
         tag: Box<Expr>,
-        quasis: Vec<Arc<str>>,
+        /// Cooked template segments. A segment is `None` when it contains an
+        /// invalid escape sequence, which is allowed in tagged templates and
+        /// yields `undefined` for that element.
+        quasis: Vec<Option<Arc<str>>>,
         raw: Vec<Arc<str>>,
         exprs: Vec<Expr>,
     },
