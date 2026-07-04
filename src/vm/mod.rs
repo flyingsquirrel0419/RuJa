@@ -442,26 +442,27 @@ impl Vm {
         // while `var` and function declarations leak to the caller's function
         // scope — UNLESS the eval code is strict, in which case nothing leaks
         // (the eval has its own scope and all bindings stay local). Pre-declare
-        // the var/function names in the caller env (sloppy only) so the eval
-        // body's `DeclareVar` writes land in the right place; then run the eval
-        // body in the child environment.
+        // the var/function names in the caller's variable environment (sloppy
+        // only) so later name resolution can see the hoisted bindings; then run
+        // the eval body in the child environment.
         let is_strict = caller_strict || program.is_strict;
         let var_names = if is_strict {
             Vec::new()
         } else {
             crate::compiler::Compiler::collect_var_names(&program.body)
         };
+        let var_env = crate::environment::function_scope_root(&self.heap, caller_env);
         if !is_strict {
             for name in &var_names {
-                crate::environment::declare_var(&self.heap, caller_env, name, Value::Undefined);
+                crate::environment::declare_var(&self.heap, var_env, name, Value::Undefined);
             }
         }
         let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true)?;
         let result = self.execute_chunk_scoped(chunk, eval_env, this_val);
         // After running, copy the var/function bindings that the eval body
-        // established back into the caller's environment (they leak per spec).
-        // `let`/`const`/`class` stay in eval_env and are discarded with it.
-        // Strict eval does not leak anything.
+        // established back into the caller's variable environment (they leak per
+        // spec). `let`/`const`/`class` stay in eval_env and are discarded with
+        // it. Strict eval does not leak anything.
         if is_strict {
             if !self.microtask_queue.is_empty() {
                 self.run_microtasks()?;
@@ -486,13 +487,10 @@ impl Vm {
             if crate::environment::has_lexical_binding(&self.heap, caller_env, &name) {
                 continue;
             }
-            crate::environment::declare(
-                &self.heap,
-                caller_env,
-                &name,
-                value,
-                crate::value::BindingKind::Var,
-            );
+            crate::environment::declare_var(&self.heap, var_env, &name, value.clone());
+            if var_env == self.global {
+                self.set_global_var_property(&name, value);
+            }
         }
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;

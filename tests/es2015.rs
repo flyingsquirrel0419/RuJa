@@ -552,6 +552,11 @@ fn for_in_lexical_head_tdz_and_iteration_scope() {
         run("let x = 'outside'; var probeExpr; for (let x in { i: probeExpr = function(){ try { typeof x; return 'no'; } catch (e) { return e.name; } } }) ; probeExpr();"),
         Value::String(Arc::from("ReferenceError"))
     );
+
+    assert_eq!(
+        run("var probeBefore = function() { return x; }; var x = 1; var probeDecl, probeExpr, probeBody; for (let [_ = probeDecl = function() { return x; }] in { '': (eval('var x = 2;'), probeExpr = function() { return x; }) }) probeBody = function() { return x; }; [probeBefore(), probeDecl(), probeExpr(), probeBody(), x].join(',');"),
+        Value::String(Arc::from("2,2,2,2,2"))
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **93.0%** (up from 88.6%).
-Current supported subset count: **3884 pass / 294 fail / 2 timeout**.
+Current supported subset count: **3887 pass / 291 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -59,6 +59,12 @@ Current supported subset count: **3884 pass / 294 fail / 2 timeout**.
   array, so member-expression `for...in` heads like `for ([let][1] in obj)`
   route through the same [[Set]] semantics as ordinary element assignment.
   The `for...in` subset improves to **73 pass / 1 fail**.
+- **Direct eval `var` leakage from lexical `for...in` heads**: sloppy direct
+  eval now copies `var`/function declarations back to the caller's variable
+  environment rather than the temporary TDZ lexical environment used while
+  evaluating a lexical `for...in` right-hand side. This preserves closures
+  created before, during, and after the loop head expression and brings the
+  `for...in` subset to **74 pass / 0 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
