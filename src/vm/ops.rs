@@ -46,6 +46,24 @@ impl Vm {
                     let s = self.to_string(&prim)?;
                     self.stack.push(Value::String(s));
                 }
+                Op::CheckNullBase => {
+                    // Stack: [obj, key]. Check obj (second from top) for
+                    // null/undefined per spec ToObject, which throws TypeError
+                    // before ToPropertyKey is called on the key.
+                    let len = self.stack.len();
+                    if len >= 2 {
+                        let obj = self.stack[len - 2].clone();
+                        match obj {
+                            Value::Null | Value::Undefined => {
+                                return Err(Error::type_err(format!(
+                                    "Cannot read properties of {}",
+                                    obj.type_of()
+                                )));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 Op::Const(idx) => {
                     let v = {
                         let frame = self.current_frame()?;

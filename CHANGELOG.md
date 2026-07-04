@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **86.5%** (up from 84.8%).
+Supported-subset pass rate: **86.8%** (up from 84.8%).
 
 - **Template-literal raw/cooked escapes**: template segments now correctly
   handle line continuations (cooked empty, raw preserves `\\` + line
@@ -23,9 +23,11 @@ Supported-subset pass rate: **86.5%** (up from 84.8%).
   between get and put (the `with` + getter-delete pattern). Unresolved
   references always throw ReferenceError per spec.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
-  assignments now check for null/undefined base before calling
-  ToPropertyKey on the key, so `null[throwingToString] *= x` throws
-  TypeError (not the toString error) per spec.
+  assignments now check for null/undefined base (ToObject) after
+  evaluating the key expression but before calling ToPropertyKey,
+  matching spec evaluation order. `null[throwingToString] *= x` throws
+  TypeError (not the toString error). ToPropertyKey is called exactly
+  once per spec (T4 series).
 - **With-object own-property checks**: `with`-object binding lookups in
   get_value/put_value now use `has_own_property` (not `has_property`),
   so inherited prototype properties are not mistakenly found on the

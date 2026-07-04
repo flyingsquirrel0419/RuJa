@@ -304,6 +304,7 @@ pub enum Op {
     // Coerce top-of-stack to a string via ToPrimitive(string) + ToString
     // (used by template-literal interpolation).
     ToString,
+    CheckNullBase, // pop obj; throw TypeError if null/undefined; push obj back
 
     // Halt
     Halt,

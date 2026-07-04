@@ -3168,12 +3168,16 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
-                    // Do NOT call ToString here. Per spec, the key reference
-                    // is evaluated (the expression runs) but ToPropertyKey
-                    // is called later during GetValue/PutValue. This matters
-                    // when the base is null/undefined: spec throws TypeError
-                    // before calling ToPropertyKey on the key.
+                    // Per spec: ToObject(base) is called AFTER key evaluation
+                    // but BEFORE ToPropertyKey. So: evaluate base, evaluate
+                    // key, check base for null/undefined (ToObject), then
+                    // ToPropertyKey (ToString).
+                    self.chunk.emit(Op::CheckNullBase, self.current_line);
+                    self.chunk.emit(Op::ToString, self.current_line);
                 } else {
+                    // Non-computed: check base for null/undefined after
+                    // evaluating the key constant.
+                    self.chunk.emit(Op::CheckNullBase, self.current_line);
                     let key = if let Expr::String(s) = property.as_ref() {
                         s.to_string()
                     } else {
