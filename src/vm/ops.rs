@@ -1501,6 +1501,15 @@ impl Vm {
                     };
                     self.stack.push(v);
                 }
+                Op::GetSuperProp => {
+                    // stack (bottom->top): [receiver, super_base, key]
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let super_base = self.stack.pop().unwrap_or(Value::Undefined);
+                    let receiver = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    let value = self.get_property_rx(&super_base, &key_str, receiver, 0)?;
+                    self.stack.push(value);
+                }
                 Op::GetElem => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1517,6 +1526,24 @@ impl Vm {
                     // Invalidate IC entry for this object+key so stale
                     // cached values are not returned on next GetProp.
                     if let Value::Object(idx) = &obj {
+                        self.ic_invalidate(idx.0, &key_str);
+                    }
+                    self.stack.push(value);
+                }
+                Op::SetSuperProp => {
+                    // stack (bottom->top): [receiver, super_base, key, value]
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let super_base = self.stack.pop().unwrap_or(Value::Undefined);
+                    let receiver = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key_str = self.to_property_key(&key)?;
+                    self.set_property_with_receiver(
+                        &super_base,
+                        &key_str,
+                        value.clone(),
+                        &receiver,
+                    )?;
+                    if let Value::Object(idx) = &receiver {
                         self.ic_invalidate(idx.0, &key_str);
                     }
                     self.stack.push(value);
@@ -2634,10 +2661,13 @@ impl Vm {
         if let Some(fdef) = self.functions.get(func_idx).cloned() {
             let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
             let is_arrow = fdef.is_arrow;
+            let is_method = fdef.is_method;
             let fn_length = fdef.length;
             let fn_name = fdef.name.clone();
-            // create a .prototype object for non-arrow functions
-            let proto_val = if !fdef.is_arrow {
+            // Generator methods are non-constructors, but still have an own
+            // prototype. Other concise methods do not.
+            let has_prototype = !is_arrow && (!is_method || fdef.is_generator);
+            let proto_val = if has_prototype {
                 let proto = HeapObj::Object(crate::value::ObjectData {
                     props: Mutex::new(IndexMap::new()),
                     proto: Mutex::new(Some(self.object_proto.clone())),
@@ -2655,7 +2685,7 @@ impl Vm {
                 kind: crate::value::FunctionKind::Interpreted { func: fdef },
                 closure: env_idx,
                 is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-                prototype: Mutex::new(if !is_arrow {
+                prototype: Mutex::new(if has_prototype {
                     Some(proto_val.clone())
                 } else {
                     None
@@ -2685,7 +2715,7 @@ impl Vm {
                     name_desc.configurable = true;
                     props.insert(crate::value::PropertyKey::from("name"), name_desc);
                     // prototype: writable, non-enumerable, non-configurable
-                    if !is_arrow {
+                    if has_prototype {
                         let mut proto_desc =
                             crate::value::PropertyDescriptor::data(proto_val.clone());
                         proto_desc.writable = true;

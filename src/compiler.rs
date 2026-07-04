@@ -2581,6 +2581,27 @@ impl Compiler {
                 computed,
                 optional,
             } => {
+                if matches!(object.as_ref(), Expr::Super) {
+                    let this_idx = self.intern("this");
+                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                    let super_idx = self.intern("#super");
+                    self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                    if *computed {
+                        self.compile_expr(property)?;
+                    } else {
+                        let key = if let Expr::String(s) = property.as_ref() {
+                            s.to_string()
+                        } else {
+                            String::new()
+                        };
+                        let key_idx = self
+                            .chunk
+                            .add_constant(Value::String(Arc::from(key.as_str())));
+                        self.chunk.emit(Op::Const(key_idx), self.current_line);
+                    }
+                    self.chunk.emit(Op::GetSuperProp, self.current_line);
+                    return Ok(());
+                }
                 self.compile_expr(object)?;
                 let mut jend = 0usize;
                 if *optional {
@@ -3147,6 +3168,28 @@ impl Compiler {
                 computed,
                 ..
             } => {
+                if matches!(object.as_ref(), Expr::Super) {
+                    let this_idx = self.intern("this");
+                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                    let super_idx = self.intern("#super");
+                    self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                    if *computed {
+                        self.compile_expr(property)?;
+                    } else {
+                        let key = if let Expr::String(s) = &**property {
+                            s.to_string()
+                        } else {
+                            String::new()
+                        };
+                        let key_idx = self
+                            .chunk
+                            .add_constant(Value::String(Arc::from(key.as_str())));
+                        self.chunk.emit(Op::Const(key_idx), self.current_line);
+                    }
+                    self.compile_expr(value)?;
+                    self.chunk.emit(Op::SetSuperProp, self.current_line);
+                    return Ok(());
+                }
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;

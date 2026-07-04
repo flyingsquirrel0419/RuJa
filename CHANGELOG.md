@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **91.6%** (up from 88.6%).
-Current supported subset count: **3828 pass / 350 fail / 2 timeout**.
+Supported-subset pass rate: **92.1%** (up from 88.6%).
+Current supported subset count: **3850 pass / 328 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -180,6 +180,22 @@ Current supported subset count: **3828 pass / 350 fail / 2 timeout**.
   `language/expressions/object` subset improves to
   **250 pass / 35 fail / 285 ran**, and the supported subset rises to
   **3828 pass / 350 fail / 2 timeout**.
+- **Object literal method semantics**: concise methods and accessors are now
+  non-constructors, ordinary concise methods no longer get an own
+  `prototype` property, and object accessor methods bind `super` through the
+  literal home object. `super.x` reads and `super.x = v` writes now use the
+  original receiver instead of the prototype object. The
+  `language/expressions/object` subset improves to
+  **254 pass / 31 fail / 285 ran**, and the supported subset rises to
+  **3840 pass / 338 fail / 2 timeout**.
+- **Object literal `__proto__` semantics**: duplicate non-computed
+  `__proto__:` prototype-mutation properties now throw a parse-time
+  `SyntaxError`, while computed `["__proto__"]` and shorthand `{__proto__}`
+  remain ordinary data properties. Own data `__proto__` properties now take
+  precedence over the legacy prototype getter. The
+  `language/expressions/object` subset improves to
+  **258 pass / 27 fail / 285 ran**, and the supported subset rises to
+  **3850 pass / 328 fail / 2 timeout**.
 - **test262 metadata parser indentation**: the local runner now accepts
   `negative:` metadata with arbitrary YAML indentation, matching current
   test262 files such as update-expression early-error tests.

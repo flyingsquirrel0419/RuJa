@@ -54,6 +54,7 @@ pub struct Parser {
     /// `return` at depth 0 is a SyntaxError.
     function_depth: usize,
     super_depth: usize,
+    super_call_depth: usize,
 }
 
 impl Parser {
@@ -78,6 +79,7 @@ impl Parser {
             label_stack: Vec::new(),
             function_depth: 0,
             super_depth: 0,
+            super_call_depth: 0,
         }
     }
 
@@ -480,7 +482,7 @@ impl Parser {
         let params = self.parse_params()?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body(false)?;
+        let mut body = self.parse_fn_body(false, false)?;
         {
             let mut pre = self.take_dstr_prelude();
             pre.append(&mut body);
@@ -600,7 +602,11 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_fn_body(&mut self, super_allowed: bool) -> error::Result<Vec<Stmt>> {
+    fn parse_fn_body(
+        &mut self,
+        super_allowed: bool,
+        super_call_allowed: bool,
+    ) -> error::Result<Vec<Stmt>> {
         self.expect(&TokenKind::LBrace, "{")?;
         // Detect a leading "use strict" directive BEFORE parsing body
         // statements, so strict-mode early errors (e.g. assignment to `eval`)
@@ -611,10 +617,16 @@ impl Parser {
             self.is_strict_context = true;
         }
         let saved_super = self.super_depth;
+        let saved_super_call = self.super_call_depth;
         if super_allowed {
             self.super_depth += 1;
         } else {
             self.super_depth = 0;
+        }
+        if super_call_allowed {
+            self.super_call_depth += 1;
+        } else {
+            self.super_call_depth = 0;
         }
         self.function_depth += 1;
         let mut body = Vec::new();
@@ -625,6 +637,7 @@ impl Parser {
         self.function_depth -= 1;
         self.is_strict_context = saved_strict;
         self.super_depth = saved_super;
+        self.super_call_depth = saved_super_call;
         Ok(body)
     }
 
@@ -1746,6 +1759,9 @@ impl Parser {
                     };
                 }
                 TokenKind::LParen => {
+                    if matches!(e, Expr::Super) && self.super_call_depth == 0 {
+                        return Err(error::Error::syntax("super call unexpected here"));
+                    }
                     self.advance();
                     let args = self.parse_args()?;
                     self.expect(&TokenKind::RParen, ")")?;
@@ -2098,6 +2114,7 @@ impl Parser {
     fn parse_object(&mut self) -> error::Result<Expr> {
         self.advance(); // {
         let mut props = Vec::new();
+        let mut seen_proto_mutation = false;
         while !self.check(&TokenKind::RBrace) {
             // Spread element: {...expr}
             if self.check(&TokenKind::Spread) {
@@ -2198,15 +2215,9 @@ impl Parser {
                     self.advance();
                     let e = self.parse_assign()?;
                     self.expect(&TokenKind::RBracket, "]")?;
-                    // Computed key: the expression is evaluated at runtime, so even a
-                    // bare identifier `[key]` must become a Computed key (not the
-                    // constant Ident form used by shorthand `{x}`).
-                    let key = match e {
-                        Expr::String(s) => PropertyKey::String(s),
-                        Expr::Number(n) => PropertyKey::Number(n),
-                        other => PropertyKey::Computed(Box::new(other)),
-                    };
-                    (key, true)
+                    // Computed keys have no static PropName, even when the
+                    // expression is a literal such as ["__proto__"].
+                    (PropertyKey::Computed(Box::new(e)), true)
                 }
                 other => {
                     return Err(error::Error::syntax(format!(
@@ -2219,7 +2230,7 @@ impl Parser {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
-                let mut body = self.parse_fn_body(true)?;
+                let mut body = self.parse_fn_body(true, false)?;
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
@@ -2243,7 +2254,7 @@ impl Parser {
                         is_generator: false,
                         param_decls: Vec::new(),
                         is_strict,
-                        is_method: false,
+                        is_method: true,
                     }),
                     computed,
                     method: false,
@@ -2259,7 +2270,7 @@ impl Parser {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
-                let mut body = self.parse_fn_body(true)?;
+                let mut body = self.parse_fn_body(true, false)?;
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
@@ -2313,6 +2324,14 @@ impl Parser {
                 });
             } else {
                 self.expect(&TokenKind::Colon, ":")?;
+                if !computed && Self::prop_key_name(&key).as_deref() == Some("__proto__") {
+                    if seen_proto_mutation {
+                        return Err(error::Error::syntax(
+                            "Duplicate __proto__ property in object literal".to_string(),
+                        ));
+                    }
+                    seen_proto_mutation = true;
+                }
                 let mut value = self.parse_assign()?;
                 // SetFunctionName: assigning a function/arrow to a property
                 // sets its `name` to the property key (when the function has
@@ -2368,7 +2387,7 @@ impl Parser {
         let params = self.parse_params()?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body(false)?;
+        let mut body = self.parse_fn_body(false, false)?;
         {
             let mut pre = self.take_dstr_prelude();
             pre.append(&mut body);
@@ -2672,7 +2691,7 @@ impl Parser {
             .collect();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
-            let mut body = self.parse_fn_body(false)?;
+            let mut body = self.parse_fn_body(false, false)?;
             {
                 let mut pre = self.take_dstr_prelude();
                 pre.append(&mut body);
@@ -2806,7 +2825,7 @@ impl Parser {
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
                 self.advance(); // static
-                let block = self.parse_fn_body(false)?;
+                let block = self.parse_fn_body(false, false)?;
                 static_blocks.push(block);
                 continue;
             }
@@ -2821,7 +2840,7 @@ impl Parser {
                     let params = self.parse_params()?;
                     let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                     let rest_param = self.cur_rest_param.take();
-                    let mut body = self.parse_fn_body(true)?;
+                    let mut body = self.parse_fn_body(true, false)?;
                     {
                         let mut pre = self.take_dstr_prelude();
                         pre.append(&mut body);
@@ -2907,7 +2926,8 @@ impl Parser {
             let params = self.parse_params()?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
             let rest_param = self.cur_rest_param.take();
-            let mut body = self.parse_fn_body(true)?;
+            let super_call_allowed = superclass.is_some() && is_constructor;
+            let mut body = self.parse_fn_body(true, super_call_allowed)?;
             {
                 let mut pre = self.take_dstr_prelude();
                 pre.append(&mut body);

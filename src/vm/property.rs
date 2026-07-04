@@ -394,6 +394,136 @@ impl Vm {
         }
     }
 
+    pub(crate) fn set_property_with_receiver(
+        &mut self,
+        base: &Value,
+        key: &str,
+        value: Value,
+        receiver: &Value,
+    ) -> error::Result<()> {
+        let Value::Object(base_idx) = base else {
+            return Err(Error::type_err(
+                "Cannot set property of primitive".to_string(),
+            ));
+        };
+        let pkey = crate::value::PropertyKey::from(key);
+        self.ordinary_set_with_receiver(*base_idx, &pkey, key, value, receiver)
+    }
+
+    fn ordinary_set_with_receiver(
+        &mut self,
+        mut base_idx: GcIdx,
+        pkey: &crate::value::PropertyKey,
+        key: &str,
+        value: Value,
+        receiver: &Value,
+    ) -> error::Result<()> {
+        for _ in 0..1024 {
+            let (desc, proto) = self.heap.with_obj(base_idx.0, |o| {
+                (
+                    o.props().lock().get(pkey).cloned(),
+                    o.proto().lock().clone(),
+                )
+            });
+            if let Some(desc) = desc {
+                if desc.is_accessor {
+                    if let Some(setter) = desc.set {
+                        self.call_function(
+                            &setter,
+                            std::slice::from_ref(&value),
+                            Some(receiver.clone()),
+                        )?;
+                        return Ok(());
+                    }
+                    if self.current_strict() {
+                        return Err(Error::type_err(format!(
+                            "Cannot set property '{}' which has only a getter",
+                            key
+                        )));
+                    }
+                    return Ok(());
+                }
+                if !desc.writable {
+                    if self.current_strict() {
+                        return Err(Error::type_err(format!(
+                            "Cannot assign to read only property '{}' of object",
+                            key
+                        )));
+                    }
+                    return Ok(());
+                }
+                return self.set_receiver_data_property(receiver, pkey.clone(), key, value);
+            }
+            match proto {
+                Some(Value::Object(proto_idx)) => base_idx = proto_idx,
+                _ => return self.set_receiver_data_property(receiver, pkey.clone(), key, value),
+            }
+        }
+        Err(Error::type_err("Prototype chain too deep".to_string()))
+    }
+
+    fn set_receiver_data_property(
+        &mut self,
+        receiver: &Value,
+        pkey: crate::value::PropertyKey,
+        key: &str,
+        value: Value,
+    ) -> error::Result<()> {
+        let Value::Object(receiver_idx) = receiver else {
+            if self.current_strict() {
+                return Err(Error::type_err(
+                    "Cannot set property of primitive".to_string(),
+                ));
+            }
+            return Ok(());
+        };
+        let existing = self
+            .heap
+            .with_obj(receiver_idx.0, |o| o.props().lock().get(&pkey).cloned());
+        if let Some(desc) = existing {
+            if desc.is_accessor || !desc.writable {
+                if self.current_strict() {
+                    return Err(Error::type_err(format!(
+                        "Cannot assign to read only property '{}' of object",
+                        key
+                    )));
+                }
+                return Ok(());
+            }
+        } else {
+            let is_extensible = self.heap.with_obj(receiver_idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    od.extensible.load(std::sync::atomic::Ordering::Relaxed)
+                } else {
+                    true
+                }
+            });
+            if !is_extensible {
+                if self.current_strict() {
+                    return Err(Error::type_err(format!(
+                        "Cannot add property '{}', object is not extensible",
+                        key
+                    )));
+                }
+                return Ok(());
+            }
+        }
+        let cache_key = pkey.as_str().map(|s| s.to_string());
+        self.heap.with_obj(receiver_idx.0, |o| {
+            let props = o.props();
+            let mut props = props.lock();
+            if let Some(existing) = props.get_mut(&pkey) {
+                existing.value = value;
+            } else {
+                props.insert(pkey, crate::value::PropertyDescriptor::data(value));
+            }
+        });
+        if let Some(key) = cache_key {
+            self.ic_invalidate(receiver_idx.0, &key);
+        }
+        Ok(())
+    }
+
     /// Strictness of the currently-executing frame, used by ordinary
     /// [[Set]]/[[DefineOwnProperty]] to decide whether a failed assignment
     /// throws a TypeError or is silently ignored. The top-level program has

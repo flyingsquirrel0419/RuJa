@@ -650,6 +650,22 @@ impl Vm {
             Value::Object(idx) => *idx,
             _ => return Err(Error::type_err("not a constructor".to_string())),
         };
+        let is_non_constructor = self.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                match &f.kind {
+                    crate::value::FunctionKind::Interpreted { func } => {
+                        func.is_arrow || func.is_method
+                    }
+                    crate::value::FunctionKind::Native { .. } => false,
+                    crate::value::FunctionKind::Bound { .. } => false,
+                }
+            } else {
+                true
+            }
+        });
+        if is_non_constructor {
+            return Err(Error::type_err("not a constructor".to_string()));
+        }
         // Read prototype from the function's own properties first (it may
         // have been reassigned via `fn.prototype = newProto`), falling back
         // to the internal FunctionData.prototype field.

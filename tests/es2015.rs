@@ -428,6 +428,108 @@ fn computed_accessor_key_to_property_key_errors() {
 }
 
 #[test]
+fn object_methods_are_not_constructors() {
+    let err = common::run_err("let obj = { method() {} }; new obj.method();");
+    assert!(
+        err.contains("not a constructor") || err.contains("TypeError"),
+        "expected method constructor TypeError, got {err}"
+    );
+}
+
+#[test]
+fn object_methods_do_not_have_own_prototype() {
+    let src = "let method = { method() {} }.method; Object.prototype.hasOwnProperty.call(method, 'prototype');";
+    assert_eq!(run(src), Value::Bool(false));
+}
+
+#[test]
+fn ordinary_functions_and_generator_methods_keep_own_prototype() {
+    assert_eq!(
+        run("function ordinary() {} Object.prototype.hasOwnProperty.call(ordinary, 'prototype');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("let method = { *method() {} }.method; Object.prototype.hasOwnProperty.call(method, 'prototype');"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn object_accessors_bind_super() {
+    let src = r#"
+        let proto = {
+            get value() { return 40; },
+            set value(v) { this.seen = v + 1; }
+        };
+        let obj = {
+            __proto__: proto,
+            get value() { return super.value + 2; },
+            set value(v) { super.value = v; }
+        };
+        let got = obj.value;
+        obj.value = 4;
+        got + obj.seen;
+    "#;
+    assert_eq!(run(src), Value::Number(47.0));
+}
+
+#[test]
+fn object_super_get_uses_receiver() {
+    let src = r#"
+        let proto = { get x() { return this._x; } };
+        let object = {
+            __proto__: proto,
+            _x: 9,
+            get x() { return super.x; }
+        };
+        object.x;
+    "#;
+    assert_eq!(run(src), Value::Number(9.0));
+}
+
+#[test]
+fn object_methods_reject_super_call() {
+    for src in [
+        "({ method(){ super(); } });",
+        "({ get x(){ super(); } });",
+        "({ set x(v){ super(); } });",
+    ] {
+        let err = common::run_err(src);
+        assert!(
+            err.contains("super call") || err.contains("SyntaxError"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn object_proto_duplicate_colon_is_syntax_error() {
+    let err = common::run_err("({ __proto__: null, other: null, '__proto__': null });");
+    assert!(
+        err.contains("Duplicate __proto__") || err.contains("SyntaxError"),
+        "{err}"
+    );
+}
+
+#[test]
+fn computed_and_shorthand_proto_are_data_properties() {
+    let computed = r#"
+        let proto = {};
+        let ownProp = {};
+        let obj = { __proto__: proto, ['__proto__']: {}, ['__proto__']: ownProp };
+        Object.getPrototypeOf(obj) === proto && obj.__proto__ === ownProp;
+    "#;
+    assert_eq!(run(computed), Value::Bool(true));
+
+    let shorthand = r#"
+        let __proto__ = 2;
+        let obj = { __proto__, __proto__ };
+        obj.hasOwnProperty("__proto__") && obj.__proto__ === 2;
+    "#;
+    assert_eq!(run(shorthand), Value::Bool(true));
+}
+
+#[test]
 fn array_prototype_iterator_override_honored() {
     let src = r#"
         Array.prototype[Symbol.iterator] = function() {

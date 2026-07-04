@@ -712,6 +712,19 @@ impl Vm {
                     }
                     return Ok(Value::Undefined);
                 }
+                if key == "__proto__" {
+                    if let Some(value) = self.heap.with_obj(idx.0, |o| {
+                        o.props().lock().get(&pkey).and_then(|d| {
+                            if d.is_accessor {
+                                None
+                            } else {
+                                Some(d.value.clone())
+                            }
+                        })
+                    }) {
+                        return Ok(value);
+                    }
+                }
                 // __proto__ getter returns the object's [[Prototype]].
                 if key == "__proto__" {
                     return Ok(self
