@@ -3168,10 +3168,11 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
-                    // Convert the key to a property key string ONCE, so that
-                    // ToPropertyKey (and thus toString) is called only once
-                    // per spec. Both GetElem and SetElem use this string.
-                    self.chunk.emit(Op::ToString, self.current_line);
+                    // Do NOT call ToString here. Per spec, the key reference
+                    // is evaluated (the expression runs) but ToPropertyKey
+                    // is called later during GetValue/PutValue. This matters
+                    // when the base is null/undefined: spec throws TypeError
+                    // before calling ToPropertyKey on the key.
                 } else {
                     let key = if let Expr::String(s) = property.as_ref() {
                         s.to_string()

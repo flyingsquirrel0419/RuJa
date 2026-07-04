@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **86.0%** (up from 84.8%).
+Supported-subset pass rate: **86.5%** (up from 84.8%).
 
 - **Template-literal raw/cooked escapes**: template segments now correctly
   handle line continuations (cooked empty, raw preserves `\\` + line
@@ -22,6 +22,17 @@ Supported-subset pass rate: **86.0%** (up from 84.8%).
   operate → PutValue, preserving the original binding even if deleted
   between get and put (the `with` + getter-delete pattern). Unresolved
   references always throw ReferenceError per spec.
+- **Null/undefined base before ToPropertyKey**: `base[key]` compound
+  assignments now check for null/undefined base before calling
+  ToPropertyKey on the key, so `null[throwingToString] *= x` throws
+  TypeError (not the toString error) per spec.
+- **With-object own-property checks**: `with`-object binding lookups in
+  get_value/put_value now use `has_own_property` (not `has_property`),
+  so inherited prototype properties are not mistakenly found on the
+  binding object.
+- **Const/TDZ enforcement in put_value**: `put_value` now uses
+  `set_checked` so const reassignment throws TypeError and TDZ access
+  throws ReferenceError.
 See [docs/test262.md](docs/test262.md#three-pass-rate-scopes) for the
 three distinct pass-rate scopes and what each measures.
 

@@ -280,6 +280,18 @@ impl Vm {
     /// existing `get_property(&str)` path) and Symbol keys (looked up directly
     /// in the object's `props` map as `PropertyKey::Symbol`).
     pub fn get_property_key(&mut self, obj: &Value, key: &Value) -> error::Result<Value> {
+        // Per spec, base is checked for null/undefined BEFORE ToPropertyKey.
+        match obj {
+            Value::Null | Value::Undefined => {
+                // Don't call ToPropertyKey on the key (which might throw);
+                // just use a placeholder for the error message.
+                return Err(Error::type_err(format!(
+                    "Cannot read properties of {}",
+                    obj.type_of()
+                )));
+            }
+            _ => {}
+        }
         match key {
             Value::Symbol(id) => {
                 let pkey = crate::value::PropertyKey::Symbol(*id);
