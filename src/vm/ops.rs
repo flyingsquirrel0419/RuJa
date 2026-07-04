@@ -196,6 +196,20 @@ impl Vm {
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    // Per spec: var declarations create/update a binding in
+                    // the variable environment (function scope). If a `with`
+                    // object has a same-named property, the var assignment
+                    // ALSO sets the with-object's property (so
+                    // `with(o){ var foo = x }` sets both the var binding AND
+                    // o.foo). This matches the test262 expectation that
+                    // `with(o){ var foo = "set in with" }` results in
+                    // `o.foo === "set in with"`.
+                    let with_objs = crate::environment::with_objects(&self.heap, cur_env);
+                    for obj in &with_objs {
+                        if self.has_own_property(obj, &name) {
+                            self.set_property(obj, &name, value.clone())?;
+                        }
+                    }
                     crate::environment::declare_var(&self.heap, cur_env, &name, value);
                 }
                 Op::DeclareLet(name_idx) => {

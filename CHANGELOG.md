@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **87.0%** (up from 84.8%).
+Supported-subset pass rate: **86.9%** (up from 84.8%).
 
 - **Template-literal raw/cooked escapes**: template segments now correctly
   handle line continuations (cooked empty, raw preserves `\\` + line
@@ -32,6 +32,9 @@ Supported-subset pass rate: **87.0%** (up from 84.8%).
   get_value/put_value now use `has_own_property` (not `has_property`),
   so inherited prototype properties are not mistakenly found on the
   binding object.
+- **`with` + `var` initialization**: `var foo = x` inside a `with` block
+  now also sets the with-object's property when it already has one, so
+  `with(o){ var foo = "set in with" }` results in `o.foo === "set in with"`.
 - **Const/TDZ enforcement in put_value**: `put_value` now uses
   `set_checked` so const reassignment throws TypeError and TDZ access
   throws ReferenceError.

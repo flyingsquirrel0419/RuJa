@@ -34,7 +34,7 @@ VM은 `Send`이며 엔진 전체에 `unsafe` 코드가 없습니다.
 ES5.1 + 클래스, async/await, 제너레이터, Promise, 구조분해 할당,
 getter/setter, 태그드 템플릿, Symbol, Map/Set, WeakMap/WeakSet,
 Reflect, Proxy, Uint8Array, BigInt, Date, 정규표현식 등.
-지원 서브셋 test262 통과율: **87.0%** (`language/statements` +
+지원 서브셋 test262 통과율: **86.9%** (`language/statements` +
 `language/expressions`, 미지원 기능 테스트 제외). 전체 스위트 대비
 차이는 [test262 적합성](../docs/test262.md) 문서를 참조하세요.
 지원 및 의도적으로 미지원 기능 전체 목록은
