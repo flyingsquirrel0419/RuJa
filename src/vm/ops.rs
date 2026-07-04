@@ -808,13 +808,50 @@ impl Vm {
                             _ => crate::value::PropertyKey::from(""),
                         }
                     };
+                    let name_str = name.as_str().unwrap_or_default().to_string();
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let strict = self.current_strict();
-                    let r#ref = crate::value::ReferenceRecord {
-                        base: crate::value::ReferenceBase::Environment(env),
-                        name,
-                        strict,
-                    };
+                    let mut base = crate::value::ReferenceBase::Environment(env);
+                    let mut cur_env = Some(env);
+                    while let Some(e_idx) = cur_env {
+                        let (has_binding, has_with, with_obj_val, parent) =
+                            self.heap.with_obj(e_idx.0, |obj| {
+                                if let HeapObj::Environment(e) = obj {
+                                    if e.vars.lock().contains_key(name_str.as_str()) {
+                                        return (true, false, None, None);
+                                    }
+                                    if let Some(with_obj) = e.with_object.lock().clone() {
+                                        return (false, true, Some(with_obj), *e.parent.lock());
+                                    }
+                                    return (false, false, None, *e.parent.lock());
+                                }
+                                (false, false, None, None)
+                            });
+                        if has_binding {
+                            base = crate::value::ReferenceBase::Environment(e_idx);
+                            break;
+                        }
+                        if has_with {
+                            if let Some(with_obj) = with_obj_val {
+                                if self.has_own_property(&with_obj, &name_str) {
+                                    base = crate::value::ReferenceBase::ObjectEnvironment(
+                                        Box::new(with_obj),
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        cur_env = parent;
+                    }
+                    if cur_env.is_none() {
+                        let global_this = self.global_this.clone();
+                        if self.has_property(&global_this, &name_str)? {
+                            base = crate::value::ReferenceBase::ObjectEnvironment(Box::new(
+                                global_this,
+                            ));
+                        }
+                    }
+                    let r#ref = crate::value::ReferenceRecord { base, name, strict };
                     self.stack.push(Value::Reference(Box::new(r#ref)));
                 }
                 Op::GetValue => {

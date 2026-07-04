@@ -8,6 +8,18 @@ use crate::value::{GcIdx, PromiseStatus, Value};
 use std::sync::Arc;
 
 impl Vm {
+    fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
+        match value {
+            Value::Object(idx) => roots.push(idx.0),
+            Value::Reference(r) => match &r.base {
+                crate::value::ReferenceBase::Environment(env_idx) => roots.push(env_idx.0),
+                crate::value::ReferenceBase::ObjectEnvironment(base)
+                | crate::value::ReferenceBase::Value(base) => Self::push_value_roots(roots, base),
+            },
+            _ => {}
+        }
+    }
+
     pub(crate) fn get_property_rx(
         &mut self,
         obj: &Value,
@@ -114,6 +126,25 @@ impl Vm {
     }
 
     pub fn set_property(&mut self, obj: &Value, key: &str, value: Value) -> error::Result<()> {
+        self.set_property_impl(obj, key, value, true)
+    }
+
+    pub(crate) fn set_object_environment_property(
+        &mut self,
+        obj: &Value,
+        key: &str,
+        value: Value,
+    ) -> error::Result<()> {
+        self.set_property_impl(obj, key, value, false)
+    }
+
+    fn set_property_impl(
+        &mut self,
+        obj: &Value,
+        key: &str,
+        value: Value,
+        route_global_this: bool,
+    ) -> error::Result<()> {
         // ES [[Set]] semantics, simplified:
         //  1. Walk the prototype chain for an accessor descriptor with a
         //     `set` function; if found, call it and return.
@@ -194,7 +225,7 @@ impl Vm {
                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                     matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))
                 });
-                if is_global_this {
+                if route_global_this && is_global_this {
                     // Set on the global environment: update if it exists,
                     // otherwise declare a new global binding.
                     if !crate::environment::set(&self.heap, self.global, key, value.clone()) {
@@ -521,38 +552,28 @@ impl Vm {
     // ---- GC roots ----
     pub fn collect_roots(&self) -> Vec<usize> {
         let mut roots = vec![self.global.0];
-        if let Value::Object(idx) = &self.global_this {
-            roots.push(idx.0);
-        }
-        if let Some(Value::Object(idx)) = &self.pending_new_target {
-            roots.push(idx.0);
+        Self::push_value_roots(&mut roots, &self.global_this);
+        if let Some(v) = &self.pending_new_target {
+            Self::push_value_roots(&mut roots, v);
         }
         for v in &self.stack {
-            if let Value::Object(idx) = v {
-                roots.push(idx.0);
-            }
+            Self::push_value_roots(&mut roots, v);
         }
         for f in &self.frames {
             roots.push(f.env.0);
-            if let Value::Object(idx) = &f.this_val {
-                roots.push(idx.0);
-            }
+            Self::push_value_roots(&mut roots, &f.this_val);
             for l in &f.locals {
-                if let Value::Object(idx) = l {
-                    roots.push(idx.0);
-                }
+                Self::push_value_roots(&mut roots, l);
             }
             // Per-frame generator run-state can hold live heap values
             // (resume value sent via next(obj), and the yielded value before
             // it is moved into the LazyGenerator). Root them so a GC during
             // resume_generator does not collect them.
-            if let Value::Object(idx) = &*f.gen_resume_value.lock() {
-                roots.push(idx.0);
-            }
+            Self::push_value_roots(&mut roots, &f.gen_resume_value.lock());
             // gen_yield is Mutex<Option<Value>>; peek without consuming via take+set.
             let y = f.gen_yield.lock().take();
-            if let Some(Value::Object(idx)) = &y {
-                roots.push(idx.0);
+            if let Some(v) = &y {
+                Self::push_value_roots(&mut roots, v);
             }
             *f.gen_yield.lock() = y;
         }
@@ -572,9 +593,7 @@ impl Vm {
             &self.set_proto,
             &self.generator_proto,
         ] {
-            if let Value::Object(idx) = proto {
-                roots.push(idx.0);
-            }
+            Self::push_value_roots(&mut roots, proto);
         }
         // Pending microtasks hold live heap values (Promise handlers, resolve/
         // reject reasons). Root them so a GC between scheduling and running a
@@ -587,33 +606,23 @@ impl Vm {
                     derived,
                     ..
                 } => {
-                    if let Value::Object(idx) = on_fulfilled {
-                        roots.push(idx.0);
-                    }
-                    if let Value::Object(idx) = on_rejected {
-                        roots.push(idx.0);
-                    }
+                    Self::push_value_roots(&mut roots, on_fulfilled);
+                    Self::push_value_roots(&mut roots, on_rejected);
                     if let Some(idx) = derived {
                         roots.push(idx.0);
                     }
                 }
                 Microtask::Resolve { value, .. } => {
-                    if let Value::Object(idx) = value {
-                        roots.push(idx.0);
-                    }
+                    Self::push_value_roots(&mut roots, value);
                 }
                 Microtask::Reject { reason, .. } => {
-                    if let Value::Object(idx) = reason {
-                        roots.push(idx.0);
-                    }
+                    Self::push_value_roots(&mut roots, reason);
                 }
             }
         }
         // Global constants are reachable for the program lifetime.
         for v in &self.global_constants {
-            if let Value::Object(idx) = v {
-                roots.push(idx.0);
-            }
+            Self::push_value_roots(&mut roots, v);
         }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
         roots.extend_from_slice(&self.gc_pins);

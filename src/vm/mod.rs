@@ -941,6 +941,12 @@ impl Vm {
                             self.get_property(base, &format!("[Symbol {}]", id))
                         }
                     },
+                    crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
+                        crate::value::PropertyKey::Str(s) => self.get_property(base, s),
+                        crate::value::PropertyKey::Symbol(id) => {
+                            self.get_property(base, &format!("[Symbol {}]", id))
+                        }
+                    },
                 }
             }
             _ => Ok(v.clone()),
@@ -1075,6 +1081,19 @@ impl Vm {
                         crate::value::PropertyKey::Str(s) => self.set_property(base, s, value)?,
                         crate::value::PropertyKey::Symbol(id) => {
                             let key = crate::value::PropertyKey::Symbol(*id);
+                            self.set_property_key(base, &Value::Symbol(*id), value)?
+                        }
+                    },
+                    crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
+                        crate::value::PropertyKey::Str(s) => {
+                            if !self.has_property(base, s)? {
+                                if r.strict {
+                                    return Err(Error::reference(format!("{} is not defined", s)));
+                                }
+                            }
+                            self.set_object_environment_property(base, s, value)?
+                        }
+                        crate::value::PropertyKey::Symbol(id) => {
                             self.set_property_key(base, &Value::Symbol(*id), value)?
                         }
                     },

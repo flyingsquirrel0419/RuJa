@@ -2,7 +2,7 @@
 //! including member and element targets.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -138,6 +138,72 @@ fn compound_element() {
     assert_eq!(
         run("var a = [10,20,30]; a[1] += 5; a[1];"),
         Value::Number(25.0)
+    );
+}
+
+#[test]
+fn compound_ident_preserves_resolved_binding_across_eval() {
+    assert_eq!(
+        run("function f(){ var x=3; var inner=(function(){ x *= (eval('var x=2;'), 4); return x; })(); return inner + ':' + x; } f();"),
+        Value::String(Arc::from("2:12"))
+    );
+    assert_eq!(
+        run("function f(){ var x=5; var inner=(function(){ x <<= (eval('var x=2;'), 1); return x; })(); return inner + ':' + x; } f();"),
+        Value::String(Arc::from("2:10"))
+    );
+}
+
+#[test]
+fn compound_ident_strict_object_environment_missing_after_get_throws() {
+    let global_err = run_err(
+        r#"
+        Object.defineProperty(this, 'x', {
+          configurable: true,
+          get: function() { delete this.x; return 2; }
+        });
+        (function() { 'use strict'; x ^= 3; })();
+        "#,
+    );
+    assert!(global_err.contains("ReferenceError"));
+
+    let with_err = run_err(
+        r#"
+        var scope = {
+          get x() { delete this.x; return 2; }
+        };
+        with (scope) {
+          (function() { 'use strict'; x ^= 3; })();
+        }
+        "#,
+    );
+    assert!(with_err.contains("ReferenceError"));
+}
+
+#[test]
+fn compound_ident_sloppy_object_environment_recreates_deleted_property() {
+    assert_eq!(
+        run(r#"
+            var scope = {
+              get x() { delete this.x; return 2; }
+            };
+            with (scope) {
+              x += 3;
+            }
+            scope.hasOwnProperty('x') && scope.x === 5;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            Object.defineProperty(this, 'x', {
+              configurable: true,
+              get: function() { delete this.x; return 2; }
+            });
+            x += 3;
+            this.hasOwnProperty('x') && this.x === 5;
+            "#),
+        Value::Bool(true)
     );
 }
 

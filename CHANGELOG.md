@@ -4,7 +4,7 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **89.5%** (up from 88.6%).
+Supported-subset pass rate: **89.8%** (up from 88.6%).
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -88,6 +88,19 @@ Supported-subset pass rate: **89.5%** (up from 88.6%).
   operate → PutValue, preserving the original binding even if deleted
   between get and put (the `with` + getter-delete pattern). Unresolved
   references always throw ReferenceError per spec.
+- **Resolved Reference bases across compound-assignment RHS evaluation**:
+  `LoadRef` now records the resolved declarative environment or object
+  environment base before evaluating the right-hand side. Direct eval can no
+  longer introduce an inner `var` binding that steals the final `PutValue`;
+  the compound-assignment test262 directory now passes 406/406 locally.
+  Strict object-environment references also throw ReferenceError if the
+  property disappears between `GetValue` and `PutValue`.
+- **Reference GC rooting and global object writes**: GC root collection now
+  follows object bases stored inside `Value::Reference`, so compound
+  assignment RHS evaluation cannot collect a captured object/environment
+  reference. Object-environment `PutValue` also bypasses the legacy
+  global-env write shortcut, preserving sloppy global object property writes
+  when a getter deletes the property before the final put.
 - **Null/undefined base before ToPropertyKey**: `base[key]` compound
   assignments now check for null/undefined base (ToObject) after
   evaluating the key expression but before calling ToPropertyKey,

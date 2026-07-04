@@ -182,6 +182,9 @@ pub struct ReferenceRecord {
 pub enum ReferenceBase {
     /// An environment record (heap index of an `EnvironmentData`).
     Environment(GcIdx),
+    /// A property reached through an object environment record (`with` or
+    /// global object identifier resolution), not a normal member expression.
+    ObjectEnvironment(Box<Value>),
     /// A value base (Object, primitive wrapper, etc.) for property references.
     Value(Box<Value>),
 }
