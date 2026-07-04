@@ -73,9 +73,9 @@ impl Default for Compiler {
     }
 }
 
-/// A loop-stack frame: (continue_target, pending break jumps,
-/// pending continue jumps, optional label).
-type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool);
+/// A loop-stack frame: (continue target, pending break jumps,
+/// pending continue jumps, optional label, is switch, scope depth at entry).
+type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool, usize);
 
 impl Compiler {
     pub fn new() -> Self {
@@ -270,22 +270,34 @@ impl Compiler {
         // Attach a pending label (set by a wrapping Labeled statement) so
         // `break label` / `continue label` can target this loop.
         let label = self.pending_label.take();
-        self.loop_stack
-            .push((continue_target, Vec::new(), Vec::new(), label, false));
+        self.loop_stack.push((
+            continue_target,
+            Vec::new(),
+            Vec::new(),
+            label,
+            false,
+            self.scopes.len(),
+        ));
     }
 
     /// Like `begin_loop` but tags the loop with a label so `break label` /
     /// `continue label` can target it.
     #[allow(dead_code)]
     fn begin_labeled_loop(&mut self, continue_target: usize, label: Arc<str>) {
-        self.loop_stack
-            .push((continue_target, Vec::new(), Vec::new(), Some(label), false));
+        self.loop_stack.push((
+            continue_target,
+            Vec::new(),
+            Vec::new(),
+            Some(label),
+            false,
+            self.scopes.len(),
+        ));
     }
 
     /// Patch the current loop's continue target (used when the continue target is
     /// only known after the body, e.g. the update block of a C-style for).
     fn set_continue_target(&mut self, target: usize) {
-        if let Some((cont, _, cont_jumps, _, _)) = self.loop_stack.last_mut() {
+        if let Some((cont, _, cont_jumps, _, _, _)) = self.loop_stack.last_mut() {
             *cont = target;
             // patch already-emitted continue jumps to the real target
             for j in cont_jumps.drain(..) {
@@ -322,7 +334,7 @@ impl Compiler {
 
     /// End a loop: patch all pending `break` jumps to `end`.
     fn end_loop(&mut self, end: usize) {
-        if let Some((cont, breaks, _, _, _)) = self.loop_stack.pop() {
+        if let Some((cont, breaks, _, _, _, _)) = self.loop_stack.pop() {
             // any un-patched continue jumps fall back to the loop start/cond.
             let _ = cont;
             for j in breaks {
@@ -397,6 +409,54 @@ impl Compiler {
             Pattern::Assign(inner, _) => Self::pattern_names(inner, out),
             Pattern::Rest(inner) => Self::pattern_names(inner, out),
         }
+    }
+
+    fn lexical_for_head_bindings(left: &Stmt) -> Option<(VarKind, Vec<Arc<str>>)> {
+        match &left.node {
+            StmtNode::VarDecl {
+                kind: kind @ (VarKind::Let | VarKind::Const),
+                decls,
+            } => Some((*kind, decls.iter().map(|(name, _)| name.clone()).collect())),
+            StmtNode::Destructure {
+                kind: kind @ (VarKind::Let | VarKind::Const),
+                pattern,
+                ..
+            } => {
+                let mut names = Vec::new();
+                Self::pattern_names(pattern, &mut names);
+                Some((*kind, names))
+            }
+            _ => None,
+        }
+    }
+
+    fn lexical_bindings_from_names(kind: VarKind, names: &[Arc<str>]) -> Vec<(Arc<str>, VarKind)> {
+        names.iter().map(|name| (name.clone(), kind)).collect()
+    }
+
+    fn compile_for_var_existing_lexical(&mut self, left: &Stmt) -> error::Result<()> {
+        match &left.node {
+            StmtNode::VarDecl { kind, decls } => {
+                if let Some((name, _)) = decls.first() {
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    match kind {
+                        VarKind::Const => self
+                            .chunk
+                            .emit(Op::InitEnvConst(name_idx), self.current_line),
+                        _ => self.chunk.emit(Op::InitEnv(name_idx), self.current_line),
+                    }
+                } else {
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
+            }
+            StmtNode::Destructure { kind, pattern, .. } => {
+                let temp_idx = self.intern("#destr");
+                self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
+                self.compile_pattern(pattern, temp_idx, &[], *kind)?;
+            }
+            _ => self.compile_for_var(left)?,
+        }
+        Ok(())
     }
 
     /// Collect lexical (`let`/`const`) names declared at the top level of a
@@ -729,7 +789,18 @@ impl Compiler {
                 // async iterator protocol (Symbol.asyncIterator) and awaits each
                 // next() result.
                 self.push_scope(false);
-                self.compile_expr(right)?;
+                let lexical_head = Self::lexical_for_head_bindings(left);
+                if let Some((kind, names)) = &lexical_head {
+                    let bindings = Self::lexical_bindings_from_names(*kind, names);
+                    self.chunk.emit(Op::PushScope, self.current_line);
+                    self.push_scope(false);
+                    self.emit_lexical_hoist(&bindings)?;
+                    self.compile_expr(right)?;
+                    self.chunk.emit(Op::PopScope, self.current_line);
+                    self.pop_scope();
+                } else {
+                    self.compile_expr(right)?;
+                }
                 if *is_await {
                     self.chunk.emit(Op::GetAsyncIterator, self.current_line);
                 } else {
@@ -752,30 +823,18 @@ impl Compiler {
                 let done_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
                 // Bind the value into the loop variable, then run the body.
-                self.compile_for_var(left)?;
-                // For let/const declarations: create a fresh binding per
-                // iteration so closures capture distinct values.
-                let (per_iteration_let, loop_names) = match &left.node {
-                    StmtNode::VarDecl { kind, decls } => {
-                        let names: Vec<Arc<str>> = decls.iter().map(|(n, _)| n.clone()).collect();
-                        (*kind == VarKind::Let || *kind == VarKind::Const, names)
-                    }
-                    _ => (false, Vec::new()),
-                };
-                let loop_names_idx = if loop_names.is_empty() {
-                    usize::MAX
+                if let Some((kind, names)) = &lexical_head {
+                    let bindings = Self::lexical_bindings_from_names(*kind, names);
+                    self.chunk.emit(Op::PushScope, self.current_line);
+                    self.push_scope(false);
+                    self.emit_lexical_hoist(&bindings)?;
+                    self.compile_for_var_existing_lexical(left)?;
+                    self.compile_stmt(body)?;
+                    self.chunk.emit(Op::PopScope, self.current_line);
+                    self.pop_scope();
                 } else {
-                    let idx = self.chunk.let_names.len();
-                    self.chunk.let_names.push(loop_names);
-                    idx
-                };
-                if per_iteration_let {
-                    self.chunk
-                        .emit(Op::CloneLetNames(loop_names_idx), self.current_line);
-                }
-                self.compile_stmt(body)?;
-                if per_iteration_let {
-                    self.chunk.emit(Op::RestoreParentEnv, self.current_line);
+                    self.compile_for_var(left)?;
+                    self.compile_stmt(body)?;
                 }
                 self.chunk.emit(Op::Pop, self.current_line); // discard body's expr result
                 self.chunk.emit(Op::Jump(loop_start), self.current_line);
@@ -984,7 +1043,7 @@ impl Compiler {
                 let target = if let Some(l) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, _, _, lbl, _): &LoopFrame| {
+                        .rposition(|(_, _, _, lbl, _, _): &LoopFrame| {
                             lbl.as_ref().is_some_and(|x| x == l)
                         })
                 } else {
@@ -995,13 +1054,15 @@ impl Compiler {
                     }
                 };
                 if let Some(i) = target {
+                    let scope_depth = self.loop_stack[i].5;
                     let active = self.finally_active();
+                    self.emit_scope_unwind(scope_depth);
                     if active {
                         let divert_ip = self.chunk.code.len();
                         self.chunk.emit(Op::DivertBreak(0), self.current_line);
                         self.finally_stack.last_mut().unwrap().push(divert_ip);
                     }
-                    let (_, breaks, _, _, _) = &mut self.loop_stack[i];
+                    let (_, breaks, _, _, _, _) = &mut self.loop_stack[i];
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
                     breaks.push(j);
@@ -1012,7 +1073,7 @@ impl Compiler {
                 let target = if let Some(l) = label {
                     self.loop_stack
                         .iter()
-                        .rposition(|(_, _, _, lbl, _): &LoopFrame| {
+                        .rposition(|(_, _, _, lbl, _, _): &LoopFrame| {
                             lbl.as_ref().is_some_and(|x| x == l)
                         })
                 } else {
@@ -1026,14 +1087,16 @@ impl Compiler {
                             .iter()
                             .enumerate()
                             .rev()
-                            .find(|(_, (_, _, _, _, is_switch))| !is_switch)
+                            .find(|(_, (_, _, _, _, is_switch, _))| !is_switch)
                             .map(|(i, _)| i)
                     }
                 };
                 if let Some(i) = target {
                     self.propagate_switch_completion_on_continue(i);
+                    let scope_depth = self.loop_stack[i].5;
                     let active = self.finally_active();
                     let cont = self.loop_stack[i].0;
+                    self.emit_scope_unwind(scope_depth);
                     if active {
                         if cont != usize::MAX {
                             let divert_ip = self.chunk.code.len();
@@ -1080,10 +1143,11 @@ impl Compiler {
                         Vec::new(),
                         Some(label.clone()),
                         false,
+                        self.scopes.len(),
                     ));
                     let result = self.compile_stmt(body);
                     // break jumps patch to here (after the body).
-                    if let Some((_, breaks, _, _, _)) = self.loop_stack.pop() {
+                    if let Some((_, breaks, _, _, _, _)) = self.loop_stack.pop() {
                         let end = self.chunk.code.len();
                         for j in breaks {
                             self.chunk.patch_jump(j, end);
@@ -1143,8 +1207,14 @@ impl Compiler {
                 // is_switch=true so continue targets the enclosing loop.
                 let saved_sw_val = self.switch_val_depth;
                 let switch_loop_idx = self.loop_stack.len();
-                self.loop_stack
-                    .push((usize::MAX, Vec::new(), Vec::new(), None, true));
+                self.loop_stack.push((
+                    usize::MAX,
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    true,
+                    self.scopes.len(),
+                ));
                 self.switch_ctx_stack
                     .push((sw_val_idx, saved_sw_val, switch_loop_idx));
                 // Tests: for each case, load disc, compare, jump to body on match.

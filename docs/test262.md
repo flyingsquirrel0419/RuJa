@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 92.5% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 92.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (92.5%).** It reflects the portion of the spec
+supported-subset rate (92.6%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -179,10 +179,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   accepted as the loop delimiter, `async` is accepted as a contextual
   assignment target, invalid `const let` heads are rejected, and array/object
   left-hand sides must be valid assignment patterns.
+- **`for...of` lexical head environments** — lexical loop heads now put their
+  bound names in TDZ while evaluating the iterable, then create a fresh
+  per-iteration environment before binding each value so destructuring
+  defaults and body closures observe the correct binding.
 
 ## Why the rate is not higher
 
-The remaining 316 failures plus 2 timeouts in the supported subset cluster
+The remaining 310 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, for-of/for-in iteration,
 super/class behavior, try completion edges, and destructuring assignment.
 These are tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

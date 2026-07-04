@@ -2392,7 +2392,8 @@ impl Vm {
                 }
                 Op::Await => self.op_await()?,
                 Op::TypeofVar(name_idx) => {
-                    // `typeof name`: "undefined" if the name is not bound (must not throw).
+                    // `typeof name`: "undefined" if the name is unbound, but
+                    // TDZ bindings still throw ReferenceError.
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -2407,8 +2408,27 @@ impl Vm {
                         }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let val = crate::environment::get(&self.heap, cur_env, &name)
-                        .or_else(|| crate::environment::get(&self.heap, self.global, &name));
+                    let val = match crate::environment::get_checked(&self.heap, cur_env, &name) {
+                        Ok(Some(v)) => Some(v),
+                        Ok(None) | Err(false) => {
+                            match crate::environment::get_checked(&self.heap, self.global, &name) {
+                                Ok(Some(v)) => Some(v),
+                                Ok(None) | Err(false) => None,
+                                Err(true) => {
+                                    return Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    )));
+                                }
+                            }
+                        }
+                        Err(true) => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )));
+                        }
+                    };
                     let val = if val.is_none() {
                         let global_this = self.global_this.clone();
                         if self.has_property(&global_this, &name)? {

@@ -42,6 +42,16 @@ fn let_access_before_decl_in_block() {
 }
 
 #[test]
+fn typeof_tdz_binding_throws() {
+    let msg = run_err("{ typeof y; let y = 5; }");
+    assert!(
+        msg.contains("Cannot access 'y' before initialization"),
+        "got: {}",
+        msg
+    );
+}
+
+#[test]
 fn let_access_before_decl_in_function() {
     let msg = run_err("function f(){ console.log(z); let z = 5; } f();");
     assert!(

@@ -2,7 +2,7 @@
 //! params, destructuring, for-of/for-in, spread, Map/Set/Symbol.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -442,6 +442,31 @@ fn for_of_allows_async_as_lhs_identifier_name() {
     assert_eq!(
         run("let async; for (\\u0061sync of [7]) {} async;"),
         Value::Number(7.0)
+    );
+}
+
+#[test]
+fn for_of_lexical_head_tdz_and_iteration_scope() {
+    let msg = run_err("let x = 1; for (let x of [x]) {}");
+    assert!(
+        msg.contains("Cannot access 'x' before initialization"),
+        "got: {}",
+        msg
+    );
+
+    assert_eq!(
+        run("var value; for (let [x] of [[34]]) { value = x; } typeof x + ':' + value;"),
+        Value::String(Arc::from("undefined:34"))
+    );
+
+    assert_eq!(
+        run("let x = 'outside'; var probeDecl, probeBody; for (let [x, _ = probeDecl = function(){ return x; }] of [['inside']]) probeBody = function(){ return x; }; probeDecl() + ':' + probeBody() + ':' + x;"),
+        Value::String(Arc::from("inside:inside:outside"))
+    );
+
+    assert_eq!(
+        run("let x = 'outside'; var probeExpr; for (let x of (probeExpr = function(){ try { typeof x; return 'no'; } catch (e) { return e.name; } }, [])) ; probeExpr();"),
+        Value::String(Arc::from("ReferenceError"))
     );
 }
 

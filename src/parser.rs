@@ -998,6 +998,14 @@ impl Parser {
                     "let followed by of in for-of head is not valid".to_string(),
                 ));
             }
+            if matches!(self.peek(), TokenKind::Async)
+                && !self.peek_at_tok(0).had_escape
+                && self.is_raw_of_at(1)
+            {
+                return Err(error::Error::syntax(
+                    "async cannot be the for-of left-hand side".to_string(),
+                ));
+            }
             self.no_in = true;
             let e = self.parse_assign()?;
             self.no_in = false;
@@ -3300,6 +3308,7 @@ mod tests {
             "for (const let of []) {}",
             "for ([(x, y)] of []) {}",
             "for ({ m() {} } of []) {}",
+            "var async; for (async of [1]) ;",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
