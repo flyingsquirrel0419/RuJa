@@ -590,7 +590,7 @@ pub struct LazyGeneratorData {
     /// Local variables slot table.
     pub locals: Mutex<Vec<Value>>,
     /// Saved try/catch handler stack (so catches resume across yields).
-    pub catch_stack: Mutex<Vec<(usize, u32)>>,
+    pub catch_stack: Mutex<Vec<(usize, u32, GcIdx)>>,
     /// True once the body has begun executing.
     pub started: AtomicBool,
     /// True once the body has run to completion (return / fall-off end).

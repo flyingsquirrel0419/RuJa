@@ -285,6 +285,10 @@ pub enum Op {
     /// original loop-scope env, and the env chain does not grow per iteration).
     RestoreParentEnv,
     DeclareVar(usize), // name index
+    /// Hoist a `var` binding in the function scope root as `undefined`,
+    /// without touching any `with`-object properties. Used at function/block
+    /// entry to create the hoisted binding before the initializer runs.
+    HoistVar(usize), // name index
     DeclareLet(usize),
     DeclareConst(usize),
     DeclareEnv(usize),         // declare name in env with value from stack

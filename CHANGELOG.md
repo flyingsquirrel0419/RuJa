@@ -4,7 +4,38 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **86.9%** (up from 84.8%).
+Supported-subset pass rate: **88.6%** (up from 86.9%).
+
+- **`with`-statement scope semantics**: `var x = expr` inside a `with`-block
+  now correctly resolves the assignment target through the environment chain.
+  When the `with`-object has a matching property, the assignment targets the
+  with-object (not the function-scope var binding). When a `var` binding
+  already exists in a closer scope (e.g. inside a function defined within
+  the `with`-block), the var binding takes precedence over the with-object
+  property. This fixes ~45 `with`-statement test262 failures.
+- **Identifier resolution order**: `LoadEnvName`, `get_value`, and
+  `put_value` now walk the environment chain in spec order — at each
+  environment record, var/let/const bindings are checked before
+  with-object properties. This ensures a var binding in a child scope
+  shadows a with-object property on a parent scope, while a with-object
+  property shadows an outer var binding.
+- **Var hoisting vs initializer separation**: a new `HoistVar` opcode
+  creates the hoisted `var` binding as `undefined` in the function-scope
+  root without touching `with`-object properties. The `DeclareVar` opcode
+  then sets the initializer value via `set_checked`, which respects the
+  environment chain precedence. This prevents var hoisting from
+  clobbering existing with-object properties.
+- **Try/catch environment unwinding**: when a `throw` inside a `try` body
+  diverts to a `catch` handler, the frame environment is now restored to
+  the try-entry point, unwinding any scopes or `with`-environments opened
+  inside the try body but not popped because the throw bypassed their
+  `Pop*` opcodes. `catch_stack` entries now store the saved environment
+  alongside the handler IP.
+- **`PutValue` env-chain traversal**: `put_value` for Reference-based
+  assignments now walks the environment chain from the reference's base
+  env, matching spec `SetMutableBinding` semantics. A deleted with-object
+  property is recreated on the closest with-object (non-strict) rather
+  than falling through to an outer with-object.
 
 - **Template-literal raw/cooked escapes**: template segments now correctly
   handle line continuations (cooked empty, raw preserves `\\` + line

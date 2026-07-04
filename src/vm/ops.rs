@@ -180,6 +180,28 @@ impl Vm {
                         crate::value::BindingKind::Let,
                     );
                 }
+                Op::HoistVar(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    // Hoist the var binding as undefined in the function
+                    // scope root, without touching with-object properties.
+                    crate::environment::ensure_var(
+                        &self.heap,
+                        self.frames.last().map(|f| f.env).unwrap_or(self.global),
+                        &name,
+                    );
+                }
                 Op::DeclareVar(name_idx) => {
                     let name = {
                         let frame = self.current_frame()?;
@@ -196,21 +218,42 @@ impl Vm {
                     };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    // Per spec: var declarations create/update a binding in
-                    // the variable environment (function scope). If a `with`
-                    // object has a same-named property, the var assignment
-                    // ALSO sets the with-object's property (so
-                    // `with(o){ var foo = x }` sets both the var binding AND
-                    // o.foo). This matches the test262 expectation that
-                    // `with(o){ var foo = "set in with" }` results in
-                    // `o.foo === "set in with"`.
-                    let with_objs = crate::environment::with_objects(&self.heap, cur_env);
-                    for obj in &with_objs {
-                        if self.has_own_property(obj, &name) {
-                            self.set_property(obj, &name, value.clone())?;
+                    // Per spec (ES5 12.2): `var x = expr` is equivalent to
+                    // `var x; x = expr`. The `var x` hoisting creates a binding
+                    // in the variable environment (function scope) initialized
+                    // to undefined. The `x = expr` assignment uses PutValue
+                    // with the reference resolved via identifier resolution,
+                    // which walks the environment chain: at each environment,
+                    // var bindings take precedence, then with-object properties.
+                    //
+                    // First, ensure the var binding exists in the function
+                    // scope root (hoisting). This creates it as undefined if
+                    // not already present, without touching with-objects.
+                    crate::environment::ensure_var(&self.heap, cur_env, &name);
+                    // Now set the value via identifier resolution (set_checked),
+                    // which respects the env chain: a var binding in the
+                    // function scope takes precedence over a with-object
+                    // property at a parent scope. If no binding is found at
+                    // all, declare as a new var (auto-global at top level).
+                    match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
+                    {
+                        crate::environment::SetOutcome::Set => {}
+                        crate::environment::SetOutcome::Const => {
+                            return Err(Error::type_err(format!(
+                                "Assignment to constant variable '{}'",
+                                name
+                            )));
+                        }
+                        crate::environment::SetOutcome::Tdz => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )));
+                        }
+                        crate::environment::SetOutcome::NotFound => {
+                            crate::environment::declare_var(&self.heap, cur_env, &name, value);
                         }
                     }
-                    crate::environment::declare_var(&self.heap, cur_env, &name, value);
                 }
                 Op::DeclareLet(name_idx) => {
                     let name = {
@@ -588,61 +631,88 @@ impl Vm {
                         }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    // `with`-statement object environment records take precedence over
-                    // the lexical scope chain (closest first), per spec.
-                    let with_objs = crate::environment::with_objects(&self.heap, env);
-                    let mut found_in_with: Option<(Value, Value)> = None;
-                    for obj in &with_objs {
-                        let v = self.get_property(obj, &name)?;
-                        if !v.is_undefined() {
-                            // Remember which `with` object supplied the value so
-                            // that, if the callee is called as `foo()` (not
-                            // `obj.foo()`), the next `Call` binds `this` to it.
-                            found_in_with = Some((v, obj.clone()));
+                    // Per spec, identifier resolution walks the environment chain
+                    // from innermost to outermost. At each environment record:
+                    //   1. Check for a binding (var/let/const) — found = use it.
+                    //   2. If the environment has a `with`-object, check its
+                    //      properties — found = use it (and set pending_with_this).
+                    //   3. Neither = continue to parent.
+                    //
+                    // We walk the chain manually so that a var binding in a
+                    // child scope shadows a with-object property on a parent
+                    // scope (the function-inside-with case), while a
+                    // with-object property shadows an outer var binding
+                    // (the direct-with case).
+                    let mut found = false;
+                    let mut cur_env = Some(env);
+                    while let Some(e_idx) = cur_env {
+                        let (binding_val, in_tdz, has_with, with_obj_val, parent) =
+                            self.heap.with_obj(e_idx.0, |obj| {
+                                if let HeapObj::Environment(e) = obj {
+                                    // 1. Check var/let/const bindings.
+                                    if let Some(b) = e.vars.lock().get(name.as_str()) {
+                                        if !b.initialized.load(Ordering::Relaxed) {
+                                            return (None, true, false, None, None);
+                                        }
+                                        return (
+                                            Some(b.value.lock().clone()),
+                                            false,
+                                            false,
+                                            None,
+                                            None,
+                                        );
+                                    }
+                                    // 2. Check with-object.
+                                    if let Some(with_obj) = e.with_object.lock().clone() {
+                                        return (
+                                            None,
+                                            false,
+                                            true,
+                                            Some(with_obj),
+                                            *e.parent.lock(),
+                                        );
+                                    }
+                                    return (None, false, false, None, *e.parent.lock());
+                                }
+                                (None, false, false, None, None)
+                            });
+                        if in_tdz {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )));
+                        }
+                        if let Some(v) = binding_val {
+                            self.stack.push(v);
+                            found = true;
                             break;
                         }
-                    }
-                    if let Some((v, with_obj)) = found_in_with {
-                        // Only function-valued lookups rebind `this`; a plain
-                        // value read does not affect the next call. We defer the
-                        // is-function check to `Call` by stashing the candidate
-                        // `this` here unconditionally, and `Call` clears it on
-                        // any use (function or not) so it never leaks past one
-                        // opcode.
-                        if matches!(v, Value::Object(_)) {
-                            *self.current_frame_mut()?.pending_with_this.lock() = Some(with_obj);
-                        }
-                        self.stack.push(v);
-                    } else {
-                        match crate::environment::get_checked(&self.heap, env, &name) {
-                            Ok(Some(v)) => self.stack.push(v),
-                            Err(true) => {
-                                return Err(Error::reference(format!(
-                                    "Cannot access '{}' before initialization",
-                                    name
-                                )))
-                            }
-                            Ok(None) | Err(false) => {
-                                match crate::environment::get_checked(
-                                    &self.heap,
-                                    self.global,
-                                    &name,
-                                ) {
-                                    Ok(Some(v)) => self.stack.push(v),
-                                    Ok(None) | Err(false) => {
-                                        return Err(Error::reference(format!(
-                                            "{} is not defined",
-                                            name
-                                        )))
+                        if has_with {
+                            if let Some(with_obj) = with_obj_val {
+                                let has_prop = self.has_own_property(&with_obj, &name);
+                                if has_prop {
+                                    let v = self.get_property(&with_obj, &name)?;
+                                    if matches!(v, Value::Object(_)) {
+                                        *self.current_frame_mut()?.pending_with_this.lock() =
+                                            Some(with_obj);
                                     }
-                                    Err(true) => {
-                                        return Err(Error::reference(format!(
-                                            "Cannot access '{}' before initialization",
-                                            name
-                                        )))
-                                    }
+                                    self.stack.push(v);
+                                    found = true;
+                                    break;
                                 }
                             }
+                        }
+                        cur_env = parent;
+                    }
+                    if !found {
+                        // Last resort: check global (this).
+                        let global_this = self.global_this.clone();
+                        let has = self.has_property(&global_this, &name)?;
+                        if has {
+                            let v = self.get_property(&global_this, &name)?;
+                            self.stack.push(v);
+                        } else {
+                            return Err(Error::reference(format!("{} is not defined", name)));
                         }
                     }
                 }
@@ -1611,7 +1681,7 @@ impl Vm {
                         let divert_to_finally =
                             match (frame.finally_stack.last(), frame.catch_stack.last()) {
                                 (Some(&(_, _)), None) => true,
-                                (Some(&(_, fseq)), Some(&(_, cseq))) => fseq > cseq,
+                                (Some(&(_, fseq)), Some(&(_, cseq, _))) => fseq > cseq,
                                 _ => false,
                             };
                         if divert_to_finally {
@@ -1630,7 +1700,10 @@ impl Vm {
                             frame.ip = target;
                             continue;
                         }
-                        if let Some((handler, _)) = frame.catch_stack.pop() {
+                        if let Some((handler, _, saved_env)) = frame.catch_stack.pop() {
+                            // Restore env to try-entry point, unwinding any
+                            // scopes/with-envs opened in the try body.
+                            frame.env = saved_env;
                             frame.ip = handler;
                             self.stack.push(v);
                             continue;
@@ -1642,7 +1715,8 @@ impl Vm {
                     let f = self.current_frame_mut()?;
                     let seq = f.guard_seq.load(Ordering::Relaxed) + 1;
                     f.guard_seq.store(seq, Ordering::Relaxed);
-                    f.catch_stack.push((handler, seq));
+                    let saved_env = f.env;
+                    f.catch_stack.push((handler, seq, saved_env));
                 }
                 Op::PopTry => {
                     let f = self.current_frame_mut()?;
@@ -1827,7 +1901,7 @@ impl Vm {
                             let divert_to_outer_finally =
                                 match (frame.finally_stack.last(), frame.catch_stack.last()) {
                                     (Some(&(_, _)), None) => true,
-                                    (Some(&(_, fseq)), Some(&(_, cseq))) => fseq > cseq,
+                                    (Some(&(_, fseq)), Some(&(_, cseq, _))) => fseq > cseq,
                                     _ => false,
                                 };
                             if divert_to_outer_finally {
@@ -1845,7 +1919,7 @@ impl Vm {
                                 continue;
                             }
                             // If an outer try catches, route there; else propagate.
-                            if let Some(&(handler, _)) = frame.catch_stack.last() {
+                            if let Some(&(handler, _, _)) = frame.catch_stack.last() {
                                 frame.catch_stack.pop();
                                 frame.ip = handler;
                                 self.stack.push(val);

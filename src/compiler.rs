@@ -181,8 +181,7 @@ impl Compiler {
                 // Use Undefined + DeclareVar (always creates a binding)
                 // instead of StoreGlobal (which would throw in strict mode
                 // when the binding doesn't exist yet).
-                self.chunk.emit(Op::Undefined, self.current_line);
-                self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
+                self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
             }
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at the top
@@ -563,8 +562,7 @@ impl Compiler {
                                 self.chunk.emit(Op::Const(name_idx), self.current_line);
                                 self.chunk.emit(Op::StoreGlobal, self.current_line);
                             } else {
-                                self.chunk.emit(Op::Undefined, self.current_line);
-                                self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
+                                self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
                             }
                         }
                     }
@@ -1116,8 +1114,7 @@ impl Compiler {
                             self.chunk.emit(Op::Const(name_idx), self.current_line);
                             self.chunk.emit(Op::StoreGlobal, self.current_line);
                         } else {
-                            self.chunk.emit(Op::Undefined, self.current_line);
-                            self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
+                            self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
                         }
                     }
                 }
@@ -1413,8 +1410,7 @@ impl Compiler {
                 }
                 self.declare(name, VarKind::Var)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::Undefined, self.current_line);
-                self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
+                self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
             }
         }
         // Hoist function declarations: compile them first so they're available

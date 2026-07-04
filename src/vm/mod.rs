@@ -87,7 +87,7 @@ pub struct CallFrame {
     pub ip: usize,
     pub locals: Vec<Value>,
     pub env: GcIdx,
-    pub catch_stack: Vec<(usize, u32)>,
+    pub catch_stack: Vec<(usize, u32, GcIdx)>,
     /// Monotonic push counter for ordering catch vs finally guards by depth.
     pub guard_seq: AtomicU32,
     pub this_val: Value,
@@ -776,7 +776,7 @@ impl Vm {
                     let handler = self
                         .frames
                         .last()
-                        .and_then(|f| f.catch_stack.last().map(|(ip, _)| *ip));
+                        .and_then(|f| f.catch_stack.last().map(|(ip, _, _)| *ip));
                     match handler {
                         _ if !e.catchable() => return Err(e),
                         Some(handler) => {
@@ -789,7 +789,10 @@ impl Vm {
                             };
                             // Pop the handler so we don't loop, push the thrown value
                             // for the catch binding, and jump to the handler ip.
-                            self.current_frame_mut()?.catch_stack.pop();
+                            let (_, _, saved_env) =
+                                self.current_frame_mut()?.catch_stack.pop().unwrap();
+                            // Unwind scopes opened in the try body.
+                            self.current_frame_mut()?.env = saved_env;
                             self.stack.push(thrown);
                             self.current_frame_mut()?.ip = handler;
                             continue;
@@ -850,41 +853,67 @@ impl Vm {
                 match &r.base {
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
-                        // `with`-statement object env records take precedence
-                        // over the lexical scope chain (closest first), per
-                        // spec. Check with-objects BEFORE env bindings so that
-                        // a getter on the with-object is invoked.
-                        let with_objs = env::with_objects(&self.heap, *env_idx);
-                        for obj in &with_objs {
-                            if self.has_own_property(obj, &name) {
-                                return self.get_property(obj, &name);
+                        // Walk the environment chain in order: at each env,
+                        // check var/let/const bindings first, then the
+                        // with-object (if any). This ensures a var binding in
+                        // a child scope shadows a with-object property on a
+                        // parent scope, and a with-object property shadows an
+                        // outer var binding.
+                        let mut cur_env = Some(*env_idx);
+                        while let Some(e_idx) = cur_env {
+                            let (binding_val, in_tdz, has_with, with_obj_val, parent) =
+                                self.heap.with_obj(e_idx.0, |obj| {
+                                    if let HeapObj::Environment(e) = obj {
+                                        if let Some(b) = e.vars.lock().get(name.as_str()) {
+                                            if !b.initialized.load(Ordering::Relaxed) {
+                                                return (None, true, false, None, None);
+                                            }
+                                            return (
+                                                Some(b.value.lock().clone()),
+                                                false,
+                                                false,
+                                                None,
+                                                None,
+                                            );
+                                        }
+                                        if let Some(with_obj) = e.with_object.lock().clone() {
+                                            return (
+                                                None,
+                                                false,
+                                                true,
+                                                Some(with_obj),
+                                                *e.parent.lock(),
+                                            );
+                                        }
+                                        return (None, false, false, None, *e.parent.lock());
+                                    }
+                                    (None, false, false, None, None)
+                                });
+                            if in_tdz {
+                                return Err(Error::reference(format!(
+                                    "Cannot access '{}' before initialization",
+                                    name
+                                )));
                             }
+                            if let Some(v) = binding_val {
+                                return Ok(v);
+                            }
+                            if has_with {
+                                if let Some(with_obj) = with_obj_val {
+                                    if self.has_own_property(&with_obj, &name) {
+                                        return self.get_property(&with_obj, &name);
+                                    }
+                                }
+                            }
+                            cur_env = parent;
                         }
-                        // Not found on with-objects: search env bindings.
-                        match env::get_checked(&self.heap, *env_idx, &name) {
-                            Ok(Some(val)) => Ok(val),
-                            Ok(None) => {
-                                let global_this = self.global_this.clone();
-                                let has = self.has_property(&global_this, &name)?;
-                                if has {
-                                    self.get_property(&global_this, &name)
-                                } else {
-                                    Err(Error::reference(format!("{} is not defined", name)))
-                                }
-                            }
-                            Err(true) => Err(Error::reference(format!(
-                                "Cannot access '{}' before initialization",
-                                name
-                            ))),
-                            Err(false) => {
-                                let global_this = self.global_this.clone();
-                                let has = self.has_property(&global_this, &name)?;
-                                if has {
-                                    self.get_property(&global_this, &name)
-                                } else {
-                                    Err(Error::reference(format!("{} is not defined", name)))
-                                }
-                            }
+                        // Last resort: check global (this).
+                        let global_this = self.global_this.clone();
+                        let has = self.has_property(&global_this, &name)?;
+                        if has {
+                            self.get_property(&global_this, &name)
+                        } else {
+                            Err(Error::reference(format!("{} is not defined", name)))
                         }
                     }
                     crate::value::ReferenceBase::Value(base) => match &r.name {
@@ -912,66 +941,103 @@ impl Vm {
                 match &r.base {
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
-                        // `with`-statement object env records take precedence
-                        // over the lexical scope chain (closest first), per
-                        // spec. Check with-objects BEFORE env bindings.
-                        let with_objs = env::with_objects(&self.heap, *env_idx);
-                        let mut found_idx: Option<usize> = None;
-                        for (i, obj) in with_objs.iter().enumerate() {
-                            if self.has_own_property(obj, &name) {
-                                found_idx = Some(i);
-                                break;
-                            }
-                        }
-                        if let Some(i) = found_idx {
-                            let obj = with_objs[i].clone();
-                            self.set_property(&obj, &name, value)?;
-                            return Ok(());
-                        }
-                        // Property not found on any with-object (deleted).
-                        // Per spec SetMutableBinding: if S (strict) is true and
-                        // the property no longer exists, throw ReferenceError.
-                        if !with_objs.is_empty() {
-                            if r.strict {
-                                return Err(Error::reference(format!("{} is not defined", name)));
-                            }
-                            let obj = with_objs[0].clone();
-                            if let Value::Object(idx) = &obj {
-                                let pkey = crate::value::PropertyKey::from(name.as_str());
-                                let desc = crate::value::PropertyDescriptor {
-                                    value,
-                                    writable: true,
-                                    enumerable: true,
-                                    configurable: true,
-                                    get: None,
-                                    set: None,
-                                    is_accessor: false,
-                                };
-                                self.heap.with_obj(idx.0, |o| {
-                                    o.props().lock().insert(pkey, desc);
+                        // Walk the env chain from the reference's env, checking
+                        // at each level: (1) var/let/const binding, (2) with-object
+                        // property. This matches the spec's SetMutableBinding
+                        // semantics where the reference's base env is used, not
+                        // the current env. If a with-object property was deleted
+                        // between GetValue and PutValue, we recreate it on the
+                        // closest with-object (non-strict) or throw (strict).
+                        let mut cur_env = Some(*env_idx);
+                        while let Some(e_idx) = cur_env {
+                            let (has_binding, is_const, in_tdz, has_with, with_obj_val, parent) =
+                                self.heap.with_obj(e_idx.0, |obj| {
+                                    if let HeapObj::Environment(e) = obj {
+                                        // Check var/let/const bindings.
+                                        if let Some(b) = e.vars.lock().get(name.as_str()) {
+                                            if !b.initialized.load(Ordering::Relaxed) {
+                                                return (false, false, true, false, None, None);
+                                            }
+                                            if b.kind == crate::value::BindingKind::Const {
+                                                return (false, true, false, false, None, None);
+                                            }
+                                            *b.value.lock() = value.clone();
+                                            return (true, false, false, false, None, None);
+                                        }
+                                        // Check with-object.
+                                        if let Some(with_obj) = e.with_object.lock().clone() {
+                                            return (
+                                                false,
+                                                false,
+                                                false,
+                                                true,
+                                                Some(with_obj),
+                                                *e.parent.lock(),
+                                            );
+                                        }
+                                        return (
+                                            false,
+                                            false,
+                                            false,
+                                            false,
+                                            None,
+                                            *e.parent.lock(),
+                                        );
+                                    }
+                                    (false, false, false, false, None, None)
                                 });
-                                self.ic_invalidate(idx.0, &name);
-                            }
-                            return Ok(());
-                        }
-                        // Not found on with-objects: try env bindings.
-                        let outcome = env::set_checked(&self.heap, *env_idx, &name, value.clone());
-                        match outcome {
-                            env::SetOutcome::Set => return Ok(()),
-                            env::SetOutcome::Const => {
-                                return Err(Error::type_err(format!(
-                                    "Assignment to constant variable '{}'",
-                                    name
-                                )));
-                            }
-                            env::SetOutcome::Tdz => {
+                            if in_tdz {
                                 return Err(Error::reference(format!(
                                     "Cannot access '{}' before initialization",
                                     name
                                 )));
                             }
-                            env::SetOutcome::NotFound => {} // fall through
+                            if is_const {
+                                return Err(Error::type_err(format!(
+                                    "Assignment to constant variable '{}'",
+                                    name
+                                )));
+                            }
+                            if has_binding {
+                                return Ok(());
+                            }
+                            if has_with {
+                                if let Some(with_obj) = with_obj_val {
+                                    if self.has_own_property(&with_obj, &name) {
+                                        self.set_property(&with_obj, &name, value)?;
+                                        return Ok(());
+                                    }
+                                    // Property not found on this with-object
+                                    // (may have been deleted). For non-strict,
+                                    // recreate it here; for strict, throw.
+                                    if r.strict {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            name
+                                        )));
+                                    }
+                                    if let Value::Object(idx) = &with_obj {
+                                        let pkey = crate::value::PropertyKey::from(name.as_str());
+                                        let desc = crate::value::PropertyDescriptor {
+                                            value,
+                                            writable: true,
+                                            enumerable: true,
+                                            configurable: true,
+                                            get: None,
+                                            set: None,
+                                            is_accessor: false,
+                                        };
+                                        self.heap.with_obj(idx.0, |o| {
+                                            o.props().lock().insert(pkey, desc);
+                                        });
+                                        self.ic_invalidate(idx.0, &name);
+                                    }
+                                    return Ok(());
+                                }
+                            }
+                            cur_env = parent;
                         }
+                        // Not found in env chain: check global, or declare.
                         let global_this = self.global_this.clone();
                         let has_global = self.has_property(&global_this, &name)?;
                         if has_global {
@@ -981,7 +1047,7 @@ impl Vm {
                         if r.strict {
                             return Err(Error::reference(format!("{} is not defined", name)));
                         }
-                        env::declare_var(&self.heap, self.global, &name, value);
+                        env::declare_var(&self.heap, *env_idx, &name, value);
                     }
                     crate::value::ReferenceBase::Value(base) => match &r.name {
                         crate::value::PropertyKey::Str(s) => self.set_property(base, s, value)?,

@@ -480,6 +480,36 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
     true
 }
 
+/// Ensure a `var` binding exists in the function-scope root (variable
+/// environment), creating it as `undefined` if not already present. Unlike
+/// `declare_var`, this does NOT set a value — it only creates the hoisted
+/// binding so that identifier resolution finds it before reaching a
+/// `with`-object. Used by `Op::DeclareVar` before `set_checked`.
+pub fn ensure_var(heap: &Heap, env: GcIdx, name: &str) {
+    let root = function_scope_root(heap, env);
+    let exists = heap.with_obj(root.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.lock().contains_key(name)
+        } else {
+            false
+        }
+    });
+    if !exists {
+        heap.with_obj(root.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                e.vars.lock().insert(
+                    Arc::from(name),
+                    crate::value::Binding {
+                        value: Mutex::new(Value::Undefined),
+                        kind: BindingKind::Var,
+                        initialized: AtomicBool::new(true),
+                    },
+                );
+            }
+        });
+    }
+}
+
 pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     // Always declare/hoist at the function-scope root first.
     let root = function_scope_root(heap, env);
