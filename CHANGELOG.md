@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **92.3%** (up from 88.6%).
-Current supported subset count: **3856 pass / 322 fail / 2 timeout**.
+Supported-subset pass rate: **92.5%** (up from 88.6%).
+Current supported subset count: **3864 pass / 314 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -20,6 +20,11 @@ Current supported subset count: **3856 pass / 322 fail / 2 timeout**.
   `Object.defineProperty(array, index, descriptor)` also advances array
   length for indexed descriptors, and deleting mapped arguments elements
   breaks the parameter alias as required.
+- **`for...of` head parsing and early errors**: the parser now requires the
+  `of` delimiter to be the raw keyword, allows `async` as a contextual
+  identifier on assignment left-hand sides, rejects `const let` heads, and
+  validates array/object assignment patterns before accepting them as
+  `for...of` targets.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

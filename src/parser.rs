@@ -203,7 +203,7 @@ impl Parser {
         }
         match self.peek_at_tok(1).kind {
             TokenKind::LBracket | TokenKind::LBrace => true,
-            TokenKind::Ident(_) => true,
+            TokenKind::Ident(_) | TokenKind::Async => true,
             _ => false,
         }
     }
@@ -947,7 +947,7 @@ impl Parser {
                     body,
                 }));
             }
-            if self.check(&TokenKind::Of) {
+            if self.is_raw_of() {
                 // for-of head declarations must not have an initializer.
                 match &stmt.node {
                     StmtNode::VarDecl { decls, .. } => {
@@ -992,7 +992,7 @@ impl Parser {
             // a ForDeclaration but 'of' is not a valid binding name.
             if matches!(self.peek(), TokenKind::Let)
                 && !self.is_strict_context
-                && matches!(self.peek_at_tok(1).kind, TokenKind::Of)
+                && self.is_raw_of_at(1)
             {
                 return Err(error::Error::syntax(
                     "let followed by of in for-of head is not valid".to_string(),
@@ -1028,17 +1028,9 @@ impl Parser {
                     body,
                 }));
             }
-            if self.check(&TokenKind::Of) {
+            if self.is_raw_of() {
                 // Validate that the LHS is a valid assignment target.
-                let is_valid_target = match &e {
-                    Expr::Ident(_)
-                    | Expr::Member { .. }
-                    | Expr::Array(_)
-                    | Expr::Object(_)
-                    | Expr::PrivateGet { .. } => true,
-                    _ => false,
-                };
-                if !is_valid_target {
+                if !Self::is_for_in_of_assignment_target(&e) {
                     return Err(error::Error::syntax(
                         "Invalid left-hand side in for-of".to_string(),
                     ));
@@ -1094,6 +1086,15 @@ impl Parser {
         }))
     }
 
+    fn is_raw_of(&self) -> bool {
+        self.is_raw_of_at(0)
+    }
+
+    fn is_raw_of_at(&self, offset: usize) -> bool {
+        let tok = self.peek_at_tok(offset);
+        matches!(tok.kind, TokenKind::Of) && !tok.had_escape
+    }
+
     fn parse_var_decl_no_semi(&mut self) -> error::Result<Stmt> {
         let kind = match self.advance() {
             TokenKind::Var => VarKind::Var,
@@ -1121,7 +1122,10 @@ impl Parser {
             let name = match self.advance() {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
                 TokenKind::Of => Arc::from("of"),
-                TokenKind::Let if !self.is_strict_context => Arc::from("let"),
+                TokenKind::Async => Arc::from("async"),
+                TokenKind::Let if kind == VarKind::Var && !self.is_strict_context => {
+                    Arc::from("let")
+                }
                 other => {
                     return Err(error::Error::syntax(format!(
                         "Expected identifier, got {:?}",
@@ -1372,11 +1376,36 @@ impl Parser {
 
     fn is_assignment_target(target: &Expr) -> bool {
         match target {
-            Expr::Ident(_)
-            | Expr::Member { .. }
-            | Expr::PrivateGet { .. }
-            | Expr::Array(_)
-            | Expr::Object(_) => true,
+            Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
+            Expr::Array(_) | Expr::Object(_) => Self::is_assignment_pattern(target),
+            _ => false,
+        }
+    }
+
+    fn is_for_in_of_assignment_target(target: &Expr) -> bool {
+        Self::is_assignment_target(target)
+    }
+
+    fn is_assignment_pattern(target: &Expr) -> bool {
+        match target {
+            Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
+            Expr::Assign(AssignOp::Assign, left, _) => Self::is_assignment_pattern(left),
+            Expr::Array(elements) => elements.iter().all(|element| match element {
+                Expr::Undefined => true,
+                Expr::Spread(inner) => Self::is_assignment_pattern(inner),
+                other => Self::is_assignment_pattern(other),
+            }),
+            Expr::Object(props) => props.iter().all(|prop| {
+                if prop.method
+                    || matches!(prop.kind, PropKind::Method | PropKind::Get | PropKind::Set)
+                {
+                    return false;
+                }
+                match &prop.key {
+                    PropertyKey::Spread(_) => Self::is_assignment_pattern(&prop.value),
+                    _ => Self::is_assignment_pattern(&prop.value),
+                }
+            }),
             _ => false,
         }
     }
@@ -3262,6 +3291,29 @@ mod tests {
     fn parse_for_loop() {
         let p = parse("for (let i = 0; i < 10; i++) { sum += i; }");
         assert!(matches!(&p.body[0].node, StmtNode::For { .. }));
+    }
+
+    #[test]
+    fn parse_for_of_head_early_errors() {
+        for src in [
+            "for (var x o\\u0066 []) ;",
+            "for (const let of []) {}",
+            "for ([(x, y)] of []) {}",
+            "for ({ m() {} } of []) {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_for_of_async_lhs_contextual_identifier() {
+        for src in [
+            "var async = { x: 0 }; for (async.x of [1]) ;",
+            "let async; for ((async) of [7]) ;",
+            "let async; for (\\u0061sync of [7]) ;",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
     }
 
     #[test]

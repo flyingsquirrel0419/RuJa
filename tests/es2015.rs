@@ -430,6 +430,22 @@ fn arguments_for_of_observes_mutation_and_sloppy_parameter_mapping() {
 }
 
 #[test]
+fn for_of_allows_async_as_lhs_identifier_name() {
+    assert_eq!(
+        run("var async = { x: 0 }; for (async.x of [1]) {} async.x;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("let async; for ((async) of [7]) {} async;"),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run("let async; for (\\u0061sync of [7]) {} async;"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
 fn computed_key_in_object_literal() {
     let src = r#"
         let key = "dynamic";
