@@ -768,13 +768,13 @@ impl Vm {
                                         name
                                     )));
                                 }
-                                crate::environment::declare(
-                                    &self.heap,
-                                    self.global,
-                                    &name,
-                                    value,
-                                    crate::value::BindingKind::Var,
-                                );
+                                // Non-strict: create a configurable property
+                                // on the global object (spec: implicit global
+                                // assignment creates a writable, enumerable,
+                                // configurable data property on the global
+                                // object, NOT a var binding in the env record).
+                                let global_this = self.global_this.clone();
+                                self.set_property(&global_this, &name, value)?;
                             }
                         }
                     }
@@ -1592,13 +1592,25 @@ impl Vm {
                         }
                     };
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    // First try normal delete_binding (handles lexical bindings
+                    // and with-object properties).
                     let deleted = crate::environment::delete_binding(&self.heap, cur_env, &name);
-                    // If not found in scope chain, check global environment
-                    if !deleted && !crate::environment::has(&self.heap, cur_env, &name) {
-                        // Unresolvable reference: delete returns true
+                    if deleted {
                         self.stack.push(Value::Bool(true));
+                    } else if !crate::environment::has(&self.heap, cur_env, &name) {
+                        // Unresolvable reference: delete returns true.
+                        self.stack.push(Value::Bool(true));
+                    } else if !self.current_strict() {
+                        // Non-strict: implicit globals (x = 1 without var)
+                        // are stored as var bindings in the global env. Per
+                        // spec they should be configurable properties on the
+                        // global object and thus deletable. Since RuJa uses
+                        // env bindings, we allow deletion from global env.
+                        let deleted_global =
+                            crate::environment::delete_var_binding(&self.heap, self.global, &name);
+                        self.stack.push(Value::Bool(deleted_global));
                     } else {
-                        self.stack.push(Value::Bool(deleted));
+                        self.stack.push(Value::Bool(false));
                     }
                 }
                 Op::ValidateExtends => {

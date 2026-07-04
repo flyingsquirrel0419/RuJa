@@ -506,7 +506,7 @@ impl Compiler {
                         // `var` is function-scoped: declare at the function-scope root
                         // (or global at top level), regardless of block nesting.
                         self.declare(name, *kind)?;
-                        let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         if self.scopes.len() == 1 {
                             // top-level var: declare as global binding.
                             // Use DeclareVar (always creates binding) instead
@@ -521,7 +521,7 @@ impl Compiler {
                         // Lexical (let/const): already declared uninitialized at scope
                         // entry by `emit_lexical_hoist`. Initialize the binding with the
                         // value now (this lifts the TDZ).
-                        let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         match kind {
                             VarKind::Const => {
                                 self.chunk.emit(Op::InitConst(name_idx), self.current_line)
@@ -950,7 +950,7 @@ impl Compiler {
                         self.chunk.emit(Op::StoreLocal(slot), self.current_line);
                     } else {
                         // store as global so recursive calls can find it
-                        let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                         // Use DeclareVar (always creates binding) instead of
                         // StoreGlobal (which throws for undeclared in strict).
                         self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
@@ -1214,7 +1214,7 @@ impl Compiler {
                 // Single declarator: bind the on-stack value as a let/const in the loop scope.
                 if let Some((name, _)) = decls.first() {
                     self.declare(name, *kind)?;
-                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     match kind {
                         VarKind::Const => {
                             self.chunk
@@ -1235,10 +1235,62 @@ impl Compiler {
                 self.compile_pattern(pattern, temp_idx, &[], *kind)?;
             }
             _other => {
-                // Non-declaration left side (e.g. `for (x of/in ...)`): the iterator
-                // value is on the stack. Assign it to the target expression.
+                // Non-declaration left side (e.g. `for (x.y of/in ...)`):
+                // the iterator value is on the stack. For a simple identifier
+                // we can use StoreEnvName/StoreGlobal directly (they pop the
+                // value). For a member expression we need to evaluate obj+key
+                // first, then the value is already on the stack in the right
+                // position for SetProp ([obj, key, value]).
                 if let StmtNode::ExprStmt(expr) = &left.node {
-                    self.compile_assign_target(expr)?;
+                    match expr {
+                        Expr::Ident(name) => {
+                            if self.scopes.len() > 1 {
+                                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                                self.chunk
+                                    .emit(Op::StoreEnvName(name_idx), self.current_line);
+                            } else {
+                                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                                self.chunk.emit(Op::Const(name_idx), self.current_line);
+                                self.chunk.emit(Op::StoreGlobal, self.current_line);
+                            }
+                        }
+                        Expr::Member {
+                            object,
+                            property,
+                            computed,
+                            ..
+                        } => {
+                            // Stack: [value]. We need [obj, key, value] for
+                            // SetProp/SetElem. Evaluate obj, swap value below
+                            // it, then evaluate key, swap again.
+                            self.compile_expr(object)?;
+                            // [value, obj] -> [obj, value]
+                            self.chunk.emit(Op::Swap, self.current_line);
+                            if *computed {
+                                self.compile_expr(property)?;
+                                // [obj, value, key] -> [obj, key, value]
+                                self.chunk.emit(Op::Swap, self.current_line);
+                                self.chunk.emit(Op::SetElem, self.current_line);
+                            } else {
+                                let key = if let Expr::String(s) = property.as_ref() {
+                                    s.to_string()
+                                } else {
+                                    String::new()
+                                };
+                                let key_idx = self
+                                    .chunk
+                                    .add_constant(Value::String(Arc::from(key.as_str())));
+                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                                // [obj, value, key] -> [obj, key, value]
+                                self.chunk.emit(Op::Swap, self.current_line);
+                                self.chunk.emit(Op::SetProp, self.current_line);
+                            }
+                            self.chunk.emit(Op::Pop, self.current_line);
+                        }
+                        _ => {
+                            self.compile_assign_target(expr)?;
+                        }
+                    }
                 } else {
                     self.compile_stmt(left)?;
                 }
@@ -1853,11 +1905,11 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
-                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk
                         .emit(Op::LoadEnvName(name_idx), self.current_line);
                 } else {
-                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.emit(Op::Const(name_idx), self.current_line);
                     self.chunk.emit(Op::LoadGlobal, self.current_line);
                 }
@@ -3085,7 +3137,7 @@ impl Compiler {
             Expr::Ident(name) => {
                 self.compile_expr(value)?;
                 self.chunk.emit(Op::Dup, self.current_line);
-                let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::StoreEnv(name_idx), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
@@ -3100,11 +3152,11 @@ impl Compiler {
         match target {
             Expr::Ident(name) => {
                 if self.scopes.len() > 1 {
-                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk
                         .emit(Op::StoreEnvName(name_idx), self.current_line);
                 } else {
-                    let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.emit(Op::Const(name_idx), self.current_line);
                     self.chunk.emit(Op::StoreGlobal, self.current_line);
                 }
@@ -3211,7 +3263,7 @@ impl Compiler {
                 // SAME reference (preserving the original binding even if it
                 // was deleted between GetValue and PutValue, e.g. inside
                 // `with` where a getter deletes the property).
-                let name_idx = self.chunk.add_constant(Value::String(Arc::from(&**name)));
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
                 // stack: [ref]
                 self.chunk.emit(Op::Dup, self.current_line);

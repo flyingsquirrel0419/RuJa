@@ -736,6 +736,16 @@ impl Parser {
     /// contains any duplicate entries.
     fn check_for_dup_bound_names(&self, node: &StmtNode) -> error::Result<()> {
         let mut names = Vec::new();
+        let is_var = match node {
+            StmtNode::VarDecl { kind, .. } => *kind == VarKind::Var,
+            StmtNode::Destructure { kind, .. } => *kind == VarKind::Var,
+            _ => return Ok(()),
+        };
+        // Per spec, duplicate bound names are only a Syntax Error for
+        // lexical declarations (let/const), not for var.
+        if is_var {
+            return Ok(());
+        }
         match node {
             StmtNode::VarDecl { decls, .. } => {
                 for (name, _) in decls {

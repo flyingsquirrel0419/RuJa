@@ -567,6 +567,22 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
     });
 }
 
+/// Force-delete a var binding from a specific environment record.
+/// Used by `delete x` in non-strict mode for implicit globals (which per
+/// spec should be configurable properties on the global object).
+pub fn delete_var_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            let mut vars = e.vars.lock();
+            if vars.contains_key(name) {
+                vars.shift_remove(name);
+                return true;
+            }
+        }
+        false
+    })
+}
+
 pub fn function_scope_root(heap: &Heap, env: GcIdx) -> GcIdx {
     let mut cur = env;
     loop {

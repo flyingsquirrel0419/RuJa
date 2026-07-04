@@ -1047,7 +1047,10 @@ impl Vm {
                         if r.strict {
                             return Err(Error::reference(format!("{} is not defined", name)));
                         }
-                        env::declare_var(&self.heap, *env_idx, &name, value);
+                        // Non-strict: create a configurable property on the
+                        // global object (spec implicit global).
+                        let global_this = self.global_this.clone();
+                        self.set_property(&global_this, &name, value)?;
                     }
                     crate::value::ReferenceBase::Value(base) => match &r.name {
                         crate::value::PropertyKey::Str(s) => self.set_property(base, s, value)?,

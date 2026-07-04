@@ -6,6 +6,16 @@
 
 Supported-subset pass rate: **88.6%** (up from 86.9%).
 
+- **for-of/for-in member expression LHS**: `for (x.y of [23])` now correctly
+  evaluates the member expression as the assignment target using Swap-based
+  stack reordering. Previously threw "Cannot set property of primitive".
+- **for-in/for-of duplicate var names**: `for (var [x, x] in obj)` is no
+  longer a SyntaxError. Duplicate names are only an error for `let`/`const`
+  declarations, not `var`.
+- **`delete x` (implicit global)**: `delete x` where `x` was created by an
+  implicit global assignment (`x = 1` without `var`) now returns `true` and
+  removes the binding, matching spec non-strict-mode behavior.
+
 - **`with`-statement scope semantics**: `var x = expr` inside a `with`-block
   now correctly resolves the assignment target through the environment chain.
   When the `with`-object has a matching property, the assignment targets the
