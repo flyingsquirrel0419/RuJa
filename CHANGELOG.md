@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.1%** (up from 88.6%).
-Current supported subset count: **3889 pass / 289 fail / 2 timeout**.
+Supported-subset pass rate: **93.2%** (up from 88.6%).
+Current supported subset count: **3892 pass / 286 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -71,6 +71,12 @@ Current supported subset count: **3889 pass / 289 fail / 2 timeout**.
   `.prototype` and `prototype.constructor` own data properties remain writable
   even when `Function.prototype`/`Object.prototype` define same-named accessors,
   reducing the `function` statement subset to **8 failures**.
+- **Catch parameter early errors**: `try` statements now reject duplicate
+  catch-parameter bound names and direct catch-block lexical/function
+  redeclarations of the catch parameter while still allowing `var` and nested
+  block shadowing. This fixes the `early-catch-duplicates`,
+  `early-catch-lex`, and `early-catch-function` test262 cases and reduces the
+  `try` statement subset to **9 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

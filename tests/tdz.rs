@@ -383,3 +383,30 @@ fn nested_scope_same_name_ok() {
         r
     );
 }
+
+#[test]
+fn catch_parameter_redecl_early_errors() {
+    for src in [
+        "try {} catch ([x, x]) {}",
+        "try {} catch (x) { let x; }",
+        "function f() { try {} catch (e) { function e(){} } }",
+        "function f() { try {} catch (e) { label: function e(){} } }",
+    ] {
+        let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+        match vm.run(src) {
+            Err(e) => assert!(
+                e.to_string().contains("already been declared"),
+                "expected redeclaration error for {src}, got: {e}"
+            ),
+            Ok(v) => panic!("expected redeclaration error for {src}, got {:?}", v),
+        }
+    }
+}
+
+#[test]
+fn catch_parameter_allows_nested_shadowing() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    assert!(vm
+        .run("try { throw 1; } catch (x) { { let x = 2; } x; }")
+        .is_ok());
+}

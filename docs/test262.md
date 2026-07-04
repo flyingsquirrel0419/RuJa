@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 93.1% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 93.2% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (93.1%).** It reflects the portion of the spec
+supported-subset rate (93.2%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 93.1%:
+~56% to 93.2%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -207,10 +207,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   descriptors now handle assignment before inherited setters or inherited
   non-writable data properties, fixing writable checks for ordinary function
   `.prototype` and `prototype.constructor` descriptors.
+- **Catch parameter early errors** — catch parameters now reject duplicate
+  bound names and direct catch-block lexical/function redeclarations of the
+  same name while preserving allowed `var` and nested block shadowing.
 
 ## Why the rate is not higher
 
-The remaining 289 failures plus 2 timeouts in the supported subset cluster
+The remaining 286 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, try completion edges, and destructuring assignment. These are
 tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

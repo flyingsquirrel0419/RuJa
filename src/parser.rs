@@ -1193,7 +1193,11 @@ impl Parser {
                 self.expect(&TokenKind::RParen, ")")?;
                 catch_param = Some(pat);
             }
-            catch_body = Some(Box::new(self.parse_block()?));
+            let body = self.parse_block()?;
+            if let Some(param) = &catch_param {
+                check_catch_parameter_early_errors(param, &body.node)?;
+            }
+            catch_body = Some(Box::new(body));
         }
         if self.eat(&TokenKind::Finally) {
             finally_body = Some(Box::new(self.parse_block()?));
@@ -3324,6 +3328,31 @@ mod tests {
         let p = parse("try { f(); } catch (e) { g(); } finally { h(); }");
         assert!(matches!(&p.body[0].node, StmtNode::TryCatch { .. }));
     }
+
+    #[test]
+    fn parse_catch_parameter_early_errors() {
+        for src in [
+            "try {} catch ([x, x]) {}",
+            "try {} catch (x) { let x; }",
+            "try {} catch (x) { const x = 1; }",
+            "try {} catch (x) { class x {} }",
+            "function f() { try {} catch (e) { function e(){} } }",
+            "function f() { try {} catch (e) { label: function e(){} } }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_catch_parameter_allows_non_conflicting_scopes() {
+        for src in [
+            "try {} catch (x) { var x; }",
+            "try {} catch (x) { { let x; } }",
+            "try {} catch (x) { function y(){} }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+    }
 }
 
 /// Extract all binding names from a destructuring pattern.
@@ -3361,4 +3390,82 @@ fn check_pattern_strict(pattern: &Pattern) -> error::Result<()> {
         }
     }
     Ok(())
+}
+
+fn check_duplicate_bound_names(names: &[Arc<str>]) -> error::Result<()> {
+    for (i, name) in names.iter().enumerate() {
+        if names[..i].contains(name) {
+            return Err(error::Error::syntax(format!(
+                "Identifier '{}' has already been declared",
+                name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn collect_catch_block_lexical_names(node: &StmtNode, lexical: &mut Vec<Arc<str>>) {
+    let StmtNode::Block(body) = node else {
+        return;
+    };
+
+    for stmt in body {
+        match &stmt.node {
+            StmtNode::VarDecl { kind, decls } => {
+                if matches!(kind, VarKind::Let | VarKind::Const) {
+                    for (name, _) in decls {
+                        lexical.push(name.clone());
+                    }
+                }
+            }
+            StmtNode::Destructure { kind, pattern, .. } => {
+                if matches!(kind, VarKind::Let | VarKind::Const) {
+                    collect_pattern_names(pattern, lexical);
+                }
+            }
+            StmtNode::FunctionDecl(f) => {
+                if let Some(name) = &f.name {
+                    lexical.push(name.clone());
+                }
+            }
+            StmtNode::Labeled(_, body) if is_labelled_function(&stmt.node) => {
+                if let StmtNode::FunctionDecl(f) = labelled_function_decl(&body.node) {
+                    if let Some(name) = &f.name {
+                        lexical.push(name.clone());
+                    }
+                }
+            }
+            StmtNode::ExprStmt(Expr::Class(c)) => {
+                if let Some(name) = &c.name {
+                    lexical.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn check_catch_parameter_early_errors(param: &Pattern, body: &StmtNode) -> error::Result<()> {
+    let mut param_names = Vec::new();
+    collect_pattern_names(param, &mut param_names);
+    check_duplicate_bound_names(&param_names)?;
+
+    let mut lexical_names = Vec::new();
+    collect_catch_block_lexical_names(body, &mut lexical_names);
+    for name in &param_names {
+        if lexical_names.contains(name) {
+            return Err(error::Error::syntax(format!(
+                "Identifier '{}' has already been declared",
+                name
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn labelled_function_decl(node: &StmtNode) -> &StmtNode {
+    match node {
+        StmtNode::Labeled(_, body) => labelled_function_decl(&body.node),
+        _ => node,
+    }
 }
