@@ -1011,15 +1011,7 @@ impl Parser {
             self.no_in = false;
             if self.check(&TokenKind::In) {
                 // Validate that the LHS is a valid assignment target.
-                let is_valid_target = match &e {
-                    Expr::Ident(_)
-                    | Expr::Member { .. }
-                    | Expr::Array(_)
-                    | Expr::Object(_)
-                    | Expr::PrivateGet { .. } => true,
-                    _ => false,
-                };
-                if !is_valid_target {
+                if !Self::is_for_in_of_assignment_target(&e) {
                     return Err(error::Error::syntax(
                         "Invalid left-hand side in for-in".to_string(),
                     ));
@@ -3308,6 +3300,8 @@ mod tests {
             "for (const let of []) {}",
             "for ([(x, y)] of []) {}",
             "for ({ m() {} } of []) {}",
+            "for ([(x, y)] in {}) {}",
+            "for ({ m() {} } in {}) {}",
             "var async; for (async of [1]) ;",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **92.6%** (up from 88.6%).
-Current supported subset count: **3868 pass / 310 fail / 2 timeout**.
+Supported-subset pass rate: **92.8%** (up from 88.6%).
+Current supported subset count: **3876 pass / 302 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -31,6 +31,13 @@ Current supported subset count: **3868 pass / 310 fail / 2 timeout**.
   Destructuring defaults and statement-body closures now capture the same
   initialized iteration binding, and `typeof` on TDZ bindings throws
   `ReferenceError` while unbound names still report `"undefined"`.
+- **`for...in` lexical head environments**: `let`/`const` loop heads now mirror
+  `for...of` by evaluating the right-hand object under a temporary TDZ
+  environment and binding each enumerated property key inside a fresh
+  per-iteration lexical environment. Destructuring defaults and loop-body
+  closures now capture the initialized iteration binding, and array/object
+  assignment-pattern left-hand sides are validated before accepting them as
+  `for...in` targets.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

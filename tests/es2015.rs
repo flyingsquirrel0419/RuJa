@@ -471,6 +471,31 @@ fn for_of_lexical_head_tdz_and_iteration_scope() {
 }
 
 #[test]
+fn for_in_lexical_head_tdz_and_iteration_scope() {
+    let msg = run_err("let x = 1; for (let x in { x }) {}");
+    assert!(
+        msg.contains("Cannot access 'x' before initialization"),
+        "got: {}",
+        msg
+    );
+
+    assert_eq!(
+        run("var obj = Object.create(null); obj.key = 1; var value; for (let [x] in obj) { value = x; } typeof x + ':' + value;"),
+        Value::String(Arc::from("undefined:k"))
+    );
+
+    assert_eq!(
+        run("let x = 'outside'; var probeDecl, probeBody; for (let [x, _ = probeDecl = function(){ return x; }] in { i: 0 }) probeBody = function(){ return x; }; probeDecl() + ':' + probeBody() + ':' + x;"),
+        Value::String(Arc::from("i:i:outside"))
+    );
+
+    assert_eq!(
+        run("let x = 'outside'; var probeExpr; for (let x in { i: probeExpr = function(){ try { typeof x; return 'no'; } catch (e) { return e.name; } } }) ; probeExpr();"),
+        Value::String(Arc::from("ReferenceError"))
+    );
+}
+
+#[test]
 fn computed_key_in_object_literal() {
     let src = r#"
         let key = "dynamic";
