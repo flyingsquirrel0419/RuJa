@@ -154,6 +154,14 @@ fn for_of_string() {
         run("let s=''; for(let c of 'abc'){s+=c;} s;"),
         Value::String(Arc::from("abc"))
     );
+    assert_eq!(
+        run(r#"let s=''; for(let c of "\uD801\uDC28"){s+=c;} s.length;"#),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run(r#"let count=0; for(let c of "\uD801\uDC28"){count++;} count;"#),
+        Value::Number(1.0)
+    );
 }
 
 #[test]

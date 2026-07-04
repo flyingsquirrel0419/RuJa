@@ -44,7 +44,7 @@ pub(crate) fn str_char_at(
     }
     match crate::value::utf16_get(&s, i as usize) {
         Some(unit) => Ok(Value::String(Arc::from(
-            String::from_utf16_lossy(&[unit]).as_str(),
+            crate::value::utf16_to_string(&[unit]).as_str(),
         ))),
         None => Ok(Value::String(Arc::from(""))),
     }
@@ -166,7 +166,7 @@ pub(crate) fn string_from_code_point(
         }
     }
     Ok(Value::String(Arc::from(
-        String::from_utf16_lossy(&units).as_str(),
+        crate::value::utf16_to_string(&units).as_str(),
     )))
 }
 
@@ -305,11 +305,11 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     let parts: Vec<String> = match sep {
         None => vec![s],
         Some(sep) if sep.is_empty() => {
-            let units: Vec<u16> = s.encode_utf16().collect();
+            let units = crate::value::utf16_from_str(&s);
             units
                 .iter()
                 .take(limit)
-                .map(|&u| String::from_utf16_lossy(&[u]))
+                .map(|&u| crate::value::utf16_to_string(&[u]))
                 .collect()
         }
         Some(sep) => s.split(&sep).take(limit).map(|p| p.to_string()).collect(),
@@ -644,9 +644,9 @@ pub(crate) fn str_pad_start(
         out.push_str(&pad);
     }
     // Truncate by code units.
-    let mut units: Vec<u16> = out.encode_utf16().collect();
+    let mut units = crate::value::utf16_from_str(&out);
     units.truncate(need);
-    out = String::from_utf16_lossy(&units);
+    out = crate::value::utf16_to_string(&units);
     out.push_str(&s);
     Ok(Value::String(Arc::from(out.as_str())))
 }
@@ -681,9 +681,9 @@ pub(crate) fn str_pad_end(
     while crate::value::utf16_len(&out) - cur_len < need {
         out.push_str(&pad);
     }
-    let mut units: Vec<u16> = out.encode_utf16().collect();
+    let mut units = crate::value::utf16_from_str(&out);
     units.truncate(target);
-    out = String::from_utf16_lossy(&units);
+    out = crate::value::utf16_to_string(&units);
     Ok(Value::String(Arc::from(out.as_str())))
 }
 pub(crate) fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -698,7 +698,7 @@ pub(crate) fn str_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
         // Return a 1-code-unit string (surrogate half for supplementary).
         let unit = crate::value::utf16_get(&s, idx as usize).unwrap();
         return Ok(Value::String(Arc::from(
-            String::from_utf16_lossy(&[unit]).as_str(),
+            crate::value::utf16_to_string(&[unit]).as_str(),
         )));
     }
     Ok(Value::Undefined)
@@ -737,10 +737,10 @@ pub(crate) fn str_replace_all(
     };
     if from.is_empty() {
         let mut out = String::new();
-        let units: Vec<u16> = s.encode_utf16().collect();
+        let units = crate::value::utf16_from_str(&s);
         for &u in &units {
             out.push_str(&to);
-            out.push_str(&String::from_utf16_lossy(&[u]));
+            out.push_str(&crate::value::utf16_to_string(&[u]));
         }
         out.push_str(&to);
         return Ok(Value::String(Arc::from(out.as_str())));

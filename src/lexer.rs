@@ -249,11 +249,12 @@ impl<'a> Lexer<'a> {
             }
             let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
             let s: String = s.chars().filter(|&c| c != '_').collect();
-            let v = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
             if self.peek() == Some(b'n') {
                 self.advance();
+                let v = num_bigint::BigInt::parse_bytes(&s.as_bytes()[2..], 16).unwrap_or_default();
                 return TokenKind::BigInt(v.to_string());
             }
+            let v = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
             return TokenKind::Number(v as f64);
         }
         if self.peek() == Some(b'0')
@@ -270,11 +271,12 @@ impl<'a> Lexer<'a> {
             }
             let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
             let s: String = s.chars().filter(|&c| c != '_').collect();
-            let v = i64::from_str_radix(&s, 8).unwrap_or(0);
             if self.peek() == Some(b'n') {
                 self.advance();
+                let v = num_bigint::BigInt::parse_bytes(s.as_bytes(), 8).unwrap_or_default();
                 return TokenKind::BigInt(v.to_string());
             }
+            let v = i64::from_str_radix(&s, 8).unwrap_or(0);
             return TokenKind::Number(v as f64);
         }
         if self.peek() == Some(b'0')
@@ -291,11 +293,12 @@ impl<'a> Lexer<'a> {
             }
             let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
             let s: String = s.chars().filter(|&c| c != '_').collect();
-            let v = i64::from_str_radix(&s, 2).unwrap_or(0);
             if self.peek() == Some(b'n') {
                 self.advance();
+                let v = num_bigint::BigInt::parse_bytes(s.as_bytes(), 2).unwrap_or_default();
                 return TokenKind::BigInt(v.to_string());
             }
+            let v = i64::from_str_radix(&s, 2).unwrap_or(0);
             return TokenKind::Number(v as f64);
         }
         let mut seen_dot = false;
@@ -361,8 +364,36 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     }
-                    Some(b'u') => match self.read_unicode_escape() {
-                        Some(ch) => s.push(ch),
+                    Some(b'u') => match self.read_unicode_escape_value() {
+                        Some(cp) => {
+                            if (0xD800..=0xDBFF).contains(&cp) {
+                                let save = self.pos;
+                                if self.peek() == Some(b'\\') && self.peek_at(1) == Some(b'u') {
+                                    self.advance();
+                                    self.advance();
+                                    if let Some(low) = self.read_unicode_escape_value() {
+                                        if (0xDC00..=0xDFFF).contains(&low) {
+                                            let cp =
+                                                0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
+                                            if let Some(ch) = char::from_u32(cp) {
+                                                s.push(ch);
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                }
+                                self.pos = save;
+                            }
+                            if (0xD800..=0xDFFF).contains(&cp) {
+                                s.push_str(&crate::value::utf16_to_string(&[cp as u16]));
+                            } else if let Some(ch) = char::from_u32(cp) {
+                                s.push(ch);
+                            } else {
+                                return TokenKind::LexError(
+                                    "invalid unicode escape sequence".to_string(),
+                                );
+                            }
+                        }
                         None => {
                             return TokenKind::LexError(
                                 "invalid unicode escape sequence".to_string(),
@@ -418,8 +449,8 @@ impl<'a> Lexer<'a> {
     }
 
     /// Read a `\uXXXX` or `\u{XXXX...}` escape (the `\u` already consumed),
-    /// returning the decoded char or None on invalid input.
-    fn read_unicode_escape(&mut self) -> Option<char> {
+    /// returning the numeric code point/code unit value or None on invalid input.
+    fn read_unicode_escape_value(&mut self) -> Option<u32> {
         if self.peek() == Some(b'{') {
             self.advance();
             let mut v = 0u32;
@@ -430,7 +461,7 @@ impl<'a> Lexer<'a> {
                     if count == 0 || count > 6 {
                         return None;
                     }
-                    return char::from_u32(v);
+                    return (v <= 0x10FFFF).then_some(v);
                 }
                 let d = (b as char).to_digit(16)?;
                 v = v.checked_mul(16)?.checked_add(d)?;
@@ -440,8 +471,7 @@ impl<'a> Lexer<'a> {
             // Unterminated \u{...}
             None
         } else {
-            let v = self.read_hex_digits(4)?;
-            char::from_u32(v)
+            self.read_hex_digits(4)
         }
     }
 

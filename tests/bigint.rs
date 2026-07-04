@@ -56,6 +56,9 @@ fn bigint_strict_eq() {
 fn bigint_loose_eq() {
     assert_eq!(run("0n == 0;"), Value::Bool(true));
     assert_eq!(run("123n == 123;"), Value::Bool(true));
+    assert_eq!(run("0n == '';"), Value::Bool(true));
+    assert_eq!(run("0x10n == 16n;"), Value::Bool(true));
+    assert_eq!(run("0x10000000000000000n == 0n;"), Value::Bool(false));
 }
 
 #[test]
@@ -64,6 +67,10 @@ fn bigint_compare() {
     assert_eq!(run("3n > 2n;"), Value::Bool(true));
     assert_eq!(run("2n > 3n;"), Value::Bool(false));
     assert_eq!(run("1n < 2;"), Value::Bool(true));
+    assert_eq!(run("1n < 1.5;"), Value::Bool(true));
+    assert_eq!(run("'0x10' > 15n;"), Value::Bool(true));
+    assert_eq!(run("1n > '0.';"), Value::Bool(false));
+    assert_eq!(run("0x10000000000000000n > 0n;"), Value::Bool(true));
 }
 
 #[test]
@@ -110,6 +117,10 @@ fn bigint_large_exact() {
 #[test]
 fn bigint_hex_oct_bin_literals() {
     assert_eq!(run("0xffn;"), Value::BigInt(num_bigint::BigInt::from(255)));
+    assert_eq!(
+        run("0x10000000000000000n;"),
+        Value::BigInt(num_bigint::BigInt::parse_bytes(b"10000000000000000", 16).unwrap())
+    );
     assert_eq!(run("0o17n;"), Value::BigInt(num_bigint::BigInt::from(15)));
     assert_eq!(run("0b101n;"), Value::BigInt(num_bigint::BigInt::from(5)));
 }

@@ -129,6 +129,12 @@ fn destructure_string_iterable() {
         a + b;
     "#;
     assert_eq!(run(src), Value::String(std::sync::Arc::from("hi")));
+
+    let astral = r#"
+        let [a, b] = "\uD801\uDC28";
+        a.length + ":" + (b === undefined);
+    "#;
+    assert_eq!(run(astral), Value::String(std::sync::Arc::from("2:true")));
 }
 
 #[test]

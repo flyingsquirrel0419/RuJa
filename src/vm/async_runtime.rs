@@ -721,9 +721,9 @@ impl Vm {
             }
         }
         let items: Vec<Value> = match iterable {
-            Value::String(s) => crate::value::utf16_from_str(s)
+            Value::String(s) => crate::value::utf16_code_point_strings(s)
                 .into_iter()
-                .map(|unit| Value::String(Arc::from(String::from_utf16_lossy(&[unit]).as_str())))
+                .map(|s| Value::String(Arc::from(s.as_str())))
                 .collect(),
             Value::Object(idx) => {
                 let (is_array, is_map, is_set, is_generator) = self.heap.with_obj(idx.0, |o| {

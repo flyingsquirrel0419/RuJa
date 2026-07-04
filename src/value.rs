@@ -828,22 +828,69 @@ fn format_exponential(n: f64, _abs: f64) -> String {
 // JS strings are sequences of UTF-16 code units. Rust `&str`/`String` are
 // UTF-8 and cannot represent lone (unpaired) surrogates. We model JS string
 // length/indexing/charCodeAt on UTF-16 code units by converting to `Vec<u16>`
-// for code-unit-level operations. Lone surrogates round-trip through the
-// `u16` vector (they just can't be losslessly re-encoded to UTF-8).
+// for code-unit-level operations. Lone surrogates are preserved internally as
+// private-use sentinels and mapped back to their original code units here.
 // =========================================================================
 
-/// Encode a Rust string into a Vec of UTF-16 code units. Supplementary
-/// characters become surrogate pairs; the result mirrors `String.prototype.length`.
+const SURROGATE_SENTINEL_BASE: u32 = 0xF0000;
+
+fn surrogate_to_sentinel(unit: u16) -> char {
+    debug_assert!((0xD800..=0xDFFF).contains(&unit));
+    char::from_u32(SURROGATE_SENTINEL_BASE + (unit as u32 - 0xD800)).unwrap()
+}
+
+fn sentinel_to_surrogate(ch: char) -> Option<u16> {
+    let cp = ch as u32;
+    if (SURROGATE_SENTINEL_BASE..=SURROGATE_SENTINEL_BASE + 0x7FF).contains(&cp) {
+        Some(0xD800 + (cp - SURROGATE_SENTINEL_BASE) as u16)
+    } else {
+        None
+    }
+}
+
+/// Encode an internal Rust string into JS UTF-16 code units. Supplementary
+/// characters become surrogate pairs, and RuJa's private lone-surrogate
+/// sentinels become their original code units.
 pub fn utf16_from_str(s: &str) -> Vec<u16> {
-    s.encode_utf16().collect()
+    let mut units = Vec::new();
+    for ch in s.chars() {
+        if let Some(unit) = sentinel_to_surrogate(ch) {
+            units.push(unit);
+        } else {
+            let mut buf = [0; 2];
+            units.extend_from_slice(ch.encode_utf16(&mut buf));
+        }
+    }
+    units
 }
 
 /// Decode a sequence of UTF-16 code units back into a Rust `String`. Lone
-/// surrogates are replaced with U+FFFD (matches JS `ToString` behavior where
-/// the string already contains them internally; for our purposes this is
-/// only called on well-formed sequences).
+/// surrogates are preserved using private-use sentinels because Rust `String`
+/// cannot directly represent them.
 pub fn utf16_to_string(units: &[u16]) -> String {
-    String::from_utf16_lossy(units)
+    let mut out = String::new();
+    let mut i = 0;
+    while i < units.len() {
+        let unit = units[i];
+        if (0xD800..=0xDBFF).contains(&unit) && i + 1 < units.len() {
+            let low = units[i + 1];
+            if (0xDC00..=0xDFFF).contains(&low) {
+                let cp = 0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
+                if let Some(ch) = char::from_u32(cp) {
+                    out.push(ch);
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        if (0xD800..=0xDFFF).contains(&unit) {
+            out.push(surrogate_to_sentinel(unit));
+        } else if let Some(ch) = char::from_u32(unit as u32) {
+            out.push(ch);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Build a Rust `String` from a series of UTF-16 code-unit numeric arguments
@@ -851,9 +898,9 @@ pub fn utf16_to_string(units: &[u16]) -> String {
 /// lone surrogates by emitting them directly into the u16 vector, then
 /// decoding. Lone surrogates become U+FFFD in the resulting String (so the
 /// length seen by the engine is correct even though the lone surrogate is
-/// not round-trippable through UTF-8).
+/// not directly representable as UTF-8).
 pub fn utf16_from_codes(codes: &[u16]) -> String {
-    String::from_utf16_lossy(codes)
+    utf16_to_string(codes)
 }
 
 /// Return the JS length (UTF-16 code-unit count) of a Rust string.
@@ -863,7 +910,7 @@ pub fn utf16_len(s: &str) -> usize {
     if s.is_ascii() {
         s.len()
     } else {
-        s.encode_utf16().count()
+        utf16_from_str(s).len()
     }
 }
 
@@ -873,7 +920,7 @@ pub fn utf16_get(s: &str, i: usize) -> Option<u16> {
     if s.is_ascii() {
         s.as_bytes().get(i).map(|b| *b as u16)
     } else {
-        s.encode_utf16().nth(i)
+        utf16_from_str(s).get(i).copied()
     }
 }
 
@@ -886,11 +933,34 @@ pub fn utf16_slice(s: &str, start: usize, end: usize) -> String {
         let end = end.clamp(start, len);
         s[start..end].to_string()
     } else {
-        let units: Vec<u16> = s.encode_utf16().collect();
+        let units = utf16_from_str(s);
         let start = start.min(units.len());
         let end = end.clamp(start, units.len());
-        String::from_utf16_lossy(&units[start..end])
+        utf16_to_string(&units[start..end])
     }
+}
+
+/// Split a JS string into the values produced by StringIterator. Valid
+/// surrogate pairs are yielded as one supplementary character; lone surrogates
+/// are yielded as one code unit.
+pub fn utf16_code_point_strings(s: &str) -> Vec<String> {
+    let units = utf16_from_str(s);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < units.len() {
+        let unit = units[i];
+        if (0xD800..=0xDBFF).contains(&unit) && i + 1 < units.len() {
+            let low = units[i + 1];
+            if (0xDC00..=0xDFFF).contains(&low) {
+                out.push(utf16_to_string(&[unit, low]));
+                i += 2;
+                continue;
+            }
+        }
+        out.push(utf16_to_string(&[unit]));
+        i += 1;
+    }
+    out
 }
 
 /// Find the UTF-16 code-unit index of `needle` in `s` starting at or after
@@ -899,8 +969,8 @@ pub fn utf16_index_of(s: &str, needle: &str, start: usize) -> Option<usize> {
     if needle.is_empty() {
         return Some(start.min(utf16_len(s)));
     }
-    let hay: Vec<u16> = s.encode_utf16().collect();
-    let nee: Vec<u16> = needle.encode_utf16().collect();
+    let hay = utf16_from_str(s);
+    let nee = utf16_from_str(needle);
     let start = start.min(hay.len());
     if nee.len() > hay.len() - start {
         return None;
@@ -918,8 +988,8 @@ pub fn utf16_index_of(s: &str, needle: &str, start: usize) -> Option<usize> {
 
 /// Last index of `needle` at or before code-unit index `end`.
 pub fn utf16_last_index_of(s: &str, needle: &str, end: usize) -> Option<usize> {
-    let hay: Vec<u16> = s.encode_utf16().collect();
-    let nee: Vec<u16> = needle.encode_utf16().collect();
+    let hay = utf16_from_str(s);
+    let nee = utf16_from_str(needle);
     if nee.is_empty() {
         return Some(end.min(hay.len()));
     }

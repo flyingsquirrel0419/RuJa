@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+enum CompareOp {
+    Lt,
+    Gt,
+    Lte,
+    Gte,
+}
+
 impl Vm {
     pub(crate) fn interpret_inner_raw(
         &mut self,
@@ -1020,10 +1028,10 @@ impl Vm {
                     let r = self.strict_eq(&a, &b);
                     self.stack.push(Value::Bool(!r));
                 }
-                Op::Lt => self.compare(|a, b| a < b, |a: &str, b: &str| a < b)?,
-                Op::Gt => self.compare(|a, b| a > b, |a: &str, b: &str| a > b)?,
-                Op::Lte => self.compare(|a, b| a <= b, |a: &str, b: &str| a <= b)?,
-                Op::Gte => self.compare(|a, b| a >= b, |a: &str, b: &str| a >= b)?,
+                Op::Lt => self.compare(CompareOp::Lt)?,
+                Op::Gt => self.compare(CompareOp::Gt)?,
+                Op::Lte => self.compare(CompareOp::Lte)?,
+                Op::Gte => self.compare(CompareOp::Gte)?,
                 Op::In => {
                     // stack: [key, obj]; true if obj has the property (own or inherited).
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2607,33 +2615,84 @@ impl Vm {
         Ok(())
     }
 
-    fn compare<F: Fn(f64, f64) -> bool, S: Fn(&str, &str) -> bool>(
-        &mut self,
-        f: F,
-        sf: S,
-    ) -> error::Result<()> {
+    fn compare(&mut self, op: CompareOp) -> error::Result<()> {
         let (a, b) = self.pop2();
         let pa = self.to_primitive(&a)?;
         let pb = self.to_primitive(&b)?;
-        // BigInt vs BigInt: compare exactly without f64 rounding.
-        if let (Value::BigInt(x), Value::BigInt(y)) = (&pa, &pb) {
-            let xf = num_traits::ToPrimitive::to_f64(x).unwrap_or(f64::NAN);
-            let yf = num_traits::ToPrimitive::to_f64(y).unwrap_or(f64::NAN);
-            self.stack.push(Value::Bool(f(xf, yf)));
-            return Ok(());
-        }
-        if let (Value::String(sa), Value::String(sb)) = (&pa, &pb) {
-            self.stack.push(Value::Bool(sf(sa, sb)));
-        } else {
-            let av = self.to_number(&pa)?;
-            let bv = self.to_number(&pb)?;
-            if av.is_nan() || bv.is_nan() {
-                self.stack.push(Value::Bool(false));
-            } else {
-                self.stack.push(Value::Bool(f(av, bv)));
+        let result = match (&pa, &pb) {
+            (Value::String(sa), Value::String(sb)) => {
+                let au = crate::value::utf16_from_str(sa);
+                let bu = crate::value::utf16_from_str(sb);
+                Self::apply_compare_order(op, au.cmp(&bu))
             }
-        }
+            (Value::BigInt(x), Value::BigInt(y)) => Self::apply_compare_order(op, x.cmp(y)),
+            (Value::BigInt(x), Value::String(s)) => Self::string_to_bigint(s)
+                .map(|y| Self::apply_compare_order(op, x.cmp(&y)))
+                .unwrap_or(false),
+            (Value::String(s), Value::BigInt(y)) => Self::string_to_bigint(s)
+                .map(|x| Self::apply_compare_order(op, x.cmp(y)))
+                .unwrap_or(false),
+            (Value::BigInt(x), Value::Number(y)) => Self::compare_bigint_number(x, *y, op),
+            (Value::Number(x), Value::BigInt(y)) => {
+                let reversed = match op {
+                    CompareOp::Lt => CompareOp::Gt,
+                    CompareOp::Gt => CompareOp::Lt,
+                    CompareOp::Lte => CompareOp::Gte,
+                    CompareOp::Gte => CompareOp::Lte,
+                };
+                Self::compare_bigint_number(y, *x, reversed)
+            }
+            _ => {
+                let av = self.to_number(&pa)?;
+                let bv = self.to_number(&pb)?;
+                if av.is_nan() || bv.is_nan() {
+                    false
+                } else {
+                    match op {
+                        CompareOp::Lt => av < bv,
+                        CompareOp::Gt => av > bv,
+                        CompareOp::Lte => av <= bv,
+                        CompareOp::Gte => av >= bv,
+                    }
+                }
+            }
+        };
+        self.stack.push(Value::Bool(result));
         Ok(())
+    }
+
+    fn apply_compare_order(op: CompareOp, ordering: std::cmp::Ordering) -> bool {
+        match op {
+            CompareOp::Lt => ordering == std::cmp::Ordering::Less,
+            CompareOp::Gt => ordering == std::cmp::Ordering::Greater,
+            CompareOp::Lte => ordering != std::cmp::Ordering::Greater,
+            CompareOp::Gte => ordering != std::cmp::Ordering::Less,
+        }
+    }
+
+    fn compare_bigint_number(x: &num_bigint::BigInt, y: f64, op: CompareOp) -> bool {
+        if y.is_nan() {
+            return false;
+        }
+        if y == f64::INFINITY {
+            return matches!(op, CompareOp::Lt | CompareOp::Lte);
+        }
+        if y == f64::NEG_INFINITY {
+            return matches!(op, CompareOp::Gt | CompareOp::Gte);
+        }
+        if let Some(y_int) = Self::number_to_bigint_exact(y) {
+            return Self::apply_compare_order(op, x.cmp(&y_int));
+        }
+        let bound = match op {
+            CompareOp::Lt | CompareOp::Lte => y.floor(),
+            CompareOp::Gt | CompareOp::Gte => y.ceil(),
+        };
+        Self::number_to_bigint_exact(bound)
+            .map(|bound| match op {
+                CompareOp::Lt | CompareOp::Lte => x <= &bound,
+                CompareOp::Gt | CompareOp::Gte => x >= &bound,
+            })
+            .unwrap_or(false)
     }
 
     // ---- type conversions ----

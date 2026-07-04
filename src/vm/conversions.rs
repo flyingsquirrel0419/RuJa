@@ -63,6 +63,30 @@ impl Vm {
         }
     }
 
+    pub(crate) fn string_to_bigint(s: &str) -> Option<num_bigint::BigInt> {
+        let t = s.trim();
+        if t.is_empty() {
+            return Some(num_bigint::BigInt::from(0));
+        }
+        if let Some(digits) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+            return num_bigint::BigInt::parse_bytes(digits.as_bytes(), 16);
+        }
+        if let Some(digits) = t.strip_prefix("0o").or_else(|| t.strip_prefix("0O")) {
+            return num_bigint::BigInt::parse_bytes(digits.as_bytes(), 8);
+        }
+        if let Some(digits) = t.strip_prefix("0b").or_else(|| t.strip_prefix("0B")) {
+            return num_bigint::BigInt::parse_bytes(digits.as_bytes(), 2);
+        }
+        num_bigint::BigInt::parse_bytes(t.as_bytes(), 10)
+    }
+
+    pub(crate) fn number_to_bigint_exact(n: f64) -> Option<num_bigint::BigInt> {
+        if !n.is_finite() || n.fract() != 0.0 {
+            return None;
+        }
+        num_traits::FromPrimitive::from_f64(n)
+    }
+
     pub fn to_number(&mut self, v: &Value) -> error::Result<f64> {
         Ok(match v {
             Value::Undefined => f64::NAN,
@@ -540,22 +564,18 @@ impl Vm {
                 self.loose_eq(a, &bp)?
             }
             // BigInt vs Number: compare numerically.
-            (Value::BigInt(x), Value::Number(y)) => {
-                num_traits::ToPrimitive::to_f64(x).unwrap_or(f64::NAN) == *y
-            }
-            (Value::Number(x), Value::BigInt(y)) => {
-                *x == num_traits::ToPrimitive::to_f64(y).unwrap_or(f64::NAN)
-            }
+            (Value::BigInt(x), Value::Number(y)) => Self::number_to_bigint_exact(*y)
+                .map(|v| *x == v)
+                .unwrap_or(false),
+            (Value::Number(x), Value::BigInt(y)) => Self::number_to_bigint_exact(*x)
+                .map(|v| v == *y)
+                .unwrap_or(false),
             // BigInt vs String: parse the string, then compare.
             (Value::BigInt(x), Value::String(s)) => {
-                num_bigint::BigInt::parse_bytes(s.trim().as_bytes(), 10)
-                    .map(|v| v == *x)
-                    .unwrap_or(false)
+                Self::string_to_bigint(s).map(|v| v == *x).unwrap_or(false)
             }
             (Value::String(s), Value::BigInt(y)) => {
-                num_bigint::BigInt::parse_bytes(s.trim().as_bytes(), 10)
-                    .map(|v| v == *y)
-                    .unwrap_or(false)
+                Self::string_to_bigint(s).map(|v| v == *y).unwrap_or(false)
             }
             _ => false,
         })
@@ -572,7 +592,7 @@ impl Vm {
                 if let Ok(idx) = key.parse::<usize>() {
                     if let Some(unit) = crate::value::utf16_get(s, idx) {
                         return Ok(Value::String(Arc::from(
-                            String::from_utf16_lossy(&[unit]).as_str(),
+                            crate::value::utf16_to_string(&[unit]).as_str(),
                         )));
                     }
                     return Ok(Value::Undefined);
@@ -754,7 +774,7 @@ impl Vm {
                             if let Ok(i) = key.parse::<usize>() {
                                 if let Some(unit) = crate::value::utf16_get(&s, i) {
                                     return Ok(Value::String(Arc::from(
-                                        String::from_utf16_lossy(&[unit]).as_str(),
+                                        crate::value::utf16_to_string(&[unit]).as_str(),
                                     )));
                                 }
                                 return Ok(Value::Undefined);

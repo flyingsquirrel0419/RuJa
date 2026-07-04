@@ -4,7 +4,22 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **88.6%** (up from 86.9%).
+Supported-subset pass rate: **89.4%** (up from 88.6%).
+
+- **BigInt exact comparison semantics**: BigInt equality and relational
+  comparisons now avoid lossy `f64` conversion. BigInt-vs-Number comparison
+  handles integer, fractional, `NaN`, and infinity cases separately, while
+  BigInt-vs-String now implements `StringToBigInt` for empty strings and
+  `0x`/`0o`/`0b` prefixes. This fixes the BigInt equality and comparison
+  test262 clusters, including large literals beyond IEEE-754 precision.
+- **Arbitrary-precision BigInt prefixed literals**: hex/octal/binary BigInt
+  literals are parsed with `num_bigint` instead of overflowing through `i64`,
+  so literals such as `0x10000000000000000n` preserve their exact value.
+- **UTF-16 string comparison and iteration**: string relational comparison now
+  uses UTF-16 code-unit order, and string iteration (`for...of`, destructuring,
+  spread) yields Unicode code points by combining valid surrogate pairs. Lone
+  surrogate escapes are accepted and preserved internally with private
+  sentinels because Rust `String` cannot store surrogate code points directly.
 
 - **for-of/for-in member expression LHS**: `for (x.y of [23])` now correctly
   evaluates the member expression as the assignment target using Swap-based
