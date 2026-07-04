@@ -52,6 +52,11 @@ three distinct pass-rate scopes and what each measures.
   that does not fit in a `u32` now throws a `RangeError` instead of
   silently clamping to zero and returning the wrong value.
 
+- **Arrow function early errors**: arrow functions now reject
+  `eval`/`arguments` parameter names and duplicate parameter names in
+  both sloppy and strict mode, matching the spec's strict-mode parameter
+  rules for arrows.
+
 - **for-in/for-of non-declaration parsing**: `for (x in obj)` and
   `for ((x) in obj)` now parse and assign correctly (was: SyntaxError or
   undefined). Added `no_in` flag to prevent `in` being consumed as a binary

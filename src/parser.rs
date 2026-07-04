@@ -2538,10 +2538,82 @@ impl Parser {
         Ok(false)
     }
 
+    /// Validate arrow-function parameters per strict-mode rules, which apply
+    /// to arrow functions even when the enclosing context is sloppy.
+    fn validate_arrow_params(
+        &self,
+        params: &[Arc<str>],
+        dstr_decls: &[(Pattern, String, Option<Expr>)],
+        rest_param: Option<&Arc<str>>,
+    ) -> error::Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for p in params {
+            if matches!(&**p, "eval" | "arguments") {
+                return Err(error::Error::syntax(format!(
+                    "Parameter name '{}' is not allowed in arrow function",
+                    p
+                )));
+            }
+            if !seen.insert(p.clone()) {
+                return Err(error::Error::syntax(format!(
+                    "Duplicate parameter '{}' is not allowed in arrow function",
+                    p
+                )));
+            }
+        }
+        for (pattern, _tmp, _default) in dstr_decls {
+            Self::pattern_binding_names(pattern, &mut seen);
+        }
+        if let Some(r) = rest_param {
+            if matches!(&**r, "eval" | "arguments") {
+                return Err(error::Error::syntax(format!(
+                    "Parameter name '{}' is not allowed in arrow function",
+                    r
+                )));
+            }
+            if !seen.insert(r.clone()) {
+                return Err(error::Error::syntax(format!(
+                    "Duplicate parameter '{}' is not allowed in arrow function",
+                    r
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Collect all binding identifiers introduced by a destructuring pattern.
+    fn pattern_binding_names(pattern: &Pattern, out: &mut std::collections::HashSet<Arc<str>>) {
+        match pattern {
+            Pattern::Ident(name) => {
+                out.insert(name.clone());
+            }
+            Pattern::Hole => {}
+            Pattern::Array(elems) => {
+                for el in elems {
+                    Self::pattern_binding_names(el, out);
+                }
+            }
+            Pattern::Object(props, rest) => {
+                for (_, target) in props {
+                    Self::pattern_binding_names(target, out);
+                }
+                if let Some(r) = rest {
+                    Self::pattern_binding_names(r, out);
+                }
+            }
+            Pattern::Assign(inner, _) => Self::pattern_binding_names(inner, out),
+            Pattern::Rest(inner) => Self::pattern_binding_names(inner, out),
+        }
+    }
+
     fn parse_arrow_body(&mut self, params: Vec<Arc<str>>) -> error::Result<Expr> {
         let param_defaults = std::mem::take(&mut self.arrow_defaults);
         let rest_param = self.arrow_rest.take();
         let dstr_decls = std::mem::take(&mut self.arrow_destructure_decls);
+        // Arrow functions always use strict-mode parameter rules, even in
+        // sloppy mode: eval/arguments are forbidden and duplicate bindings are
+        // rejected. Validate before consuming the destructuring declarations.
+        self.validate_arrow_params(&params, &dstr_decls, rest_param.as_ref())?;
         // Synthesize `let <pattern> = __argN;` prelude statements that bind
         // each destructuring parameter from its positional temp argument.
         // A parameter default wraps the pattern so the compiler applies it
@@ -2577,26 +2649,6 @@ impl Parser {
                 body = combined;
             }
             let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
-            // Strict-mode validation for arrow function parameters.
-            if is_strict {
-                for p in &params {
-                    if matches!(&**p, "eval" | "arguments") {
-                        return Err(error::Error::syntax(format!(
-                            "Parameter name '{}' is not allowed in strict mode",
-                            p
-                        )));
-                    }
-                }
-                let mut seen = std::collections::HashSet::new();
-                for p in &params {
-                    if !seen.insert(p.clone()) {
-                        return Err(error::Error::syntax(format!(
-                            "Duplicate parameter '{}' is not allowed in strict mode",
-                            p
-                        )));
-                    }
-                }
-            }
             // 'use strict' directive not allowed with non-simple params.
             let has_non_simple = !param_defaults.is_empty()
                 || rest_param.is_some()
@@ -2623,26 +2675,6 @@ impl Parser {
             let e = self.parse_assign()?;
             let mut body = prelude;
             body.push(self.stmt(StmtNode::Return(Some(e))));
-            // Strict-mode param validation for expression-body arrows.
-            if self.is_strict_context {
-                for p in &params {
-                    if matches!(&**p, "eval" | "arguments") {
-                        return Err(error::Error::syntax(format!(
-                            "Parameter name '{}' is not allowed in strict mode",
-                            p
-                        )));
-                    }
-                }
-                let mut seen = std::collections::HashSet::new();
-                for p in &params {
-                    if !seen.insert(p.clone()) {
-                        return Err(error::Error::syntax(format!(
-                            "Duplicate parameter '{}' is not allowed in strict mode",
-                            p
-                        )));
-                    }
-                }
-            }
             Ok(Expr::Arrow(FunctionExpr {
                 name: None,
                 params,

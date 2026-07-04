@@ -147,6 +147,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `RangeError`.
 - **BigInt exponent overflow** — huge exponents no longer clamp to zero
   and return a wrong value; they throw `RangeError`.
+- **Arrow function early errors** — arrow functions reject
+  `eval`/`arguments` parameter names and duplicate parameter names in
+  sloppy as well as strict mode.
 
 ## Why the rate is not higher
 
