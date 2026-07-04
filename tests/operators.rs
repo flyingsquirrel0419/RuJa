@@ -363,6 +363,58 @@ fn delete_super_property_checks_this_before_key_expression() {
 }
 
 #[test]
+fn update_identifier_preserves_with_reference_after_getter_delete() {
+    assert_eq!(
+        run(r#"
+            var x = 0;
+            var scope = {
+              get x() {
+                delete this.x;
+                return 2;
+              }
+            };
+            with (scope) {
+              ++x;
+            }
+            scope.x + ":" + x;
+            "#,),
+        Value::String(Arc::from("3:0"))
+    );
+}
+
+#[test]
+fn update_member_evaluates_computed_key_once() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var base = {};
+            var prop = {
+              toString: function() {
+                calls = calls + 1;
+                return "k";
+              }
+            };
+            ++base[prop];
+            calls + ":" + base.k;
+            "#,),
+        Value::String(Arc::from("1:NaN"))
+    );
+}
+
+#[test]
+fn update_preserves_bigint_numeric_type() {
+    assert_eq!(
+        run(r#"
+            var x = 0n;
+            var post = x++;
+            var pre = ++x;
+            [typeof post, post, typeof pre, pre, typeof x, x].join(":");
+            "#,),
+        Value::String(Arc::from("bigint:0:bigint:2:bigint:2"))
+    );
+}
+
+#[test]
 fn strict_parenthesized_eval_arguments_assignment_is_syntax_error() {
     assert!(run_err(r#""use strict"; (eval) = 20;"#).contains("SyntaxError"));
     assert!(run_err(r#""use strict"; (arguments) = 20;"#).contains("SyntaxError"));

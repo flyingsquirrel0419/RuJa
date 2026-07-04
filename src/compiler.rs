@@ -1917,8 +1917,9 @@ impl Compiler {
                 }
             }
             Expr::Update(op, prefix, target) => {
-                // `x++`/`++x`/`x--`/`--x`. Stash the old value in a temp env binding
-                // so the store can use a clean [obj, key, value] without fighting it.
+                // `x++`/`++x`/`x--`/`--x`: evaluate the reference once, read
+                // its value, write the new value through the same reference,
+                // and return either the old or new numeric value.
                 let inc_op = || match op {
                     UpdateOp::Inc => Op::Inc,
                     UpdateOp::Dec => Op::Dec,
@@ -1930,32 +1931,13 @@ impl Compiler {
                         computed,
                         ..
                     } => {
-                        // Load the current value.
-                        self.compile_expr(object)?; // [obj]
+                        self.compile_expr(object)?;
                         if *computed {
-                            self.compile_expr(property)?; // [obj, key]
-                            self.chunk.emit(Op::GetElem, self.current_line); // [oldVal]
+                            self.compile_expr(property)?;
+                            self.chunk.emit(Op::CheckNullBase, self.current_line);
+                            self.chunk.emit(Op::ToString, self.current_line);
                         } else {
-                            let key = if let Expr::String(s) = property.as_ref() {
-                                s.to_string()
-                            } else {
-                                String::new()
-                            };
-                            let key_idx = self
-                                .chunk
-                                .add_constant(Value::String(Arc::from(key.as_str())));
-                            self.chunk.emit(Op::Const(key_idx), self.current_line); // [obj, key]
-                            self.chunk.emit(Op::GetProp, self.current_line); // [oldVal]
-                        }
-                        self.chunk.emit(Op::TypeCoerce, self.current_line); // [oldNum]
-                                                                            // Stash oldNum; then store newNum back via a clean reload.
-                        let tmp_idx = self.intern("#upd");
-                        self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line); // []
-                                                                                     // Build [obj, key, newNum] and store.
-                        self.compile_expr(object)?; // [obj]
-                        if *computed {
-                            self.compile_expr(property)?; // [obj, key]
-                        } else {
+                            self.chunk.emit(Op::CheckNullBase, self.current_line);
                             let key = if let Expr::String(s) = property.as_ref() {
                                 s.to_string()
                             } else {
@@ -1965,26 +1947,26 @@ impl Compiler {
                                 .chunk
                                 .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
-                            // [obj, key]
                         }
-                        self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [obj, key, oldNum]
-                        self.chunk.emit(Op::Dup, self.current_line); // [obj, key, oldNum, oldNum]
-                        self.chunk.emit(inc_op(), self.current_line); // [obj, key, oldNum, newNum]
-                        self.chunk.emit(Op::Swap, self.current_line); // [obj, key, newNum, oldNum]
-                        self.chunk.emit(Op::Pop, self.current_line); // [obj, key, newNum]
+                        self.chunk.emit(Op::Dup2, self.current_line);
+                        if *computed {
+                            self.chunk.emit(Op::GetElem, self.current_line);
+                        } else {
+                            self.chunk.emit(Op::GetProp, self.current_line);
+                        }
+                        self.chunk.emit(Op::ToNumeric, self.current_line);
+                        let tmp_idx = self.intern("#upd");
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line);
+                        self.chunk.emit(inc_op(), self.current_line);
                         if *computed {
                             self.chunk.emit(Op::SetElem, self.current_line);
                         } else {
                             self.chunk.emit(Op::SetProp, self.current_line);
                         }
-                        self.chunk.emit(Op::Pop, self.current_line); // discard the value SetProp/SetElem leaves
-                                                                     // Result: oldNum (postfix) or newNum (prefix).
-                        if *prefix {
-                            self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [oldNum]
-                            self.chunk.emit(inc_op(), self.current_line); // [newNum]
-                        } else {
+                        if !*prefix {
+                            self.chunk.emit(Op::Pop, self.current_line);
                             self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
-                            // [oldNum]
                         }
                     }
                     _ => {
@@ -1995,7 +1977,7 @@ impl Compiler {
                             self.compile_expr(object)?; // [obj]
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                             self.chunk.emit(Op::GetPrivate(name_idx), self.current_line); // [oldVal]
-                            self.chunk.emit(Op::TypeCoerce, self.current_line); // [oldNum]
+                            self.chunk.emit(Op::ToNumeric, self.current_line); // [oldNum]
                             let tmp_idx = self.intern("#upd");
                             self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line); // []
                                                                                          // Build [obj, newNum] and store.
@@ -2016,17 +1998,35 @@ impl Compiler {
                             }
                             return Ok(());
                         }
-                        self.compile_expr(target)?; // [old]
-                        self.chunk.emit(Op::TypeCoerce, self.current_line); // [oldNum]
-                        self.chunk.emit(Op::Dup, self.current_line); // [oldNum, oldNum]
-                        self.chunk.emit(inc_op(), self.current_line); // [oldNum, newNum]
-                        self.compile_assign_target(target)?;
-                        self.chunk.emit(Op::Pop, self.current_line); // [oldNum]
-                        if *prefix {
-                            self.chunk.emit(Op::Dup, self.current_line); // [oldNum, oldNum]
-                            self.chunk.emit(inc_op(), self.current_line); // [oldNum, newNum]
-                            self.chunk.emit(Op::Swap, self.current_line); // [newNum, oldNum]
-                            self.chunk.emit(Op::Pop, self.current_line); // [newNum]
+                        if let Expr::Ident(name) = target.as_ref() {
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk.emit(Op::GetValue, self.current_line);
+                            self.chunk.emit(Op::ToNumeric, self.current_line);
+                            let tmp_idx = self.intern("#upd");
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line);
+                            self.chunk.emit(inc_op(), self.current_line);
+                            self.chunk.emit(Op::Swap, self.current_line);
+                            self.chunk.emit(Op::PutValue, self.current_line);
+                            if !*prefix {
+                                self.chunk.emit(Op::Pop, self.current_line);
+                                self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
+                            }
+                        } else {
+                            self.compile_expr(target)?;
+                            self.chunk.emit(Op::ToNumeric, self.current_line);
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk.emit(inc_op(), self.current_line);
+                            self.compile_assign_target(target)?;
+                            self.chunk.emit(Op::Pop, self.current_line);
+                            if *prefix {
+                                self.chunk.emit(Op::Dup, self.current_line);
+                                self.chunk.emit(inc_op(), self.current_line);
+                                self.chunk.emit(Op::Swap, self.current_line);
+                                self.chunk.emit(Op::Pop, self.current_line);
+                            }
                         }
                     }
                 }

@@ -260,6 +260,7 @@ pub enum Op {
     InstanceOf,
     In,
     TypeCoerce, // ToNumber for unary +
+    ToNumeric,  // ToNumeric for update expressions
     Void,
     DeleteVar(usize),
     TypeofVar(usize),

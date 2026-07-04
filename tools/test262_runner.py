@@ -56,7 +56,11 @@ def parse_meta(src):
         if m2:
             meta[key] = [x.strip() for x in m2.group(1).split(',') if x.strip()]
     # negative: { phase: <parse|runtime|resolution>, type: <ErrorName> }
-    mn = re.search(r'^negative:\s*\n(  phase:\s*(\w+)\n  type:\s*(\w+)|  type:\s*(\w+)\n  phase:\s*(\w+))', block, re.MULTILINE)
+    mn = re.search(
+        r'^negative:\s*\n(\s+phase:\s*(\w+)\n\s+type:\s*(\w+)|\s+type:\s*(\w+)\n\s+phase:\s*(\w+))',
+        block,
+        re.MULTILINE,
+    )
     if mn:
         phase = mn.group(2) or mn.group(5)
         typ = mn.group(3) or mn.group(4)

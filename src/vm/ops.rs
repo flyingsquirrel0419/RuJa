@@ -2340,6 +2340,16 @@ impl Vm {
                     let n = self.to_number(&v)?;
                     self.stack.push(Value::Number(n));
                 }
+                Op::ToNumeric => {
+                    let v = self.stack.pop().unwrap_or(Value::Undefined);
+                    match v {
+                        Value::BigInt(_) => self.stack.push(v),
+                        _ => {
+                            let n = self.to_number(&v)?;
+                            self.stack.push(Value::Number(n));
+                        }
+                    }
+                }
                 Op::Await => self.op_await()?,
                 Op::TypeofVar(name_idx) => {
                     // `typeof name`: "undefined" if the name is not bound (must not throw).
