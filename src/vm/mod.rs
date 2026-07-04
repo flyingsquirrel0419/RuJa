@@ -839,6 +839,106 @@ impl Vm {
         Ok(self.to_string(v)?.to_string())
     }
 
+    /// Spec GetValue (6.2.4.2): if `v` is a Reference, resolve it to its
+    /// value; otherwise return `v` unchanged. For environment-record-based
+    /// references (identifier lookups), this walks the env chain. For
+    /// property references, this calls [[Get]] on the base object.
+    pub(crate) fn get_value(&mut self, v: &Value) -> error::Result<Value> {
+        match v {
+            Value::Reference(r) => {
+                let r = r.clone();
+                match &r.base {
+                    crate::value::ReferenceBase::Environment(env_idx) => {
+                        let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
+                        let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                        // Search from the reference's env, not the current env,
+                        // so that the reference captures the scope where it was created.
+                        match env::get_checked(&self.heap, *env_idx, &name) {
+                            Ok(Some(val)) => Ok(val),
+                            Ok(None) => {
+                                // Binding not found in this env chain; fall
+                                // back to global lookup.
+                                match env::get_checked(&self.heap, self.global, &name) {
+                                    Ok(Some(val)) => Ok(val),
+                                    _ => {
+                                        if r.strict {
+                                            Err(Error::reference(format!(
+                                                "{} is not defined",
+                                                name
+                                            )))
+                                        } else {
+                                            Ok(Value::Undefined)
+                                        }
+                                    }
+                                }
+                            }
+                            Err(true) => {
+                                // TDZ violation.
+                                Err(Error::reference(format!(
+                                    "Cannot access '{}' before initialization",
+                                    name
+                                )))
+                            }
+                            Err(false) => {
+                                // Binding not found.
+                                if r.strict {
+                                    Err(Error::reference(format!("{} is not defined", name)))
+                                } else {
+                                    Ok(Value::Undefined)
+                                }
+                            }
+                        }
+                    }
+                    crate::value::ReferenceBase::Value(base) => match &r.name {
+                        crate::value::PropertyKey::Str(s) => self.get_property(base, s),
+                        crate::value::PropertyKey::Symbol(id) => {
+                            self.get_property(base, &format!("[Symbol {}]", id))
+                        }
+                    },
+                }
+            }
+            _ => Ok(v.clone()),
+        }
+    }
+
+    /// Spec PutValue (6.2.4.3): if `v` is a Reference, store `value` into
+    /// the referenced binding/property. For environment-record-based
+    /// references, this uses SetMutableBinding on the reference's env (not
+    /// the current env), preserving the original binding even if it was
+    /// deleted between GetValue and PutValue (the `with`+compound-assign case).
+    /// For property references, this calls [[Set]] on the base object.
+    pub(crate) fn put_value(&mut self, v: &Value, value: Value) -> error::Result<()> {
+        match v {
+            Value::Reference(r) => {
+                let r = r.clone();
+                match &r.base {
+                    crate::value::ReferenceBase::Environment(env_idx) => {
+                        let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
+                        // Try to set in the reference's env chain first.
+                        if env::set(&self.heap, *env_idx, &name, value.clone()) {
+                            return Ok(());
+                        }
+                        // Not found in env chain: in sloppy mode, create a
+                        // global var; in strict mode, throw ReferenceError.
+                        if r.strict {
+                            return Err(Error::reference(format!("{} is not defined", name)));
+                        }
+                        env::declare_var(&self.heap, self.global, &name, value);
+                    }
+                    crate::value::ReferenceBase::Value(base) => match &r.name {
+                        crate::value::PropertyKey::Str(s) => self.set_property(base, s, value)?,
+                        crate::value::PropertyKey::Symbol(id) => {
+                            let key = crate::value::PropertyKey::Symbol(*id);
+                            self.set_property_key(base, &Value::Symbol(*id), value)?
+                        }
+                    },
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Build a frozen tagged-template object and its frozen `raw` array per
     /// GetTemplateObject. Both objects are ordinary objects with
     /// Array.prototype and class_name "Array" so `Array.isArray` recognizes
