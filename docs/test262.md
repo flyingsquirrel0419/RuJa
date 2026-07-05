@@ -187,6 +187,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   properties with the required `name` and `length`. This closes the focused
   BigInt fixed-width static cluster at 14 pass / 0 fail / 14 skip and improves
   the broader `built-ins/BigInt` smoke run to 49 pass / 25 fail / 29 skip.
+- **BigInt prototype conversion methods** — `BigInt.prototype.valueOf` now
+  returns only primitive BigInt receiver data, and
+  `BigInt.prototype.toString(radix)` now handles radices 2 through 36 with
+  required `ToNumber`/`ToIntegerOrInfinity` validation. BigInt prototype
+  descriptors, primitive-wrapper `Object(value)` prototype wiring, and ordinary
+  `ToPrimitive` lookup for boxed primitives were tightened as part of the same
+  cluster. This closes the focused BigInt prototype/valueOf/toString cluster
+  at 16 pass / 0 fail / 5 skip and brings the broader `built-ins/BigInt` smoke
+  run to 74 pass / 0 fail / 29 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

@@ -22,7 +22,7 @@ pub(crate) mod proxy;
 pub(crate) mod typed_array;
 pub(crate) use function::*;
 pub(crate) use global::{
-    bigint_as_int_n, bigint_as_uint_n, bigint_to_string, function_constructor,
+    bigint_as_int_n, bigint_as_uint_n, bigint_to_string, bigint_value_of, function_constructor,
     generator_function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan,
     global_parse_float, global_parse_int,
 };
@@ -403,6 +403,12 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         "parseInt",
         Value::Object(parse_int_idx),
     );
+    if let Some(object) = crate::environment::get(&vm.heap, vm.global, "Object") {
+        define_realm_global(vm, realm_env, &global, "Object", object);
+    }
+    if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
+        define_realm_global(vm, realm_env, &global, "BigInt", bigint);
+    }
 
     Ok(global)
 }
@@ -2187,18 +2193,26 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             vm.heap.with_obj(bi.0, |obj| {
                 if let HeapObj::Function(f) = obj {
                     *f.prototype.lock() = Some(bproto.clone());
+                    f.props
+                        .lock()
+                        .insert(PropertyKey::from("prototype"), const_prop(bproto.clone()));
                 }
             });
             let to_str = vm.new_native_function("toString", bigint_to_string, 0)?;
+            let value_of = vm.new_native_function("valueOf", bigint_value_of, 0)?;
             if let Value::Object(pi) = bproto {
                 vm.heap.with_obj(pi.0, |obj| {
                     obj.props().lock().insert(
+                        crate::value::PropertyKey::from("constructor"),
+                        data_prop(Value::Object(bi)),
+                    );
+                    obj.props().lock().insert(
                         crate::value::PropertyKey::from("toString"),
-                        crate::value::PropertyDescriptor::data(Value::Object(to_str)),
+                        data_prop(Value::Object(to_str)),
                     );
                     obj.props().lock().insert(
                         crate::value::PropertyKey::from("valueOf"),
-                        crate::value::PropertyDescriptor::data(Value::Object(to_str)),
+                        data_prop(Value::Object(value_of)),
                     );
                 });
             }

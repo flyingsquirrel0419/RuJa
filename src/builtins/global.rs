@@ -252,19 +252,59 @@ pub(crate) fn bigint_as_uint_n(
     Ok(Value::BigInt(bigint_uint_n(bits, bigint)))
 }
 
-/// `BigInt.prototype.toString()`: returns the decimal string of the BigInt.
+fn this_bigint_value(vm: &mut Vm, value: Option<Value>) -> error::Result<BigInt> {
+    match value {
+        Some(Value::BigInt(n)) => Ok(n),
+        Some(Value::Object(idx)) => {
+            let primitive = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    od.primitive.lock().clone()
+                } else {
+                    None
+                }
+            });
+            if let Some(Value::BigInt(n)) = primitive {
+                Ok(n)
+            } else {
+                Err(Error::type_err(
+                    "BigInt method called on incompatible receiver",
+                ))
+            }
+        }
+        _ => Err(Error::type_err(
+            "BigInt method called on incompatible receiver",
+        )),
+    }
+}
+
+/// `BigInt.prototype.toString([radix])`: stringify a BigInt in radix 2..36.
 pub(crate) fn bigint_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let _ = args;
-    let v = match this {
-        Some(Value::BigInt(n)) => n.clone(),
-        Some(_) => num_bigint::BigInt::from(0),
-        None => num_bigint::BigInt::from(0),
+    let n = this_bigint_value(vm, this)?;
+    let radix = match args.first() {
+        None | Some(Value::Undefined) => 10,
+        Some(value) => {
+            let number = vm.to_number(value)?;
+            let integer = if number.is_nan() { 0.0 } else { number.trunc() };
+            if !(2.0..=36.0).contains(&integer) {
+                return Err(Error::range("toString() radix must be between 2 and 36"));
+            }
+            integer as u32
+        }
     };
-    Ok(Value::String(Arc::from(v.to_string().as_str())))
+    Ok(Value::String(Arc::from(n.to_str_radix(radix).as_str())))
+}
+
+/// `BigInt.prototype.valueOf()`: return the primitive BigInt value.
+pub(crate) fn bigint_value_of(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::BigInt(this_bigint_value(vm, this)?))
 }
 
 /// `eval(x)`: if `x` is not a string, return it as-is. Otherwise parse and

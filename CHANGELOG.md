@@ -68,6 +68,16 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   non-constructable native functions. The focused BigInt fixed-width static
   cluster now runs at **14 pass / 0 fail / 14 skip**, and the broader
   `built-ins/BigInt` smoke run improves to **49 pass / 25 fail / 29 skip**.
+- **BigInt prototype conversion methods**: implemented
+  `BigInt.prototype.valueOf` and radix-aware
+  `BigInt.prototype.toString(radix)` with `thisBigIntValue` receiver checks,
+  `ToNumber`/`ToIntegerOrInfinity` radix validation, own
+  `BigInt.prototype.constructor`, the non-writable `BigInt` constructor
+  `prototype` property, primitive-wrapper `Object(value)` prototype wiring,
+  and ordinary `ToPrimitive` lookup for boxed primitives. The focused BigInt
+  prototype/valueOf/toString cluster now runs at **16 pass / 0 fail / 5 skip**,
+  and the broader `built-ins/BigInt` smoke run is now **74 pass / 0 fail / 29
+  skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

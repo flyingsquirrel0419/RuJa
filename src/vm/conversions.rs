@@ -189,21 +189,13 @@ impl Vm {
                         .collect();
                     Arc::from(parts.join(",").as_str())
                 } else {
-                    // Honor a user-defined `toString` method (it returns a
-                    // primitive that we then stringify). This is evaluated
-                    // outside the heap borrow so it can call back into the VM.
-                    let ts = self.get_property(v, "toString")?;
-                    if matches!(ts, Value::Object(_)) {
-                        let r = self.call_function(&ts, &[], Some(v.clone()))?;
-                        if !matches!(r, Value::Object(_)) {
-                            return self.to_string(&r);
-                        }
+                    let prim = self.to_primitive_hint(v, true)?;
+                    if matches!(prim, Value::Object(_)) {
+                        return Err(Error::type_err(
+                            "Cannot convert object to primitive value".to_string(),
+                        ));
                     }
-                    // Default: [object <className>]
-                    let name = self
-                        .heap
-                        .with_obj(idx.0, |obj| obj.class_name().to_string());
-                    Arc::from(format!("[object {}]", name).as_str())
+                    return self.to_string(&prim);
                 }
             }
             Value::Symbol(_) => {
@@ -278,23 +270,6 @@ impl Vm {
                 };
                 let effective_string_hint = string_hint || is_date_default;
 
-                // Boxed primitives (`new Number(5)`, `Object("x")`):
-                // ToPrimitive returns the wrapped primitive via valueOf,
-                // unless a string hint asks for toString (e.g. `${...}`).
-                if !effective_string_hint {
-                    if let Value::Object(idx) = v {
-                        let prim = self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::Object(od) = o {
-                                od.primitive.lock().clone()
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(p) = prim {
-                            return Ok(p);
-                        }
-                    }
-                }
                 // Arrays have a well-defined default toString (join with ",");
                 // honor it directly rather than looking up a method that may
                 // not be installed on Array.prototype yet.
@@ -821,6 +796,17 @@ impl Vm {
                     return Ok(self
                         .heap
                         .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
+                }
+                if let Some(value) = self.heap.with_obj(idx.0, |o| {
+                    o.props().lock().get(&pkey).and_then(|d| {
+                        if d.is_accessor {
+                            None
+                        } else {
+                            Some(d.value.clone())
+                        }
+                    })
+                }) {
+                    return Ok(value);
                 }
                 // globalThis routes property reads to the global environment.
                 let is_global_this = self.heap.with_obj(idx.0, |o| {

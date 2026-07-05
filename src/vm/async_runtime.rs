@@ -282,7 +282,23 @@ impl Vm {
             Value::Object(idx) => Value::Object(*idx),
             _ => {
                 let idx = self.new_object()?;
-                self.set_primitive(&Value::Object(idx), value.clone());
+                let obj = Value::Object(idx);
+                self.set_primitive(&obj, value.clone());
+                let proto = match value {
+                    Value::String(_) => Some(self.string_proto.clone()),
+                    Value::Number(_) => Some(self.number_proto.clone()),
+                    Value::Bool(_) => Some(self.boolean_proto.clone()),
+                    Value::BigInt(_) => Some(self.bigint_proto.clone()),
+                    Value::Symbol(_) => Some(self.symbol_proto.clone()),
+                    _ => None,
+                };
+                if let Some(proto) = proto {
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Object(od) = o {
+                            *od.proto.lock() = Some(proto);
+                        }
+                    });
+                }
                 Value::Object(idx)
             }
         })

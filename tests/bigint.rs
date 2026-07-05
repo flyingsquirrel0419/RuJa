@@ -204,6 +204,43 @@ fn bigint_to_string() {
 }
 
 #[test]
+fn bigint_prototype_valueof_and_tostring_radix() {
+    assert_eq!(
+        run(r#"
+            [
+              BigInt.prototype.valueOf.call(0n).toString(),
+              BigInt.prototype.valueOf.call(Object(-1n)).toString(),
+              (35n).toString(36),
+              (-255n).toString(16),
+              Object(10n).toString(2),
+              Object.getPrototypeOf(Object(1n)) === BigInt.prototype,
+              Object.prototype.propertyIsEnumerable.call(BigInt.prototype, "valueOf"),
+              BigInt.prototype.valueOf.name,
+              BigInt.prototype.toString.length,
+              BigInt.prototype.constructor === BigInt
+            ].join(",");
+            "#),
+        Value::String(Arc::from("0,-1,z,-ff,1010,true,false,valueOf,0,true"))
+    );
+    assert!(
+        run_err("BigInt.prototype.valueOf.call({});").contains("TypeError"),
+        "plain objects must not be accepted as BigInt wrappers"
+    );
+    assert!(
+        run_err("BigInt.prototype.toString.call(BigInt.prototype);").contains("TypeError"),
+        "BigInt.prototype itself has no [[BigIntData]]"
+    );
+    assert!(
+        run_err("(0n).toString(1);").contains("RangeError"),
+        "radix below 2 should throw RangeError"
+    );
+    assert!(
+        run_err("(0n).toString(0n);").contains("TypeError"),
+        "radix conversion uses ToNumber and rejects BigInt"
+    );
+}
+
+#[test]
 fn bigint_large_exact() {
     assert_eq!(
         run("9007199254740993n === 9007199254740993n;"),

@@ -80,9 +80,8 @@ guarantees, run RuJa in a separately killable process as well.
 - Static class field declarations (`static x = 1`) are not yet supported;
   static initialization blocks (`static { }`) are
 - BigInt: arbitrary precision via `num-bigint`; fixed-width
-  `asIntN`/`asUintN` and DataView 64-bit interop are implemented, but
-  `BigInt.prototype.toString(radix)` and some prototype descriptor edges are
-  still incomplete
+  `asIntN`/`asUintN`, prototype conversion methods, and DataView 64-bit
+  interop are implemented
 - Wrapper objects (`new String(x)`, `new Number(x)`, `new Boolean(x)`,
   `Object(x)`) now store the wrapped primitive, so `.valueOf()` and
   `ToPrimitive` resolve to it (`new Number(5) + 1 === 6`). Boxed-string
