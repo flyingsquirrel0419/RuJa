@@ -224,7 +224,7 @@ pub(crate) fn function_constructor(
     _: Option<Value>,
 ) -> error::Result<Value> {
     use crate::ast::FunctionExpr;
-    use crate::value::{FunctionData, FunctionKind};
+    use crate::value::{FunctionData, FunctionKind, PropertyDescriptor, PropertyKey};
     use std::sync::Arc;
 
     // Build the parameter source: all args except the last, joined by commas.
@@ -310,17 +310,43 @@ pub(crate) fn function_constructor(
         primitive: Mutex::new(None),
     });
     let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)?));
+    let function_object_proto = if let Some(new_target) = vm.current_native_new_target.clone() {
+        let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
+        if matches!(proto, Value::Object(_)) {
+            proto
+        } else {
+            vm.function_proto.clone()
+        }
+    } else {
+        vm.function_proto.clone()
+    };
+    let mut props = IndexMap::new();
+    let mut len_desc = PropertyDescriptor::data(Value::Number(fdef.length as f64));
+    len_desc.writable = false;
+    len_desc.enumerable = false;
+    len_desc.configurable = true;
+    props.insert(PropertyKey::from("length"), len_desc);
+    let mut name_desc = PropertyDescriptor::data(Value::String(Arc::from("anonymous")));
+    name_desc.writable = false;
+    name_desc.enumerable = false;
+    name_desc.configurable = true;
+    props.insert(PropertyKey::from("name"), name_desc);
+    let mut proto_desc = PropertyDescriptor::data(proto_val.clone());
+    proto_desc.enumerable = false;
+    proto_desc.configurable = false;
+    props.insert(PropertyKey::from("prototype"), proto_desc);
+
     let fd = FunctionData {
         name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
         closure: vm.global,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(proto_val.clone())),
-        proto: Mutex::new(match vm.function_proto {
-            Value::Object(_) => Some(vm.function_proto.clone()),
+        proto: Mutex::new(match function_object_proto {
+            Value::Object(_) => Some(function_object_proto),
             _ => None,
         }),
-        props: Mutex::new(IndexMap::new()),
+        props: Mutex::new(props),
     };
     let f_idx = vm.heap.allocate(HeapObj::Function(fd))?;
     // link prototype.constructor back to the function

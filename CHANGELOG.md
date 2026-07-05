@@ -4,9 +4,16 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.3%** (up from 88.6%).
-Current supported subset count: **4152 pass / 28 fail / 0 timeout**.
+Supported-subset pass rate: **99.5%** (up from 88.6%).
+Current supported subset count: **4158 pass / 22 fail / 0 timeout**.
 
+- **Dynamic Function subclass construction**: native constructors now preserve
+  the active `new.target` for native constructor bodies, and the dynamic
+  `Function` constructor now creates function objects with the
+  `new.target.prototype` internal prototype plus own `length`, `name`, and
+  `prototype` descriptors. This closes Function subclass `length`/`name` and
+  `instanceof` checks, improves GeneratorFunction subclass descriptor checks,
+  and raises the supported subset to **4158 pass / 22 fail / 0 timeout**.
 - **Class method descriptor validation**: static class methods and accessors now
   route through own-property descriptor validation when defining constructor
   properties, so computed static `prototype` methods/accessors throw instead of

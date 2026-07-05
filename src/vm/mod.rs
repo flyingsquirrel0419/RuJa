@@ -31,6 +31,9 @@ pub struct Vm {
     /// Native functions sometimes need the active callee object, for example
     /// Error subclass constructors called without `new`.
     pub(crate) current_native_callee: Option<Value>,
+    /// Native constructors need the active `new.target` for
+    /// OrdinaryCreateFromConstructor-style allocation.
+    pub(crate) current_native_new_target: Option<Value>,
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) object_proto: Value,
@@ -256,6 +259,7 @@ impl Vm {
             global_this: Value::Undefined,
             pending_new_target: None,
             current_native_callee: None,
+            current_native_new_target: None,
             stack: Vec::new(),
             frames: Vec::new(),
             object_proto: Value::Undefined,

@@ -328,7 +328,8 @@ impl Vm {
         match kind_info {
             Some(FuncCallInfo::Native(f)) => {
                 let saved_native_callee = self.current_native_callee.replace(Value::Object(idx));
-                let _new_target = self.pending_new_target.take();
+                let saved_native_new_target = self.current_native_new_target.take();
+                self.current_native_new_target = self.pending_new_target.take();
                 // Workaround: in release builds, the function pointer for
                 // Object.prototype.toString doesn't dispatch correctly.
                 // When the callee is named "toString" and the receiver's
@@ -365,6 +366,7 @@ impl Vm {
                                 let result =
                                     crate::builtins::object_to_string(self, this.clone(), None);
                                 self.current_native_callee = saved_native_callee;
+                                self.current_native_new_target = saved_native_new_target;
                                 return result;
                             }
                         }
@@ -372,6 +374,7 @@ impl Vm {
                 }
                 let result = f(self, args, this);
                 self.current_native_callee = saved_native_callee;
+                self.current_native_new_target = saved_native_new_target;
                 result
             }
             Some(FuncCallInfo::Interpreted {

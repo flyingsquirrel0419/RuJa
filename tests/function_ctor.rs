@@ -56,6 +56,40 @@ fn function_ctor_has_prototype() {
 }
 
 #[test]
+fn function_ctor_defines_own_name_and_length_descriptors() {
+    let src = r#"
+        let f = new Function("a", "b", "return a + b;");
+        let len = Object.getOwnPropertyDescriptor(f, "length");
+        let name = Object.getOwnPropertyDescriptor(f, "name");
+        [
+          f(2, 3),
+          len.value,
+          len.writable,
+          len.enumerable,
+          len.configurable,
+          name.value,
+          name.writable,
+          name.enumerable,
+          name.configurable
+        ].join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("5,2,false,false,true,anonymous,false,false,true"))
+    );
+}
+
+#[test]
+fn function_subclass_instances_use_new_target_prototype() {
+    let src = r#"
+        class Subclass extends Function {}
+        const sub = new Subclass("return 1;");
+        (sub instanceof Subclass) + ":" + (sub instanceof Function) + ":" + sub();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true:true:1")));
+}
+
+#[test]
 fn function_ctor_use_strict_body() {
     // A "use strict" directive inside the body makes the function strict.
     let mut vm = ruja::Vm::new().expect("failed to initialize VM");

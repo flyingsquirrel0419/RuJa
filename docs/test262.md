@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2-24.3% of all matrix files; 49.9-50.0% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.3% (4152 pass / 28 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.5% (4158 pass / 22 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.3%).** It reflects the portion of the spec
+supported-subset rate (99.5%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -92,8 +92,8 @@ vary slightly because a small number of tests can cross the timeout boundary:
 |--------|-------|
 | Total matrix files | 47,717 |
 | Actually run | 23,162-23,175 |
-| Pass | 11,568-11,578 |
-| Fail | 11,588-11,594 |
+| Pass | 11,568-11,593 |
+| Fail | 11,571-11,594 |
 | Timeout | 8-13 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **49.9-50.0%** |
@@ -128,7 +128,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 99.3%:
+~56% to 99.5%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -147,6 +147,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Class method descriptor validation** — computed static class methods and
   accessors now respect non-configurable constructor properties, so attempts
   to redefine a class constructor's `prototype` property throw `TypeError`.
+- **Dynamic Function subclass construction** — native constructors preserve
+  the active `new.target`, and dynamic `Function` instances get
+  `new.target.prototype` as their internal prototype plus own `length` and
+  `name` descriptors, so Function subclass `instanceof` and descriptor checks
+  pass.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending
