@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **94.1%** (up from 88.6%).
-Current supported subset count: **3931 pass / 247 fail / 2 timeout**.
+Supported-subset pass rate: **94.2%** (up from 88.6%).
+Current supported subset count: **3934 pass / 244 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -136,6 +136,12 @@ Current supported subset count: **3931 pass / 247 fail / 2 timeout**.
   identifier, and single-statement bodies still use ExpressionStatement
   lookahead rules, reducing `language/statements/let/syntax` to
   **26 pass / 4 fail**.
+- **Parenthesized assignment-pattern targets**: parenthesized object/array
+  literals are no longer accepted as assignment targets for an outer
+  assignment. This preserves valid inner destructuring such as `({} = obj)`
+  while rejecting `({}) = 1` and arrow-expression bodies like
+  `() => ({}) = 1`, reducing `language/expressions/assignmenttargettype` to
+  **313 pass / 3 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

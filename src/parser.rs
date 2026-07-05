@@ -1473,6 +1473,10 @@ impl Parser {
     fn parse_assign_inner(&mut self) -> error::Result<Expr> {
         let left_start = self.pos;
         let left = self.parse_ternary()?;
+        let left_is_parenthesized_pattern = matches!(
+            self.tokens.get(left_start).map(|t| &t.kind),
+            Some(TokenKind::LParen)
+        ) && matches!(left, Expr::Array(_) | Expr::Object(_));
         let left_is_parenthesized_ident = matches!(
             self.tokens.get(left_start).map(|t| &t.kind),
             Some(TokenKind::LParen)
@@ -1500,7 +1504,7 @@ impl Parser {
         let mut right = self.parse_assign()?;
         // Validate that the left side is a valid assignment target.
         // Invalid: literals, binary ops, unary ops, function calls, etc.
-        if !Self::is_assignment_target(&left) {
+        if left_is_parenthesized_pattern || !Self::is_assignment_target(&left) {
             return Err(error::Error::syntax(
                 "Invalid left-hand side in assignment".to_string(),
             ));
@@ -3477,6 +3481,15 @@ mod tests {
 
         assert!(Parser::parse("function f() { let await; }").is_ok());
         assert!(Parser::parse("l\\u0065t\na;\nvar a;").is_ok());
+    }
+
+    #[test]
+    fn parse_parenthesized_patterns_are_not_assignment_targets() {
+        for src in ["({}) = 1;", "() => ({}) = 1;", "async () => ({}) = 1;"] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        assert!(Parser::parse("({} = {});").is_ok());
     }
 
     #[test]
