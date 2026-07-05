@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **95.9%** (up from 88.6%).
-Current supported subset count: **4007 pass / 171 fail / 2 timeout**.
+Supported-subset pass rate: **96.0%** (up from 88.6%).
+Current supported subset count: **4009 pass / 169 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -258,6 +258,12 @@ Current supported subset count: **4007 pass / 171 fail / 2 timeout**.
   enclosing super binding. This raises `language/expressions/super` to
   **34 pass / 2 fail** and the supported subset to
   **4007 pass / 171 fail / 2 timeout**.
+- **Computed `super[...]` putvalue evaluation order**: compound assignment and
+  update expressions now evaluate a `super` property target by checking the
+  derived constructor `this` binding before evaluating a computed property
+  expression, then reuse the same receiver/base/key reference for the get and
+  set. This closes `language/expressions/super` at **36 pass / 0 fail** and
+  raises the supported subset to **4009 pass / 169 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

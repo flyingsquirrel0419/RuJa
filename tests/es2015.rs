@@ -381,6 +381,18 @@ fn super_constructor_call_accepts_mixed_spread_arguments() {
     );
 }
 
+#[test]
+fn computed_super_putvalue_checks_this_before_key_expression() {
+    assert_eq!(
+        run("var count=0; class A{constructor(){count++; throw new Error('base');}} class B extends A{constructor(){super[super()] += 0;}} var out; try{new B();}catch(e){out=(e instanceof ReferenceError)+':'+count;} out;"),
+        Value::String(Arc::from("true:0"))
+    );
+    assert_eq!(
+        run("var count=0; class A{constructor(){count++; throw new Error('base');}} class B extends A{constructor(){super[super()]++;}} var out; try{new B();}catch(e){out=(e instanceof ReferenceError)+':'+count;} out;"),
+        Value::String(Arc::from("true:0"))
+    );
+}
+
 // ---- Symbol-keyed properties ----
 
 #[test]
