@@ -44,6 +44,42 @@ fn super_call() {
 }
 
 #[test]
+fn class_super_property_uses_home_object_prototype() {
+    assert_eq!(
+        run("class A{constructor(){this.s=super.toString();}} new A().s === Object.prototype.toString.call(new A());"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class A{m(){super.x = 1;}} var a = new A(); a.m(); a.x;"),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
+fn static_class_super_property_uses_super_constructor() {
+    assert_eq!(
+        run("class B{static get x(){return 2;} static method(){return 1;}} class C extends B{static method(){return super.x + super.method();}} C.method();"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("class B{static get x(){return 2;} static method(){return 1;}} class C extends B{static get x(){return super.x + super.method();}} C.x;"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("class B{static get x(){return 2;} static method(){return 1;}} class C extends B{static set x(v){this.y = v + super.x + super.method();}} C.x = 3; C.y;"),
+        Value::Number(6.0)
+    );
+}
+
+#[test]
+fn class_super_capture_is_per_class() {
+    assert_eq!(
+        run("class B{static get x(){return 2;}} class C extends B{static m(){return super.x;}} class D{} C.m();"),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
 fn static_method() {
     assert_eq!(
         run("class C{static s(){return 42;}} C.s();"),

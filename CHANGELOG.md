@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **97.3%** (up from 88.6%).
-Current supported subset count: **4064 pass / 114 fail / 2 timeout**.
+Supported-subset pass rate: **97.4%** (up from 88.6%).
+Current supported subset count: **4069 pass / 109 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -301,6 +301,14 @@ Current supported subset count: **4064 pass / 114 fail / 2 timeout**.
   `static` modifier. This improves `language/statements/class/syntax` to
   **12 pass / 1 fail** and raises the supported subset to
   **4064 pass / 114 fail / 2 timeout**.
+- **Class `super` property HomeObject capture**: class evaluation now gives
+  constructor and instance methods a per-class `#super` binding based on
+  `Class.prototype.[[Prototype]]`, while static methods, static accessors, and
+  static blocks capture `Class.[[Prototype]]` in their own closure environment.
+  This allows base-class constructor and method `super.prop`, fixes static
+  `super.x` lookup on subclasses, closes `language/statements/class/super` and
+  `language/statements/class/syntax` at **21 pass / 0 fail**, and raises the
+  supported subset to **4069 pass / 109 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

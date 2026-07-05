@@ -171,6 +171,7 @@ pub enum Op {
     SetElem,
     DeleteProp,
     SetProto,        // pop [proto, obj]; set obj's [[Prototype]] to proto
+    GetProto,        // pop [obj]; push obj.[[Prototype]] or null
     ValidateExtends, // pop [parentCtor]; throw TypeError if not a constructor or prototype is invalid
     Inc,             // pop [val]; push val+1 (Number or BigInt)
     Dec,             // pop [val]; push val-1 (Number or BigInt)

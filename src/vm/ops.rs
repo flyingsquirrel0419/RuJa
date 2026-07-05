@@ -1939,6 +1939,16 @@ impl Vm {
                         }
                     }
                 }
+                Op::GetProto => {
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let proto = match &obj {
+                        Value::Object(idx) => self
+                            .heap
+                            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)),
+                        _ => Value::Null,
+                    };
+                    self.stack.push(proto);
+                }
                 Op::Throw => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     // If a finally guards this region, divert to it with a
