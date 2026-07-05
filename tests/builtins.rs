@@ -78,6 +78,11 @@ fn string_methods() {
         Value::String(Arc::from("HELLO"))
     );
     assert_eq!(run("'hello'.charAt(1);"), Value::String(Arc::from("e")));
+    assert_eq!(
+        run("new String('abc123').charAt(2);"),
+        Value::String(Arc::from("c"))
+    );
+    assert_eq!(run("String.prototype.length;"), Value::Number(0.0));
 }
 
 #[test]
@@ -768,6 +773,14 @@ fn boxed_string_valueof() {
     assert_eq!(
         run("new String('hi').valueOf();"),
         Value::String(std::sync::Arc::from("hi"))
+    );
+}
+
+#[test]
+fn date_static_parse_exists() {
+    assert_eq!(
+        run("typeof Date.parse + ':' + Date.parse('123') + ':' + typeof Date.UTC + ':' + typeof Date.prototype.getUTCFullYear + ':' + typeof Date.prototype.setUTCFullYear;"),
+        Value::String(std::sync::Arc::from("function:123:function:function:function"))
     );
 }
 

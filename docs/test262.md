@@ -93,12 +93,12 @@ matrix, so this baseline is recorded as the observed range:
 |--------|-------|
 | Total matrix files | 47,717 |
 | Actually run | 23,162-23,164 |
-| Pass | 11,187-11,189 |
-| Fail | 11,975 |
+| Pass | 11,458-11,461 |
+| Fail | 11,703-11,704 |
 | Timeout | 11-13 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **48.3%** |
-| **Pass rate (of total)** | **23.4%** |
+| **Pass rate (of run)** | **49.5%** |
+| **Pass rate (of total)** | **24.0%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -510,10 +510,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `$262.createRealm()` case, closes
   `language/expressions/conditional/in-branch-1.js`, and raises the supported
   subset to **4124 pass / 56 fail / 0 timeout**.
+- **Boxed String methods and Date method surface** — String prototype methods
+  now read the wrapped primitive from `new String(...)` objects, so indexed
+  operations like `charAt` agree with boxed string index properties. The
+  bootstrap also installs `String.prototype.length`, `Date.parse`, `Date.UTC`,
+  and the ES5 Date prototype method surface needed for property-access checks.
+  This closes `language/expressions/property-accessors` at **15 pass / 0
+  fail** and raises the supported subset to **4127 pass / 53 fail / 0
+  timeout**.
 
 ## Why the rate is not higher
 
-The remaining 56 failures in the supported subset cluster
-around class behavior, super semantics, property access, and
+The remaining 53 failures in the supported subset cluster
+around class behavior, super semantics, switch scoping/redeclaration, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

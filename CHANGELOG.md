@@ -5,8 +5,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **98.7%** (up from 88.6%).
-Current supported subset count: **4124 pass / 56 fail / 0 timeout**.
+Current supported subset count: **4127 pass / 53 fail / 0 timeout**.
 
+- **Boxed String methods and Date method surface**: String prototype methods
+  now read the wrapped primitive from `new String(...)` objects, so indexed
+  operations like `charAt` agree with boxed string index properties. The
+  bootstrap also installs `String.prototype.length`, `Date.parse`, `Date.UTC`,
+  and the ES5 Date prototype method surface needed for property-access checks.
+  This closes `language/expressions/property-accessors` at **15 pass / 0
+  fail** and raises the supported subset to **4127 pass / 53 fail / 0
+  timeout**.
 - **Tagged-template call context and conditional `in` grammar**: tagged
   templates used as member expressions now preserve their receiver as `this`,
   ``new tag`...` `` constructs the tag result rather than the tag function

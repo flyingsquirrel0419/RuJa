@@ -6,16 +6,17 @@ use super::*;
 pub(crate) fn str_val(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
     match this {
         Some(Value::String(s)) => Ok(s.to_string()),
-        Some(Value::Object(idx)) => Ok(vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(o) = o {
-                if let Some(cn) = &o.class_name {
+        Some(Value::Object(idx)) => Ok(vm.heap.with_obj(idx.0, |o| match o {
+            HeapObj::Object(o) => {
+                if let Some(Value::String(s)) = o.primitive.lock().clone() {
+                    s.to_string()
+                } else if let Some(cn) = &o.class_name {
                     cn.to_string()
                 } else {
                     "[object Object]".into()
                 }
-            } else {
-                "[object Object]".into()
             }
+            _ => "[object Object]".into(),
         })),
         Some(v) => Ok(vm.to_string(v)?.to_string()),
         None => Ok("undefined".into()),

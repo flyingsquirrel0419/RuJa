@@ -657,6 +657,37 @@ pub(crate) fn date_get_time(
     }
     Ok(Value::Number(f64::NAN))
 }
+
+pub(crate) fn date_get_component(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::Number(f64::NAN))
+}
+
+pub(crate) fn date_set_component(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let value = match args.first() {
+        Some(v) => vm.to_number(v)?,
+        None => f64::NAN,
+    };
+    if let Some(Value::Object(idx)) = &this {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(o) = o {
+                o.props.lock().insert(
+                    PropertyKey::from("__time__"),
+                    data_prop(Value::Number(value)),
+                );
+            }
+        });
+    }
+    Ok(Value::Number(value))
+}
+
 pub(crate) fn date_to_string(
     _vm: &mut Vm,
     _args: &[Value],
@@ -673,6 +704,32 @@ pub(crate) fn date_now(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     Ok(Value::Number(now_ms()))
+}
+
+pub(crate) fn date_parse(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let source = match args.first() {
+        Some(v) => vm.to_string(v)?,
+        None => return Ok(Value::Number(f64::NAN)),
+    };
+    if let Ok(n) = source.trim().parse::<f64>() {
+        return Ok(Value::Number(n));
+    }
+    Ok(Value::Number(f64::NAN))
+}
+
+pub(crate) fn date_utc(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let year = match args.first() {
+        Some(v) => vm.to_number(v)?,
+        None => f64::NAN,
+    };
+    if year.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    Ok(Value::Number(year))
 }
 
 pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {

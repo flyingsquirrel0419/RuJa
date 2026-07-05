@@ -26,7 +26,8 @@ pub(crate) use global::{
     global_is_nan, global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
-    build_json, build_reflect, date_constructor, date_get_time, date_now, date_to_string,
+    build_json, build_reflect, date_constructor, date_get_component, date_get_time, date_now,
+    date_parse, date_set_component, date_to_string, date_utc,
 };
 pub(crate) use math::{build_console, build_math};
 pub(crate) use proxy::*;
@@ -1636,18 +1637,61 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Date",
         date_constructor,
         &[
+            ("valueOf", date_get_time, 0),
             ("getTime", date_get_time, 0),
+            ("getFullYear", date_get_component, 0),
+            ("getUTCFullYear", date_get_component, 0),
+            ("getMonth", date_get_component, 0),
+            ("getUTCMonth", date_get_component, 0),
+            ("getDate", date_get_component, 0),
+            ("getUTCDate", date_get_component, 0),
+            ("getDay", date_get_component, 0),
+            ("getUTCDay", date_get_component, 0),
+            ("getHours", date_get_component, 0),
+            ("getUTCHours", date_get_component, 0),
+            ("getMinutes", date_get_component, 0),
+            ("getUTCMinutes", date_get_component, 0),
+            ("getSeconds", date_get_component, 0),
+            ("getUTCSeconds", date_get_component, 0),
+            ("getMilliseconds", date_get_component, 0),
+            ("getUTCMilliseconds", date_get_component, 0),
+            ("setTime", date_set_component, 1),
+            ("setMilliseconds", date_set_component, 1),
+            ("setUTCMilliseconds", date_set_component, 1),
+            ("setSeconds", date_set_component, 1),
+            ("setUTCSeconds", date_set_component, 1),
+            ("setMinutes", date_set_component, 1),
+            ("setUTCMinutes", date_set_component, 1),
+            ("setHours", date_set_component, 1),
+            ("setUTCHours", date_set_component, 1),
+            ("setDate", date_set_component, 1),
+            ("setUTCDate", date_set_component, 1),
+            ("setMonth", date_set_component, 1),
+            ("setUTCMonth", date_set_component, 1),
+            ("setFullYear", date_set_component, 1),
+            ("setUTCFullYear", date_set_component, 1),
             ("toString", date_to_string, 0),
+            ("toLocaleString", date_to_string, 0),
+            ("toUTCString", date_to_string, 0),
         ],
     )?;
     vm.date_proto = Value::Object(date_proto);
     define_global(vm, "Date", Value::Object(date_ctor));
     let now_fn = vm.new_native_function("now", date_now, 0)?;
+    let parse_fn = vm.new_native_function("parse", date_parse, 1)?;
+    let utc_fn = vm.new_native_function("UTC", date_utc, 7)?;
     if let Value::Object(dc) = Value::Object(date_ctor) {
         vm.heap.with_obj(dc.0, |obj| {
             obj.props()
                 .lock()
                 .insert(PropertyKey::from("now"), data_prop(Value::Object(now_fn)));
+            obj.props().lock().insert(
+                PropertyKey::from("parse"),
+                data_prop(Value::Object(parse_fn)),
+            );
+            obj.props()
+                .lock()
+                .insert(PropertyKey::from("UTC"), data_prop(Value::Object(utc_fn)));
         });
     }
     // Array
@@ -1749,6 +1793,11 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         ],
     )?;
     vm.string_proto = Value::Object(str_proto);
+    vm.heap.with_obj(str_proto.0, |obj| {
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("length"), const_prop(Value::Number(0.0)));
+    });
     define_global(vm, "String", Value::Object(str_ctor));
     // String static methods
     let raw_fn = vm.new_native_function("raw", string_raw, 1)?;
