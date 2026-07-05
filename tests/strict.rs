@@ -103,3 +103,21 @@ fn strict_with_inside_block_scope_also_rejected() {
     let r = vm.run("\"use strict\"; { with({}){} }");
     assert!(r.is_err());
 }
+
+#[test]
+fn use_strict_directive_rejects_non_simple_params() {
+    for src in [
+        r#"function f(a = 0) { "use strict"; }"#,
+        r#"var f = function(a = 0) { "use strict"; }"#,
+        r#"var f = ({ m(a = 0) { "use strict"; } });"#,
+        r#"var f = (a = 0) => { "use strict"; };"#,
+        r#"function f([a]) { "use strict"; }"#,
+        r#"var f = ([a]) => { "use strict"; };"#,
+    ] {
+        let err = common::run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError for {src:?}, got {err}"
+        );
+    }
+}

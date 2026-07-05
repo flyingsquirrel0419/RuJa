@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.4%** (up from 88.6%).
-Current supported subset count: **3904 pass / 274 fail / 2 timeout**.
+Supported-subset pass rate: **93.6%** (up from 88.6%).
+Current supported subset count: **3911 pass / 267 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -110,6 +110,13 @@ Current supported subset count: **3904 pass / 274 fail / 2 timeout**.
   `Function.prototype.bind` therefore do not gain own `caller`/`arguments`
   properties but still inherit the required restricted accessors, reducing the
   `function` statement subset to **7 failures**.
+- **Function body `"use strict"` with non-simple parameters**: function
+  declarations, function expressions, object/class methods, and arrow block
+  bodies now reject a directive prologue `"use strict"` when the formal
+  parameter list contains defaults, rest, or destructuring. Directive
+  detection now runs before synthesized destructuring-parameter prelude
+  statements are prepended, reducing the `function` statement subset to
+  **6 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

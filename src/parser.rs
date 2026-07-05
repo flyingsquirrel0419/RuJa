@@ -294,6 +294,32 @@ impl Parser {
         false
     }
 
+    fn has_non_simple_params(
+        param_defaults: &[Option<Expr>],
+        rest_param: Option<&Arc<str>>,
+        has_destructuring_params: bool,
+    ) -> bool {
+        param_defaults.iter().any(Option::is_some)
+            || rest_param.is_some()
+            || has_destructuring_params
+    }
+
+    fn reject_use_strict_with_non_simple_params(
+        body_contains_use_strict: bool,
+        param_defaults: &[Option<Expr>],
+        rest_param: Option<&Arc<str>>,
+        has_destructuring_params: bool,
+    ) -> error::Result<()> {
+        if body_contains_use_strict
+            && Self::has_non_simple_params(param_defaults, rest_param, has_destructuring_params)
+        {
+            return Err(error::Error::syntax(
+                "'use strict' not allowed with non-simple parameters".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
         // Bound statement recursion so deeply nested `{{...}}` / `if(1) if(1)
         // ...` fails with a SyntaxError instead of overflowing the Rust
@@ -483,12 +509,20 @@ impl Parser {
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
         let mut body = self.parse_fn_body(false, false)?;
+        let body_contains_use_strict = Self::scan_directive_prologue(&body);
+        let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+        Self::reject_use_strict_with_non_simple_params(
+            body_contains_use_strict,
+            &param_defaults,
+            rest_param.as_ref(),
+            has_destructuring_params,
+        )?;
         {
             let mut pre = self.take_dstr_prelude();
             pre.append(&mut body);
             body = pre;
         }
-        let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+        let is_strict = self.is_strict_context || body_contains_use_strict;
         // Strict mode (inherited or from body directive): validate that no
         // parameter name is `eval` or `arguments`, and no duplicate params.
         if is_strict {
@@ -2264,6 +2298,14 @@ impl Parser {
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 let mut body = self.parse_fn_body(true, false)?;
+                let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+                Self::reject_use_strict_with_non_simple_params(
+                    body_contains_use_strict,
+                    &param_defaults,
+                    rest_param.as_ref(),
+                    has_destructuring_params,
+                )?;
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
@@ -2273,7 +2315,7 @@ impl Parser {
                     let prefix = if is_getter { "get " } else { "set " };
                     Arc::from(format!("{}{}", prefix, n).as_str())
                 });
-                let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+                let is_strict = self.is_strict_context || body_contains_use_strict;
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
@@ -2304,12 +2346,20 @@ impl Parser {
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 let mut body = self.parse_fn_body(true, false)?;
+                let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+                Self::reject_use_strict_with_non_simple_params(
+                    body_contains_use_strict,
+                    &param_defaults,
+                    rest_param.as_ref(),
+                    has_destructuring_params,
+                )?;
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
                     body = pre;
                 }
-                let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+                let is_strict = self.is_strict_context || body_contains_use_strict;
                 let method_name = Self::prop_key_name(&key);
                 props.push(Property {
                     key,
@@ -2421,12 +2471,20 @@ impl Parser {
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
         let mut body = self.parse_fn_body(false, false)?;
+        let body_contains_use_strict = Self::scan_directive_prologue(&body);
+        let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+        Self::reject_use_strict_with_non_simple_params(
+            body_contains_use_strict,
+            &param_defaults,
+            rest_param.as_ref(),
+            has_destructuring_params,
+        )?;
         {
             let mut pre = self.take_dstr_prelude();
             pre.append(&mut body);
             body = pre;
         }
-        let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
+        let is_strict = self.is_strict_context || body_contains_use_strict;
         // Strict mode: validate parameter names and duplicates (same as decl).
         if is_strict {
             if let Some(ref n) = name {
@@ -2697,6 +2755,7 @@ impl Parser {
         let param_defaults = std::mem::take(&mut self.arrow_defaults);
         let rest_param = self.arrow_rest.take();
         let dstr_decls = std::mem::take(&mut self.arrow_destructure_decls);
+        let has_destructuring_params = !dstr_decls.is_empty();
         // Arrow functions always use strict-mode parameter rules, even in
         // sloppy mode: eval/arguments are forbidden and duplicate bindings are
         // rejected. Validate before consuming the destructuring declarations.
@@ -2725,6 +2784,13 @@ impl Parser {
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
             let mut body = self.parse_fn_body(false, false)?;
+            let body_contains_use_strict = Self::scan_directive_prologue(&body);
+            Self::reject_use_strict_with_non_simple_params(
+                body_contains_use_strict,
+                &param_defaults,
+                rest_param.as_ref(),
+                has_destructuring_params,
+            )?;
             {
                 let mut pre = self.take_dstr_prelude();
                 pre.append(&mut body);
@@ -2735,16 +2801,7 @@ impl Parser {
                 combined.append(&mut body);
                 body = combined;
             }
-            let is_strict = self.is_strict_context || Self::scan_directive_prologue(&body);
-            // 'use strict' directive not allowed with non-simple params.
-            let has_non_simple = !param_defaults.is_empty()
-                || rest_param.is_some()
-                || !self.arrow_destructure_decls.is_empty();
-            if has_non_simple && Self::scan_directive_prologue(&body) {
-                return Err(error::Error::syntax(
-                    "'use strict' not allowed with non-simple parameters".to_string(),
-                ));
-            }
+            let is_strict = self.is_strict_context || body_contains_use_strict;
             Ok(Expr::Arrow(FunctionExpr {
                 name: None,
                 params,
@@ -2874,6 +2931,14 @@ impl Parser {
                     let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                     let rest_param = self.cur_rest_param.take();
                     let mut body = self.parse_fn_body(true, false)?;
+                    let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                    let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+                    Self::reject_use_strict_with_non_simple_params(
+                        body_contains_use_strict,
+                        &param_defaults,
+                        rest_param.as_ref(),
+                        has_destructuring_params,
+                    )?;
                     {
                         let mut pre = self.take_dstr_prelude();
                         pre.append(&mut body);
@@ -2961,6 +3026,14 @@ impl Parser {
             let rest_param = self.cur_rest_param.take();
             let super_call_allowed = superclass.is_some() && is_constructor;
             let mut body = self.parse_fn_body(true, super_call_allowed)?;
+            let body_contains_use_strict = Self::scan_directive_prologue(&body);
+            let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+            Self::reject_use_strict_with_non_simple_params(
+                body_contains_use_strict,
+                &param_defaults,
+                rest_param.as_ref(),
+                has_destructuring_params,
+            )?;
             {
                 let mut pre = self.take_dstr_prelude();
                 pre.append(&mut body);
