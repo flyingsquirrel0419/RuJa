@@ -235,6 +235,7 @@ fn unary_plus() {
     assert_eq!(run(r#"+"5";"#), Value::Number(5.0));
     assert_eq!(run("+true;"), Value::Number(1.0));
     assert_eq!(run("+(-5);"), Value::Number(-5.0));
+    assert!(matches!(run(r#"+"INFINITY";"#), Value::Number(n) if n.is_nan()));
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use super::*;
+use num_traits::{Signed, ToPrimitive};
 
 #[derive(Clone, Copy)]
 enum CompareOp {
@@ -1144,8 +1145,11 @@ impl Vm {
                 }
                 Op::BitNot => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    let n = to_int32(self.to_number(&v)?);
-                    self.stack.push(Value::Number(!n as f64));
+                    match self.to_numeric(&v)? {
+                        Value::BigInt(n) => self.stack.push(Value::BigInt(!n)),
+                        Value::Number(n) => self.stack.push(Value::Number(!to_int32(n) as f64)),
+                        _ => unreachable!("ToNumeric returns Number or BigInt"),
+                    }
                 }
                 Op::Eq => {
                     let (a, b) = self.pop2();
@@ -1228,18 +1232,30 @@ impl Vm {
                     let _ = ctor;
                     self.stack.push(Value::Bool(result));
                 }
-                Op::BitAnd => self.int_bin(|a, b| a & b)?,
-                Op::BitOr => self.int_bin(|a, b| a | b)?,
-                Op::BitXor => self.int_bin(|a, b| a ^ b)?,
-                Op::Shl => self.int_bin(|a, b| a << (b as u32 & 31))?,
-                Op::Shr => self.int_bin(|a, b| a >> (b as u32 & 31))?,
+                Op::BitAnd => self.bitwise_bin(|a, b| a & b, |a, b| Ok(a & b))?,
+                Op::BitOr => self.bitwise_bin(|a, b| a | b, |a, b| Ok(a | b))?,
+                Op::BitXor => self.bitwise_bin(|a, b| a ^ b, |a, b| Ok(a ^ b))?,
+                Op::Shl => self.shift_bin(false)?,
+                Op::Shr => self.shift_bin(true)?,
                 Op::Ushr => {
                     // Unsigned right shift: result is a uint32 promoted to Number,
                     // so -1 >>> 0 === 4294967295 (not -1).
                     let (a, b) = self.pop2();
-                    let av = to_uint32(self.to_number(&a)?);
-                    let bv = to_uint32(self.to_number(&b)?);
-                    self.stack.push(Value::Number((av >> (bv & 31)) as f64));
+                    let av = self.to_numeric(&a)?;
+                    let bv = self.to_numeric(&b)?;
+                    match (&av, &bv) {
+                        (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+                            return Err(Error::type_err(
+                                "BigInt does not support unsigned right shift".to_string(),
+                            ));
+                        }
+                        (Value::Number(a), Value::Number(b)) => {
+                            let av = to_uint32(*a);
+                            let bv = to_uint32(*b);
+                            self.stack.push(Value::Number((av >> (bv & 31)) as f64));
+                        }
+                        _ => unreachable!("ToNumeric returns Number or BigInt"),
+                    }
                 }
                 Op::Jump(target) => {
                     self.current_frame_mut()?.ip = target;
@@ -2438,13 +2454,8 @@ impl Vm {
                 }
                 Op::ToNumeric => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    match v {
-                        Value::BigInt(_) => self.stack.push(v),
-                        _ => {
-                            let n = self.to_number(&v)?;
-                            self.stack.push(Value::Number(n));
-                        }
-                    }
+                    let n = self.to_numeric(&v)?;
+                    self.stack.push(n);
                 }
                 Op::Await => self.op_await()?,
                 Op::TypeofVar(name_idx) => {
@@ -2866,11 +2877,123 @@ impl Vm {
         Ok(())
     }
 
-    fn int_bin<F: Fn(i32, i32) -> i32>(&mut self, f: F) -> error::Result<()> {
+    fn bitwise_bin<
+        F: Fn(i32, i32) -> i32,
+        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
+    >(
+        &mut self,
+        numf: F,
+        bigf: B,
+    ) -> error::Result<()> {
         let (a, b) = self.pop2();
-        let av = to_int32(self.to_number(&a)?);
-        let bv = to_int32(self.to_number(&b)?);
-        self.stack.push(Value::Number(f(av, bv) as f64));
+        let av = self.to_numeric(&a)?;
+        let bv = self.to_numeric(&b)?;
+        match (av, bv) {
+            (Value::BigInt(x), Value::BigInt(y)) => self.stack.push(Value::BigInt(bigf(x, y)?)),
+            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+                return Err(Error::type_err(
+                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
+                ));
+            }
+            (Value::Number(x), Value::Number(y)) => {
+                self.stack
+                    .push(Value::Number(numf(to_int32(x), to_int32(y)) as f64));
+            }
+            _ => unreachable!("ToNumeric returns Number or BigInt"),
+        }
+        Ok(())
+    }
+
+    fn shift_bin(&mut self, right: bool) -> error::Result<()> {
+        let (a, b) = self.pop2();
+        let av = self.to_numeric(&a)?;
+        let bv = self.to_numeric(&b)?;
+        match (av, bv) {
+            (Value::BigInt(x), Value::BigInt(y)) => {
+                let shifted = if right {
+                    Self::bigint_signed_right_shift(x, y)?
+                } else {
+                    Self::bigint_left_shift(x, y)?
+                };
+                self.stack.push(Value::BigInt(shifted));
+            }
+            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
+                return Err(Error::type_err(
+                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
+                ));
+            }
+            (Value::Number(x), Value::Number(y)) => {
+                let left = to_int32(x);
+                let shift = to_uint32(y) & 31;
+                let result = if right {
+                    left >> shift
+                } else {
+                    left.wrapping_shl(shift)
+                };
+                self.stack.push(Value::Number(result as f64));
+            }
+            _ => unreachable!("ToNumeric returns Number or BigInt"),
+        }
+        Ok(())
+    }
+
+    fn bigint_left_shift(
+        x: num_bigint::BigInt,
+        y: num_bigint::BigInt,
+    ) -> error::Result<num_bigint::BigInt> {
+        if y.is_negative() {
+            return Self::bigint_signed_right_shift(x, -y);
+        }
+        let shift = y
+            .to_usize()
+            .ok_or_else(|| Error::range("BigInt shift count is too large".to_string()))?;
+        Ok(x << shift)
+    }
+
+    fn bigint_signed_right_shift(
+        x: num_bigint::BigInt,
+        y: num_bigint::BigInt,
+    ) -> error::Result<num_bigint::BigInt> {
+        if y.is_negative() {
+            return Self::bigint_left_shift(x, -y);
+        }
+        let shift = y
+            .to_usize()
+            .ok_or_else(|| Error::range("BigInt shift count is too large".to_string()))?;
+        Ok(x >> shift)
+    }
+
+    fn number_bigint_type_error() -> std::sync::Arc<Error> {
+        Error::type_err("Cannot mix BigInt and other types, use explicit conversions".to_string())
+    }
+
+    fn numeric_pair(&mut self) -> error::Result<(Value, Value)> {
+        let (a, b) = self.pop2();
+        let av = self.to_numeric(&a)?;
+        let bv = self.to_numeric(&b)?;
+        if matches!(
+            (&av, &bv),
+            (Value::BigInt(_), Value::Number(_)) | (Value::Number(_), Value::BigInt(_))
+        ) {
+            return Err(Self::number_bigint_type_error());
+        }
+        Ok((av, bv))
+    }
+
+    fn push_numeric_bin<
+        F: Fn(f64, f64) -> f64,
+        B: Fn(num_bigint::BigInt, num_bigint::BigInt) -> error::Result<num_bigint::BigInt>,
+    >(
+        &mut self,
+        numf: F,
+        bigf: B,
+    ) -> error::Result<()> {
+        let (av, bv) = self.numeric_pair()?;
+        match (av, bv) {
+            (Value::BigInt(x), Value::BigInt(y)) => self.stack.push(Value::BigInt(bigf(x, y)?)),
+            (Value::Number(x), Value::Number(y)) => self.stack.push(Value::Number(numf(x, y))),
+            _ => unreachable!("numeric_pair returns matching Number or BigInt operands"),
+        }
         Ok(())
     }
 
@@ -2886,24 +3009,7 @@ impl Vm {
         numf: F,
         bigf: B,
     ) -> error::Result<()> {
-        let (a, b) = self.pop2();
-        match (&a, &b) {
-            (Value::BigInt(x), Value::BigInt(y)) => {
-                self.stack.push(Value::BigInt(bigf(x.clone(), y.clone())?));
-            }
-            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
-                // Mixing BigInt with non-bigint numbers is a TypeError per spec.
-                return Err(Error::type_err(
-                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
-                ));
-            }
-            _ => {
-                let av = self.to_number(&a)?;
-                let bv = self.to_number(&b)?;
-                self.stack.push(Value::Number(numf(av, bv)));
-            }
-        }
-        Ok(())
+        self.push_numeric_bin(numf, bigf)
     }
 
     fn bin_op<F: Fn(f64, f64) -> Value, G: Fn(&str, &str) -> Value>(

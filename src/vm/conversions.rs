@@ -43,6 +43,12 @@ impl Vm {
         if t == "-Infinity" {
             return f64::NEG_INFINITY;
         }
+        if t.eq_ignore_ascii_case("Infinity")
+            || t.eq_ignore_ascii_case("+Infinity")
+            || t.eq_ignore_ascii_case("-Infinity")
+        {
+            return f64::NAN;
+        }
         // Hex/binary/octal integer literals (no sign, no fraction).
         let (radix, digits) = if let Some(d) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))
         {
@@ -99,7 +105,11 @@ impl Vm {
                 }
             }
             Value::Number(n) => *n,
-            Value::BigInt(n) => num_traits::ToPrimitive::to_f64(n).unwrap_or(f64::NAN),
+            Value::BigInt(_) => {
+                return Err(Error::type_err(
+                    "Cannot convert BigInt to number".to_string(),
+                ))
+            }
             Value::String(s) => Self::string_to_number(s),
             Value::Object(_) => {
                 // Per ES ToNumber on objects: run ToPrimitive(number hint)
@@ -114,6 +124,17 @@ impl Vm {
             }
             Value::Reference(_) => f64::NAN,
         })
+    }
+
+    pub fn to_numeric(&mut self, v: &Value) -> error::Result<Value> {
+        let prim = match v {
+            Value::Object(_) => self.to_primitive_number(v)?,
+            _ => v.clone(),
+        };
+        match prim {
+            Value::BigInt(_) => Ok(prim),
+            _ => Ok(Value::Number(self.to_number(&prim)?)),
+        }
     }
 
     pub fn to_string(&mut self, v: &Value) -> error::Result<Arc<str>> {

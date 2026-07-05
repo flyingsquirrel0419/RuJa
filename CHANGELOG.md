@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **96.1%** (up from 88.6%).
-Current supported subset count: **4013 pass / 165 fail / 2 timeout**.
+Supported-subset pass rate: **96.6%** (up from 88.6%).
+Current supported subset count: **4034 pass / 144 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -269,6 +269,16 @@ Current supported subset count: **4013 pass / 165 fail / 2 timeout**.
   parenthesized combinations still parse and evaluate. This closes
   `language/expressions/coalesce` at **22 pass / 0 fail** and raises the
   supported subset to **4013 pass / 165 fail / 2 timeout**.
+- **BigInt `ToNumeric` operator semantics**: unary plus and unsigned right
+  shift now reject BigInt operands with `TypeError`, while BigInt-aware
+  arithmetic, bitwise, and signed shift operations preserve BigInt results
+  after `ToNumeric`, including boxed BigInts. `ToNumber` no longer silently
+  converts BigInt except through the `Number()` constructor, and string
+  numeric conversion no longer accepts incorrectly-cased Infinity spellings.
+  This closes the BigInt failures in `bitwise-and`, `bitwise-or`,
+  `bitwise-xor`, and `unsigned-right-shift`, reduces `unary-plus` to
+  **0 failures**, and raises the supported subset to
+  **4034 pass / 144 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

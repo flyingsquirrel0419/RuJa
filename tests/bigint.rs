@@ -102,6 +102,38 @@ fn bigint_mix_with_number_is_typeerror() {
 }
 
 #[test]
+fn bigint_numeric_operator_coercions() {
+    assert_eq!(
+        run("0b101n & 0b011n;"),
+        Value::BigInt(num_bigint::BigInt::from(1))
+    );
+    assert_eq!(
+        run("0b101n | 0b011n;"),
+        Value::BigInt(num_bigint::BigInt::from(7))
+    );
+    assert_eq!(
+        run("0b101n ^ 0b011n;"),
+        Value::BigInt(num_bigint::BigInt::from(6))
+    );
+    assert_eq!(
+        run("Object(0b101n) & 0b011n;"),
+        Value::BigInt(num_bigint::BigInt::from(1))
+    );
+    assert_eq!(run("8n >> 1n;"), Value::BigInt(num_bigint::BigInt::from(4)));
+    assert_eq!(
+        run("1n << 4n;"),
+        Value::BigInt(num_bigint::BigInt::from(16))
+    );
+
+    for src in ["1n & 1;", "1n | 1;", "1n ^ 1;", "1n >>> 1n;", "+0n;"] {
+        let err = run_err(src);
+        assert!(err.contains("TypeError"), "{src}: {err}");
+    }
+
+    assert_eq!(run("Number(1n);"), Value::Number(1.0));
+}
+
+#[test]
 fn bigint_to_string() {
     assert_eq!(run("(123n).toString();"), Value::String(Arc::from("123")));
 }

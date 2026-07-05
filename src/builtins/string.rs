@@ -848,17 +848,36 @@ pub(crate) fn number_constructor(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    fn number_from_constructor_arg(vm: &mut Vm, v: &Value) -> error::Result<Value> {
+        let prim = match v {
+            Value::Object(_) => vm.to_primitive_number(v)?,
+            _ => v.clone(),
+        };
+        match prim {
+            Value::BigInt(n) => Ok(Value::Number(
+                num_traits::ToPrimitive::to_f64(&n).unwrap_or_else(|| {
+                    if n.sign() == num_bigint::Sign::Minus {
+                        f64::NEG_INFINITY
+                    } else {
+                        f64::INFINITY
+                    }
+                }),
+            )),
+            _ => Ok(Value::Number(vm.to_number(&prim)?)),
+        }
+    }
+
     if let Some(Value::Object(_)) = &this {
         let prim = match args.first() {
             None => Value::Number(0.0),
-            Some(v) => Value::Number(vm.to_number(v)?),
+            Some(v) => number_from_constructor_arg(vm, v)?,
         };
         vm.set_primitive(this.as_ref().unwrap(), prim);
         return Ok(this.unwrap());
     }
     match args.first() {
         None => Ok(Value::Number(0.0)),
-        Some(v) => Ok(Value::Number(vm.to_number(v)?)),
+        Some(v) => number_from_constructor_arg(vm, v),
     }
 }
 

@@ -13,7 +13,7 @@ use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use indexmap::IndexMap;
-use num_traits::{Signed, Zero};
+use num_traits::Zero;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};

@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.1% of all matrix files; 47.6% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 96.1% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 96.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (96.1%).** It reflects the portion of the spec
+supported-subset rate (96.6%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -91,12 +91,12 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 |--------|-------|
 | Total matrix files | 47,717 |
 | Actually run | 23,175 |
-| Pass | 11,033 |
-| Fail | 12,134 |
+| Pass | 11,056 |
+| Fail | 12,111 |
 | Timeout | 8 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **47.6%** |
-| **Pass rate (of total)** | **23.1%** |
+| **Pass rate (of run)** | **47.7%** |
+| **Pass rate (of total)** | **23.2%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 96.1%:
+~56% to 96.6%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -372,10 +372,19 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   parenthesized combinations still parse and evaluate. This closes
   `language/expressions/coalesce` at **22 pass / 0 fail** and raises the
   supported subset to **4013 pass / 165 fail / 2 timeout**.
+- **BigInt `ToNumeric` operator semantics** — unary plus and unsigned right
+  shift reject BigInt operands with `TypeError`, while BigInt-aware
+  arithmetic, bitwise, and signed shift operations preserve BigInt results
+  after `ToNumeric`, including boxed BigInts. `ToNumber` no longer silently
+  converts BigInt except through `Number()`, and string numeric conversion no
+  longer accepts incorrectly-cased Infinity spellings. This closes the BigInt
+  failures in `bitwise-and`, `bitwise-or`, `bitwise-xor`, and
+  `unsigned-right-shift`, reduces `unary-plus` to **0 failures**, and raises
+  the supported subset to **4034 pass / 144 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 165 failures plus 2 timeouts in the supported subset cluster
+The remaining 144 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.
