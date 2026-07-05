@@ -554,48 +554,80 @@ fn object_to_string_native(
     object_to_string(vm, this, None)
 }
 
+fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
+    match obj {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |heap_obj| {
+            if heap_obj.props().lock().contains_key(key) {
+                return true;
+            }
+            if let HeapObj::Array(a) = heap_obj {
+                if key.as_str() == Some("length") {
+                    return true;
+                }
+                if let Some(name) = key.as_str() {
+                    if let Ok(i) = name.parse::<usize>() {
+                        return i < a.items.lock().len();
+                    }
+                }
+            }
+            if let HeapObj::Object(od) = heap_obj {
+                if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                    if key.as_str() == Some("length") {
+                        return true;
+                    }
+                    return key
+                        .as_str()
+                        .and_then(|name| name.parse::<usize>().ok())
+                        .is_some_and(|i| i < crate::value::utf16_len(&s));
+                }
+            }
+            false
+        }),
+        Value::String(s) => {
+            if key.as_str() == Some("length") {
+                return true;
+            }
+            key.as_str()
+                .and_then(|name| name.parse::<usize>().ok())
+                .is_some_and(|i| i < crate::value::utf16_len(s))
+        }
+        _ => false,
+    }
+}
+
+fn to_property_key_descriptor(vm: &mut Vm, value: &Value) -> error::Result<PropertyKey> {
+    match vm.to_property_key_value(value)? {
+        Value::String(s) => Ok(PropertyKey::from_rc(s)),
+        Value::Symbol(id) => Ok(PropertyKey::Symbol(id)),
+        _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+    }
+}
+
 fn object_has_own_property(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
-    let key = if let Some(a) = args.first() {
-        vm.to_property_key(a)?
-    } else {
-        String::new()
-    };
-    match &this {
-        Value::Object(idx) => {
-            let has = vm.heap.with_obj(idx.0, |obj| {
-                obj.props()
-                    .lock()
-                    .contains_key(&crate::value::PropertyKey::from(key.as_str()))
-                    || {
-                        if let HeapObj::Array(a) = obj {
-                            if key == "length" {
-                                return true;
-                            }
-                            if let Ok(i) = key.parse::<usize>() {
-                                return i < a.items.lock().len();
-                            }
-                        }
-                        false
-                    }
-            });
-            Ok(Value::Bool(has))
-        }
-        Value::String(s) => {
-            if key == "length" {
-                return Ok(Value::Bool(true));
-            }
-            if let Ok(i) = key.parse::<usize>() {
-                return Ok(Value::Bool(i < crate::value::utf16_len(s)));
-            }
-            Ok(Value::Bool(false))
-        }
-        _ => Ok(Value::Bool(false)),
+    let key = to_property_key_descriptor(vm, args.first().unwrap_or(&Value::Undefined))?;
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
     }
+    Ok(Value::Bool(object_has_own_key(vm, &this, &key)))
+}
+
+fn object_has_own(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
+    let key = to_property_key_descriptor(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    Ok(Value::Bool(object_has_own_key(vm, &obj, &key)))
 }
 
 fn object_property_is_enumerable(
@@ -1689,6 +1721,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         ("entries", object_entries as NativeFn, 1),
         ("assign", object_assign as NativeFn, 2),
         ("is", object_is as NativeFn, 2),
+        ("hasOwn", object_has_own as NativeFn, 2),
         ("fromEntries", object_from_entries as NativeFn, 1),
         ("create", object_create as NativeFn, 2),
         ("freeze", object_freeze as NativeFn, 1),

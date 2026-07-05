@@ -196,6 +196,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   cluster. This closes the focused BigInt prototype/valueOf/toString cluster
   at 16 pass / 0 fail / 5 skip and brings the broader `built-ins/BigInt` smoke
   run to 74 pass / 0 fail / 29 skip.
+- **`Object.hasOwn`** — `Object.hasOwn` now exposes the ES2022 static
+  own-property predicate with the required `ToObject` before `ToPropertyKey`
+  ordering, symbol-key support, primitive string own `length`/index handling,
+  and standard built-in function descriptors. This closes the focused
+  `Object.hasOwn` cluster at 56 pass / 0 fail / 6 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

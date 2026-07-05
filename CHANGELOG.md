@@ -78,6 +78,11 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   prototype/valueOf/toString cluster now runs at **16 pass / 0 fail / 5 skip**,
   and the broader `built-ins/BigInt` smoke run is now **74 pass / 0 fail / 29
   skip**.
+- **`Object.hasOwn`**: added the ES2022 static own-property predicate with
+  `ToObject` before `ToPropertyKey`, symbol-key support, primitive string
+  wrapper `length`/index handling, correct `name`/`length` descriptors, and no
+  constructable `prototype` property. The focused `Object.hasOwn` test262
+  cluster now runs at **56 pass / 0 fail / 6 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

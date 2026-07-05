@@ -1180,6 +1180,23 @@ fn object_statics() {
     assert_eq!(run("Object.is(0, -0);"), Value::Bool(false));
     assert_eq!(run("Object.is(1, 1);"), Value::Bool(true));
     assert_eq!(
+        run("var p={x:1}; var o=Object.create(p); o.y=2; [Object.hasOwn(o,'x'), Object.hasOwn(o,'y'), Object.hasOwn('abc','length'), Object.hasOwn('abc','1')].join(',');"),
+        Value::String(Arc::from("false,true,true,true"))
+    );
+    assert_eq!(
+        run("var s=Symbol(); var o={}; o[s]=1; [Object.hasOwn(o,s), Object.hasOwn({},s), Object.hasOwn.length, Object.hasOwn.name, Object.hasOwn.prototype].join(',');"),
+        Value::String(Arc::from("true,false,2,hasOwn,"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var key = { get toString() { calls++; throw new Error("key"); } };
+            try { Object.hasOwn(null, key); } catch (e) {}
+            calls;
+            "#),
+        Value::Number(0.0)
+    );
+    assert_eq!(
         run("var o = Object.fromEntries([['a',1],['b',2]]); o.a + o.b;"),
         Value::Number(3.0)
     );

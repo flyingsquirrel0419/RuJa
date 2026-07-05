@@ -90,7 +90,7 @@
   conversions, `codePointAt`, `concat`, `search`; `replace` with function
   callback, `split` with regex
 - **Object**: `defineProperty`, `defineProperties`, `keys`, `values`,
-  `entries`, `assign`, `create`, `getPrototypeOf`/`setPrototypeOf`,
+  `entries`, `assign`, `hasOwn`, `create`, `getPrototypeOf`/`setPrototypeOf`,
   `preventExtensions`/`isExtensible`, `seal`/`isSealed`, `freeze`/`isFrozen`,
   `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`, `getOwnPropertyNames`
 - **Number**: `parseInt`/`parseFloat`, `isNaN`, `isFinite`; `Number` statics
