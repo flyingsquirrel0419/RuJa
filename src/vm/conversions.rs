@@ -137,6 +137,25 @@ impl Vm {
         }
     }
 
+    pub fn to_bigint(&mut self, v: &Value) -> error::Result<num_bigint::BigInt> {
+        let prim = match v {
+            Value::Object(_) => self.to_primitive_number(v)?,
+            _ => v.clone(),
+        };
+        match prim {
+            Value::BigInt(n) => Ok(n),
+            Value::Bool(b) => Ok(num_bigint::BigInt::from(if b { 1 } else { 0 })),
+            Value::String(s) => Self::string_to_bigint(&s)
+                .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s))),
+            Value::Undefined | Value::Null | Value::Number(_) | Value::Symbol(_) => {
+                Err(Error::type_err("Cannot convert to a BigInt".to_string()))
+            }
+            Value::Object(_) | Value::Reference(_) => {
+                Err(Error::type_err("Cannot convert to a BigInt".to_string()))
+            }
+        }
+    }
+
     pub fn to_string(&mut self, v: &Value) -> error::Result<Arc<str>> {
         Ok(match v {
             Value::Undefined => Arc::from("undefined"),

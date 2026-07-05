@@ -151,38 +151,41 @@ pub(crate) fn global_is_finite(
     Ok(Value::Bool(n.is_finite()))
 }
 
-/// `BigInt(x)`: convert a number, string, or boolean to a BigInt. Throws
-/// RangeError for non-integral numbers and SyntaxError for unparseable strings.
-pub(crate) fn global_bigint(
-    _vm: &mut Vm,
-    args: &[Value],
-    _: Option<Value>,
-) -> error::Result<Value> {
+/// `BigInt(x)`: convert a primitive or primitive-producing object to a BigInt.
+/// Throws RangeError for non-integral numbers, SyntaxError for unparseable
+/// strings, and TypeError for unsupported primitive types.
+pub(crate) fn global_bigint(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let arg = args.first().unwrap_or(&Value::Undefined);
-    match arg {
+    let prim = match arg {
+        Value::Object(_) => vm.to_primitive_number(arg)?,
+        _ => arg.clone(),
+    };
+    match prim {
         Value::BigInt(n) => Ok(Value::BigInt(n.clone())),
-        Value::Bool(b) => Ok(Value::BigInt(num_bigint::BigInt::from(if *b {
+        Value::Bool(b) => Ok(Value::BigInt(num_bigint::BigInt::from(if b {
             1
         } else {
             0
         }))),
         Value::Number(n) => {
-            if n.is_nan() || n.is_infinite() || n.fract() != 0.0 {
+            if let Some(bigint) = Vm::number_to_bigint_exact(n) {
+                Ok(Value::BigInt(bigint))
+            } else {
                 Err(Error::range(format!(
                     "The number {} cannot be converted to a BigInt because it is not an integer",
-                    crate::value::num_to_string(*n)
+                    crate::value::num_to_string(n)
                 )))
-            } else {
-                Ok(Value::BigInt(num_bigint::BigInt::from(*n as i64)))
             }
         }
-        Value::String(s) => {
-            let t = s.trim();
-            num_bigint::BigInt::parse_bytes(t.as_bytes(), 10)
-                .map(Value::BigInt)
-                .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s)))
+        Value::String(s) => Vm::string_to_bigint(&s)
+            .map(Value::BigInt)
+            .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s))),
+        Value::Undefined | Value::Null | Value::Symbol(_) => {
+            Err(Error::type_err("Cannot convert to a BigInt".to_string()))
         }
-        _ => Err(Error::syntax("Cannot convert to a BigInt".to_string())),
+        Value::Object(_) | Value::Reference(_) => {
+            Err(Error::type_err("Cannot convert to a BigInt".to_string()))
+        }
     }
 }
 

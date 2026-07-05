@@ -1812,6 +1812,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         &[
             ("getFloat32", data_view_get_float32, 1),
             ("getFloat64", data_view_get_float64, 1),
+            ("getBigInt64", data_view_get_bigint64, 1),
+            ("getBigUint64", data_view_get_biguint64, 1),
             ("getInt16", data_view_get_int16, 1),
             ("getInt32", data_view_get_int32, 1),
             ("getInt8", data_view_get_int8, 1),
@@ -1820,6 +1822,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("getUint8", data_view_get_uint8, 1),
             ("setFloat32", data_view_set_float32, 2),
             ("setFloat64", data_view_set_float64, 2),
+            ("setBigInt64", data_view_set_bigint64, 2),
+            ("setBigUint64", data_view_set_biguint64, 2),
             ("setInt16", data_view_set_int16, 2),
             ("setInt32", data_view_set_int32, 2),
             ("setInt8", data_view_set_int8, 2),

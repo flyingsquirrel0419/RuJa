@@ -96,12 +96,24 @@ fn bigint_constructor() {
         run("BigInt(true);"),
         Value::BigInt(num_bigint::BigInt::from(1))
     );
+    assert_eq!(
+        run("BigInt({ valueOf: function() { return '0x10'; } });"),
+        Value::BigInt(num_bigint::BigInt::from(16))
+    );
 }
 
 #[test]
 fn bigint_constructor_rejects_fractional() {
     let err = run_err("BigInt(1.5);");
     assert!(err.contains("RangeError"), "got: {}", err);
+}
+
+#[test]
+fn bigint_constructor_rejects_missing_and_nullish_with_typeerror() {
+    for src in ["BigInt();", "BigInt(undefined);", "BigInt(null);"] {
+        let err = run_err(src);
+        assert!(err.contains("TypeError"), "{src}: {err}");
+    }
 }
 
 #[test]

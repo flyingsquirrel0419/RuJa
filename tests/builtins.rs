@@ -621,6 +621,118 @@ fn data_view_float_methods_read_write_endian_and_validate_order() {
 }
 
 #[test]
+fn data_view_bigint_methods_read_write_endian_and_validate_order() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(18);
+            var dv = new DataView(buffer, 1, 16);
+            var values = [];
+            values.push(dv.setBigUint64(0, 0x0102030405060708n) === undefined);
+            values.push(dv.getUint8(0));
+            values.push(dv.getUint8(7));
+            values.push(dv.getBigUint64(0).toString());
+            values.push(dv.getBigUint64(0, true).toString());
+            values.push(dv.setBigInt64(8, -2n, true) === undefined);
+            values.push(dv.getBigUint64(8).toString());
+            values.push(dv.getBigInt64(8, true).toString());
+            values.push(DataView.prototype.getBigUint64.length);
+            values.push(DataView.prototype.setBigInt64.length);
+            values.push(DataView.prototype.getBigInt64.name);
+            values.push(DataView.prototype.setBigUint64.name);
+            values.join(",");
+            "#),
+        Value::String(Arc::from(
+            "true,1,8,72623859790382856,578437695752307201,true,18374686479671623679,-2,1,2,getBigInt64,setBigUint64"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(8));
+            dv.setBigUint64(0, 0x10000000000000001n);
+            var wrapped = dv.getBigUint64(0).toString();
+            dv.setBigInt64(0, -1n);
+            [wrapped, dv.getBigUint64(0).toString(), dv.getBigInt64(0).toString()].join(",");
+            "#),
+        Value::String(Arc::from("1,18446744073709551615,-1"))
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(8));
+            var boxed = { valueOf: function() { return "42"; } };
+            dv.setBigUint64(0, boxed);
+            dv.getBigUint64(0).toString();
+            "#),
+        Value::String(Arc::from("42"))
+    );
+    assert!(
+        run_err("new DataView(new ArrayBuffer(8)).setBigUint64(0, 1);").contains("TypeError"),
+        "ToBigInt should reject Number values"
+    );
+    assert!(
+        run_err("new DataView(new ArrayBuffer(8)).setBigInt64(0);").contains("TypeError"),
+        "missing BigInt setter value should throw TypeError"
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(8));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setBigInt64(-1, poisoned);
+            "#
+        )
+        .contains("RangeError"),
+        "invalid byteOffset should be rejected before BigInt value conversion"
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(8));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setBigInt64(8, poisoned);
+            "#
+        )
+        .contains("Error"),
+        "BigInt value conversion should run before range check for valid ToIndex values"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(8);
+            var dv = new DataView(buffer);
+            var value = { valueOf: function() { $262.detachArrayBuffer(buffer); return 1n; } };
+            dv.setBigInt64(0, value);
+            "#
+        )
+        .contains("TypeError"),
+        "detached buffers should be checked after BigInt value conversion"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(8);
+            var dv = new DataView(buffer);
+            $262.detachArrayBuffer(buffer);
+            dv.getBigUint64(Infinity);
+            "#
+        )
+        .contains("RangeError"),
+        "ToIndex should run before detached-buffer validation"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(8);
+            var dv = new DataView(buffer);
+            $262.detachArrayBuffer(buffer);
+            dv.getBigInt64(0);
+            "#
+        )
+        .contains("TypeError"),
+        "detached buffers should reject DataView BigInt reads"
+    );
+}
+
+#[test]
 fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
     assert_eq!(
         run(r#"

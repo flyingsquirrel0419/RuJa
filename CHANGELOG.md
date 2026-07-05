@@ -49,6 +49,19 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   same `ToIndex`/value/detached/range validation ordering as the integer
   DataView methods. The focused DataView float method cluster now runs at
   **62 pass / 0 fail / 28 skip**.
+- **DataView BigInt element accessors**: implemented
+  `DataView.prototype.getBigInt64`, `getBigUint64`, `setBigInt64`, and
+  `setBigUint64` with signed/unsigned 64-bit BigInt reads, big-endian
+  defaults, `ToBoolean` little-endian handling, `ToBigInt` setter conversion,
+  modulo-`2^64` byte writes, and the same receiver, `ToIndex`, detached-buffer,
+  and byte-range validation ordering as the numeric DataView methods. The
+  official runner still skips this focused cluster while `ArrayBuffer` and
+  `DataView` remain marked unsupported; with only those feature skips lifted
+  for diagnosis, the BigInt DataView cluster runs at **40 pass / 3 fail / 26
+  skip**, with remaining failures requiring immutable ArrayBuffer and
+  additional typed-array receiver support. The shared `BigInt()` constructor
+  conversion path now also handles primitive-producing objects and reports
+  `TypeError` for missing/nullish input.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

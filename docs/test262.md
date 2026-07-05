@@ -168,6 +168,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   preservation, and the required `ToIndex`/value/detached/range validation
   order. This closes the focused DataView float method cluster at 62 pass /
   0 fail / 28 skip.
+- **DataView BigInt element accessors** — `DataView.prototype.getBigInt64`,
+  `getBigUint64`, `setBigInt64`, and `setBigUint64` now handle signed and
+  unsigned 64-bit BigInt reads, big-endian defaults, `ToBoolean`
+  little-endian arguments, `ToBigInt` setter conversion, modulo-`2^64`
+  backing-store writes, and the required receiver/`ToIndex`/value/detached/
+  range validation order. The official runner still skips this focused
+  cluster while `ArrayBuffer` and `DataView` are marked unsupported; with only
+  those feature skips lifted for diagnosis, the focused cluster runs at 40
+  pass / 3 fail / 26 skip, with remaining failures requiring immutable
+  ArrayBuffer and additional typed-array receiver support. The shared
+  `BigInt()` constructor path now also converts primitive-producing objects
+  and reports `TypeError` for missing/nullish input.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

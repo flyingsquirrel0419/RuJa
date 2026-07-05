@@ -655,6 +655,80 @@ fn data_view_write_f64(
     Ok(Value::Undefined)
 }
 
+fn data_view_read_bigint64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    signed: bool,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView getter on detached buffer"));
+    }
+    if request_index
+        .checked_add(8)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let bytes = array_buffer_bytes_at(vm, &buffer, byte_index, 8)?;
+    let raw = [
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ];
+    let value = if signed {
+        if little_endian {
+            BigInt::from(i64::from_le_bytes(raw))
+        } else {
+            BigInt::from(i64::from_be_bytes(raw))
+        }
+    } else if little_endian {
+        BigInt::from(u64::from_le_bytes(raw))
+    } else {
+        BigInt::from(u64::from_be_bytes(raw))
+    };
+    Ok(Value::BigInt(value))
+}
+
+fn bigint_to_u64_element(value: &BigInt) -> u64 {
+    let modulus = BigInt::from(1u128 << 64);
+    let wrapped = ((value % &modulus) + &modulus) % &modulus;
+    num_traits::ToPrimitive::to_u64(&wrapped).unwrap_or(0)
+}
+
+fn data_view_write_bigint64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let bigint_value = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
+    let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView setter on detached buffer"));
+    }
+    if request_index
+        .checked_add(8)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let value = bigint_to_u64_element(&bigint_value);
+    let bytes = if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    array_buffer_set_bytes_at(vm, &buffer, byte_index, &bytes)?;
+    Ok(Value::Undefined)
+}
+
 pub(crate) fn data_view_buffer_get(
     vm: &mut Vm,
     _args: &[Value],
@@ -818,6 +892,38 @@ pub(crate) fn data_view_set_float64(
     this: Option<Value>,
 ) -> error::Result<Value> {
     data_view_write_f64(vm, args, this, "setFloat64")
+}
+
+pub(crate) fn data_view_get_bigint64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_bigint64(vm, args, this, true, "getBigInt64")
+}
+
+pub(crate) fn data_view_get_biguint64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_bigint64(vm, args, this, false, "getBigUint64")
+}
+
+pub(crate) fn data_view_set_bigint64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_bigint64(vm, args, this, "setBigInt64")
+}
+
+pub(crate) fn data_view_set_biguint64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_bigint64(vm, args, this, "setBigUint64")
 }
 
 pub(crate) fn to_uint8_element(n: f64) -> u8 {
