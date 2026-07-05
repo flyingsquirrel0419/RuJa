@@ -641,7 +641,7 @@ impl Vm {
                 // TypedArray index access: read from buffer.
                 let ta_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::TypedArray(t) = o {
-                        Some((t.kind, t.buffer.len()))
+                        Some((t.kind, t.buffer.lock().len()))
                     } else {
                         None
                     }
@@ -662,9 +662,10 @@ impl Vm {
                         if offset + elem_size <= buf_len {
                             let val = self.heap.with_obj(idx.0, |o| {
                                 if let crate::value::HeapObj::TypedArray(t) = o {
+                                    let buffer = t.buffer.lock();
                                     match kind {
-                                        crate::value::TypedArrayKind::Uint8 => t.buffer[i] as f64,
-                                        _ => t.buffer[i] as f64, // simplified for now
+                                        crate::value::TypedArrayKind::Uint8 => buffer[i] as f64,
+                                        _ => buffer[i] as f64, // simplified for now
                                     }
                                 } else {
                                     f64::NAN

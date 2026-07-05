@@ -104,6 +104,31 @@ fn array_subclass_instances_use_new_target_prototype() {
 }
 
 #[test]
+fn uint8array_subclass_instances_use_new_target_prototype_and_store_elements() {
+    assert_eq!(
+        run(r#"
+            class ExtendedUint8Array extends Uint8Array {
+              constructor() {
+                super(10);
+                this[0] = 255;
+                this[1] = 0xFFA;
+              }
+            }
+            var eua = new ExtendedUint8Array();
+            [
+              eua.length,
+              eua.byteLength,
+              eua[0],
+              eua[1],
+              Object.getPrototypeOf(eua) === ExtendedUint8Array.prototype,
+              Object.prototype.toString.call(eua)
+            ].join(",");
+            "#),
+        Value::String(Arc::from("10,10,255,250,true,[object Uint8Array]"))
+    );
+}
+
+#[test]
 fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
     assert_eq!(
         run(r#"

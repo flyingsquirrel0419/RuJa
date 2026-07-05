@@ -310,6 +310,24 @@ impl Vm {
                         _ => return Ok(()),
                     }
                 }
+                let typed_array_index = self.heap.with_obj(idx.0, |o| {
+                    if matches!(o, HeapObj::TypedArray(_)) {
+                        crate::value::parse_array_index(key)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(i) = typed_array_index {
+                    let byte = crate::builtins::to_uint8_element(self.to_number(&value)?);
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::TypedArray(t) = o {
+                            if let Some(slot) = t.buffer.lock().get_mut(i) {
+                                *slot = byte;
+                            }
+                        }
+                    });
+                    return Ok(());
+                }
                 // --- Array fast paths ---
                 let is_array_length = self
                     .heap

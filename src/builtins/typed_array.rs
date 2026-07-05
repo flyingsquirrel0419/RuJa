@@ -1,10 +1,18 @@
 use super::*;
 
+pub(crate) fn to_uint8_element(n: f64) -> u8 {
+    if !n.is_finite() || n == 0.0 {
+        return 0;
+    }
+    n.trunc().rem_euclid(256.0) as u8
+}
+
 pub(crate) fn uint8array_constructor(
     vm: &mut Vm,
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
     let length = if args.is_empty() {
         0usize
     } else {
@@ -26,15 +34,15 @@ pub(crate) fn uint8array_constructor(
                 });
                 let mut buf = Vec::with_capacity(items.len());
                 for item in &items {
-                    buf.push(vm.to_number(item)? as u8);
+                    buf.push(to_uint8_element(vm.to_number(item)?));
                 }
                 let idx = vm
                     .heap
                     .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
-                        buffer: buf,
+                        buffer: Mutex::new(buf),
                         kind: crate::value::TypedArrayKind::Uint8,
                         props: Mutex::new(IndexMap::new()),
-                        proto: Mutex::new(Some(vm.object_proto.clone())),
+                        proto: Mutex::new(Some(proto)),
                     }))?;
                 return Ok(Value::Object(GcIdx(idx)));
             }
@@ -45,10 +53,10 @@ pub(crate) fn uint8array_constructor(
     let idx = vm
         .heap
         .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
-            buffer: vec![0u8; length],
+            buffer: Mutex::new(vec![0u8; length]),
             kind: crate::value::TypedArrayKind::Uint8,
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
+            proto: Mutex::new(Some(proto)),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
 }

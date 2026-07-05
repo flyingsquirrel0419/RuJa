@@ -5,8 +5,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.8%** (up from 88.6%).
-Current supported subset count: **4172 pass / 8 fail / 0 timeout**.
+Current supported subset count: **4173 pass / 7 fail / 0 timeout**.
 
+- **Uint8Array subclass exotic construction**: `Uint8Array` now exposes a
+  constructor `prototype`, subclass construction allocates typed-array exotic
+  objects with `new.target.prototype`, and integer-index writes update the
+  backing buffer with Uint8 wrapping semantics. This closes the remaining
+  generic builtin subclassing check, raising the supported subset to **4173
+  pass / 7 fail / 0 timeout**.
 - **Promise subclass executor validation**: `Promise` construction now rejects
   non-callable executors before allocating the promise object and uses
   `new.target.prototype` when creating subclass promise instances. This closes

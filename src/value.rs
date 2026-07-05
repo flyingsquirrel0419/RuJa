@@ -365,7 +365,7 @@ impl fmt::Debug for Value {
 /// A TypedArray backed by a Vec<u8>. Only Uint8Array is supported for now;
 /// other TypedArray kinds can be added by extending `TypedArrayKind`.
 pub struct TypedArrayData {
-    pub buffer: Vec<u8>,
+    pub buffer: Mutex<Vec<u8>>,
     pub kind: TypedArrayKind,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,

@@ -1645,6 +1645,29 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
 
     // Uint8Array constructor.
     let u8_ctor_idx = vm.new_native_function("Uint8Array", uint8array_constructor, 1)?;
+    let u8_proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Uint8Array")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?);
+    vm.heap.with_obj(u8_ctor_idx.0, |o| {
+        if let HeapObj::Function(f) = o {
+            *f.prototype.lock() = Some(Value::Object(u8_proto_idx));
+            f.props.lock().insert(
+                PropertyKey::from("prototype"),
+                data_prop(Value::Object(u8_proto_idx)),
+            );
+        }
+    });
+    vm.heap.with_obj(u8_proto_idx.0, |o| {
+        o.props().lock().insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(u8_ctor_idx)),
+        );
+    });
     define_global(vm, "Uint8Array", Value::Object(u8_ctor_idx));
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with(
