@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.7% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.8% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (95.7%).** It reflects the portion of the spec
+supported-subset rate (95.8%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 95.7%:
+~56% to 95.8%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -338,10 +338,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   after the superclass constructor has run. This closes
   `language/expressions/arrow-function` at **90 pass / 0 fail** and raises the
   supported subset to **3999 pass / 179 fail / 2 timeout**.
+- **`super()` constructor mixed spread arguments** — `super(...)` now lowers
+  mixed spread and non-spread arguments through the same iterator-backed
+  argument-array path used by ordinary calls and `new`. This preserves
+  left-to-right evaluation, handles empty spreads, and reports unresolvable
+  spread operands as `ReferenceError`. This raises
+  `language/expressions/super` to **30 pass / 6 fail** and the supported
+  subset to **4003 pass / 175 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 179 failures plus 2 timeouts in the supported subset cluster
+The remaining 175 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

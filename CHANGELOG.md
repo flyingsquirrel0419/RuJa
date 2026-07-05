@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **95.7%** (up from 88.6%).
-Current supported subset count: **3999 pass / 179 fail / 2 timeout**.
+Supported-subset pass rate: **95.8%** (up from 88.6%).
+Current supported subset count: **4003 pass / 175 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -237,6 +237,13 @@ Current supported subset count: **3999 pass / 179 fail / 2 timeout**.
   after the superclass constructor has run. This closes
   `language/expressions/arrow-function` at **90 pass / 0 fail** and raises the
   supported subset to **3999 pass / 179 fail / 2 timeout**.
+- **`super()` constructor mixed spread arguments**: `super(...)` now lowers
+  mixed spread and non-spread arguments through the same iterator-backed
+  argument-array path used by ordinary calls and `new`. This preserves
+  left-to-right evaluation, handles empty spreads, and reports unresolvable
+  spread operands as `ReferenceError`. This raises
+  `language/expressions/super` to **30 pass / 6 fail** and the supported
+  subset to **4003 pass / 175 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

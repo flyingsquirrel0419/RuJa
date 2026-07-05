@@ -356,6 +356,18 @@ fn arrow_super_call_rebinds_lexical_constructor_this() {
     );
 }
 
+#[test]
+fn super_constructor_call_accepts_mixed_spread_arguments() {
+    assert_eq!(
+        run("class A{constructor(){this.args=[].slice.call(arguments).join(',');}} class B extends A{constructor(){super(1, ...[2,3], 4);}} new B().args;"),
+        Value::String(Arc::from("1,2,3,4"))
+    );
+    assert_eq!(
+        run("class A{constructor(){}} class B extends A{constructor(){var threw=false; try{super(0, ...missing);}catch(e){threw=e instanceof ReferenceError;} return {threw};}} new B().threw;"),
+        Value::Bool(true)
+    );
+}
+
 // ---- Symbol-keyed properties ----
 
 #[test]

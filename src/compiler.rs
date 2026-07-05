@@ -2699,14 +2699,29 @@ impl Compiler {
                         self.chunk.emit(Op::CallSuperCtorSpread, self.current_line);
                         return Ok(());
                     }
-                    for a in args {
-                        if let Expr::Spread(_) = a {
-                        } else {
+                    let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
+                    if has_spread {
+                        self.chunk.emit(Op::NewArray(0), self.current_line);
+                        for a in args {
+                            match a {
+                                Expr::Spread(inner) => {
+                                    self.compile_expr(inner)?;
+                                    self.chunk.emit(Op::SpreadPush, self.current_line);
+                                }
+                                _ => {
+                                    self.compile_expr(a)?;
+                                    self.chunk.emit(Op::ArrayPush, self.current_line);
+                                }
+                            }
+                        }
+                        self.chunk.emit(Op::CallSuperCtorSpread, self.current_line);
+                    } else {
+                        for a in args {
                             self.compile_expr(a)?;
                         }
+                        self.chunk
+                            .emit(Op::CallSuperCtor(args.len()), self.current_line);
                     }
-                    self.chunk
-                        .emit(Op::CallSuperCtor(args.len()), self.current_line);
                     return Ok(());
                 }
                 match callee.as_ref() {
