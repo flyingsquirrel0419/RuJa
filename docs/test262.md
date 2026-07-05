@@ -259,10 +259,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **`import.meta` assignment target early errors** — direct and parenthesized
   `import.meta` assignments now fail in the parser, closing the
   `language/expressions/assignmenttargettype` subset.
+- **Object destructuring assignment target order** — member-expression targets
+  inside object assignment patterns are evaluated before source property
+  `GetV`, including computed source keys, reducing
+  `language/expressions/assignment/destructuring` to **1 pass / 5 fail**.
 
 ## Why the rate is not higher
 
-The remaining 236 failures plus 2 timeouts in the supported subset cluster
+The remaining 235 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and destructuring assignment. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.

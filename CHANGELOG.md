@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **94.4%** (up from 88.6%).
-Current supported subset count: **3942 pass / 236 fail / 2 timeout**.
+Current supported subset count: **3943 pass / 235 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -156,6 +156,11 @@ Current supported subset count: **3942 pass / 236 fail / 2 timeout**.
   reaching runtime. This closes the remaining
   `language/expressions/assignmenttargettype` failures, bringing that
   directory to **316 pass / 0 fail**.
+- **Object destructuring assignment target order**: member-expression targets
+  inside object assignment patterns are now evaluated before reading the
+  source property value, including computed source keys. This fixes the
+  test262 target-reference evaluation-order case and reduces
+  `language/expressions/assignment/destructuring` to **1 pass / 5 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

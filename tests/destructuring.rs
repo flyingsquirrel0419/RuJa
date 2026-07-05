@@ -6,6 +6,7 @@
 mod common;
 use common::run;
 use ruja::Value;
+use std::sync::Arc;
 
 #[test]
 fn array_swap() {
@@ -58,6 +59,37 @@ fn object_assign_rename() {
     assert_eq!(
         run("var p=0, q=0; ({a: p, b: q} = {a: 1, b: 2}); p + q;"),
         Value::Number(3.0)
+    );
+}
+
+#[test]
+fn object_assign_member_target_evaluates_before_source_get() {
+    let src = r#"
+        var log = [];
+        function source() {
+            log.push("source");
+            return { get p() { log.push("get"); } };
+        }
+        function target() {
+            log.push("target");
+            return { set q(v) { log.push("set"); } };
+        }
+        function sourceKey() {
+            log.push("source-key");
+            return { toString: function() { log.push("source-key-tostring"); return "p"; } };
+        }
+        function targetKey() {
+            log.push("target-key");
+            return { toString: function() { log.push("target-key-tostring"); return "q"; } };
+        }
+        ({[sourceKey()]: target()[targetKey()]} = source());
+        log.join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "source,source-key,source-key-tostring,target,target-key,get,target-key-tostring,set"
+        ))
     );
 }
 

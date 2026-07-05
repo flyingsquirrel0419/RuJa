@@ -1847,6 +1847,13 @@ impl Compiler {
                     match &p.key {
                         PropertyKey::Ident(s) | PropertyKey::String(s) => {
                             new_path.push(PathStep::Prop(s.clone()));
+                            if let Some(member_target) =
+                                self.compile_assign_member_target_temps(&p.value)?
+                            {
+                                self.load_path(temp_idx, &new_path);
+                                self.store_current_value_to_member_target(member_target);
+                                continue;
+                            }
                         }
                         PropertyKey::Number(n) => {
                             let key = self
@@ -1862,8 +1869,22 @@ impl Compiler {
                             continue;
                         }
                         PropertyKey::Computed(e) => {
-                            self.load_path(temp_idx, path);
                             self.compile_expr(e)?;
+                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                            let source_key = self.intern("#dkey");
+                            self.chunk
+                                .emit(Op::DeclareEnv(source_key), self.current_line);
+                            if let Some(member_target) =
+                                self.compile_assign_member_target_temps(&p.value)?
+                            {
+                                self.load_path(temp_idx, path);
+                                self.chunk.emit(Op::LoadEnv(source_key), self.current_line);
+                                self.chunk.emit(Op::GetElem, self.current_line);
+                                self.store_current_value_to_member_target(member_target);
+                                continue;
+                            }
+                            self.load_path(temp_idx, path);
+                            self.chunk.emit(Op::LoadEnv(source_key), self.current_line);
                             self.chunk.emit(Op::GetElem, self.current_line);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
@@ -1909,6 +1930,54 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+
+    fn compile_assign_member_target_temps(
+        &mut self,
+        target: &Expr,
+    ) -> error::Result<Option<(usize, usize, bool)>> {
+        let Expr::Member {
+            object,
+            property,
+            computed,
+            ..
+        } = target
+        else {
+            return Ok(None);
+        };
+        self.compile_expr(object)?;
+        let obj_idx = self.intern("#dtarget_obj");
+        self.chunk.emit(Op::DeclareEnv(obj_idx), self.current_line);
+        if *computed {
+            self.compile_expr(property)?;
+        } else {
+            let key = if let Expr::String(s) = property.as_ref() {
+                s.to_string()
+            } else {
+                String::new()
+            };
+            let key_idx = self
+                .chunk
+                .add_constant(Value::String(Arc::from(key.as_str())));
+            self.chunk.emit(Op::Const(key_idx), self.current_line);
+        }
+        let key_idx = self.intern("#dtarget_key");
+        self.chunk.emit(Op::DeclareEnv(key_idx), self.current_line);
+        Ok(Some((obj_idx, key_idx, *computed)))
+    }
+
+    fn store_current_value_to_member_target(&mut self, target: (usize, usize, bool)) {
+        let (obj_idx, key_idx, computed) = target;
+        self.chunk.emit(Op::LoadEnv(obj_idx), self.current_line);
+        self.chunk.emit(Op::Swap, self.current_line);
+        self.chunk.emit(Op::LoadEnv(key_idx), self.current_line);
+        self.chunk.emit(Op::Swap, self.current_line);
+        if computed {
+            self.chunk.emit(Op::SetElem, self.current_line);
+        } else {
+            self.chunk.emit(Op::SetProp, self.current_line);
+        }
+        self.chunk.emit(Op::Pop, self.current_line);
     }
 
     /// Rest binding for assignment patterns: `...rest` collects temp[i..].
