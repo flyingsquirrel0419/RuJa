@@ -1828,15 +1828,35 @@ impl Compiler {
     ) -> error::Result<()> {
         match target {
             Expr::Array(elems) => {
-                for (i, el) in elems.iter().enumerate() {
+                self.load_path(temp_idx, path);
+                self.chunk.emit(Op::GetIterator, self.current_line);
+                let iter_idx = self.intern("#arr-assign-iter");
+                self.chunk.emit(Op::DeclareEnv(iter_idx), self.current_line);
+                for el in elems {
                     match el {
                         Expr::Spread(inner) => {
-                            self.bind_assign_rest(inner, temp_idx, path, i)?;
+                            self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
+                            self.chunk.emit(Op::IteratorCollectRest, self.current_line);
+                            let rest_idx = self.intern("#arr-assign-rest");
+                            self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
+                            self.compile_assign_value_to_target(inner, rest_idx, None)?;
                         }
                         _ => {
-                            let mut new_path = path.to_vec();
-                            new_path.push(PathStep::Index(i));
-                            self.compile_assign_pattern(el, temp_idx, &new_path)?;
+                            let member_target = self
+                                .compile_assign_member_target_temps(Self::assignment_target(el))?;
+                            self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
+                            self.chunk.emit(Op::IteratorNext, self.current_line);
+                            let done_idx = self.intern("#arr-assign-done");
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            let elem_idx = self.intern("#arr-assign-elem");
+                            self.chunk.emit(Op::DeclareEnv(elem_idx), self.current_line);
+                            self.compile_assign_value_guarded_by_iterator(
+                                el,
+                                elem_idx,
+                                iter_idx,
+                                done_idx,
+                                member_target,
+                            )?;
                         }
                     }
                 }
@@ -1916,6 +1936,21 @@ impl Compiler {
                     }
                 }
             }
+            Expr::Assign(AssignOp::Assign, left, default) => {
+                self.load_path(temp_idx, path);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk.emit(Op::StrictEq, self.current_line);
+                let skip = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.compile_expr(default)?;
+                let after = self.chunk.code.len();
+                self.chunk.patch_jump(skip, after);
+                let t2 = self.intern("#d2");
+                self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
+                self.compile_assign_pattern(left, t2, &[])?;
+            }
             Expr::Ident(name) => {
                 self.load_path(temp_idx, path);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -1923,9 +1958,105 @@ impl Compiler {
                     .emit(Op::StoreEnvName(name_idx), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
+            Expr::Member { .. } => {
+                if let Some(member_target) = self.compile_assign_member_target_temps(target)? {
+                    self.load_path(temp_idx, path);
+                    self.store_current_value_to_member_target(member_target);
+                }
+            }
             _ => {
                 // Non-pattern element (e.g. a hole `[,`): just discard.
                 self.load_path(temp_idx, path);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+        }
+        Ok(())
+    }
+
+    fn assignment_target(expr: &Expr) -> &Expr {
+        if let Expr::Assign(AssignOp::Assign, left, _) = expr {
+            left
+        } else {
+            expr
+        }
+    }
+
+    fn compile_assign_value_guarded_by_iterator(
+        &mut self,
+        target: &Expr,
+        value_idx: usize,
+        iter_idx: usize,
+        done_idx: usize,
+        member_target: Option<(usize, usize, bool)>,
+    ) -> error::Result<()> {
+        let finally_guard_ip = self.chunk.code.len();
+        self.chunk.emit(Op::PushFinally(0), self.current_line);
+        self.compile_assign_value_to_target(target, value_idx, member_target)?;
+        self.chunk.emit(Op::PopFinally, self.current_line);
+        let jump_after_finally = self.chunk.code.len();
+        self.chunk.emit(Op::Jump(0), self.current_line);
+        let finally_start = self.chunk.code.len();
+        if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
+            *target = finally_start;
+        }
+        self.chunk.emit(Op::PopFinally, self.current_line);
+        self.chunk.emit(
+            Op::IteratorCloseIfAbrupt {
+                iter: iter_idx,
+                done: done_idx,
+            },
+            self.current_line,
+        );
+        self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
+        let after_finally = self.chunk.code.len();
+        self.chunk.patch_jump(jump_after_finally, after_finally);
+        Ok(())
+    }
+
+    fn compile_assign_value_to_target(
+        &mut self,
+        target: &Expr,
+        value_idx: usize,
+        member_target: Option<(usize, usize, bool)>,
+    ) -> error::Result<()> {
+        match target {
+            Expr::Assign(AssignOp::Assign, left, default) => {
+                self.load_path(value_idx, &[]);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk.emit(Op::StrictEq, self.current_line);
+                let skip = self.chunk.code.len();
+                self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.compile_expr(default)?;
+                let after = self.chunk.code.len();
+                self.chunk.patch_jump(skip, after);
+                let t2 = self.intern("#arr-assign-value");
+                self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
+                self.compile_assign_value_to_target(left, t2, member_target)?;
+            }
+            Expr::Ident(name) => {
+                self.load_path(value_idx, &[]);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::StoreEnvName(name_idx), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+            Expr::Member { .. } => {
+                let target = match member_target {
+                    Some(target) => target,
+                    None => self
+                        .compile_assign_member_target_temps(target)?
+                        .ok_or_else(|| error::Error::internal("expected member target"))?,
+                };
+                self.load_path(value_idx, &[]);
+                self.store_current_value_to_member_target(target);
+            }
+            Expr::Array(_) | Expr::Object(_) => {
+                self.compile_assign_pattern(target, value_idx, &[])?;
+            }
+            _ => {
+                self.load_path(value_idx, &[]);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
         }

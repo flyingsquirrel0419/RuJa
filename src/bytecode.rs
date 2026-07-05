@@ -244,6 +244,15 @@ pub enum Op {
     /// into a fresh array. Used by rest elements in array destructuring
     /// patterns: `[a, ...rest] = iterable`. Pops the iterator, pushes the array.
     IteratorCollectRest,
+    /// In a finally body for array assignment destructuring, close the iterator
+    /// only when the guarded element assignment/default evaluation threw and
+    /// that element's IteratorStep had not completed the iterator. The close
+    /// operation's own errors are intentionally ignored so the original throw
+    /// completion is preserved.
+    IteratorCloseIfAbrupt {
+        iter: usize,
+        done: usize,
+    },
     /// Build a tagged-template object: pop or look up the cached template
     /// object for this source site. Operands are indices into the chunk's
     /// constants for the cooked and raw string arrays. The resulting object

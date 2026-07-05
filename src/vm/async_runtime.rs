@@ -1001,6 +1001,47 @@ impl Vm {
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
     }
 
+    pub(crate) fn iterator_close(&mut self, it: &Value) -> error::Result<()> {
+        let iter_obj = match it {
+            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Iterator(it) = o {
+                    it.lazy_iter
+                        .lock()
+                        .clone()
+                        .or_else(|| it.generator.lock().clone())
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        };
+        let Some(iter_obj) = iter_obj else {
+            return Ok(());
+        };
+
+        let return_method = self.get_property(&iter_obj, "return")?;
+        if return_method.is_undefined() || matches!(return_method, Value::Null) {
+            self.mark_iterator_done(it);
+            return Ok(());
+        }
+        if !crate::builtins::is_callable(&return_method, &self.heap) {
+            return Err(Error::type_err("Iterator return is not callable"));
+        }
+        let _ = self.call_function(&return_method, &[], Some(iter_obj))?;
+        self.mark_iterator_done(it);
+        Ok(())
+    }
+
+    pub(crate) fn mark_iterator_done(&self, it: &Value) {
+        if let Value::Object(idx) = it {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Iterator(it) = o {
+                    it.done.store(true, Ordering::Relaxed);
+                }
+            });
+        }
+    }
+
     fn for_in_key_is_enumerable(&self, source: &Value, origin: &Value, key: &str) -> bool {
         let mut cur = if origin == source {
             source.clone()
@@ -1214,7 +1255,6 @@ impl Vm {
                 iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
             let next_fn = self.get_property(&iter_obj, "next")?;
             let result = self.call_function(&next_fn, &[resume], Some(iter_obj))?;
-            let value = self.get_property(&result, "value")?;
             let done = match self.get_property(&result, "done")? {
                 Value::Bool(b) => b,
                 _ => false,
@@ -1227,7 +1267,9 @@ impl Vm {
                         }
                     });
                 }
+                return Ok((Value::Undefined, true));
             }
+            let value = self.get_property(&result, "value")?;
             Ok((value, done))
         } else {
             let idx = match it {
@@ -1293,7 +1335,6 @@ impl Vm {
             let result = self.call_function(&next_fn, &[], Some(iter_obj))?;
             // Await: if it's a Promise, drain microtasks and read the settled value.
             let result = self.await_value(result)?;
-            let value = self.get_property(&result, "value")?;
             let done = match self.get_property(&result, "done")? {
                 Value::Bool(b) => b,
                 _ => false,
@@ -1306,7 +1347,9 @@ impl Vm {
                         }
                     });
                 }
+                return Ok((Value::Undefined, true));
             }
+            let value = self.get_property(&result, "value")?;
             return Ok((value, done));
         }
         // Eager (Vec-backed) iterator: step directly, no awaiting needed.

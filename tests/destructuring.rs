@@ -47,6 +47,134 @@ fn array_assign_rest() {
 }
 
 #[test]
+fn array_assign_uses_iterator_protocol_and_defaults() {
+    let src = r#"
+        var a = 0, b = 0;
+        var iterable = {
+            [Symbol.iterator]: function() {
+                var i = 0;
+                return {
+                    next: function() {
+                        i += 1;
+                        if (i === 1) return { value: undefined, done: false };
+                        if (i === 2) return { value: 7, done: false };
+                        return { value: undefined, done: true };
+                    }
+                };
+            }
+        };
+        [a = 3, b] = iterable;
+        a + "," + b;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("3,7")));
+}
+
+#[test]
+fn array_assign_member_target_evaluates_before_iterator_step() {
+    let src = r#"
+        var log = [];
+        function source() {
+            log.push("source");
+            return {
+                [Symbol.iterator]: function() {
+                    log.push("iterator");
+                    return {
+                        next: function() {
+                            log.push("iterator-step");
+                            return {
+                                get done() {
+                                    log.push("iterator-done");
+                                    return true;
+                                },
+                                get value() {
+                                    log.push("iterator-value");
+                                }
+                            };
+                        }
+                    };
+                }
+            };
+        }
+        function target() {
+            log.push("target");
+            return { set q(v) { log.push("set"); } };
+        }
+        function targetKey() {
+            log.push("target-key");
+            return { toString: function() { log.push("target-key-tostring"); return "q"; } };
+        }
+        [target()[targetKey()]] = source();
+        log.join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "source,iterator,target,target-key,iterator-step,iterator-done,target-key-tostring,set"
+        ))
+    );
+}
+
+#[test]
+fn array_assign_closes_iterator_on_default_throw_preserving_original_throw() {
+    let src = r#"
+        var log = [];
+        function MyError() {}
+        function thrower() {
+            throw new MyError();
+        }
+        var iterator = {
+            [Symbol.iterator]: function() {
+                return this;
+            },
+            next: function() {
+                return { value: undefined, done: false };
+            },
+            get return() {
+                log.push("return-get");
+                throw "ignored";
+            }
+        };
+        try {
+            var a;
+            [a = thrower()] = iterator;
+        } catch (e) {
+            log.push(e instanceof MyError);
+        }
+        log.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("return-get,true")));
+}
+
+#[test]
+fn array_assign_closes_iterator_on_target_throw_preserving_original_throw() {
+    let src = r#"
+        var log = [];
+        function MyError() {}
+        var target = {
+            set a(v) {
+                throw new MyError();
+            }
+        };
+        var iterator = {
+            [Symbol.iterator]: function() {
+                return this;
+            },
+            next: function() {
+                return { value: 1, done: false };
+            },
+            return: 0
+        };
+        try {
+            [target.a] = iterator;
+        } catch (e) {
+            log.push(e instanceof MyError);
+        }
+        log.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true")));
+}
+
+#[test]
 fn object_assign_shorthand() {
     assert_eq!(
         run("var x=0, y=0; ({x, y} = {x: 5, y: 7}); x + y;"),

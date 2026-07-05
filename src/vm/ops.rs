@@ -2542,6 +2542,39 @@ impl Vm {
                     let val = Value::Object(self.alloc(arr)?);
                     self.stack.push(val);
                 }
+                Op::IteratorCloseIfAbrupt { iter, done } => {
+                    let should_close = {
+                        let frame = self.current_frame()?;
+                        frame.finally_completion_tag.load(Ordering::Relaxed) == 4
+                    };
+                    if should_close {
+                        let (iter_name, done_name) = {
+                            let frame = self.current_frame()?;
+                            let iter_name = match frame.chunk.constants.get(iter) {
+                                Some(Value::String(s)) => s.to_string(),
+                                _ => String::new(),
+                            };
+                            let done_name = match frame.chunk.constants.get(done) {
+                                Some(Value::String(s)) => s.to_string(),
+                                _ => String::new(),
+                            };
+                            (iter_name, done_name)
+                        };
+                        let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                        let done_value =
+                            crate::environment::get_checked(&self.heap, env, &done_name)
+                                .ok()
+                                .flatten()
+                                .unwrap_or(Value::Bool(true));
+                        if !matches!(done_value, Value::Bool(true)) {
+                            if let Ok(Some(iterator)) =
+                                crate::environment::get_checked(&self.heap, env, &iter_name)
+                            {
+                                let _ = self.iterator_close(&iterator);
+                            }
+                        }
+                    }
+                }
                 Op::GetTemplateObject(quasi_ids, raw_ids) => {
                     let frame = self.current_frame()?;
                     let chunk_ptr = Arc::as_ptr(&frame.chunk) as usize;

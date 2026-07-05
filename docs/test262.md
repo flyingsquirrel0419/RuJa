@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 94.4% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 94.5% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (94.4%).** It reflects the portion of the spec
+supported-subset rate (94.5%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 94.4%:
+~56% to 94.5%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -263,10 +263,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   inside object assignment patterns are evaluated before source property
   `GetV`, including computed source keys, reducing
   `language/expressions/assignment/destructuring` to **1 pass / 5 fail**.
+- **Array destructuring assignment iterator semantics** — array assignment
+  patterns now use the iterator protocol, evaluate member targets before
+  `IteratorStep`, apply defaults, close unfinished iterators on abrupt default
+  evaluation or target assignment while preserving the original throw, and
+  read lazy iterator `done` before `value`. This reduces
+  `language/expressions/assignment/destructuring` to **5 pass / 1 fail**.
 
 ## Why the rate is not higher
 
-The remaining 235 failures plus 2 timeouts in the supported subset cluster
+The remaining 231 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and destructuring assignment. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.
