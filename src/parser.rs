@@ -190,6 +190,10 @@ impl Parser {
         )
     }
 
+    fn is_strict_identifier_reference_reserved(name: &str) -> bool {
+        Self::is_future_reserved(name) || matches!(name, "let" | "static" | "yield")
+    }
+
     /// Check that an identifier name is a valid binding name (not a
     /// FutureReservedWord). Returns the name on success, SyntaxError on failure.
     fn check_binding_name(&self, name: &str) -> error::Result<()> {
@@ -1019,6 +1023,38 @@ impl Parser {
             if !seen.insert(name.clone()) {
                 return Err(error::Error::syntax(format!(
                     "Duplicate declaration '{}' in for-in/for-of head",
+                    name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_strict_formal_param_names(
+        params: &[Arc<str>],
+        dstr_decls: &[(Pattern, String, Option<Expr>)],
+        rest_param: Option<&Arc<str>>,
+    ) -> error::Result<()> {
+        let synthetic_params: std::collections::HashSet<&str> =
+            dstr_decls.iter().map(|(_, tmp, _)| tmp.as_str()).collect();
+        let mut names = Vec::new();
+        for param in params {
+            if !synthetic_params.contains(param.as_ref()) {
+                names.push(param.clone());
+            }
+        }
+        for (pattern, _tmp, _default) in dstr_decls {
+            collect_pattern_names(pattern, &mut names);
+        }
+        if let Some(rest) = rest_param {
+            if !synthetic_params.contains(rest.as_ref()) {
+                names.push(rest.clone());
+            }
+        }
+        for name in names {
+            if matches!(&*name, "eval" | "arguments") {
+                return Err(error::Error::syntax(format!(
+                    "Parameter name '{}' is not allowed in strict mode",
                     name
                 )));
             }
@@ -2543,6 +2579,14 @@ impl Parser {
                     rest_param.as_ref(),
                     has_destructuring_params,
                 )?;
+                let is_strict = self.is_strict_context || body_contains_use_strict;
+                if is_strict {
+                    Self::reject_strict_formal_param_names(
+                        &params,
+                        &self.cur_param_destructure_decls,
+                        rest_param.as_ref(),
+                    )?;
+                }
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
@@ -2552,7 +2596,6 @@ impl Parser {
                     let prefix = if is_getter { "get " } else { "set " };
                     Arc::from(format!("{}{}", prefix, n).as_str())
                 });
-                let is_strict = self.is_strict_context || body_contains_use_strict;
                 props.push(Property {
                     key,
                     value: Expr::Function(FunctionExpr {
@@ -2600,12 +2643,19 @@ impl Parser {
                     rest_param.as_ref(),
                     has_destructuring_params,
                 )?;
+                let is_strict = self.is_strict_context || body_contains_use_strict;
+                if is_strict {
+                    Self::reject_strict_formal_param_names(
+                        &params,
+                        &self.cur_param_destructure_decls,
+                        rest_param.as_ref(),
+                    )?;
+                }
                 {
                     let mut pre = self.take_dstr_prelude();
                     pre.append(&mut body);
                     body = pre;
                 }
-                let is_strict = self.is_strict_context || body_contains_use_strict;
                 let method_name = Self::prop_key_name(&key);
                 props.push(Property {
                     key,
@@ -2637,6 +2687,12 @@ impl Parser {
                 }
                 // Shorthand property: `{x}` is equivalent to `{x: x}`.
                 let value = if let PropertyKey::Ident(s) = &key {
+                    if self.is_strict_context && Self::is_strict_identifier_reference_reserved(s) {
+                        return Err(error::Error::syntax(format!(
+                            "'{}' is a reserved word in strict mode",
+                            s
+                        )));
+                    }
                     Expr::Ident(s.clone())
                 } else {
                     return Err(error::Error::syntax(
@@ -3852,6 +3908,28 @@ mod tests {
         assert!(
             Parser::parse(r#"for (({ ["x" in empty]: value } = obj); ; ) { break; }"#,).is_ok()
         );
+    }
+
+    #[test]
+    fn parse_object_literal_strict_early_errors() {
+        for src in [
+            r#"function f() { "use strict"; ({ let }); }"#,
+            r#"function f() { "use strict"; ({ yield }); }"#,
+            r#"void { set x(eval) { "use strict"; } };"#,
+            r#"void { set x(arguments) { "use strict"; } };"#,
+            r#"void { m(eval) { "use strict"; } };"#,
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            r#"var let = 1; ({ let });"#,
+            r#"var yield = 1; ({ yield });"#,
+            r#"void { set x(eval) {} };"#,
+            r#"void { m(arguments) {} };"#,
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
     }
 
     #[test]

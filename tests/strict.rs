@@ -121,3 +121,20 @@ fn use_strict_directive_rejects_non_simple_params() {
         );
     }
 }
+
+#[test]
+fn strict_object_literal_early_errors() {
+    for src in [
+        r#"function f() { "use strict"; ({ let }); }"#,
+        r#"function f() { "use strict"; ({ yield }); }"#,
+        r#"void { set x(eval) { "use strict"; } };"#,
+        r#"void { set x(arguments) { "use strict"; } };"#,
+        r#"void { m(eval) { "use strict"; } };"#,
+    ] {
+        let err = common::run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError for {src:?}, got {err}"
+        );
+    }
+}

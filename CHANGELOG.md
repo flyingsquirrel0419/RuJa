@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **94.5%** (up from 88.6%).
-Current supported subset count: **3949 pass / 229 fail / 2 timeout**.
+Supported-subset pass rate: **94.6%** (up from 88.6%).
+Current supported subset count: **3953 pass / 225 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -182,6 +182,12 @@ Current supported subset count: **3949 pass / 229 fail / 2 timeout**.
   `for (... in ...)` lookahead. This fixes object accessor names such as
   `{ get ["x" in obj]() {} }` inside `for` initializers and reduces
   `language/expressions/object` to **271 pass / 14 fail**.
+- **Object literal strict early errors**: strict object literal shorthand
+  properties now reject reserved IdentifierReferences such as `let` and
+  `yield`, and object accessors/methods apply body `"use strict"` directives
+  to formal-parameter `eval`/`arguments` checks. This reduces
+  `language/expressions/object` to **275 pass / 10 fail** and raises the
+  supported subset to **3953 pass / 225 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
