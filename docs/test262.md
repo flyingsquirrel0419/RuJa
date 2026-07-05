@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.8% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.9% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.1% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (98.9%).** It reflects the portion of the spec
+supported-subset rate (99.1%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -91,12 +91,12 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 |--------|-------|
 | Total matrix files | 48,465 |
 | Actually run | 23,164 |
-| Pass | 11,552 |
-| Fail | 11,612 |
+| Pass | 11,560 |
+| Fail | 11,604 |
 | Timeout | 11 |
 | Skip | 25,290 |
 | **Pass rate (of run)** | **49.9%** |
-| **Pass rate (of total)** | **23.8%** |
+| **Pass rate (of total)** | **23.9%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -269,6 +269,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   heritage expressions parse as strict code without making script-goal
   `await` class names illegal, and strict function calls create an unmapped
   `arguments` object with a restricted `callee` accessor.
+- **Operator edge semantics** — BigInt exponentiation throws `RangeError` for
+  negative exponents, BigInt relational comparison handles Boolean/nullish
+  numeric operands through `ToNumeric`, `in` rejects primitive right-hand
+  sides before property-key conversion, `instanceof` skips prototype lookup
+  for primitive left-hand sides, and strict non-generator `yield` is a parse
+  error.
 - **Function body `"use strict"` with non-simple parameters** — function
   declarations, function expressions, object/class methods, and arrow block
   bodies now reject directive-prologue `"use strict"` when parameters contain
@@ -532,9 +538,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   unmapped `arguments` object whose `callee` accessor throws `TypeError`.
   This closes `language/statements/class/strict-mode` at **2 pass / 0 fail**
   and raises the supported subset to **4135 pass / 45 fail / 0 timeout**.
+- **Operator edge semantics** — BigInt exponentiation now throws `RangeError`
+  for negative exponents, BigInt relational comparisons now coerce
+  Boolean/nullish numeric operands through `ToNumeric`, `in` now rejects
+  primitive right-hand sides before property-key conversion, `instanceof` now
+  returns `false` for primitive left-hand sides before reading `prototype`,
+  and strict non-generator `yield` is rejected during parsing. This closes
+  `language/expressions/exponentiation`, `greater-than`, `less-than`, `in`,
+  and `instanceof` at **188 pass / 0 fail** and raises the supported subset
+  to **4142 pass / 38 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 45 failures in the supported subset cluster around class
-behavior, super semantics, and expression/operator edge cases. These are
+The remaining 38 failures in the supported subset cluster around class
+behavior, super semantics, and a few expression edge cases. These are
 tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

@@ -292,6 +292,13 @@ fn in_operator() {
     assert_eq!(run(r#""a" in {a:1};"#), Value::Bool(true));
     assert_eq!(run(r#""b" in {a:1};"#), Value::Bool(false));
     assert_eq!(run("0 in [1,2];"), Value::Bool(true));
+    let err = run_err(r#""toString" in true;"#);
+    assert!(err.contains("TypeError"), "got: {err}");
+    let err = run_err(
+        "var key = { toString: function() { throw new Error('key'); } };
+         key in true;",
+    );
+    assert!(err.contains("TypeError"), "got: {err}");
 }
 
 #[test]
@@ -310,6 +317,17 @@ fn delete_lexical_binding_returns_false() {
 #[test]
 fn instanceof_basic() {
     assert_eq!(run("new Error() instanceof Error;"), Value::Bool(true));
+    assert_eq!(
+        run("Function.prototype.prototype = true; 0 instanceof Function.prototype;"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("Object.defineProperty(Function.prototype, 'prototype', {
+               get: function() { throw new Error('getter'); }
+             });
+             0 instanceof Function.prototype;",),
+        Value::Bool(false)
+    );
 }
 
 #[test]

@@ -4,9 +4,18 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.9%** (up from 88.6%).
-Current supported subset count: **4135 pass / 45 fail / 0 timeout**.
+Supported-subset pass rate: **99.1%** (up from 88.6%).
+Current supported subset count: **4142 pass / 38 fail / 0 timeout**.
 
+- **Operator edge semantics**: BigInt exponentiation now throws `RangeError`
+  for negative exponents, BigInt relational comparisons now coerce
+  Boolean/nullish numeric operands through `ToNumeric`, `in` now rejects
+  primitive right-hand sides before property-key conversion, `instanceof`
+  now returns `false` for primitive left-hand sides before reading
+  `prototype`, and strict non-generator `yield` is rejected during parsing.
+  This closes `language/expressions/exponentiation`, `greater-than`,
+  `less-than`, `in`, and `instanceof` at **188 pass / 0 fail** and raises the
+  supported subset to **4142 pass / 38 fail / 0 timeout**.
 - **Class heritage strictness and strict arguments objects**: class heritage
   expressions now parse under strict mode while preserving script-goal
   `await` class names, and strict function calls now create an unmapped

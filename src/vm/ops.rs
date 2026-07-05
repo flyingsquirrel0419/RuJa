@@ -1165,7 +1165,7 @@ impl Vm {
                     },
                     |x, y| {
                         if y.is_negative() {
-                            Ok(num_bigint::BigInt::from(0))
+                            Err(Error::range("BigInt exponent must be positive".to_string()))
                         } else {
                             // Use BigInt's own pow (exponent is a u32).
                             let exp = num_traits::ToPrimitive::to_u32(&y).ok_or_else(|| {
@@ -1225,6 +1225,11 @@ impl Vm {
                     // stack: [key, obj]; true if obj has the property (own or inherited).
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    if !matches!(obj, Value::Object(_)) {
+                        return Err(Error::type_err(
+                            "Right-hand side of 'in' is not an object".to_string(),
+                        ));
+                    }
                     let key_str = self.to_property_key(&key)?;
                     // Use has_property (existence check) instead of get_property
                     // to avoid triggering poisoned accessors (e.g. strict-mode
@@ -1247,6 +1252,10 @@ impl Vm {
                         return Err(Error::type_err(
                             "Right-hand side of 'instanceof' is not callable".to_string(),
                         ));
+                    }
+                    if !matches!(obj, Value::Object(_)) {
+                        self.stack.push(Value::Bool(false));
+                        continue;
                     }
                     // ES spec: call [[Get]](ctor, "prototype") — this honors
                     // user-set .prototype and getters, not just the internal
@@ -3205,6 +3214,24 @@ impl Vm {
                     CompareOp::Gte => CompareOp::Lte,
                 };
                 Self::compare_bigint_number(y, *x, reversed)
+            }
+            (Value::BigInt(x), other) => match self.to_numeric(other)? {
+                Value::BigInt(y) => Self::apply_compare_order(op, x.cmp(&y)),
+                Value::Number(y) => Self::compare_bigint_number(x, y, op),
+                _ => unreachable!("ToNumeric returns Number or BigInt"),
+            },
+            (other, Value::BigInt(y)) => {
+                let reversed = match op {
+                    CompareOp::Lt => CompareOp::Gt,
+                    CompareOp::Gt => CompareOp::Lt,
+                    CompareOp::Lte => CompareOp::Gte,
+                    CompareOp::Gte => CompareOp::Lte,
+                };
+                match self.to_numeric(other)? {
+                    Value::BigInt(x) => Self::apply_compare_order(reversed, y.cmp(&x)),
+                    Value::Number(x) => Self::compare_bigint_number(y, x, reversed),
+                    _ => unreachable!("ToNumeric returns Number or BigInt"),
+                }
             }
             _ => {
                 let av = self.to_number(&pa)?;

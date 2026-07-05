@@ -2318,6 +2318,11 @@ impl Parser {
                     self.advance();
                     return Ok(Expr::Ident(Arc::from("yield")));
                 }
+                if self.generator_depth == 0 {
+                    return Err(error::Error::syntax(
+                        "'yield' is not allowed outside a generator".to_string(),
+                    ));
+                }
                 self.advance();
                 // `yield* expr` - delegate to another iterable/generator.
                 if matches!(self.peek(), TokenKind::Star) {
@@ -4324,6 +4329,20 @@ mod tests {
             "var af = (arguments) => arguments;",
             "var af = (yield) => 1;",
         ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_strict_yield_outside_generator_is_rejected() {
+        for src in [
+            r#""use strict"; (yield);"#,
+            r#""use strict"; '' in (yield);"#,
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in ["var yield = 1; yield;", "'' in (yield);"] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }
     }

@@ -38,6 +38,10 @@ fn bigint_pow() {
         run("2n ** 10n;"),
         Value::BigInt(num_bigint::BigInt::from(1024))
     );
+    for src in ["1n ** -1n;", "0n ** -1n;", "(-1n) ** -1n;"] {
+        let err = run_err(src);
+        assert!(err.contains("RangeError"), "{src}: {err}");
+    }
 }
 
 #[test]
@@ -71,6 +75,11 @@ fn bigint_compare() {
     assert_eq!(run("'0x10' > 15n;"), Value::Bool(true));
     assert_eq!(run("1n > '0.';"), Value::Bool(false));
     assert_eq!(run("0x10000000000000000n > 0n;"), Value::Bool(true));
+    assert_eq!(run("0n < true;"), Value::Bool(true));
+    assert_eq!(run("true > 0n;"), Value::Bool(true));
+    assert_eq!(run("1n > true;"), Value::Bool(false));
+    assert_eq!(run("false < 1n;"), Value::Bool(true));
+    assert_eq!(run("-3n < false;"), Value::Bool(true));
 }
 
 #[test]
