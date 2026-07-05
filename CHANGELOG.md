@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.6%** (up from 88.6%).
-Current supported subset count: **3911 pass / 267 fail / 2 timeout**.
+Supported-subset pass rate: **93.7%** (up from 88.6%).
+Current supported subset count: **3914 pass / 264 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -117,6 +117,12 @@ Current supported subset count: **3911 pass / 267 fail / 2 timeout**.
   detection now runs before synthesized destructuring-parameter prelude
   statements are prepended, reducing the `function` statement subset to
   **6 failures**.
+- **Object/class method formal-parameter early errors**: concise object
+  methods, async object methods, and class/private methods now reject duplicate
+  formal parameter bound names, including duplicates introduced by
+  destructuring patterns. Object async method parsing also enforces the
+  required no-LineTerminator restriction between `async` and the property
+  name, reducing the object method-definition subset to **3 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

@@ -320,6 +320,30 @@ impl Parser {
         Ok(())
     }
 
+    fn reject_duplicate_formal_params(
+        params: &[Arc<str>],
+        dstr_decls: &[(Pattern, String, Option<Expr>)],
+        rest_param: Option<&Arc<str>>,
+    ) -> error::Result<()> {
+        let synthetic_params: std::collections::HashSet<&str> =
+            dstr_decls.iter().map(|(_, tmp, _)| tmp.as_str()).collect();
+        let mut names = Vec::new();
+        for param in params {
+            if !synthetic_params.contains(param.as_ref()) {
+                names.push(param.clone());
+            }
+        }
+        for (pattern, _tmp, _default) in dstr_decls {
+            collect_pattern_names(pattern, &mut names);
+        }
+        if let Some(rest) = rest_param {
+            if !synthetic_params.contains(rest.as_ref()) {
+                names.push(rest.clone());
+            }
+        }
+        check_duplicate_bound_names(&names)
+    }
+
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
         // Bound statement recursion so deeply nested `{{...}}` / `if(1) if(1)
         // ...` fails with a SyntaxError instead of overflowing the Rust
@@ -2203,6 +2227,7 @@ impl Parser {
             // Async method: `async foo() {}` / `async *foo() {}` / async
             // generator. Detect `async` followed by a property-name start.
             let is_async_method = matches!(self.peek(), TokenKind::Ident(s) if s == "async")
+                && !self.peek_at_tok(1).preceded_by_newline
                 && matches!(
                     self.peek_at_tok(1).kind,
                     TokenKind::Ident(_)
@@ -2219,6 +2244,7 @@ impl Parser {
             // Also recognise the `async` keyword token as a method prefix.
             let is_async_method = is_async_method
                 || matches!(self.peek(), TokenKind::Async)
+                    && !self.peek_at_tok(1).preceded_by_newline
                     && matches!(
                         self.peek_at_tok(1).kind,
                         TokenKind::Ident(_)
@@ -2297,6 +2323,11 @@ impl Parser {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
+                Self::reject_duplicate_formal_params(
+                    &params,
+                    &self.cur_param_destructure_decls,
+                    rest_param.as_ref(),
+                )?;
                 let mut body = self.parse_fn_body(true, false)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
                 let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
@@ -2345,6 +2376,11 @@ impl Parser {
                 let params = self.parse_params()?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
+                Self::reject_duplicate_formal_params(
+                    &params,
+                    &self.cur_param_destructure_decls,
+                    rest_param.as_ref(),
+                )?;
                 let mut body = self.parse_fn_body(true, false)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
                 let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
@@ -2930,6 +2966,11 @@ impl Parser {
                     let params = self.parse_params()?;
                     let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                     let rest_param = self.cur_rest_param.take();
+                    Self::reject_duplicate_formal_params(
+                        &params,
+                        &self.cur_param_destructure_decls,
+                        rest_param.as_ref(),
+                    )?;
                     let mut body = self.parse_fn_body(true, false)?;
                     let body_contains_use_strict = Self::scan_directive_prologue(&body);
                     let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
@@ -3024,6 +3065,11 @@ impl Parser {
             let params = self.parse_params()?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
             let rest_param = self.cur_rest_param.take();
+            Self::reject_duplicate_formal_params(
+                &params,
+                &self.cur_param_destructure_decls,
+                rest_param.as_ref(),
+            )?;
             let super_call_allowed = superclass.is_some() && is_constructor;
             let mut body = self.parse_fn_body(true, super_call_allowed)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
@@ -3335,6 +3381,20 @@ mod tests {
                 other => panic!("{:?}", other),
             },
             other => panic!("{:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_method_formal_parameter_early_errors() {
+        for src in [
+            "({ foo(a, a) {} });",
+            "({ async foo(a, a) {} });",
+            "({ foo([a, a]) {} });",
+            "class C { foo(a, a) {} }",
+            "class C { #foo(a, a) {} }",
+            "({ async\nfoo() {} });",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
         }
     }
 
