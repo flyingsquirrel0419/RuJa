@@ -1,7 +1,7 @@
 //! Class features: static initialization blocks and private methods/fields.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -45,6 +45,34 @@ fn class_declaration_outer_name_is_mutable_inner_name_is_immutable() {
             outer && inner && rejected;
         "#),
         Value::Bool(true)
+    );
+}
+
+#[test]
+fn class_static_elements_cannot_redefine_non_configurable_prototype() {
+    assert!(run_err("class C { static ['prototype']() {} }").contains("TypeError"));
+    assert!(run_err("class C { static get ['prototype']() {} }").contains("TypeError"));
+    assert!(run_err("class C { static set ['prototype'](v) {} }").contains("TypeError"));
+
+    assert_eq!(
+        run("class C { static ['x'](){ return 1; } } C.x();"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("class C { static ['name'](){ return 4; } } C.name();"),
+        Value::Number(4.0)
+    );
+    assert_eq!(
+        run("class C { static ['length'](){ return 5; } } C.length();"),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        run("class C { static x(){ return 1; } static x(){ return 2; } } C.x();"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run("class C { static get x(){ return 2; } static set x(v){ this.v = v; } } var before = C.x; C.x = 3; before + ':' + C.v;"),
+        Value::String(Arc::from("2:3"))
     );
 }
 

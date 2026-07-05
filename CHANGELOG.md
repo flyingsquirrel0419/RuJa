@@ -5,8 +5,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.3%** (up from 88.6%).
-Current supported subset count: **4151 pass / 29 fail / 0 timeout**.
+Current supported subset count: **4152 pass / 28 fail / 0 timeout**.
 
+- **Class method descriptor validation**: static class methods and accessors now
+  route through own-property descriptor validation when defining constructor
+  properties, so computed static `prototype` methods/accessors throw instead of
+  overwriting the constructor's non-configurable `prototype` property. This
+  improves `language/statements/class` to **187 pass / 22 fail** and raises the
+  supported subset to **4152 pass / 28 fail / 0 timeout**.
 - **Class declaration completion and binding mutability**: class declarations
   now produce an empty statement completion, so direct eval returns
   `undefined` or the previous non-empty completion rather than the constructor.

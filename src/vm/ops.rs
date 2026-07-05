@@ -1568,29 +1568,29 @@ impl Vm {
                             Value::Symbol(s) => crate::value::PropertyKey::Symbol(*s),
                             _ => crate::value::PropertyKey::Str(Arc::from("undefined")),
                         };
-                        self.heap.with_obj(idx.0, |o| {
-                            let props = o.props();
-                            let mut props = props.lock();
-                            let entry = props.entry(pkey).or_insert_with(|| {
-                                crate::value::PropertyDescriptor {
-                                    value: Value::Undefined,
-                                    writable: false,
-                                    enumerable: false,
-                                    configurable: true,
-                                    get: None,
-                                    set: None,
-                                    is_accessor: true,
-                                }
-                            });
-                            entry.is_accessor = true;
-                            entry.writable = false;
-                            entry.enumerable = false;
-                            if kind == 0 {
-                                entry.get = Some(func.clone());
-                            } else {
-                                entry.set = Some(func.clone());
-                            }
+                        let current = self
+                            .heap
+                            .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned());
+                        let mut desc = current.unwrap_or(crate::value::PropertyDescriptor {
+                            value: Value::Undefined,
+                            writable: false,
+                            enumerable: false,
+                            configurable: true,
+                            get: None,
+                            set: None,
+                            is_accessor: true,
                         });
+                        desc.value = Value::Undefined;
+                        desc.is_accessor = true;
+                        desc.writable = false;
+                        desc.enumerable = false;
+                        desc.configurable = true;
+                        if kind == 0 {
+                            desc.get = Some(func.clone());
+                        } else {
+                            desc.set = Some(func.clone());
+                        }
+                        self.define_own_property_or_throw(&obj, pkey, desc)?;
                     }
                     self.stack.push(obj);
                 }
@@ -1718,14 +1718,15 @@ impl Vm {
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_str = self.to_property_key(&key)?;
                     if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            let mut props = o.props().lock();
-                            let mut desc = crate::value::PropertyDescriptor::data(value.clone());
-                            desc.enumerable = false;
-                            desc.configurable = true;
-                            desc.writable = true;
-                            props.insert(crate::value::PropertyKey::from(key_str.as_str()), desc);
-                        });
+                        let mut desc = crate::value::PropertyDescriptor::data(value.clone());
+                        desc.enumerable = false;
+                        desc.configurable = true;
+                        desc.writable = true;
+                        self.define_own_property_or_throw(
+                            &obj,
+                            crate::value::PropertyKey::from(key_str.as_str()),
+                            desc,
+                        )?;
                         self.ic_invalidate(idx.0, &key_str);
                     }
                     self.stack.push(value);

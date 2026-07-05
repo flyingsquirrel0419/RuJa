@@ -176,6 +176,54 @@ impl Vm {
         }
     }
 
+    pub(crate) fn define_own_property_or_throw(
+        &mut self,
+        obj: &Value,
+        key: crate::value::PropertyKey,
+        desc: crate::value::PropertyDescriptor,
+    ) -> error::Result<()> {
+        if let Value::Object(idx) = obj {
+            let current = self
+                .heap
+                .with_obj(idx.0, |o| o.props().lock().get(&key).cloned());
+            if current.is_none() {
+                let extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
+                if !extensible {
+                    return Err(Error::type_err(
+                        "Cannot define property, object is not extensible",
+                    ));
+                }
+            }
+            if let Some(current) = current {
+                if !current.configurable {
+                    if desc.configurable
+                        || desc.enumerable != current.enumerable
+                        || desc.is_accessor != current.is_accessor
+                    {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                    if current.is_accessor {
+                        if desc.get != current.get || desc.set != current.set {
+                            return Err(Error::type_err(
+                                "Cannot redefine non-configurable property",
+                            ));
+                        }
+                    } else if !current.writable && (desc.writable || desc.value != current.value) {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                }
+            }
+            self.heap.with_obj(idx.0, |o| {
+                o.props().lock().insert(key, desc);
+            });
+            Ok(())
+        } else {
+            Err(Error::type_err(
+                "Cannot define property of primitive".to_string(),
+            ))
+        }
+    }
+
     fn set_property_impl(
         &mut self,
         obj: &Value,

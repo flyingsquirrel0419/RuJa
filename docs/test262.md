@@ -22,8 +22,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.3% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2-24.3% of all matrix files; 49.9-50.0% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.3% (4152 pass / 28 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -91,13 +91,13 @@ vary slightly because a small number of tests can cross the timeout boundary:
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,162-23,164 |
-| Pass | 11,568-11,570 |
-| Fail | 11,594 |
-| Timeout | 11-13 |
+| Actually run | 23,162-23,175 |
+| Pass | 11,568-11,578 |
+| Fail | 11,588-11,594 |
+| Timeout | 8-13 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **49.9%** |
-| **Pass rate (of total)** | **24.2%** |
+| **Pass rate (of run)** | **49.9-50.0%** |
+| **Pass rate (of total)** | **24.2-24.3%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -128,7 +128,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 99.2%:
+~56% to 99.3%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -144,6 +144,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   produce an empty statement completion; their outer lexical binding is
   mutable, while the inner class-name binding captured by methods and
   heritage remains immutable.
+- **Class method descriptor validation** — computed static class methods and
+  accessors now respect non-configurable constructor properties, so attempts
+  to redefine a class constructor's `prototype` property throw `TypeError`.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending
