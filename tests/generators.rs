@@ -8,6 +8,48 @@ use ruja::Value;
 use std::sync::Arc;
 
 #[test]
+fn generator_function_constructor_is_distinct_and_subclassable() {
+    assert_eq!(
+        run(r#"
+            var GeneratorFunction = Object.getPrototypeOf(function*() {}).constructor;
+            class Gfn extends GeneratorFunction {}
+            var gfn = new Gfn("a", "yield a; yield a * 2;");
+            var iter = gfn(42);
+            [
+              GeneratorFunction === Function,
+              Object.getPrototypeOf(function*() {}) === GeneratorFunction.prototype,
+              gfn instanceof Gfn,
+              gfn instanceof GeneratorFunction,
+              iter.next().value,
+              iter.next().value
+            ].join(",");
+            "#),
+        Value::String(Arc::from("false,true,true,true,42,84"))
+    );
+}
+
+#[test]
+fn generator_function_instances_have_empty_prototype_descriptor() {
+    assert_eq!(
+        run(r#"
+            var GeneratorFunction = Object.getPrototypeOf(function*() {}).constructor;
+            class Gfn extends GeneratorFunction {}
+            var gfn = new Gfn(";");
+            var desc = Object.getOwnPropertyDescriptor(gfn, "prototype");
+            [
+              Object.keys(gfn.prototype).length,
+              gfn.prototype.hasOwnProperty("constructor"),
+              typeof gfn.prototype.next,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("0,false,function,true,false,false"))
+    );
+}
+
+#[test]
 fn gen_next_returns_value_done() {
     // The first next() yields the first value and is not done.
     let r = run("function* g(){ yield 7; } var it=g(); it.next().value;");

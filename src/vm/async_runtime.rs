@@ -565,6 +565,20 @@ impl Vm {
                 let _ = &this_val;
                 let is_gen = func.is_generator;
                 if is_gen {
+                    let generator_instance_proto = {
+                        let callee = Value::Object(idx);
+                        let proto = self
+                            .get_property_by_key(
+                                &callee,
+                                &crate::value::PropertyKey::from("prototype"),
+                            )
+                            .unwrap_or(Value::Undefined);
+                        if matches!(proto, Value::Object(_)) {
+                            proto
+                        } else {
+                            self.generator_proto.clone()
+                        }
+                    };
                     // Lazy generator: don't run the body yet. Create a suspended
                     // generator object; the body runs incrementally via next().
                     let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
@@ -583,7 +597,7 @@ impl Vm {
                             resume_value: Mutex::new(Value::Undefined),
                             is_async,
                             props: Mutex::new(IndexMap::new()),
-                            proto: Mutex::new(Some(self.generator_proto.clone())),
+                            proto: Mutex::new(Some(generator_instance_proto)),
                         },
                     ))?;
                     Ok(Value::Object(GcIdx(g_idx)))

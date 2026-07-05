@@ -1027,6 +1027,7 @@ impl Vm {
             &self.map_proto,
             &self.set_proto,
             &self.generator_proto,
+            &self.generator_function_proto,
         ] {
             Self::push_value_roots(&mut roots, proto);
         }

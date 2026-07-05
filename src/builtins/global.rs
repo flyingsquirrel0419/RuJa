@@ -223,6 +223,22 @@ pub(crate) fn function_constructor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
+    dynamic_function_constructor(vm, args, false)
+}
+
+pub(crate) fn generator_function_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    dynamic_function_constructor(vm, args, true)
+}
+
+fn dynamic_function_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    is_generator: bool,
+) -> error::Result<Value> {
     use crate::ast::FunctionExpr;
     use crate::value::{FunctionData, FunctionKind, PropertyDescriptor, PropertyKey};
     use std::sync::Arc;
@@ -249,7 +265,11 @@ pub(crate) fn function_constructor(
     // Parse params + body together by wrapping in `function _f(PARAMS){ BODY }`,
     // so directives (e.g. "use strict") in the body are honored and the body
     // is parsed as a function statement list (not a top-level block).
-    let wrapped = format!("function _f({}) {{ {} }}", params_src, body_src);
+    let wrapped = if is_generator {
+        format!("function* _f({}) {{ {} }}", params_src, body_src)
+    } else {
+        format!("function _f({}) {{ {} }}", params_src, body_src)
+    };
     let prog = crate::parser::Parser::parse(&wrapped)?;
     let params_fn = prog
         .body
@@ -274,7 +294,7 @@ pub(crate) fn function_constructor(
         body,
         is_arrow: false,
         is_async: false,
-        is_generator: false,
+        is_generator,
         param_decls: Vec::new(),
         is_strict,
         is_method: false,
@@ -291,7 +311,7 @@ pub(crate) fn function_constructor(
         num_locals: f.params.len() + 16,
         is_arrow: false,
         is_async: false,
-        is_generator: false,
+        is_generator,
         has_parameter_expressions: crate::compiler::Compiler::has_parameter_expressions(&f),
         length: crate::compiler::Compiler::fn_length(&f),
         is_method: false,
@@ -303,22 +323,32 @@ pub(crate) fn function_constructor(
     // Create the function object with a fresh prototype.
     let proto = HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(if is_generator {
+            vm.generator_proto.clone()
+        } else {
+            vm.object_proto.clone()
+        })),
         extensible: AtomicBool::new(true),
         class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
     let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)?));
+    let fallback_function_proto =
+        if is_generator && matches!(vm.generator_function_proto, Value::Object(_)) {
+            vm.generator_function_proto.clone()
+        } else {
+            vm.function_proto.clone()
+        };
     let function_object_proto = if let Some(new_target) = vm.current_native_new_target.clone() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             proto
         } else {
-            vm.function_proto.clone()
+            fallback_function_proto.clone()
         }
     } else {
-        vm.function_proto.clone()
+        fallback_function_proto
     };
     let mut props = IndexMap::new();
     let mut len_desc = PropertyDescriptor::data(Value::Number(fdef.length as f64));
@@ -350,14 +380,16 @@ pub(crate) fn function_constructor(
     };
     let f_idx = vm.heap.allocate(HeapObj::Function(fd))?;
     // link prototype.constructor back to the function
-    if let Value::Object(pidx) = &proto_val {
-        vm.heap.with_obj(pidx.0, |obj| {
-            let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(f_idx)));
-            desc.enumerable = false;
-            obj.props()
-                .lock()
-                .insert(crate::value::PropertyKey::from("constructor"), desc);
-        });
+    if !is_generator {
+        if let Value::Object(pidx) = &proto_val {
+            vm.heap.with_obj(pidx.0, |obj| {
+                let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(f_idx)));
+                desc.enumerable = false;
+                obj.props()
+                    .lock()
+                    .insert(crate::value::PropertyKey::from("constructor"), desc);
+            });
+        }
     }
     // Emit MakeClosure at top level is not needed; the function object is
     // already fully formed. We do NOT push a frame; the caller invokes it.

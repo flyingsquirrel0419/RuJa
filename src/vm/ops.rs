@@ -2894,16 +2894,21 @@ impl Vm {
             let env_idx = self.frames.last().map(|f| f.env).unwrap_or(self.global);
             let is_arrow = fdef.is_arrow;
             let is_method = fdef.is_method;
+            let is_generator = fdef.is_generator;
             let fn_length = fdef.length;
             let fn_name = fdef.name.clone();
             let has_name_binding = fdef.has_name_binding && fn_name.is_some() && !is_arrow;
             // Generator methods are non-constructors, but still have an own
             // prototype. Other concise methods do not.
-            let has_prototype = !is_arrow && (!is_method || fdef.is_generator);
+            let has_prototype = !is_arrow && (!is_method || is_generator);
             let proto_val = if has_prototype {
                 let proto = HeapObj::Object(crate::value::ObjectData {
                     props: Mutex::new(IndexMap::new()),
-                    proto: Mutex::new(Some(self.object_proto.clone())),
+                    proto: Mutex::new(Some(if is_generator {
+                        self.generator_proto.clone()
+                    } else {
+                        self.object_proto.clone()
+                    })),
                     extensible: std::sync::atomic::AtomicBool::new(true),
                     class_name: None,
                     private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -2930,10 +2935,20 @@ impl Vm {
                 } else {
                     None
                 }),
-                proto: Mutex::new(match self.function_proto {
-                    Value::Object(_) => Some(self.function_proto.clone()),
-                    _ => None,
-                }),
+                proto: Mutex::new(
+                    match if is_generator {
+                        &self.generator_function_proto
+                    } else {
+                        &self.function_proto
+                    } {
+                        Value::Object(_) => Some(if is_generator {
+                            self.generator_function_proto.clone()
+                        } else {
+                            self.function_proto.clone()
+                        }),
+                        _ => None,
+                    },
+                ),
                 props: Mutex::new(IndexMap::new()),
             };
             let idx_result = self.alloc(HeapObj::Function(fd));
@@ -2981,14 +2996,16 @@ impl Vm {
                 }
             });
             // link prototype.constructor back to the function
-            if let Value::Object(pidx) = &proto_val {
-                self.heap.with_obj(pidx.0, |obj| {
-                    let mut desc = crate::value::PropertyDescriptor::data(Value::Object(idx));
-                    desc.enumerable = false;
-                    obj.props()
-                        .lock()
-                        .insert(crate::value::PropertyKey::from("constructor"), desc);
-                });
+            if has_prototype && !is_generator {
+                if let Value::Object(pidx) = &proto_val {
+                    self.heap.with_obj(pidx.0, |obj| {
+                        let mut desc = crate::value::PropertyDescriptor::data(Value::Object(idx));
+                        desc.enumerable = false;
+                        obj.props()
+                            .lock()
+                            .insert(crate::value::PropertyKey::from("constructor"), desc);
+                    });
+                }
             }
             self.stack.push(Value::Object(idx));
         } else {

@@ -4,9 +4,18 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.6%** (up from 88.6%).
-Current supported subset count: **4164 pass / 16 fail / 0 timeout**.
+Supported-subset pass rate: **99.7%** (up from 88.6%).
+Current supported subset count: **4166 pass / 14 fail / 0 timeout**.
 
+- **GeneratorFunction constructor and prototype chain**: generator functions now
+  inherit from `%GeneratorFunction.prototype%`, whose `constructor` exposes the
+  non-global `GeneratorFunction` constructor. Dynamic generator functions parse
+  and compile as `function*`, their own `prototype` objects inherit from the
+  generator prototype without an own `constructor` reference, and generator
+  calls now use the callee's `prototype` for created generator objects. This
+  closes the remaining GeneratorFunction subclass `prototype` and regular
+  subclassing checks, raising the supported subset to **4166 pass / 14 fail / 0
+  timeout**.
 - **Array, RegExp, and String subclass exotic construction**: native
   constructors now share `new.target.prototype` fallback handling for
   OrdinaryCreateFromConstructor-style allocation. Array subclass construction
