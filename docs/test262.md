@@ -22,8 +22,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.9% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.1% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.2% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -89,14 +89,14 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 
 | Metric | Count |
 |--------|-------|
-| Total matrix files | 48,465 |
-| Actually run | 23,164 |
-| Pass | 11,560 |
-| Fail | 11,604 |
-| Timeout | 11 |
-| Skip | 25,290 |
+| Total matrix files | 47,717 |
+| Actually run | 23,162 |
+| Pass | 11,563 |
+| Fail | 11,599 |
+| Timeout | 13 |
+| Skip | 24,542 |
 | **Pass rate (of run)** | **49.9%** |
-| **Pass rate (of total)** | **23.9%** |
+| **Pass rate (of total)** | **24.2%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 98.9%:
+~56% to 99.2%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -180,6 +180,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Contextual `of` division lexing** — `/` after contextual `of` remains
   division in expression contexts while raw `of` delimiters in `for...of`
   heads still allow a following regex literal.
+- **Var initializer Reference resolution** — `var x = init` resolves the
+  binding Reference before evaluating `init`, so `with` object references
+  survive same-property mutations in the initializer, and global `var`
+  bindings keep their global object property descriptors synchronized.
 - **Arrow function early errors** — arrow functions reject duplicate
   parameter names in sloppy and strict mode, and reject `eval`/`arguments`
   parameter names when strict mode applies.

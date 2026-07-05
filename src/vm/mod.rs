@@ -1077,6 +1077,7 @@ impl Vm {
                                 is_function_name,
                                 in_tdz,
                                 global_readonly_binding,
+                                global_var_binding,
                                 has_with,
                                 with_obj_val,
                                 parent,
@@ -1086,32 +1087,47 @@ impl Vm {
                                     if let Some(b) = e.vars.lock().get(name.as_str()) {
                                         if !b.initialized.load(Ordering::Relaxed) {
                                             return (
-                                                false, false, false, true, false, false, None, None,
+                                                false, false, false, true, false, false, false,
+                                                None, None,
                                             );
                                         }
                                         if e_idx == self.global && global_readonly {
                                             return (
-                                                false, false, false, false, true, false, None, None,
+                                                false, false, false, false, true, false, false,
+                                                None, None,
                                             );
                                         }
                                         if b.kind == crate::value::BindingKind::FunctionName {
                                             return (
-                                                false, false, true, false, false, false, None, None,
+                                                false, false, true, false, false, false, false,
+                                                None, None,
                                             );
                                         }
                                         if b.kind == crate::value::BindingKind::Const {
                                             return (
-                                                false, true, false, false, false, false, None, None,
+                                                false, true, false, false, false, false, false,
+                                                None, None,
                                             );
                                         }
+                                        let is_global_var = e_idx == self.global
+                                            && b.kind == crate::value::BindingKind::Var;
                                         *b.value.lock() = value.clone();
                                         return (
-                                            true, false, false, false, false, false, None, None,
+                                            true,
+                                            false,
+                                            false,
+                                            false,
+                                            false,
+                                            is_global_var,
+                                            false,
+                                            None,
+                                            None,
                                         );
                                     }
                                     // Check with-object.
                                     if let Some(with_obj) = e.with_object.lock().clone() {
                                         return (
+                                            false,
                                             false,
                                             false,
                                             false,
@@ -1129,11 +1145,12 @@ impl Vm {
                                         false,
                                         false,
                                         false,
+                                        false,
                                         None,
                                         *e.parent.lock(),
                                     );
                                 }
-                                (false, false, false, false, false, false, None, None)
+                                (false, false, false, false, false, false, false, None, None)
                             });
                             if in_tdz {
                                 return Err(Error::reference(format!(
@@ -1162,6 +1179,9 @@ impl Vm {
                                 return Ok(());
                             }
                             if has_binding {
+                                if global_var_binding {
+                                    self.set_global_var_property(&name, value.clone());
+                                }
                                 return Ok(());
                             }
                             if has_with {

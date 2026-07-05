@@ -44,6 +44,18 @@ fn with_assignment_writes_to_object() {
 }
 
 #[test]
+fn with_var_initializer_resolves_binding_before_rhs() {
+    let src = r#"
+        var obj = { test262id: 1 };
+        with (obj) {
+          var test262id = delete obj.test262id;
+        }
+        obj.test262id + ":" + test262id;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true:undefined")));
+}
+
+#[test]
 fn with_outer_var_unchanged_after_block() {
     let src = r#"
         let p = { name: "inner" };

@@ -5,8 +5,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.2%** (up from 88.6%).
-Current supported subset count: **4146 pass / 34 fail / 0 timeout**.
+Current supported subset count: **4147 pass / 33 fail / 0 timeout**.
 
+- **Var initializer Reference resolution**: `var x = init` now resolves the
+  binding Reference before evaluating `init`, matching the spec's
+  `BindingInitialization` order for `VariableDeclaration`. This preserves
+  `with` object references when the initializer mutates the same property and
+  keeps global `var` bindings synchronized with their global object
+  descriptors. This closes `language/statements/variable` at **77 pass / 0
+  fail** and raises the supported subset to **4147 pass / 33 fail / 0
+  timeout**.
 - **Contextual `of` division lexing**: `/` after contextual `of` now remains a
   division operator in expression contexts such as `instance/of/g`, while
   raw `of` delimiters in `for...of` heads still allow a following regex

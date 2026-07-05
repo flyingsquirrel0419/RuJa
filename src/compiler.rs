@@ -649,18 +649,12 @@ impl Compiler {
                         let Some(e) = init else {
                             continue;
                         };
-                        self.compile_expr(e)?;
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                        if self.scopes.len() == 1 {
-                            // top-level var: declare as global binding.
-                            // Use DeclareVar (always creates binding) instead
-                            // of StoreGlobal (which throws for undeclared in
-                            // strict mode).
-                            self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
-                        } else {
-                            // var was hoisted to function-scope root; just set the value.
-                            self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
-                        }
+                        self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                        self.compile_expr(e)?;
+                        self.chunk.emit(Op::Swap, self.current_line);
+                        self.chunk.emit(Op::PutValue, self.current_line);
+                        self.chunk.emit(Op::Pop, self.current_line);
                     } else {
                         if let Some(e) = init {
                             self.compile_expr(e)?;
