@@ -281,6 +281,34 @@ fn template_multi() {
 }
 
 #[test]
+fn tagged_template_member_preserves_this() {
+    assert_eq!(
+        run("var context; var obj={fn:function(){context=this;}}; obj.fn`x`; context===obj;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn new_tagged_template_constructs_tag_result() {
+    assert_eq!(
+        run("function C(x){arg=x;} var tag=function(x){templateObject=x; return C;}; var arg=null, templateObject; var instance = new tag`first`; instance instanceof C && templateObject[0] === 'first' && arg === undefined;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("function C(x){arg=x;} var tag=function(x){templateObject=x; return C;}; var arg=null, templateObject; var instance = new tag`second`('arg'); instance instanceof C && templateObject[0] === 'second' && arg === 'arg';"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn conditional_then_branch_allows_in_inside_for_head() {
+    assert_eq!(
+        run("var c1=0,c2=0; function one(){c1+=1; return {};} function two(){c2+=1;} for (true ? '' in one() : two(); false;) ; c1 === 1 && c2 === 0;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn default_param() {
     assert_eq!(
         run("function f(a,b=10){return a+b;} f(5);"),

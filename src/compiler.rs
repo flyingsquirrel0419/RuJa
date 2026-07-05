@@ -3099,7 +3099,33 @@ impl Compiler {
                 // tag`q0${e0}q1` => tag(strings, e0, ...).
                 // The VM builds a cached, frozen template object with a frozen
                 // `raw` property per GetTemplateObject.
-                self.compile_expr(tag)?; // [tag]
+                let tag_is_member = if let Expr::Member {
+                    object,
+                    property,
+                    computed,
+                    optional: _,
+                } = tag.as_ref()
+                {
+                    self.compile_expr(object)?; // [obj]
+                    if *computed {
+                        self.compile_expr(property)?; // [obj, key]
+                    } else {
+                        let key = if let Expr::String(s) = property.as_ref() {
+                            s.to_string()
+                        } else {
+                            String::new()
+                        };
+                        let key_idx = self
+                            .chunk
+                            .add_constant(Value::String(Arc::from(key.as_str())));
+                        self.chunk.emit(Op::Const(key_idx), self.current_line); // [obj, key]
+                    }
+                    self.chunk.emit(Op::GetMethodForCall, self.current_line); // [obj, tag]
+                    true
+                } else {
+                    self.compile_expr(tag)?; // [tag]
+                    false
+                };
                 let quasi_ids: Vec<usize> = quasis
                     .iter()
                     .map(|q| match q {
@@ -3117,8 +3143,13 @@ impl Compiler {
                 for e in exprs {
                     self.compile_expr(e)?;
                 }
-                self.chunk
-                    .emit(Op::Call(1 + exprs.len()), self.current_line);
+                if tag_is_member {
+                    self.chunk
+                        .emit(Op::CallThis(1 + exprs.len()), self.current_line);
+                } else {
+                    self.chunk
+                        .emit(Op::Call(1 + exprs.len()), self.current_line);
+                }
             }
             Expr::Regex(pattern, flags) => {
                 // Compile to `new RegExp(pattern, flags)`.

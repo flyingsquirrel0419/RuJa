@@ -1872,7 +1872,7 @@ impl Parser {
     fn parse_ternary(&mut self) -> error::Result<Expr> {
         let cond = self.parse_nullish()?;
         if self.eat(&TokenKind::Question) {
-            let then = self.parse_assign()?;
+            let then = self.with_in_allowed(|p| p.parse_assign())?;
             self.expect(&TokenKind::Colon, ":")?;
             let else_ = self.parse_assign()?;
             Ok(Expr::Conditional(
@@ -3034,19 +3034,40 @@ impl Parser {
                 }
             }
         }
-        // parse the constructor (primary + member access, but NOT call parens)
+        // parse the constructor (primary + member/tagged access, but NOT call parens)
         let mut callee = self.parse_primary()?;
-        // allow member access on the constructor: new Foo.Bar()
-        while self.check(&TokenKind::Dot) {
-            self.advance();
-            let name = self.read_property_name()?;
-            let prop = Expr::String(Arc::from(name.as_str()));
-            callee = Expr::Member {
-                object: Box::new(callee),
-                property: Box::new(prop),
-                computed: false,
-                optional: false,
-            };
+        loop {
+            match self.peek().clone() {
+                TokenKind::Dot => {
+                    self.advance();
+                    let name = self.read_property_name()?;
+                    let prop = Expr::String(Arc::from(name.as_str()));
+                    callee = Expr::Member {
+                        object: Box::new(callee),
+                        property: Box::new(prop),
+                        computed: false,
+                        optional: false,
+                    };
+                }
+                TokenKind::LBracket => {
+                    self.advance();
+                    let prop = self.with_in_allowed(|p| p.parse_expr())?;
+                    self.expect(&TokenKind::RBracket, "]")?;
+                    callee = Expr::Member {
+                        object: Box::new(callee),
+                        property: Box::new(prop),
+                        computed: true,
+                        optional: false,
+                    };
+                }
+                TokenKind::TemplateString { cooked, raw } => {
+                    let quasi0: Option<Arc<str>> = cooked.map(|s| Arc::from(s.as_str()));
+                    let raw0: Arc<str> = Arc::from(raw.as_str());
+                    self.advance();
+                    callee = self.parse_tagged_template(callee, quasi0, raw0)?;
+                }
+                _ => break,
+            }
         }
         if self.check(&TokenKind::LParen) {
             self.advance();

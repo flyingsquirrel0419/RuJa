@@ -4,9 +4,19 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.6%** (up from 88.6%).
-Current supported subset count: **4121 pass / 59 fail / 0 timeout**.
+Supported-subset pass rate: **98.7%** (up from 88.6%).
+Current supported subset count: **4124 pass / 56 fail / 0 timeout**.
 
+- **Tagged-template call context and conditional `in` grammar**: tagged
+  templates used as member expressions now preserve their receiver as `this`,
+  ``new tag`...` `` constructs the tag result rather than the tag function
+  itself, and constructor arguments after a tagged template are applied to that
+  result. Conditional-expression true branches now allow `in` even inside
+  no-`in` contexts such as `for` heads. This reduces
+  `language/expressions/tagged-template` to its remaining cross-realm
+  `$262.createRealm()` failure, closes
+  `language/expressions/conditional/in-branch-1.js`, and raises the supported
+  subset to **4124 pass / 56 fail / 0 timeout**.
 - **Call-expression environment and argument ordering**: explicit named
   function-expression bindings now live in the function closure environment
   rather than the call body's variable environment, so body `var` declarations

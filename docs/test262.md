@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.3% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.7% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (98.6%).** It reflects the portion of the spec
+supported-subset rate (98.7%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -85,15 +85,17 @@ python3 tools/analyze_failures.py
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
-`intl402`/`staging`) in parallel. Latest confirmed full run:
+`intl402`/`staging`) in parallel. Recent successful full runs for the same
+engine code have shown small timeout-count variation in the large `built-ins`
+matrix, so this baseline is recorded as the observed range:
 
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,163 |
-| Pass | 11,185 |
-| Fail | 11,978 |
-| Timeout | 12 |
+| Actually run | 23,162-23,164 |
+| Pass | 11,187-11,189 |
+| Fail | 11,975 |
+| Timeout | 11-13 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **48.3%** |
 | **Pass rate (of total)** | **23.4%** |
@@ -498,10 +500,20 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   check after argument evaluation. This improves `language/expressions/call`
   to **48 pass / 1 fail** and raises the supported subset to
   **4121 pass / 59 fail / 0 timeout**.
+- **Tagged-template call context and conditional `in` grammar** — tagged
+  templates used as member expressions now preserve their receiver as `this`,
+  ``new tag`...` `` constructs the tag result rather than the tag function
+  itself, and constructor arguments after a tagged template are applied to that
+  result. Conditional-expression true branches now allow `in` even inside
+  no-`in` contexts such as `for` heads. This reduces
+  `language/expressions/tagged-template` to the remaining cross-realm
+  `$262.createRealm()` case, closes
+  `language/expressions/conditional/in-branch-1.js`, and raises the supported
+  subset to **4124 pass / 56 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 59 failures in the supported subset cluster
+The remaining 56 failures in the supported subset cluster
 around class behavior, super semantics, property access, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.
