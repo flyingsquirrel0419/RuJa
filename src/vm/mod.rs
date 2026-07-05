@@ -875,6 +875,11 @@ impl Vm {
                         // for the catch binding, and jump to the handler ip.
                         let (_, _, saved_env) =
                             self.current_frame_mut()?.catch_stack.pop().unwrap();
+                        {
+                            let frame = self.current_frame_mut()?;
+                            frame.finally_completion_tag.store(0, Ordering::Relaxed);
+                            *frame.finally_completion_val.lock() = Value::Undefined;
+                        }
                         // Unwind scopes opened in the try body.
                         self.current_frame_mut()?.env = saved_env;
                         self.stack.push(thrown);

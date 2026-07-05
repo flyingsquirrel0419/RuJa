@@ -920,9 +920,6 @@ impl Compiler {
                 if has_catch {
                     self.chunk.emit(Op::PopTry, self.current_line);
                 }
-                if has_finally {
-                    self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
-                }
                 // Normal try completion -> jump to finally (or end).
                 let jump_past_catch = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), self.current_line);
@@ -956,9 +953,6 @@ impl Compiler {
                     self.compile_stmt(catch_body.as_ref().unwrap())?;
                     self.chunk.emit(Op::PopScope, self.current_line);
                     self.pop_scope();
-                    if has_finally {
-                        self.chunk.emit(Op::PopFinally, self.current_line); // drop finally guard
-                    }
                     // Normal catch completion -> jump to finally (or end).
                     let jump_past_catch2 = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
@@ -993,8 +987,24 @@ impl Compiler {
                     self.chunk.emit(Op::PopFinally, self.current_line);
                     self.finally_stack.pop();
                     let saved_sv_depth = self.switch_val_depth;
-                    self.switch_val_depth = None;
+                    let saved_finally_completion = saved_sv_depth.map(|comp_idx| {
+                        let temp_name = format!("#finallycomp{}", self.chunk.code.len());
+                        let temp_idx = self.intern(&temp_name);
+                        self.chunk.emit(Op::LoadEnv(comp_idx), self.current_line);
+                        self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
+                        self.chunk.emit(Op::Undefined, self.current_line);
+                        self.chunk
+                            .emit(Op::StoreEnvName(comp_idx), self.current_line);
+                        self.chunk.emit(Op::Pop, self.current_line);
+                        (comp_idx, temp_idx)
+                    });
                     self.compile_stmt(fin)?;
+                    if let Some((comp_idx, temp_idx)) = saved_finally_completion {
+                        self.chunk.emit(Op::LoadEnv(temp_idx), self.current_line);
+                        self.chunk
+                            .emit(Op::StoreEnvName(comp_idx), self.current_line);
+                        self.chunk.emit(Op::Pop, self.current_line);
+                    }
                     // Re-raise the pending completion (return/break/continue/throw)
                     // that diverted here. A normal completion falls through.
                     self.chunk.emit(Op::PopFinallyRethrow, self.current_line);

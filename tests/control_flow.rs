@@ -140,6 +140,52 @@ fn throw_runs_inner_finally_before_catch() {
 }
 
 #[test]
+fn throw_inside_finally_replaces_pending_throw() {
+    assert_eq!(
+        run("var out; try { try { throw 'old'; } finally { throw 'new'; } } catch (e) { out = e; } out;"),
+        Value::String(Arc::from("new"))
+    );
+}
+
+#[test]
+fn caught_throw_inside_finally_clears_stale_pending_completion() {
+    assert_eq!(
+        run("var out='', fin=0;\
+             try { try { throw 'old'; } finally { throw 'new'; } } catch (e) { out += e; }\
+             try { throw 'next'; } catch (e) { out += ':' + e; } finally { fin = 1; }\
+             out + ':' + fin;"),
+        Value::String(Arc::from("new:next:1"))
+    );
+}
+
+#[test]
+fn return_to_finally_disables_skipped_catch() {
+    assert_eq!(
+        run("function f() {\
+               try { return 'try'; }\
+               catch (e) { return 'catch'; }\
+               finally { throw 'finally'; }\
+             }\
+             try { f(); } catch (e) { e; }"),
+        Value::String(Arc::from("finally"))
+    );
+}
+
+#[test]
+fn break_to_finally_disables_skipped_catch() {
+    assert_eq!(
+        run("var out;\
+             try {\
+               while (true) {\
+                 try { break; } catch (e) { out = 'catch'; } finally { throw 'finally'; }\
+               }\
+             } catch (e) { out = e; }\
+             out;"),
+        Value::String(Arc::from("finally"))
+    );
+}
+
+#[test]
 fn native_reference_error_runs_inner_finally_before_outer_catch() {
     let src =
         "let r=[];try{try{missing;}finally{r.push('fin');}}catch(e){r.push(e.name);}r.join(',');";

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.3%** (up from 88.6%).
-Current supported subset count: **3898 pass / 280 fail / 2 timeout**.
+Supported-subset pass rate: **93.4%** (up from 88.6%).
+Current supported subset count: **3902 pass / 276 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -95,6 +95,15 @@ Current supported subset count: **3898 pass / 280 fail / 2 timeout**.
   catch parameters, instead of deleting `let`/`const`-classified bindings.
   This preserves catch parameter values through `delete e`, fixes test262
   `S12.14_A4`, and reduces the `try` statement subset to **4 failures**.
+- **`try`/`finally` completion replacement semantics**: abrupt completions
+  entering a `finally` block now keep the original completion isolated from
+  the `finally` body's own completion. Normal expression values inside
+  `finally` no longer overwrite a pending empty `break`, while a `throw`
+  inside `finally` correctly replaces a pending `return`, `break`, or outer
+  `throw`. Non-throw abrupt completions also disable skipped catch handlers
+  before entering `finally`, so a `finally`-body `throw` cannot be caught by
+  the catch clause of the same already-completed try statement. This brings
+  `language/statements/try` to **98 pass / 0 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

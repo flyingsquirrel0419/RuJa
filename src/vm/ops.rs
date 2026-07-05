@@ -9,6 +9,16 @@ enum CompareOp {
 }
 
 impl Vm {
+    fn discard_catches_inside_finally(frame: &mut CallFrame, finally_seq: u32) {
+        while frame
+            .catch_stack
+            .last()
+            .is_some_and(|(_, cseq, _)| *cseq > finally_seq)
+        {
+            frame.catch_stack.pop();
+        }
+    }
+
     pub(crate) fn interpret_inner_raw(
         &mut self,
         return_depth: Option<usize>,
@@ -1226,7 +1236,8 @@ impl Vm {
                     // target, popping the finally entry so the finally body's
                     // own transfers aren't re-intercepted by this finally.
                     if let Some(frame) = self.frames.last_mut() {
-                        if let Some(&(target, _)) = frame.finally_stack.last() {
+                        if let Some(&(target, fseq)) = frame.finally_stack.last() {
+                            Self::discard_catches_inside_finally(frame, fseq);
                             frame.finally_completion_tag.store(1, Ordering::Relaxed);
                             *frame.finally_completion_val.lock() = v;
                             frame.ip = target;
@@ -1914,6 +1925,12 @@ impl Vm {
                             continue;
                         }
                         if let Some((handler, _, saved_env)) = frame.catch_stack.pop() {
+                            // A throw from inside a running finally replaces
+                            // the completion that originally entered that
+                            // finally. If an outer catch handles this new
+                            // throw, no stale pending completion may remain.
+                            frame.finally_completion_tag.store(0, Ordering::Relaxed);
+                            *frame.finally_completion_val.lock() = Value::Undefined;
                             // Restore env to try-entry point, unwinding any
                             // scopes/with-envs opened in the try body.
                             frame.env = saved_env;
@@ -1968,6 +1985,9 @@ impl Vm {
                 Op::DivertBreak(finally_start) => {
                     let resume_ip = ip + 1;
                     let f = self.current_frame_mut()?;
+                    if let Some(&(_, fseq)) = f.finally_stack.last() {
+                        Self::discard_catches_inside_finally(f, fseq);
+                    }
                     f.finally_completion_tag.store(2, Ordering::Relaxed);
                     *f.finally_completion_val.lock() = Value::Number(resume_ip as f64);
                     f.ip = finally_start;
@@ -1978,6 +1998,9 @@ impl Vm {
                     // completion as a continue with the loop's continue target,
                     // and divert to the finally body.
                     let f = self.current_frame_mut()?;
+                    if let Some(&(_, fseq)) = f.finally_stack.last() {
+                        Self::discard_catches_inside_finally(f, fseq);
+                    }
                     f.finally_completion_tag.store(3, Ordering::Relaxed);
                     *f.finally_completion_val.lock() = Value::Number(cont as f64);
                     f.ip = finally_start;
@@ -2150,6 +2173,8 @@ impl Vm {
                             // If an outer try catches, route there; else propagate.
                             if let Some(&(handler, _, _)) = frame.catch_stack.last() {
                                 frame.catch_stack.pop();
+                                frame.finally_completion_tag.store(0, Ordering::Relaxed);
+                                *frame.finally_completion_val.lock() = Value::Undefined;
                                 frame.ip = handler;
                                 self.stack.push(val);
                                 continue;
