@@ -91,8 +91,8 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 |--------|-------|
 | Total matrix files | 47,717 |
 | Actually run | 23,175 |
-| Pass | 11,148 |
-| Fail | 12,020 |
+| Pass | 11,150 |
+| Fail | 12,018 |
 | Timeout | 7 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **48.1%** |
@@ -403,12 +403,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `static` modifier. This improves `language/statements/class/syntax` to
   **12 pass / 1 fail** and raises the supported subset to
   **4064 pass / 114 fail / 2 timeout**.
-- **Class `super` property HomeObject capture** — class constructors and
-  instance methods now capture `Class.prototype.[[Prototype]]` for
-  SuperProperty, while static methods, static accessors, and static blocks
-  capture `Class.[[Prototype]]`. This closes `language/statements/class/super`
-  and `language/statements/class/syntax` at **21 pass / 0 fail** and raises
-  the supported subset to **4069 pass / 109 fail / 2 timeout**.
+- **Class `super` property HomeObject setup** — class constructors and
+  instance methods now bind `Class.prototype` as their SuperProperty
+  HomeObject, while static methods, static accessors, and static blocks bind
+  `Class`. SuperProperty evaluation reads the HomeObject prototype
+  dynamically. This closes `language/statements/class/super` and
+  `language/statements/class/syntax` at **21 pass / 0 fail** and raises the
+  supported subset to **4069 pass / 109 fail / 2 timeout**.
 - **Class definition/name-binding semantics** — class declarations now hoist as
   immutable lexical bindings, anonymous class assignment infers constructor
   display names, class bodies parse nested functions in strict context, and
@@ -419,10 +420,19 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/statements/class/definition` and
   `language/statements/class/name-binding` at **41 pass / 0 fail** and raises
   the supported subset to **4080 pass / 98 fail / 2 timeout**.
+- **Dynamic class `super` references** — `super` property reads, calls, simple
+  assignments, updates, and compound assignments now derive the super base
+  from the method HomeObject at evaluation time instead of using a stale
+  class-definition-time prototype value. This follows later
+  `Object.setPrototypeOf` changes, and simple `super.x = rhs` /
+  `super[expr] = rhs` evaluates `rhs` before throwing `TypeError` when the
+  dynamic super base is `null`. This closes `language/expressions/assignment`
+  at **110 pass / 0 fail** and raises the supported subset to
+  **4082 pass / 96 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 98 failures plus 2 timeouts in the supported subset cluster
+The remaining 96 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

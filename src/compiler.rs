@@ -2181,6 +2181,7 @@ impl Compiler {
 
         let super_name = self.intern("#super");
         self.chunk.emit(Op::LoadEnv(super_name), self.current_line);
+        self.chunk.emit(Op::GetProto, self.current_line);
         let super_idx = self.intern("#super_target_base");
         self.chunk
             .emit(Op::DeclareEnv(super_idx), self.current_line);
@@ -2838,6 +2839,7 @@ impl Compiler {
                             self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
                             let super_idx = self.intern("#super");
                             self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                            self.chunk.emit(Op::GetProto, self.current_line);
                             if *computed {
                                 self.compile_expr(property)?;
                             } else {
@@ -3036,6 +3038,7 @@ impl Compiler {
                     self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
                     let super_idx = self.intern("#super");
                     self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                    self.chunk.emit(Op::GetProto, self.current_line);
                     if *computed {
                         self.compile_expr(property)?;
                     } else {
@@ -3355,9 +3358,10 @@ impl Compiler {
                 self.chunk.emit(Op::MakeClass(func_idx), self.current_line);
                 // If there is a superclass, evaluate it and wire up the prototype chain.
                 // The class evaluation scope is captured by the constructor, so
-                // its `#super` binding is the instance HomeObject super base:
-                // `childCtor.prototype.[[Prototype]]`. Static elements shadow
-                // this with `childCtor.[[Prototype]]` when their closures are made.
+                // its `#super` binding is the instance HomeObject:
+                // `childCtor.prototype`. Static elements shadow this with
+                // `childCtor` when their closures are made. Super property
+                // evaluation reads the HomeObject prototype dynamically.
                 if let Some(super_expr) = &cls.superclass {
                     // stack: [ctor]
                     self.compile_expr(super_expr)?;
@@ -3402,14 +3406,13 @@ impl Compiler {
                         .add_constant(Value::String(Arc::from("prototype")));
                     self.chunk.emit(Op::Const(cp_key), self.current_line);
                     self.chunk.emit(Op::GetProp, self.current_line); // [ctor, childProto]
-                    self.chunk.emit(Op::GetProto, self.current_line); // [ctor, childProto.[[Prototype]]]
                     let super_name_idx = self.intern("#super");
                     self.chunk
                         .emit(Op::DeclareEnv(super_name_idx), self.current_line);
                     // stack: [ctor]
                 } else {
                     // Base class constructors and instance methods use
-                    // Class.prototype.[[Prototype]] (normally Object.prototype).
+                    // Class.prototype as their HomeObject.
                     let super_name_idx = self.intern("#super");
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     let cp_key = self
@@ -3417,7 +3420,6 @@ impl Compiler {
                         .add_constant(Value::String(Arc::from("prototype")));
                     self.chunk.emit(Op::Const(cp_key), self.current_line);
                     self.chunk.emit(Op::GetProp, self.current_line); // [ctor, childProto]
-                    self.chunk.emit(Op::GetProto, self.current_line); // [ctor, childProto.[[Prototype]]]
                     self.chunk
                         .emit(Op::DeclareEnv(super_name_idx), self.current_line);
                 }
@@ -3478,7 +3480,6 @@ impl Compiler {
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor, ctor]
-                            self.chunk.emit(Op::GetProto, self.current_line); // [ctor, ctor, ctor, ctor.[[Prototype]]]
                             let static_super_idx = self.intern("#static_super");
                             self.chunk
                                 .emit(Op::DeclareEnv(static_super_idx), self.current_line);
@@ -3506,7 +3507,6 @@ impl Compiler {
                             self.chunk.emit(Op::Const(proto_key), self.current_line);
                             self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
-                            self.chunk.emit(Op::GetProto, self.current_line); // [ctor, proto, proto.[[Prototype]]]
                             let instance_super_idx = self.intern("#instance_super");
                             self.chunk
                                 .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
@@ -3531,7 +3531,6 @@ impl Compiler {
                         // Constructor.method = fn (non-enumerable)
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
-                        self.chunk.emit(Op::GetProto, self.current_line); // [ctor, ctor, ctor.[[Prototype]]]
                         let static_super_idx = self.intern("#static_super");
                         self.chunk
                             .emit(Op::DeclareEnv(static_super_idx), self.current_line);
@@ -3557,7 +3556,6 @@ impl Compiler {
                         self.chunk.emit(Op::Const(proto_key), self.current_line);
                         self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
-                        self.chunk.emit(Op::GetProto, self.current_line); // [ctor, proto, proto.[[Prototype]]]
                         let instance_super_idx = self.intern("#instance_super");
                         self.chunk
                             .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
@@ -3624,7 +3622,6 @@ impl Compiler {
                     // stack: [ctor]. Dup ctor for `this`, then MakeClosure.
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
-                    self.chunk.emit(Op::GetProto, self.current_line); // [ctor, ctor, ctor.[[Prototype]]]
                     self.emit_make_closure_capturing_super_from_stack(sb_idx);
                     // CallThis expects [..., this, fn, args...]; here this=ctor
                     // (dup), fn on top.
@@ -3701,6 +3698,7 @@ impl Compiler {
                     self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
                     let super_idx = self.intern("#super");
                     self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                    self.chunk.emit(Op::GetProto, self.current_line);
                     if *computed {
                         self.compile_expr(property)?;
                     } else {

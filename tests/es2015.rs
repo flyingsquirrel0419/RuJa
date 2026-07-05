@@ -77,6 +77,10 @@ fn class_super_property_uses_home_object_prototype() {
         run("class A{m(){super.x = 1;}} var a = new A(); a.m(); a.x;"),
         Value::Number(1.0)
     );
+    assert_eq!(
+        run("class C{m(){return super.x;}} Object.setPrototypeOf(C.prototype,{x:2}); new C().m();"),
+        Value::Number(2.0)
+    );
 }
 
 #[test]
@@ -92,6 +96,18 @@ fn static_class_super_property_uses_super_constructor() {
     assert_eq!(
         run("class B{static get x(){return 2;} static method(){return 1;}} class C extends B{static set x(v){this.y = v + super.x + super.method();}} C.x = 3; C.y;"),
         Value::Number(6.0)
+    );
+    assert_eq!(
+        run("class B{} B.x=7; class C{static m(){return super.x;}} Object.setPrototypeOf(C,B); C.m();"),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run("var count=0; class C{static m(){try{super.x=count+=1;}catch(e){return (e instanceof TypeError)+':'+count;}}} Object.setPrototypeOf(C,null); C.m();"),
+        Value::String(Arc::from("true:1"))
+    );
+    assert_eq!(
+        run("var count=0; class C{static m(){try{super[0]=count+=1;}catch(e){return (e instanceof TypeError)+':'+count;}}} Object.setPrototypeOf(C,null); C.m();"),
+        Value::String(Arc::from("true:1"))
     );
 }
 

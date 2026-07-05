@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **97.7%** (up from 88.6%).
-Current supported subset count: **4080 pass / 98 fail / 2 timeout**.
+Current supported subset count: **4082 pass / 96 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -301,12 +301,13 @@ Current supported subset count: **4080 pass / 98 fail / 2 timeout**.
   `static` modifier. This improves `language/statements/class/syntax` to
   **12 pass / 1 fail** and raises the supported subset to
   **4064 pass / 114 fail / 2 timeout**.
-- **Class `super` property HomeObject capture**: class evaluation now gives
+- **Class `super` property HomeObject setup**: class evaluation now gives
   constructor and instance methods a per-class `#super` binding based on
-  `Class.prototype.[[Prototype]]`, while static methods, static accessors, and
-  static blocks capture `Class.[[Prototype]]` in their own closure environment.
-  This allows base-class constructor and method `super.prop`, fixes static
-  `super.x` lookup on subclasses, closes `language/statements/class/super` and
+  `Class.prototype`, while static methods, static accessors, and static blocks
+  bind `Class` in their own closure environment. SuperProperty evaluation
+  reads the HomeObject prototype dynamically. This allows base-class
+  constructor and method `super.prop`, fixes static `super.x` lookup on
+  subclasses, closes `language/statements/class/super` and
   `language/statements/class/syntax` at **21 pass / 0 fail**, and raises the
   supported subset to **4069 pass / 109 fail / 2 timeout**.
 - **Class definition/name-binding semantics**: class declarations now hoist as
@@ -320,6 +321,15 @@ Current supported subset count: **4080 pass / 98 fail / 2 timeout**.
   `language/statements/class/definition` and
   `language/statements/class/name-binding` at **41 pass / 0 fail** and raises
   the supported subset to **4080 pass / 98 fail / 2 timeout**.
+- **Dynamic class `super` references**: `super` property reads, calls, simple
+  assignments, updates, and compound assignments now derive the super base
+  from the method HomeObject at evaluation time instead of using a stale
+  class-definition-time prototype value. This follows later
+  `Object.setPrototypeOf` changes, and simple `super.x = rhs` /
+  `super[expr] = rhs` evaluates `rhs` before throwing `TypeError` when the
+  dynamic super base is `null`. This closes `language/expressions/assignment`
+  at **110 pass / 0 fail** and raises the supported subset to
+  **4082 pass / 96 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
