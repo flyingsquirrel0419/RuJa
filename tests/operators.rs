@@ -87,8 +87,19 @@ fn nullish_chain() {
 
 #[test]
 fn nullish_lower_than_or() {
-    // ?? binds looser than ||, so this is `1 || (2 ?? 3)`.
-    assert_eq!(run("1 || 2 ?? 3;"), Value::Number(1.0));
+    for src in [
+        "1 || 2 ?? 3;",
+        "1 && 2 ?? 3;",
+        "1 ?? 2 || 3;",
+        "1 ?? 2 && 3;",
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+
+    assert_eq!(run("(0 || 2) ?? 3;"), Value::Number(2.0));
+    assert_eq!(run("0 ?? (2 || 3);"), Value::Number(0.0));
+    assert_eq!(run("(1 && 2) ?? 3;"), Value::Number(2.0));
+    assert_eq!(run("null ?? (0 && 3);"), Value::Number(0.0));
 }
 
 #[test]

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **96.0%** (up from 88.6%).
-Current supported subset count: **4009 pass / 169 fail / 2 timeout**.
+Supported-subset pass rate: **96.1%** (up from 88.6%).
+Current supported subset count: **4013 pass / 165 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -264,6 +264,11 @@ Current supported subset count: **4009 pass / 169 fail / 2 timeout**.
   expression, then reuse the same receiver/base/key reference for the get and
   set. This closes `language/expressions/super` at **36 pass / 0 fail** and
   raises the supported subset to **4009 pass / 169 fail / 2 timeout**.
+- **Nullish/logical chain early errors**: unparenthesized `??` mixed directly
+  with `&&` or `||` now throws a parse-time `SyntaxError`, while
+  parenthesized combinations still parse and evaluate. This closes
+  `language/expressions/coalesce` at **22 pass / 0 fail** and raises the
+  supported subset to **4013 pass / 165 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

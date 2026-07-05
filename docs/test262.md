@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 96.0% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.1% of all matrix files; 47.6% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 96.1% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (96.0%).** It reflects the portion of the spec
+supported-subset rate (96.1%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -85,16 +85,18 @@ python3 tools/analyze_failures.py
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
-`intl402`/`staging`) in parallel. Baseline from the first full run:
+`intl402`/`staging`) in parallel. Latest confirmed full run:
 
 | Metric | Count |
 |--------|-------|
-| Total tests | 76,397 |
-| Actually run | 60,178 |
-| Pass | 19,987 |
-| Fail | 40,191 |
-| Skip | 15,481 |
-| **Pass rate (of run)** | **33.2%** |
+| Total matrix files | 47,717 |
+| Actually run | 23,175 |
+| Pass | 11,033 |
+| Fail | 12,134 |
+| Timeout | 8 |
+| Skip | 24,542 |
+| **Pass rate (of run)** | **47.6%** |
+| **Pass rate (of total)** | **23.1%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -125,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 96.0%:
+~56% to 96.1%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -365,10 +367,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   expression, then reuse the same receiver/base/key reference for the get and
   set. This closes `language/expressions/super` at **36 pass / 0 fail** and
   raises the supported subset to **4009 pass / 169 fail / 2 timeout**.
+- **Nullish/logical chain early errors** — unparenthesized `??` mixed directly
+  with `&&` or `||` now throws a parse-time `SyntaxError`, while
+  parenthesized combinations still parse and evaluate. This closes
+  `language/expressions/coalesce` at **22 pass / 0 fail** and raises the
+  supported subset to **4013 pass / 165 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 169 failures plus 2 timeouts in the supported subset cluster
+The remaining 165 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

@@ -1831,17 +1831,29 @@ impl Parser {
     }
 
     fn parse_nullish(&mut self) -> error::Result<Expr> {
-        let mut left = self.parse_logical_or()?;
+        let left = self.parse_bit_or()?;
+        if self.check(&TokenKind::Nullish) {
+            return self.parse_nullish_tail(left);
+        }
+        let left = self.parse_logical_and_tail(left)?;
+        self.parse_logical_or_tail(left)
+    }
+
+    fn parse_nullish_tail(&mut self, mut left: Expr) -> error::Result<Expr> {
         while self.check(&TokenKind::Nullish) {
             self.advance();
-            let right = self.parse_logical_or()?;
+            let right = self.parse_bit_or()?;
             left = Expr::Logical(LogicalOp::Nullish, Box::new(left), Box::new(right));
         }
         Ok(left)
     }
 
     fn parse_logical_or(&mut self) -> error::Result<Expr> {
-        let mut left = self.parse_logical_and()?;
+        let left = self.parse_logical_and()?;
+        self.parse_logical_or_tail(left)
+    }
+
+    fn parse_logical_or_tail(&mut self, mut left: Expr) -> error::Result<Expr> {
         while self.check(&TokenKind::Or) {
             self.advance();
             let right = self.parse_logical_and()?;
@@ -1851,7 +1863,11 @@ impl Parser {
     }
 
     fn parse_logical_and(&mut self) -> error::Result<Expr> {
-        let mut left = self.parse_bit_or()?;
+        let left = self.parse_bit_or()?;
+        self.parse_logical_and_tail(left)
+    }
+
+    fn parse_logical_and_tail(&mut self, mut left: Expr) -> error::Result<Expr> {
         while self.check(&TokenKind::And) {
             self.advance();
             let right = self.parse_bit_or()?;
