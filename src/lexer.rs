@@ -581,6 +581,7 @@ impl<'a> Lexer<'a> {
             "do" => TokenKind::Do,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
+            "debugger" => TokenKind::Debugger,
             "null" => TokenKind::Null,
             "true" => TokenKind::True,
             "false" => TokenKind::False,

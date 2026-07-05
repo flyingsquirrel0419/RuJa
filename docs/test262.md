@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.2% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.3% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.3% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.4% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (98.3%).** It reflects the portion of the spec
+supported-subset rate (98.4%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 98.3%:
+~56% to 98.4%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -153,6 +153,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   labels in non-module code and contextual `yield` labels in sloppy
   non-generator code parse correctly, including escaped spellings, while
   strict labelled function declarations are rejected during parsing.
+- **Function statement-control parser boundaries and raw meta-property
+  tokens** — nested function bodies reset loop/switch/label parse context,
+  `async function` honors the no-LineTerminator rule, escaped `new.target`
+  forms are rejected, and `debugger` is statement-only.
 - **BigInt increment/decrement** — `x++` on BigInt returns BigInt.
 - **Object.prototype.toString** — returns `[object Object]` for plain
   objects; `String.prototype.toString` added.
@@ -462,10 +466,20 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Strict labelled function declarations now fail during parsing instead of
   executing. This closes `language/statements/labeled` at **17 pass / 0 fail**
   and raises the supported subset to **4108 pass / 72 fail / 0 timeout**.
+- **Function statement-control parser boundaries and raw meta-property
+  tokens** — parser state for loops, switches, and labels no longer leaks into
+  nested function bodies, so inner `break`/`continue` cannot target an outer
+  function's labels. `async function` declarations and expressions now require
+  no line terminator between the keywords, `new.target` requires raw `new` and
+  `target` tokens, and `debugger` is a statement-only keyword. This closes
+  `language/statements/break`, `language/statements/continue`,
+  `language/statements/debugger`, `language/statements/async-function`, and
+  `language/expressions/new.target` in the supported subset, raising it to
+  **4114 pass / 66 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 72 failures in the supported subset cluster
+The remaining 66 failures in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

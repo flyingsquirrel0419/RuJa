@@ -653,6 +653,31 @@ fn labeled_contextual_keywords_and_strict_function_body() {
     );
 }
 
+#[test]
+fn function_bodies_reset_statement_control_context_and_raw_new_target() {
+    for src in [
+        "LABEL1: do { (function(){ break LABEL1; })(); } while (0);",
+        "LABEL1: do { (function(){ continue LABEL1; })(); } while (0);",
+        "(debugger);",
+        r#"function f() { n\u0065w.target; }"#,
+        r#"function f() { new.t\u0061rget; }"#,
+    ] {
+        let err = run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError for {src}, got: {err}"
+        );
+    }
+
+    let err = run_err("async\nfunction foo() {}");
+    assert!(
+        err.contains("ReferenceError"),
+        "async followed by a newline before function should evaluate async as an identifier, got: {err}"
+    );
+
+    assert_eq!(run("debugger; 5;"), Value::Number(5.0));
+}
+
 // ---------------------------------------------------------------------------
 // #5 try/finally control flow (return/throw override)
 // ---------------------------------------------------------------------------

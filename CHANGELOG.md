@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.3%** (up from 88.6%).
-Current supported subset count: **4108 pass / 72 fail / 0 timeout**.
+Supported-subset pass rate: **98.4%** (up from 88.6%).
+Current supported subset count: **4114 pass / 66 fail / 0 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -354,6 +354,16 @@ Current supported subset count: **4108 pass / 72 fail / 0 timeout**.
   strict labelled function declarations are rejected during parsing. This
   closes `language/statements/labeled` at **17 pass / 0 fail** and raises the
   supported subset to **4108 pass / 72 fail / 0 timeout**.
+- **Function statement-control parser boundaries and raw meta-property
+  tokens**: nested function bodies now reset loop/switch/label parsing context
+  so inner `break`/`continue` cannot target an outer function's labels.
+  `async function` declarations and expressions now require no line terminator
+  between `async` and `function`, `new.target` requires raw `new` and `target`
+  tokens, and `debugger` is parsed as a statement-only keyword. This closes
+  the remaining supported-subset failures in `language/statements/break`,
+  `language/statements/continue`, `language/statements/debugger`,
+  `language/statements/async-function`, and `language/expressions/new.target`,
+  raising the supported subset to **4114 pass / 66 fail / 0 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

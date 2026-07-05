@@ -323,6 +323,22 @@ impl Parser {
         result
     }
 
+    fn with_function_statement_control_context<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved_loop_depth = self.loop_depth;
+        let saved_switch_depth = self.switch_depth;
+        let saved_label_stack = std::mem::take(&mut self.label_stack);
+        self.loop_depth = 0;
+        self.switch_depth = 0;
+        let result = f(self);
+        self.loop_depth = saved_loop_depth;
+        self.switch_depth = saved_switch_depth;
+        self.label_stack = saved_label_stack;
+        result
+    }
+
     /// Determine if `let` at the current position is a lexical declaration
     /// (as opposed to an identifier). Per spec, `let` is a declaration when
     /// followed by `[`, `{`, or an identifier name. ASI does not apply between
@@ -586,7 +602,9 @@ impl Parser {
             ),
             TokenKind::Function => self.parse_function_decl(),
             TokenKind::Async => {
-                if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
+                if matches!(self.peek_at_tok(1).kind, TokenKind::Function)
+                    && !self.peek_at_tok(1).preceded_by_newline
+                {
                     self.advance(); // async
                     self.parse_function_decl_with_async(true)
                 } else {
@@ -642,6 +660,11 @@ impl Parser {
                     }
                 }
                 Ok(self.stmt(StmtNode::Continue(l)))
+            }
+            TokenKind::Debugger => {
+                self.advance();
+                self.expect_semi()?;
+                Ok(self.stmt(StmtNode::Empty))
             }
             TokenKind::Throw => {
                 self.advance();
@@ -924,17 +947,20 @@ impl Parser {
             self.is_strict_context = true;
         }
         self.function_depth += 1;
-        let mut body = Vec::new();
-        self.with_lexical_declaration_context(true, |p| {
-            while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
-                body.push(p.parse_stmt()?);
-            }
-            Ok(())
-        })?;
-        self.expect(&TokenKind::RBrace, "}")?;
+        let result = self.with_function_statement_control_context(|p| {
+            let mut body = Vec::new();
+            p.with_lexical_declaration_context(true, |p| {
+                while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                    body.push(p.parse_stmt()?);
+                }
+                Ok(())
+            })?;
+            p.expect(&TokenKind::RBrace, "}")?;
+            Ok(body)
+        });
         self.function_depth -= 1;
         self.is_strict_context = saved_strict;
-        Ok(body)
+        result
     }
 
     fn parse_fn_body_inner(
@@ -964,19 +990,22 @@ impl Parser {
             self.super_call_depth = 0;
         }
         self.function_depth += 1;
-        let mut body = Vec::new();
-        self.with_lexical_declaration_context(true, |p| {
-            while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
-                body.push(p.parse_stmt()?);
-            }
-            Ok(())
-        })?;
-        self.expect(&TokenKind::RBrace, "}")?;
+        let result = self.with_function_statement_control_context(|p| {
+            let mut body = Vec::new();
+            p.with_lexical_declaration_context(true, |p| {
+                while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                    body.push(p.parse_stmt()?);
+                }
+                Ok(())
+            })?;
+            p.expect(&TokenKind::RBrace, "}")?;
+            Ok(body)
+        });
         self.function_depth -= 1;
         self.is_strict_context = saved_strict;
         self.super_depth = saved_super;
         self.super_call_depth = saved_super_call;
-        Ok(body)
+        result
     }
 
     /// Take the destructuring-parameter declarations collected by the most
@@ -2319,7 +2348,9 @@ impl Parser {
             TokenKind::Async => {
                 // `async function ...` expression; `async () =>` arrow; otherwise
                 // `async` is treated as a plain identifier.
-                if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
+                if matches!(self.peek_at_tok(1).kind, TokenKind::Function)
+                    && !self.peek_at_tok(1).preceded_by_newline
+                {
                     self.advance(); // async
                     return self.parse_function_expr_with_async(true);
                 }
@@ -2979,15 +3010,21 @@ impl Parser {
     }
 
     fn parse_new(&mut self) -> error::Result<Expr> {
+        let new_had_escape = self.peek_at_tok(0).had_escape;
         self.advance(); // new
                         // new.target
         if self.check(&TokenKind::Dot) {
             // peek at the property name
-            if let TokenKind::Ident(s) = self.peek_at_tok(1).kind.clone() {
-                if s == "target" {
+            let target = self.peek_at_tok(1);
+            if let TokenKind::Ident(s) = target.kind.clone() {
+                if s == "target" && !new_had_escape && !target.had_escape {
                     self.advance(); // .
                     self.advance(); // target
                     return Ok(Expr::NewTarget);
+                } else if s == "target" {
+                    return Err(error::Error::syntax(
+                        "new.target must use raw new and target tokens".to_string(),
+                    ));
                 }
             }
         }
