@@ -92,10 +92,10 @@ vary slightly because a small number of tests can cross the timeout boundary:
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,163 |
-| Pass | 12,175 |
+| Actually run | 23,164 |
+| Pass | 12,176 |
 | Fail | 10,988 |
-| Timeout | 12 |
+| Timeout | 11 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **52.6%** |
 | **Pass rate (of total)** | **25.5%** |
