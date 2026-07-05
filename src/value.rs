@@ -371,6 +371,20 @@ pub struct TypedArrayData {
     pub proto: Mutex<Option<Value>>,
 }
 
+pub struct ArrayBufferData {
+    pub bytes: Mutex<Vec<u8>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+}
+
+pub struct DataViewData {
+    pub buffer: Value,
+    pub byte_offset: usize,
+    pub byte_length: usize,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum TypedArrayKind {
     Uint8,
@@ -432,6 +446,8 @@ pub enum HeapObj {
     LazyGenerator(LazyGeneratorData),
     Proxy(ProxyData),
     TypedArray(TypedArrayData),
+    ArrayBuffer(ArrayBufferData),
+    DataView(DataViewData),
 }
 
 /// Generic JS object.
@@ -748,6 +764,8 @@ impl HeapObj {
             HeapObj::LazyGenerator(g) => &g.props,
             HeapObj::Proxy(p) => &p.props,
             HeapObj::TypedArray(t) => &t.props,
+            HeapObj::ArrayBuffer(a) => &a.props,
+            HeapObj::DataView(d) => &d.props,
             HeapObj::Iterator(_) => panic!("iterator has no props"),
             HeapObj::Environment(_) => panic!("env has no props"),
         }
@@ -768,6 +786,8 @@ impl HeapObj {
             HeapObj::LazyGenerator(g) => &g.proto,
             HeapObj::Proxy(p) => &p.proto,
             HeapObj::TypedArray(t) => &t.proto,
+            HeapObj::ArrayBuffer(a) => &a.proto,
+            HeapObj::DataView(d) => &d.proto,
             HeapObj::Environment(_) => panic!("env has no proto"),
             HeapObj::Iterator(_) => panic!("iterator has no proto"),
         }
@@ -794,6 +814,8 @@ impl HeapObj {
             HeapObj::Environment(_) => "Environment",
             HeapObj::Proxy(_) => "Object",
             HeapObj::TypedArray(t) => t.kind.name(),
+            HeapObj::ArrayBuffer(_) => "ArrayBuffer",
+            HeapObj::DataView(_) => "DataView",
         }
     }
 

@@ -185,11 +185,17 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(&k.0, worklist);
             }
         }
+        HeapObj::DataView(d) => {
+            push_value(&d.buffer, worklist);
+        }
         HeapObj::Promise(p) => {
             push_value(&p.result.lock(), worklist);
             for h in p.handlers.lock().iter() {
                 push_value(&h.on_fulfilled, worklist);
                 push_value(&h.on_rejected, worklist);
+                if let Some(derived) = h.derived {
+                    worklist.push(derived.0);
+                }
             }
         }
         HeapObj::Generator(g) => {

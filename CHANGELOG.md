@@ -4,9 +4,20 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.8%** (up from 88.6%).
-Current supported subset count: **4173 pass / 7 fail / 0 timeout**.
+Supported-subset pass rate: **99.9%** (up from 88.6%).
+Current supported subset count: **4177 pass / 3 fail / 0 timeout**.
 
+- **ArrayBuffer and DataView subclass internals**: added minimal
+  `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
+  bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/
+  `byteOffset`/`byteLength` accessors. Subclass construction now initializes
+  the required internal slots and `ArrayBuffer.prototype.slice` returns the
+  default subclass constructor result while clamping inverted slice ranges and
+  rejecting oversized backing-store lengths, closing the ArrayBuffer/DataView
+  subclass checks and raising the supported subset to **4177 pass / 3 fail / 0
+  timeout**. Promise GC tracing now also marks downstream derived promises held
+  in pending handlers, fixing a stress failure exposed by the additional
+  bootstrap allocations.
 - **Uint8Array subclass exotic construction**: `Uint8Array` now exposes a
   constructor `prototype`, subclass construction allocates typed-array exotic
   objects with `new.target.prototype`, and integer-index writes update the

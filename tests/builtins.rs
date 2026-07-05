@@ -129,6 +129,66 @@ fn uint8array_subclass_instances_use_new_target_prototype_and_store_elements() {
 }
 
 #[test]
+fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
+    assert_eq!(
+        run(r#"
+            class AB extends ArrayBuffer {}
+            var ab = new AB(4);
+            var sliced = ab.slice(0, 1);
+            [
+              ab.byteLength,
+              sliced.byteLength,
+              sliced instanceof AB,
+              sliced instanceof ArrayBuffer,
+              Object.getPrototypeOf(ab) === AB.prototype
+            ].join(",");
+            "#),
+        Value::String(Arc::from("4,1,true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            class DV extends DataView {}
+            var buffer = new ArrayBuffer(1);
+            var dv = new DV(buffer);
+            [
+              dv.buffer === buffer,
+              dv.byteOffset,
+              dv.byteLength,
+              Object.getPrototypeOf(dv) === DV.prototype
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,0,1,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var ok = [];
+            class AB1 extends ArrayBuffer { constructor() {} }
+            try { new AB1(1); ok.push(false); } catch (e) { ok.push(e instanceof ReferenceError); }
+            class DV1 extends DataView { constructor() {} }
+            try { new DV1(new ArrayBuffer(1)); ok.push(false); } catch (e) { ok.push(e instanceof ReferenceError); }
+            try { new (class DV extends DataView {}); ok.push(false); } catch (e) { ok.push(e instanceof TypeError); }
+            ok.join(",");
+        "#),
+        Value::String(Arc::from("true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var ab = new ArrayBuffer(4);
+            ab.slice(3, 1).byteLength;
+            "#),
+        Value::Number(0.0)
+    );
+    assert!(
+        run_err("new DataView(new ArrayBuffer(4), 3, 2);").contains("RangeError"),
+        "DataView byte range past the buffer should throw RangeError"
+    );
+    assert!(
+        run_err("new ArrayBuffer(9007199254740991);").contains("RangeError"),
+        "huge ArrayBuffer lengths should throw RangeError"
+    );
+}
+
+#[test]
 fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
     assert_eq!(
         run(r#"

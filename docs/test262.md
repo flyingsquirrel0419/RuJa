@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.0% of all matrix files; 50.1-50.3% of executed files in recent confirmed full runs | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.8% (4173 pass / 7 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.9% (4177 pass / 3 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.8%).** It reflects the portion of the spec
+supported-subset rate (99.9%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -51,8 +51,9 @@ Reflect, Promise, async/await, generators, for-of, optional chaining,
 nullish coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, Atomics,
-SharedArrayBuffer, TypedArray (Uint8Array is partially supported),
-WeakRef/FinalizationRegistry, Tail-call optimization.
+SharedArrayBuffer, most TypedArray variants beyond partial Uint8Array/
+ArrayBuffer/DataView support, WeakRef/FinalizationRegistry, Tail-call
+optimization.
 
 Conformance within this subset is the goal — not the raw test262
 percentage. The full-suite number includes thousands of tests for
@@ -128,8 +129,13 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 99.8%:
+~56% to 99.9%:
 
+- **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
+  DataView exotic heap objects now initialize internal slots during subclass
+  construction; `ArrayBuffer.prototype.slice` returns the default subclass
+  constructor result, and DataView exposes `buffer`, `byteOffset`, and
+  `byteLength`.
 - **Uint8Array subclass exotic construction** — `Uint8Array` now exposes a
   constructor `prototype`, subclass construction allocates typed-array exotic
   objects with `new.target.prototype`, and integer-index writes update the

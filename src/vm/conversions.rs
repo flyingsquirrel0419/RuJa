@@ -677,6 +677,33 @@ impl Vm {
                     }
                     // Non-index property: fall through to object props.
                 }
+                let array_buffer_len = self.heap.with_obj(idx.0, |o| {
+                    if let crate::value::HeapObj::ArrayBuffer(buffer) = o {
+                        Some(buffer.bytes.lock().len())
+                    } else {
+                        None
+                    }
+                });
+                if let Some(len) = array_buffer_len {
+                    if key == "byteLength" {
+                        return Ok(Value::Number(len as f64));
+                    }
+                }
+                let data_view_info = self.heap.with_obj(idx.0, |o| {
+                    if let crate::value::HeapObj::DataView(view) = o {
+                        Some((view.buffer.clone(), view.byte_offset, view.byte_length))
+                    } else {
+                        None
+                    }
+                });
+                if let Some((buffer, byte_offset, byte_length)) = data_view_info {
+                    match key {
+                        "buffer" => return Ok(buffer),
+                        "byteOffset" => return Ok(Value::Number(byte_offset as f64)),
+                        "byteLength" => return Ok(Value::Number(byte_length as f64)),
+                        _ => {}
+                    }
+                }
                 // Proxy trap: if this object is a Proxy, call handler.get.
                 let proxy_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::Proxy(p) = o {

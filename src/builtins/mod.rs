@@ -1643,6 +1643,18 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
 
+    let (array_buffer_ctor, _) = make_builtin_constructor_with(
+        vm,
+        "ArrayBuffer",
+        array_buffer_constructor,
+        &[("slice", array_buffer_slice, 2)],
+    )?;
+    define_global(vm, "ArrayBuffer", Value::Object(array_buffer_ctor));
+
+    let (data_view_ctor, _) =
+        make_builtin_constructor_with(vm, "DataView", data_view_constructor, &[])?;
+    define_global(vm, "DataView", Value::Object(data_view_ctor));
+
     // Uint8Array constructor.
     let u8_ctor_idx = vm.new_native_function("Uint8Array", uint8array_constructor, 1)?;
     let u8_proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {

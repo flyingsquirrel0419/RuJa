@@ -1,5 +1,145 @@
 use super::*;
 
+const MAX_ARRAY_BUFFER_LENGTH: usize = 1 << 26;
+
+fn to_index_length(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if !n.is_finite() || n < 0.0 {
+        return Err(Error::range(format!("Invalid {name} length")));
+    }
+    let integer = n.trunc();
+    if integer > MAX_ARRAY_BUFFER_LENGTH as f64 {
+        return Err(Error::range(format!("Invalid {name} length")));
+    }
+    Ok(integer as usize)
+}
+
+pub(crate) fn array_buffer_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let length = match args.first() {
+        Some(value) => to_index_length(vm, value, "ArrayBuffer")?,
+        None => 0,
+    };
+    let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
+    let idx = vm
+        .heap
+        .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
+            bytes: Mutex::new(vec![0; length]),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+        }))?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
+pub(crate) fn array_buffer_slice(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("ArrayBuffer slice called without this"))?;
+    let bytes = match &this {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                Some(buffer.bytes.lock().clone())
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+    .ok_or_else(|| Error::type_err("ArrayBuffer.prototype.slice called on non-ArrayBuffer"))?;
+
+    let len = bytes.len();
+    let start = match args.first() {
+        Some(value) => vm.to_number(value)?.trunc() as isize,
+        None => 0,
+    };
+    let end = match args.get(1) {
+        Some(Value::Undefined) | None => len as isize,
+        Some(value) => vm.to_number(value)?.trunc() as isize,
+    };
+    let from = if start < 0 {
+        (len as isize + start).max(0) as usize
+    } else {
+        (start as usize).min(len)
+    };
+    let to = if end < 0 {
+        (len as isize + end).max(0) as usize
+    } else {
+        (end as usize).min(len)
+    };
+    let to = to.max(from);
+    let count = to - from;
+
+    let ctor = vm.get_property(&this, "constructor")?;
+    let ctor = if ctor.is_undefined() {
+        crate::environment::get(&vm.heap, vm.global, "ArrayBuffer").unwrap_or(Value::Undefined)
+    } else {
+        ctor
+    };
+    let result = vm.construct(&ctor, &[Value::Number(count as f64)])?;
+    if let Value::Object(idx) = &result {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                *buffer.bytes.lock() = bytes[from..to].to_vec();
+            }
+        });
+    }
+    Ok(result)
+}
+
+pub(crate) fn data_view_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let buffer = args.first().cloned().unwrap_or(Value::Undefined);
+    let buffer_len = match &buffer {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(array_buffer) = o {
+                Some(array_buffer.bytes.lock().len())
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+    .ok_or_else(|| Error::type_err("DataView buffer must be an ArrayBuffer"))?;
+
+    let byte_offset = match args.get(1) {
+        Some(value) => to_index_length(vm, value, "DataView byteOffset")?,
+        None => 0,
+    };
+    if byte_offset > buffer_len {
+        return Err(Error::range("Invalid DataView byteOffset"));
+    }
+    let byte_length = match args.get(2) {
+        Some(Value::Undefined) | None => buffer_len - byte_offset,
+        Some(value) => to_index_length(vm, value, "DataView byteLength")?,
+    };
+    if byte_offset
+        .checked_add(byte_length)
+        .is_none_or(|end| end > buffer_len)
+    {
+        return Err(Error::range("Invalid DataView byteLength"));
+    }
+
+    let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
+    let idx = vm
+        .heap
+        .allocate(HeapObj::DataView(crate::value::DataViewData {
+            buffer,
+            byte_offset,
+            byte_length,
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+        }))?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
 pub(crate) fn to_uint8_element(n: f64) -> u8 {
     if !n.is_finite() || n == 0.0 {
         return 0;

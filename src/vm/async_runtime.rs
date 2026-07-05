@@ -40,17 +40,18 @@ impl Vm {
             }
             return Ok(());
         }
-        // Pin the handler, result, and derived promise as GC roots while the
+        // Pin the source promise, handler, result, and derived promise as GC roots while the
         // handler call runs: call_function may allocate enough to trigger a GC,
         // which would otherwise collect these values held only in Rust locals.
         let pinned = self.pin_many(&[handler.clone(), result.clone()]);
+        self.gc_pins.push(promise.0);
         if let Some(d) = derived {
             self.gc_pins.push(d.0);
         }
         // call the handler with the result
         let call_ret = self.call_function(&handler, std::slice::from_ref(&result), None);
         // Unpin everything (handler + result + derived) regardless of outcome.
-        let mut to_unpin = pinned;
+        let mut to_unpin = pinned + 1;
         if derived.is_some() {
             to_unpin += 1;
         }
