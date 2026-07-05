@@ -637,6 +637,15 @@ fn await_non_promise() {
     assert!(matches!(r, Value::Object(_)));
 }
 
+#[test]
+fn await_is_contextual_identifier_in_sloppy_non_async_code() {
+    assert_eq!(run("var await = 0; await = 1; await;"), Value::Number(1.0));
+    assert_eq!(
+        run("function f(await){ return await; } f(7);"),
+        Value::Number(7.0)
+    );
+}
+
 // --- generators (function*/yield) ---
 
 #[test]

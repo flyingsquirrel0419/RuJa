@@ -57,6 +57,10 @@ pub struct Parser {
     /// keyword only inside generator parameter/body contexts; outside strict
     /// mode non-generator code it remains an ordinary identifier.
     generator_depth: usize,
+    /// Current async-function parsing depth. `await` is an expression keyword
+    /// inside async parameter/body contexts; in sloppy non-async contexts it
+    /// remains available as a contextual identifier.
+    async_depth: usize,
     /// Whether the current statement position accepts LexicalDeclaration as a
     /// StatementListItem. Single-statement bodies (`if (x) stmt`, labels,
     /// `with (x) stmt`, etc.) parse `let` with ExpressionStatement lookahead
@@ -88,6 +92,7 @@ impl Parser {
             label_stack: Vec::new(),
             function_depth: 0,
             generator_depth: 0,
+            async_depth: 0,
             lexical_declaration_allowed: true,
             super_depth: 0,
             super_call_depth: 0,
@@ -200,6 +205,10 @@ impl Parser {
         !self.is_strict_context && self.generator_depth == 0
     }
 
+    fn await_as_identifier_allowed(&self) -> bool {
+        !self.is_strict_context && self.async_depth == 0
+    }
+
     fn with_generator_context<T>(
         &mut self,
         enabled: bool,
@@ -210,6 +219,29 @@ impl Parser {
         let result = f(self);
         self.generator_depth = saved_generator_depth;
         result
+    }
+
+    fn with_async_context<T>(
+        &mut self,
+        enabled: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved_async_depth = self.async_depth;
+        self.async_depth = if enabled { 1 } else { 0 };
+        let result = f(self);
+        self.async_depth = saved_async_depth;
+        result
+    }
+
+    fn with_function_context<T>(
+        &mut self,
+        generator_enabled: bool,
+        async_enabled: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        self.with_generator_context(generator_enabled, |p| {
+            p.with_async_context(async_enabled, f)
+        })
     }
 
     fn with_lexical_declaration_context<T>(
@@ -250,6 +282,36 @@ impl Parser {
             | TokenKind::Of => true,
             _ => false,
         }
+    }
+
+    fn await_token_is_identifier_ref(&self) -> bool {
+        matches!(
+            self.peek_at_tok(1).kind,
+            TokenKind::Assign
+                | TokenKind::PlusAssign
+                | TokenKind::MinusAssign
+                | TokenKind::StarAssign
+                | TokenKind::SlashAssign
+                | TokenKind::PercentAssign
+                | TokenKind::StarStarAssign
+                | TokenKind::AmpAssign
+                | TokenKind::PipeAssign
+                | TokenKind::CaretAssign
+                | TokenKind::ShlAssign
+                | TokenKind::ShrAssign
+                | TokenKind::UshrAssign
+                | TokenKind::AndAssign
+                | TokenKind::OrAssign
+                | TokenKind::NullishAssign
+                | TokenKind::Comma
+                | TokenKind::Semicolon
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+                | TokenKind::Colon
+                | TokenKind::Instanceof
+                | TokenKind::Eof
+        )
     }
 
     fn expect_semi(&mut self) -> error::Result<()> {
@@ -454,11 +516,7 @@ impl Parser {
             TokenKind::Async => {
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
                     self.advance(); // async
-                    let mut d = self.parse_function_decl()?;
-                    if let StmtNode::FunctionDecl(fe) = &mut d.node {
-                        fe.is_async = true;
-                    }
-                    Ok(d)
+                    self.parse_function_decl_with_async(true)
                 } else {
                     let e = self.parse_expr()?;
                     self.expect_semi()?;
@@ -569,10 +627,16 @@ impl Parser {
     }
 
     fn parse_function_decl(&mut self) -> error::Result<Stmt> {
+        self.parse_function_decl_with_async(false)
+    }
+
+    fn parse_function_decl_with_async(&mut self, is_async: bool) -> error::Result<Stmt> {
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
         let name = match self.advance() {
             TokenKind::Ident(s) => Some(Arc::from(s.as_str())),
+            TokenKind::Await if self.await_as_identifier_allowed() => Some(Arc::from("await")),
+            TokenKind::Yield if self.yield_as_identifier_allowed() => Some(Arc::from("yield")),
             other => {
                 return Err(error::Error::syntax(format!(
                     "Expected function name, got {:?}",
@@ -580,10 +644,10 @@ impl Parser {
                 )))
             }
         };
-        let params = self.with_generator_context(is_generator, |p| p.parse_params())?;
+        let params = self.with_function_context(is_generator, is_async, |p| p.parse_params())?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body(false, false, is_generator)?;
+        let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = Self::scan_directive_prologue(&body);
         let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
@@ -639,7 +703,7 @@ impl Parser {
             rest_param,
             body,
             is_arrow: false,
-            is_async: false,
+            is_async,
             is_generator,
             param_decls: Vec::new(),
             is_strict,
@@ -671,6 +735,10 @@ impl Parser {
                         self.advance();
                         "yield".to_string()
                     }
+                    TokenKind::Await if self.await_as_identifier_allowed() => {
+                        self.advance();
+                        "await".to_string()
+                    }
                     _ => {
                         return Err(error::Error::syntax(
                             "Expected rest parameter name".to_string(),
@@ -696,6 +764,18 @@ impl Parser {
                 TokenKind::Yield if self.yield_as_identifier_allowed() => {
                     self.advance();
                     let s = "yield";
+                    self.check_binding_name(s)?;
+                    params.push(Arc::from(s));
+                    let default = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    self.cur_param_defaults.push(default);
+                }
+                TokenKind::Await if self.await_as_identifier_allowed() => {
+                    self.advance();
+                    let s = "await";
                     self.check_binding_name(s)?;
                     params.push(Arc::from(s));
                     let default = if self.eat(&TokenKind::Assign) {
@@ -737,8 +817,9 @@ impl Parser {
         super_allowed: bool,
         super_call_allowed: bool,
         generator_body: bool,
+        async_body: bool,
     ) -> error::Result<Vec<Stmt>> {
-        self.with_generator_context(generator_body, |p| {
+        self.with_function_context(generator_body, async_body, |p| {
             p.parse_fn_body_inner(super_allowed, super_call_allowed)
         })
     }
@@ -1267,7 +1348,7 @@ impl Parser {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
                 TokenKind::Of => Arc::from("of"),
                 TokenKind::Async => Arc::from("async"),
-                TokenKind::Await if !self.is_strict_context => Arc::from("await"),
+                TokenKind::Await if self.await_as_identifier_allowed() => Arc::from("await"),
                 TokenKind::Yield if self.yield_as_identifier_allowed() => Arc::from("yield"),
                 TokenKind::Let if kind == VarKind::Var && !self.is_strict_context => {
                     Arc::from("let")
@@ -1990,6 +2071,10 @@ impl Parser {
     fn parse_primary(&mut self) -> error::Result<Expr> {
         match self.peek().clone() {
             TokenKind::Await => {
+                if self.await_as_identifier_allowed() && self.await_token_is_identifier_ref() {
+                    self.advance();
+                    return Ok(Expr::Ident(Arc::from("await")));
+                }
                 self.advance();
                 let inner = self.parse_unary()?;
                 Ok(Expr::Await(Box::new(inner)))
@@ -2028,11 +2113,7 @@ impl Parser {
                 // `async` is treated as a plain identifier.
                 if matches!(self.peek_at_tok(1).kind, TokenKind::Function) {
                     self.advance(); // async
-                    let mut f = self.parse_function_expr()?;
-                    if let Expr::Function(fe) = &mut f {
-                        fe.is_async = true;
-                    }
-                    return Ok(f);
+                    return self.parse_function_expr_with_async(true);
                 }
                 // async arrow: `async (params) => body` or `async ident => body`
                 let is_async_arrow_paren = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
@@ -2042,14 +2123,10 @@ impl Parser {
                     self.advance(); // async
                                     // Now at `(`; parse like a parenthesized arrow.
                     self.advance(); // (
-                    if self.try_parse_arrow_params()? {
+                    if self.with_async_context(true, |p| p.try_parse_arrow_params())? {
                         let params = self.last_arrow_params.take().unwrap();
                         self.expect(&TokenKind::Arrow, "=>")?;
-                        let mut f = self.parse_arrow_body(params)?;
-                        if let Expr::Arrow(fe) = &mut f {
-                            fe.is_async = true;
-                        }
-                        return Ok(f);
+                        return self.parse_arrow_body_with_async(params, true);
                     }
                     // Not an arrow; rewind and treat async as identifier.
                     self.pos -= 2;
@@ -2066,11 +2143,7 @@ impl Parser {
                         _ => unreachable!(),
                     };
                     self.advance(); // =>
-                    let mut f = self.parse_arrow_body(vec![name])?;
-                    if let Expr::Arrow(fe) = &mut f {
-                        fe.is_async = true;
-                    }
-                    return Ok(f);
+                    return self.parse_arrow_body_with_async(vec![name], true);
                 }
                 // fall through to identifier
                 self.advance();
@@ -2419,7 +2492,7 @@ impl Parser {
                 }
             };
             if is_getter || is_setter {
-                let params = self.with_generator_context(false, |p| p.parse_params())?;
+                let params = self.with_function_context(false, false, |p| p.parse_params())?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 Self::reject_duplicate_formal_params(
@@ -2427,7 +2500,7 @@ impl Parser {
                     &self.cur_param_destructure_decls,
                     rest_param.as_ref(),
                 )?;
-                let mut body = self.parse_fn_body(true, false, false)?;
+                let mut body = self.parse_fn_body(true, false, false, false)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
                 let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
@@ -2473,7 +2546,9 @@ impl Parser {
             } else if self.check(&TokenKind::LParen) {
                 // method shorthand or value
                 let params =
-                    self.with_generator_context(is_generator_method, |p| p.parse_params())?;
+                    self.with_function_context(is_generator_method, is_async_method, |p| {
+                        p.parse_params()
+                    })?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 Self::reject_duplicate_formal_params(
@@ -2481,7 +2556,8 @@ impl Parser {
                     &self.cur_param_destructure_decls,
                     rest_param.as_ref(),
                 )?;
-                let mut body = self.parse_fn_body(true, false, is_generator_method)?;
+                let mut body =
+                    self.parse_fn_body(true, false, is_generator_method, is_async_method)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
                 let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
@@ -2586,6 +2662,10 @@ impl Parser {
     }
 
     fn parse_function_expr(&mut self) -> error::Result<Expr> {
+        self.parse_function_expr_with_async(false)
+    }
+
+    fn parse_function_expr_with_async(&mut self, is_async: bool) -> error::Result<Expr> {
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
         let name = match self.peek().clone() {
@@ -2593,20 +2673,20 @@ impl Parser {
                 self.advance();
                 Some(Arc::from(s.as_str()))
             }
-            TokenKind::Await if !self.is_strict_context => {
+            TokenKind::Await if self.await_as_identifier_allowed() => {
                 self.advance();
                 Some(Arc::from("await"))
             }
-            TokenKind::Yield if !self.is_strict_context => {
+            TokenKind::Yield if self.yield_as_identifier_allowed() => {
                 self.advance();
                 Some(Arc::from("yield"))
             }
             _ => None,
         };
-        let params = self.with_generator_context(is_generator, |p| p.parse_params())?;
+        let params = self.with_function_context(is_generator, is_async, |p| p.parse_params())?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body(false, false, is_generator)?;
+        let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = Self::scan_directive_prologue(&body);
         let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
@@ -2656,7 +2736,7 @@ impl Parser {
             rest_param,
             body,
             is_arrow: false,
-            is_async: false,
+            is_async,
             is_generator,
             param_decls: Vec::new(),
             is_strict,
@@ -2739,11 +2819,18 @@ impl Parser {
                     dstr_decls.push((p, tmp, None));
                     break;
                 }
-                if let TokenKind::Ident(s) = self.advance() {
-                    rest = Some(Arc::from(s.as_str()));
-                } else {
-                    self.pos = save;
-                    return Ok(false);
+                match self.advance() {
+                    TokenKind::Ident(s) => rest = Some(Arc::from(s.as_str())),
+                    TokenKind::Await if self.await_as_identifier_allowed() => {
+                        rest = Some(Arc::from("await"))
+                    }
+                    TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                        rest = Some(Arc::from("yield"))
+                    }
+                    _ => {
+                        self.pos = save;
+                        return Ok(false);
+                    }
                 }
                 break;
             }
@@ -2751,6 +2838,26 @@ impl Parser {
                 TokenKind::Ident(s) => {
                     self.advance();
                     params.push(Arc::from(s.as_str()));
+                    let d = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    defaults.push(d);
+                }
+                TokenKind::Await if self.await_as_identifier_allowed() => {
+                    self.advance();
+                    params.push(Arc::from("await"));
+                    let d = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    defaults.push(d);
+                }
+                TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                    self.advance();
+                    params.push(Arc::from("yield"));
                     let d = if self.eat(&TokenKind::Assign) {
                         Some(self.parse_assign()?)
                     } else {
@@ -2888,6 +2995,14 @@ impl Parser {
     }
 
     fn parse_arrow_body(&mut self, params: Vec<Arc<str>>) -> error::Result<Expr> {
+        self.parse_arrow_body_with_async(params, false)
+    }
+
+    fn parse_arrow_body_with_async(
+        &mut self,
+        params: Vec<Arc<str>>,
+        is_async: bool,
+    ) -> error::Result<Expr> {
         let param_defaults = std::mem::take(&mut self.arrow_defaults);
         let rest_param = self.arrow_rest.take();
         let dstr_decls = std::mem::take(&mut self.arrow_destructure_decls);
@@ -2919,7 +3034,7 @@ impl Parser {
             .collect();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
-            let mut body = self.parse_fn_body(false, false, false)?;
+            let mut body = self.parse_fn_body(false, false, false, is_async)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
             Self::reject_use_strict_with_non_simple_params(
                 body_contains_use_strict,
@@ -2945,14 +3060,14 @@ impl Parser {
                 rest_param,
                 body,
                 is_arrow: true,
-                is_async: false,
+                is_async,
                 is_generator: false,
                 param_decls: Vec::new(),
                 is_strict,
                 is_method: false,
             }))
         } else {
-            let e = self.parse_assign()?;
+            let e = self.with_async_context(is_async, |p| p.parse_assign())?;
             let mut body = prelude;
             body.push(self.stmt(StmtNode::Return(Some(e))));
             Ok(Expr::Arrow(FunctionExpr {
@@ -2962,7 +3077,7 @@ impl Parser {
                 rest_param,
                 body,
                 is_arrow: true,
-                is_async: false,
+                is_async,
                 is_generator: false,
                 param_decls: Vec::new(),
                 // Arrow with expression body has no directive prologue; inherit.
@@ -3026,11 +3141,11 @@ impl Parser {
                 self.advance();
                 Some(Arc::from(s.as_str()))
             }
-            TokenKind::Await if !self.is_strict_context => {
+            TokenKind::Await if self.await_as_identifier_allowed() => {
                 self.advance();
                 Some(Arc::from("await"))
             }
-            TokenKind::Yield if !self.is_strict_context => {
+            TokenKind::Yield if self.yield_as_identifier_allowed() => {
                 self.advance();
                 Some(Arc::from("yield"))
             }
@@ -3051,7 +3166,7 @@ impl Parser {
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
                 self.advance(); // static
-                let block = self.parse_fn_body(false, false, false)?;
+                let block = self.parse_fn_body(false, false, false, false)?;
                 static_blocks.push(block);
                 continue;
             }
@@ -3063,7 +3178,7 @@ impl Parser {
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
                     self.advance(); // consume #name
-                    let params = self.with_generator_context(false, |p| p.parse_params())?;
+                    let params = self.with_function_context(false, false, |p| p.parse_params())?;
                     let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                     let rest_param = self.cur_rest_param.take();
                     Self::reject_duplicate_formal_params(
@@ -3071,7 +3186,7 @@ impl Parser {
                         &self.cur_param_destructure_decls,
                         rest_param.as_ref(),
                     )?;
-                    let mut body = self.parse_fn_body(true, false, false)?;
+                    let mut body = self.parse_fn_body(true, false, false, false)?;
                     let body_contains_use_strict = Self::scan_directive_prologue(&body);
                     let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
                     Self::reject_use_strict_with_non_simple_params(
@@ -3162,7 +3277,7 @@ impl Parser {
                     _ => Arc::from(self.read_property_name()?.as_str()),
                 }
             };
-            let params = self.with_generator_context(false, |p| p.parse_params())?;
+            let params = self.with_function_context(false, false, |p| p.parse_params())?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
             let rest_param = self.cur_rest_param.take();
             Self::reject_duplicate_formal_params(
@@ -3171,7 +3286,7 @@ impl Parser {
                 rest_param.as_ref(),
             )?;
             let super_call_allowed = superclass.is_some() && is_constructor;
-            let mut body = self.parse_fn_body(true, super_call_allowed, false)?;
+            let mut body = self.parse_fn_body(true, super_call_allowed, false, false)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
             let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
             Self::reject_use_strict_with_non_simple_params(
@@ -3313,6 +3428,10 @@ impl Parser {
                             self.advance();
                             PropertyKey::Ident(Arc::from("yield"))
                         }
+                        TokenKind::Await if self.await_as_identifier_allowed() => {
+                            self.advance();
+                            PropertyKey::Ident(Arc::from("await"))
+                        }
                         TokenKind::String(s) => {
                             self.advance();
                             PropertyKey::String(Arc::from(s.as_str()))
@@ -3371,6 +3490,10 @@ impl Parser {
             TokenKind::Yield if self.yield_as_identifier_allowed() => {
                 self.advance();
                 Ok(Pattern::Ident(Arc::from("yield")))
+            }
+            TokenKind::Await if self.await_as_identifier_allowed() => {
+                self.advance();
+                Ok(Pattern::Ident(Arc::from("await")))
             }
             other => Err(error::Error::syntax(format!(
                 "Expected pattern, got {:?}",
@@ -3545,6 +3668,31 @@ mod tests {
             "function* g(yield) {}",
             "var obj = { *g(yield) {} };",
             r#""use strict"; var yield = 1;"#,
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_await_identifier_contexts() {
+        for src in [
+            "var await = 0; await = 1; await;",
+            "function foo(await) { return await; }",
+            "async function await() { return 1; }",
+            "var await; async function foo() { function bar() { await = 1; } bar(); }",
+            "var await = 'prop'; var obj = { method(await) { return await; } };",
+            "var await = 'prop'; var obj = { [await]() {} };",
+            "async function await() { return 1; } await instanceof Function;",
+            "(await) => await;",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        for src in [
+            "async function f(await) {}",
+            "async function f() { var await = 1; }",
+            "async function f() { await = 1; }",
+            "async (await) => await;",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }

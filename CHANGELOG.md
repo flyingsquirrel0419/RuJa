@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **94.2%** (up from 88.6%).
-Current supported subset count: **3934 pass / 244 fail / 2 timeout**.
+Supported-subset pass rate: **94.3%** (up from 88.6%).
+Current supported subset count: **3940 pass / 238 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -142,6 +142,15 @@ Current supported subset count: **3934 pass / 244 fail / 2 timeout**.
   while rejecting `({}) = 1` and arrow-expression bodies like
   `() => ({}) = 1`, reducing `language/expressions/assignmenttargettype` to
   **313 pass / 3 fail**.
+- **`await` contextual identifier parsing**: sloppy non-async script and
+  function contexts now parse `await` as a contextual identifier in
+  declarations, formal parameters, assignment/reference positions,
+  destructuring patterns, object method parameters, computed property names,
+  and nested non-async functions inside async bodies. Async function, async
+  method, and async arrow parameter/body contexts still parse `await` as the
+  async keyword. This brings `language/expressions/await` to
+  **7 pass / 0 fail** and reduces `language/expressions/assignmenttargettype`
+  to **314 pass / 2 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
