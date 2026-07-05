@@ -62,6 +62,12 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   additional typed-array receiver support. The shared `BigInt()` constructor
   conversion path now also handles primitive-producing objects and reports
   `TypeError` for missing/nullish input.
+- **BigInt fixed-width statics**: implemented `BigInt.asIntN` and
+  `BigInt.asUintN` with `ToIndex(bits)` before `ToBigInt(value)`, signed and
+  unsigned modulo-`2^bits` wrapping, correct `name`/`length` descriptors, and
+  non-constructable native functions. The focused BigInt fixed-width static
+  cluster now runs at **14 pass / 0 fail / 14 skip**, and the broader
+  `built-ins/BigInt` smoke run improves to **49 pass / 25 fail / 29 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

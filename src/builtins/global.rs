@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
 // =========================================================================
 // Global functions
 // =========================================================================
@@ -187,6 +189,67 @@ pub(crate) fn global_bigint(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
             Err(Error::type_err("Cannot convert to a BigInt".to_string()))
         }
     }
+}
+
+fn bigint_to_index(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() {
+        return Ok(0);
+    }
+    if !n.is_finite() {
+        return Err(Error::range(format!("Invalid {name} bits")));
+    }
+    let integer = n.trunc();
+    if integer < 0.0 || integer > MAX_SAFE_INTEGER {
+        return Err(Error::range(format!("Invalid {name} bits")));
+    }
+    Ok(integer as usize)
+}
+
+fn bigint_uint_n(bits: usize, value: BigInt) -> BigInt {
+    if bits == 0 {
+        return BigInt::zero();
+    }
+    let modulus = BigInt::from(1u8) << bits;
+    ((value % &modulus) + &modulus) % &modulus
+}
+
+pub(crate) fn bigint_as_int_n(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let bits = bigint_to_index(
+        vm,
+        args.first().unwrap_or(&Value::Undefined),
+        "BigInt.asIntN",
+    )?;
+    let bigint = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
+    if bits == 0 {
+        return Ok(Value::BigInt(BigInt::zero()));
+    }
+    let modulus = BigInt::from(1u8) << bits;
+    let threshold = BigInt::from(1u8) << (bits - 1);
+    let wrapped = ((bigint % &modulus) + &modulus) % &modulus;
+    if wrapped >= threshold {
+        Ok(Value::BigInt(wrapped - modulus))
+    } else {
+        Ok(Value::BigInt(wrapped))
+    }
+}
+
+pub(crate) fn bigint_as_uint_n(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let bits = bigint_to_index(
+        vm,
+        args.first().unwrap_or(&Value::Undefined),
+        "BigInt.asUintN",
+    )?;
+    let bigint = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
+    Ok(Value::BigInt(bigint_uint_n(bits, bigint)))
 }
 
 /// `BigInt.prototype.toString()`: returns the decimal string of the BigInt.

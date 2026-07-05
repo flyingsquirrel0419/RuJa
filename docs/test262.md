@@ -22,7 +22,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 25.2% of all matrix files; 51.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 25.2% of all matrix files; 51.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
@@ -180,6 +180,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   ArrayBuffer and additional typed-array receiver support. The shared
   `BigInt()` constructor path now also converts primitive-producing objects
   and reports `TypeError` for missing/nullish input.
+- **BigInt fixed-width statics** — `BigInt.asIntN` and `BigInt.asUintN` now
+  coerce `bits` with `ToIndex` before coercing the value with `ToBigInt`,
+  preserve the required error ordering, wrap signed and unsigned values modulo
+  `2^bits`, and expose non-enumerable writable configurable static function
+  properties with the required `name` and `length`. This closes the focused
+  BigInt fixed-width static cluster at 14 pass / 0 fail / 14 skip and improves
+  the broader `built-ins/BigInt` smoke run to 49 pass / 25 fail / 29 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

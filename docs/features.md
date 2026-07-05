@@ -45,7 +45,7 @@
 - BigInt literals (`123n`, `0xffn`, `0o17n`, `0b101n`): exact-integer
   arithmetic (`+ - * / % **`, comparisons, `===`/`==` with `Number`);
   mixing BigInt with `Number` throws `TypeError`; `BigInt()` constructor
-  and `.toString()` supported
+  `.toString()`, `BigInt.asIntN`, and `BigInt.asUintN` supported
 - `try/finally` non-local transfers: `return`/`throw`/`break`/`continue`
   in `try`/`catch` divert through **all** enclosing `finally` blocks,
   innermost-first, including nested `try/finally`; a `return`/`throw`

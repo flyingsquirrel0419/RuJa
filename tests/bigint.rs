@@ -117,6 +117,50 @@ fn bigint_constructor_rejects_missing_and_nullish_with_typeerror() {
 }
 
 #[test]
+fn bigint_as_int_n_and_as_uint_n_wrap_and_validate_order() {
+    assert_eq!(
+        run(r#"
+            [
+              BigInt.asUintN(8, 0xabcdn).toString(),
+              BigInt.asIntN(8, 0xabn).toString(),
+              BigInt.asUintN(64, -1n).toString(),
+              BigInt.asIntN(64, 0xffffffffffffffffn).toString(),
+              BigInt.asIntN(3.9, "10").toString(),
+              BigInt.asUintN(undefined, 1n).toString(),
+              BigInt.asIntN.length,
+              BigInt.asUintN.name,
+              Object.prototype.propertyIsEnumerable.call(BigInt, "asIntN")
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "205,-85,18446744073709551615,-1,2,0,2,asUintN,false"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var i = 0;
+            var bits = { valueOf: function() { if (i !== 0) throw new Error("bits"); i++; return 0; } };
+            var bigint = { valueOf: function() { if (i !== 1) throw new Error("bigint"); i++; return 0n; } };
+            BigInt.asIntN(bits, bigint);
+            i;
+            "#),
+        Value::Number(2.0)
+    );
+    assert!(
+        run_err("BigInt.asUintN(0n, 0n);").contains("TypeError"),
+        "bits uses ToIndex and should reject BigInt"
+    );
+    assert!(
+        run_err("BigInt.asIntN(-1, 0n);").contains("RangeError"),
+        "negative bits should throw RangeError"
+    );
+    assert!(
+        run_err("BigInt.asIntN(0, 1);").contains("TypeError"),
+        "value uses ToBigInt and should reject Number"
+    );
+}
+
+#[test]
 fn bigint_mix_with_number_is_typeerror() {
     let err = run_err("1n + 1;");
     assert!(err.contains("TypeError"), "got: {}", err);

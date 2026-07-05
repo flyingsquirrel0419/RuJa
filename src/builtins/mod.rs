@@ -22,8 +22,9 @@ pub(crate) mod proxy;
 pub(crate) mod typed_array;
 pub(crate) use function::*;
 pub(crate) use global::{
-    bigint_to_string, function_constructor, generator_function_constructor, global_bigint,
-    global_eval, global_is_finite, global_is_nan, global_parse_float, global_parse_int,
+    bigint_as_int_n, bigint_as_uint_n, bigint_to_string, function_constructor,
+    generator_function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan,
+    global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
     build_json, build_reflect, date_constructor, date_get_component, date_get_time, date_now,
@@ -2153,6 +2154,21 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     define_global_const(vm, "undefined", Value::Undefined);
     // BigInt constructor (function form only; no prototype methods yet).
     let bigint_idx = vm.new_native_function("BigInt", global_bigint, 1)?;
+    let as_int_n = vm.new_native_function("asIntN", bigint_as_int_n, 2)?;
+    let as_uint_n = vm.new_native_function("asUintN", bigint_as_uint_n, 2)?;
+    vm.heap.with_obj(bigint_idx.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            let mut props = f.props.lock();
+            props.insert(
+                PropertyKey::from("asIntN"),
+                data_prop(Value::Object(as_int_n)),
+            );
+            props.insert(
+                PropertyKey::from("asUintN"),
+                data_prop(Value::Object(as_uint_n)),
+            );
+        }
+    });
     define_global(vm, "BigInt", Value::Object(bigint_idx));
     // BigInt prototype with minimal members.
     {
