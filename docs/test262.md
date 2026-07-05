@@ -92,12 +92,12 @@ vary slightly because a small number of tests can cross the timeout boundary:
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,162 |
-| Pass | 12,006 |
-| Fail | 11,156 |
-| Timeout | 13 |
+| Actually run | 23,164 |
+| Pass | 12,020 |
+| Fail | 11,144 |
+| Timeout | 11 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **51.8%** |
+| **Pass rate (of run)** | **51.9%** |
 | **Pass rate (of total)** | **25.2%** |
 
 This number is dominated by tests for features RuJa does not support.
