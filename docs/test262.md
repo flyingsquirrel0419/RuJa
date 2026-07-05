@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2% of all matrix files; 50.1-50.6% of executed files in recent confirmed full runs | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.9% (4177 pass / 3 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.9%).** It reflects the portion of the spec
+supported-subset rate (100.0%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -129,8 +129,14 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 99.9%:
+~56% to 100.0%:
 
+- **test262 `$262.createRealm()` and native constructability** — RuJa now
+  exposes the test262 host `createRealm()` surface, runs indirect eval against
+  the callee's Realm environment, keeps tagged-template caches per compiled
+  Realm execution, and distinguishes constructable native constructors from
+  callable-only native functions. This closes the remaining cross-realm
+  supported-subset failures and the Proxy subclass edge case.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass
@@ -609,9 +615,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   and `instanceof` at **188 pass / 0 fail** and raises the supported subset
   to **4142 pass / 38 fail / 0 timeout**.
 
-## Why the rate is not higher
+## Why the full-suite rate is not higher
 
-The remaining 9 failures in the supported subset cluster around built-in
-subclassing gaps (`ArrayBuffer`, `DataView`, `Promise`, and generic
-builtins) plus cross-realm expression edge cases. These are tracked in
-`HANDOFF.md` and will be addressed in subsequent rounds.
+The supported subset currently has no known failures. The full-suite rate is
+still much lower because the full matrix includes unsupported features such as
+ES Modules, Intl, Atomics, most TypedArray variants, WeakRef, and
+FinalizationRegistry. Those larger feature areas are tracked in `HANDOFF.md`
+and will be pulled into support in later milestones.

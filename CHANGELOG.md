@@ -4,9 +4,18 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.9%** (up from 88.6%).
-Current supported subset count: **4177 pass / 3 fail / 0 timeout**.
+Supported-subset pass rate: **100.0%** (up from 88.6%).
+Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
 
+- **test262 `$262.createRealm()` and native constructability**: added a
+  test262 host object with `createRealm()`/`evalScript()`, realm-bound global
+  `eval` and `parseInt` functions, and indirect eval execution against the
+  callee's Realm environment. Native functions are now constructable only when
+  marked with an internal constructor prototype, so `new parseInt` throws while
+  `new Proxy(...)` remains constructable without exposing `Proxy.prototype`.
+  This closes the remaining cross-realm eval/template/non-constructor checks
+  plus the Proxy subclass edge case, raising the supported subset to **4180
+  pass / 0 fail / 0 timeout**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

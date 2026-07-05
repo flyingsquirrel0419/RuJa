@@ -184,6 +184,16 @@ impl Vm {
         func: NativeFn,
         length: usize,
     ) -> error::Result<GcIdx> {
+        self.new_native_function_in_env(name, func, length, self.global)
+    }
+
+    pub(crate) fn new_native_function_in_env(
+        &mut self,
+        name: &str,
+        func: NativeFn,
+        length: usize,
+        closure: GcIdx,
+    ) -> error::Result<GcIdx> {
         let mut props = IndexMap::new();
         let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(length as f64));
         len_desc.writable = false;
@@ -199,7 +209,7 @@ impl Vm {
         let fdef = crate::value::FunctionData {
             name: Some(Arc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
-            closure: self.global,
+            closure,
             is_class_ctor: std::sync::atomic::AtomicBool::new(false),
             // Native functions have no `prototype` property (they are not
             // constructors). Their [[Prototype]] (`__proto__`) is
@@ -214,6 +224,39 @@ impl Vm {
             private_fields: Mutex::new(std::collections::HashMap::new()),
         };
         Ok(GcIdx(self.heap.allocate(HeapObj::Function(fdef))?))
+    }
+
+    pub(crate) fn native_callee_closure(&self) -> Option<GcIdx> {
+        let Value::Object(idx) = self.current_native_callee.as_ref()? else {
+            return None;
+        };
+        self.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                Some(f.closure)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn is_constructor_value(&self, value: &Value) -> bool {
+        let Value::Object(idx) = value else {
+            return false;
+        };
+        self.heap.with_obj(idx.0, |obj| {
+            let HeapObj::Function(f) = obj else {
+                return false;
+            };
+            match &f.kind {
+                crate::value::FunctionKind::Interpreted { func } => {
+                    !func.is_arrow && !func.is_method
+                }
+                crate::value::FunctionKind::Native { .. } => f.prototype.lock().is_some(),
+                crate::value::FunctionKind::Bound { target, .. } => {
+                    self.is_constructor_value(&Value::Object(*target))
+                }
+            }
+        })
     }
 
     /// Define a global binding (visible to JS as a top-level variable).
@@ -724,20 +767,7 @@ impl Vm {
             all.extend_from_slice(args);
             return self.construct(&Value::Object(target), &all);
         }
-        let is_non_constructor = self.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Function(f) = obj {
-                match &f.kind {
-                    crate::value::FunctionKind::Interpreted { func } => {
-                        func.is_arrow || func.is_method
-                    }
-                    crate::value::FunctionKind::Native { .. } => false,
-                    crate::value::FunctionKind::Bound { .. } => false,
-                }
-            } else {
-                true
-            }
-        });
-        if is_non_constructor {
+        if !self.is_constructor_value(constructor) {
             return Err(Error::type_err("not a constructor".to_string()));
         }
         // Read prototype from the function's own properties first (it may

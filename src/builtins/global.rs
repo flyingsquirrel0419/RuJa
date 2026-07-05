@@ -211,8 +211,12 @@ pub(crate) fn global_eval(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
         // Non-string: return unchanged.
         _ => return Ok(arg),
     };
-    // Default (indirect) behavior: run in the global scope.
-    vm.eval_indirect(&src)
+    // Default (indirect) behavior: run in the eval function's own Realm. RuJa
+    // represents a native function's Realm with its closure environment.
+    let global_env = vm.native_callee_closure().unwrap_or(vm.global);
+    let global_this = crate::environment::get(&vm.heap, global_env, "globalThis")
+        .unwrap_or_else(|| vm.global_this.clone());
+    vm.eval_indirect_in(global_env, global_this, &src)
 }
 
 /// `new Function(p0, p1, ..., body)`: dynamically build a function from a

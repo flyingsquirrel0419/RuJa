@@ -412,15 +412,34 @@ impl Vm {
         result
     }
 
-    /// Evaluate a source string as an *indirect* eval: parse and compile it,
-    /// then run it in the global scope (var/function declarations leak to
-    /// global). Non-string inputs are returned as-is.
+    /// Evaluate a source string as an *indirect* eval in the current Realm's
+    /// global scope. Non-string inputs are handled by the eval builtin before
+    /// this method is called.
     pub fn eval_indirect(&mut self, src: &str) -> error::Result<Value> {
+        self.eval_indirect_in(self.global, self.global_this.clone(), src)
+    }
+
+    /// Evaluate a source string as an *indirect* eval in a specific Realm
+    /// global environment. This is used for cross-Realm eval functions whose
+    /// [[Realm]] is represented by their closure environment.
+    pub(crate) fn eval_indirect_in(
+        &mut self,
+        global_env: GcIdx,
+        global_this: Value,
+        src: &str,
+    ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions(chunk, funcs);
-        let result = self.execute_chunk_scoped(chunk, self.global, Value::Undefined);
+        crate::environment::declare(
+            &self.heap,
+            global_env,
+            "this",
+            global_this.clone(),
+            crate::value::BindingKind::Const,
+        );
+        let result = self.execute_chunk_scoped(chunk, global_env, global_this);
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }

@@ -1962,11 +1962,7 @@ impl Vm {
                         self.stack.push(Value::Null);
                         continue;
                     }
-                    let is_ctor = match &parent {
-                        Value::Object(idx) => self.heap.with_obj(idx.0, |o| o.is_function()),
-                        _ => false,
-                    };
-                    if !is_ctor {
+                    if !self.is_constructor_value(&parent) {
                         self.stack.push(parent);
                         return Err(Error::type_err("Class extends value is not a constructor"));
                     }

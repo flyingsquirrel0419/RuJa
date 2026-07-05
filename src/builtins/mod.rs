@@ -346,6 +346,96 @@ fn init_global_this(vm: &mut Vm) -> error::Result<()> {
     Ok(())
 }
 
+fn define_realm_global(vm: &mut Vm, env: GcIdx, global: &Value, name: &str, value: Value) {
+    crate::environment::declare(&vm.heap, env, name, value.clone(), BindingKind::Var);
+    if let Value::Object(idx) = global {
+        vm.heap.with_obj(idx.0, |obj| {
+            obj.props()
+                .lock()
+                .insert(PropertyKey::from(name), data_prop(value));
+        });
+    }
+}
+
+fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
+    let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
+    let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("realm-global")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let global = Value::Object(GcIdx(global_idx));
+
+    crate::environment::declare(
+        &vm.heap,
+        realm_env,
+        "this",
+        global.clone(),
+        BindingKind::Const,
+    );
+    define_realm_global(vm, realm_env, &global, "globalThis", global.clone());
+
+    let eval_idx = vm.new_native_function_in_env("eval", global_eval, 1, realm_env)?;
+    define_realm_global(vm, realm_env, &global, "eval", Value::Object(eval_idx));
+
+    let parse_int_idx =
+        vm.new_native_function_in_env("parseInt", global_parse_int, 2, realm_env)?;
+    define_realm_global(
+        vm,
+        realm_env,
+        &global,
+        "parseInt",
+        Value::Object(parse_int_idx),
+    );
+
+    Ok(global)
+}
+
+fn test262_create_realm(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let global = make_test262_realm(vm)?;
+    let realm = vm.new_object()?;
+    vm.heap.with_obj(realm.0, |obj| {
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("global"), data_prop(global));
+    });
+    Ok(Value::Object(realm))
+}
+
+fn test262_eval_script(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let src = match args.first().cloned().unwrap_or(Value::Undefined) {
+        Value::String(s) => s.to_string(),
+        _ => return Ok(Value::Undefined),
+    };
+    vm.eval_indirect(&src)
+}
+
+fn install_test262_host(vm: &mut Vm) -> error::Result<()> {
+    let host = vm.new_object()?;
+    let create_realm = vm.new_native_function("createRealm", test262_create_realm, 0)?;
+    let eval_script = vm.new_native_function("evalScript", test262_eval_script, 1)?;
+    vm.heap.with_obj(host.0, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("createRealm"),
+            data_prop(Value::Object(create_realm)),
+        );
+        props.insert(
+            PropertyKey::from("evalScript"),
+            data_prop(Value::Object(eval_script)),
+        );
+        props.insert(
+            PropertyKey::from("global"),
+            data_prop(vm.global_this.clone()),
+        );
+    });
+    define_global(vm, "$262", Value::Object(host));
+    Ok(())
+}
+
 pub(crate) fn get_arg(args: &[Value], idx: usize) -> Value {
     args.get(idx).cloned().unwrap_or(Value::Undefined)
 }
@@ -1632,6 +1722,11 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
 
     // Proxy constructor + revocable.
     let proxy_ctor_idx = vm.new_native_function("Proxy", proxy_constructor, 2)?;
+    vm.heap.with_obj(proxy_ctor_idx.0, |o| {
+        if let HeapObj::Function(f) = o {
+            f.prototype.lock().replace(Value::Undefined);
+        }
+    });
     let proxy_rev_idx = vm.new_native_function("revocable", proxy_revocable, 2)?;
     vm.heap.with_obj(proxy_ctor_idx.0, |o| {
         if let HeapObj::Function(f) = o {
@@ -2066,6 +2161,13 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));
     // Function constructor: new Function(p0, ..., body)
     let function_ctor_idx = vm.new_native_function("Function", function_constructor, 1)?;
+    vm.heap.with_obj(function_ctor_idx.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            f.prototype
+                .lock()
+                .replace(Value::Object(function_proto_idx));
+        }
+    });
     define_global(vm, "Function", Value::Object(function_ctor_idx));
     // %GeneratorFunction% is not exposed as a global binding, but generator
     // functions inherit from %GeneratorFunction.prototype%, whose constructor
@@ -2144,6 +2246,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         props.insert(PropertyKey::from("arguments"), restricted);
     });
     setup_collections(vm)?;
+    install_test262_host(vm)?;
     Ok(())
 }
 

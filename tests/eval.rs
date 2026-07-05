@@ -48,6 +48,46 @@ fn indirect_eval_runs_in_global_scope() {
 }
 
 #[test]
+fn test262_create_realm_eval_runs_in_its_own_global_scope() {
+    let src = r#"
+        var x = "outside";
+        (function() {
+            var eval = $262.createRealm().global.eval;
+            eval('var x = "inside";');
+        }());
+        x;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("outside")));
+}
+
+#[test]
+fn test262_create_realm_has_distinct_template_registry() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        var strings1 = (function(strings) { return strings; })`1234`;
+        var strings2 = other.eval('(function(strings) { return strings; })`1234`');
+        strings1 !== strings2;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
+#[test]
+fn cross_realm_non_constructor_native_throws_current_realm_type_error() {
+    let src = r#"
+        var otherParseInt = $262.createRealm().global.parseInt;
+        var ok = [];
+        try { new otherParseInt(0); ok.push(false); }
+        catch (e) { ok.push(e.constructor === TypeError); }
+        try { new otherParseInt; ok.push(false); }
+        catch (e) { ok.push(e.constructor === TypeError); }
+        try { new parseInt(0); ok.push(false); }
+        catch (e) { ok.push(e.constructor === TypeError); }
+        ok.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true,true,true")));
+}
+
+#[test]
 fn direct_eval_reads_caller_local() {
     let src = r#"
         function f() {
