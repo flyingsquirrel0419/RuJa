@@ -3456,6 +3456,7 @@ impl Compiler {
             // Destructuring assignment: `[a, b] = expr` / `{a, b} = expr`.
             Expr::Array(_) | Expr::Object(_) => {
                 self.compile_expr(value)?;
+                self.chunk.emit(Op::Dup, self.current_line);
                 let temp_idx = self.intern("#destr");
                 self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
                 self.compile_assign_pattern(target, temp_idx, &[])?;

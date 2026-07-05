@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **94.5%** (up from 88.6%).
-Current supported subset count: **3947 pass / 231 fail / 2 timeout**.
+Current supported subset count: **3948 pass / 230 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -169,6 +169,13 @@ Current supported subset count: **3947 pass / 231 fail / 2 timeout**.
   read `done` before `value`, so done iterators do not invoke `value` getters.
   This reduces `language/expressions/assignment/destructuring` to
   **5 pass / 1 fail**.
+- **Duplicate `__proto__` object assignment properties**: object assignment
+  patterns now allow duplicate static `__proto__` colon properties while
+  keeping the Annex B duplicate-`__proto__` early error for object literals.
+  Destructuring assignment expressions also preserve the RHS value as their
+  expression result, so nested assignments such as `result = ({ x } = obj)`
+  store `obj`. This brings `language/expressions/assignment/destructuring` to
+  **6 pass / 0 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

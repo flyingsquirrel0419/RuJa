@@ -222,6 +222,32 @@ fn object_assign_member_target_evaluates_before_source_get() {
 }
 
 #[test]
+fn object_assign_allows_duplicate_proto_properties() {
+    let src = r#"
+        var value = Object.defineProperty({}, "__proto__", { value: 123 });
+        var result, x, y;
+        result = { __proto__: x, __proto__: y } = value;
+        var first = result === value;
+        result = ({ __proto__: x, __proto__: y } = value);
+        [first, result === value, x, y].join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true,true,123,123")));
+}
+
+#[test]
+fn destructuring_assignment_expression_result_is_rhs() {
+    let src = r#"
+        var obj = { a: 1 };
+        var arr = [2];
+        var a, b;
+        var r1 = ({ a } = obj);
+        var r2 = ([b] = arr);
+        [r1 === obj, r2 === arr, a, b].join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true,true,1,2")));
+}
+
+#[test]
 fn fib_via_destructure_assignment() {
     // The classic infinite fibonacci generator using destructuring swap.
     assert_eq!(

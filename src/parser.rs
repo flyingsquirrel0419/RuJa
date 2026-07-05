@@ -40,6 +40,12 @@ pub struct Parser {
     /// `expr_depth`: deeply nested `{{...}}` / `if(1) if(1) ...` would
     /// otherwise overflow the Rust parser stack on untrusted input.
     stmt_depth: usize,
+    /// Object literals are parsed as cover grammar before assignment parsing
+    /// decides whether they are expressions or assignment patterns. While
+    /// parsing a property value in that cover position, defer duplicate
+    /// `__proto__` early errors until the surrounding expression is known not
+    /// to be an assignment pattern.
+    defer_object_proto_duplicate_check: usize,
     /// Nesting depth of iteration statements (while, do-while, for, for-in,
     /// for-of). `break` (unlabelled) is valid inside loops or switch;
     /// `continue` is valid only inside loops.
@@ -87,6 +93,7 @@ impl Parser {
             stmt_start_line: 0,
             expr_depth: 0,
             stmt_depth: 0,
+            defer_object_proto_duplicate_check: 0,
             loop_depth: 0,
             switch_depth: 0,
             label_stack: Vec::new(),
@@ -1579,10 +1586,18 @@ impl Parser {
             TokenKind::AndAssign => AssignOp::AndAssign,
             TokenKind::OrAssign => AssignOp::OrAssign,
             TokenKind::NullishAssign => AssignOp::NullishAssign,
-            _ => return Ok(left),
+            _ => {
+                if self.defer_object_proto_duplicate_check == 0 {
+                    Self::reject_duplicate_proto_object_literal(&left)?;
+                }
+                return Ok(left);
+            }
         };
         self.advance();
         let mut right = self.parse_assign()?;
+        if !matches!(op, AssignOp::Assign) && self.defer_object_proto_duplicate_check == 0 {
+            Self::reject_duplicate_proto_object_literal(&left)?;
+        }
         // Validate that the left side is a valid assignment target.
         // Invalid: literals, binary ops, unary ops, function calls, etc.
         if left_is_parenthesized_pattern || !Self::is_assignment_target(&left) {
@@ -1608,6 +1623,9 @@ impl Parser {
             if let Some(key_name) = Self::assign_target_name(&left) {
                 Self::name_function_from_ident(&mut right, &key_name);
             }
+        }
+        if matches!(op, AssignOp::Assign) && self.defer_object_proto_duplicate_check == 0 {
+            Self::reject_duplicate_proto_assignment_pattern(&left)?;
         }
         Ok(Expr::Assign(op, Box::new(left), Box::new(right)))
     }
@@ -2636,14 +2654,10 @@ impl Parser {
             } else {
                 self.expect(&TokenKind::Colon, ":")?;
                 if !computed && Self::prop_key_name(&key).as_deref() == Some("__proto__") {
-                    if seen_proto_mutation {
-                        return Err(error::Error::syntax(
-                            "Duplicate __proto__ property in object literal".to_string(),
-                        ));
-                    }
                     seen_proto_mutation = true;
                 }
-                let mut value = self.parse_assign()?;
+                let mut value =
+                    self.with_deferred_object_proto_duplicate_check(|p| p.parse_assign())?;
                 // SetFunctionName: assigning a function/arrow to a property
                 // sets its `name` to the property key (when the function has
                 // no explicit name). Computed keys use "".
@@ -2674,7 +2688,14 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBrace, "}")?;
-        Ok(Expr::Object(props))
+        let object = Expr::Object(props);
+        if seen_proto_mutation
+            && self.defer_object_proto_duplicate_check == 0
+            && !self.check(&TokenKind::Assign)
+        {
+            Self::reject_duplicate_proto_object_literal(&object)?;
+        }
+        Ok(object)
     }
 
     fn parse_function_expr(&mut self) -> error::Result<Expr> {
@@ -3112,6 +3133,163 @@ impl Parser {
             PropertyKey::Ident(s) | PropertyKey::String(s) => Some(s.clone()),
             PropertyKey::Number(n) => Some(Arc::from(crate::value::num_to_string(*n).as_str())),
             _ => None,
+        }
+    }
+
+    fn with_deferred_object_proto_duplicate_check<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        self.defer_object_proto_duplicate_check += 1;
+        let result = f(self);
+        self.defer_object_proto_duplicate_check -= 1;
+        result
+    }
+
+    fn is_proto_mutation_property(prop: &Property) -> bool {
+        !prop.computed
+            && !prop.shorthand
+            && !prop.method
+            && matches!(prop.kind, PropKind::Normal)
+            && Self::prop_key_name(&prop.key).as_deref() == Some("__proto__")
+    }
+
+    fn reject_duplicate_proto_object_literal(expr: &Expr) -> error::Result<()> {
+        match expr {
+            Expr::Object(props) => {
+                let mut seen_proto_mutation = false;
+                for prop in props {
+                    if Self::is_proto_mutation_property(prop) {
+                        if seen_proto_mutation {
+                            return Err(error::Error::syntax(
+                                "Duplicate __proto__ property in object literal".to_string(),
+                            ));
+                        }
+                        seen_proto_mutation = true;
+                    }
+                    Self::reject_duplicate_proto_property_key(&prop.key)?;
+                    Self::reject_duplicate_proto_object_literal(&prop.value)?;
+                }
+            }
+            Expr::Array(elements) | Expr::Sequence(elements) => {
+                for element in elements {
+                    Self::reject_duplicate_proto_object_literal(element)?;
+                }
+            }
+            Expr::TaggedTemplate { tag, exprs, .. } => {
+                Self::reject_duplicate_proto_object_literal(tag)?;
+                for expr in exprs {
+                    Self::reject_duplicate_proto_object_literal(expr)?;
+                }
+            }
+            Expr::TemplateInterp { exprs, .. } => {
+                for expr in exprs {
+                    Self::reject_duplicate_proto_object_literal(expr)?;
+                }
+            }
+            Expr::Member {
+                object, property, ..
+            } => {
+                Self::reject_duplicate_proto_object_literal(object)?;
+                Self::reject_duplicate_proto_object_literal(property)?;
+            }
+            Expr::Spread(inner)
+            | Expr::Await(inner)
+            | Expr::YieldDelegate(inner)
+            | Expr::Unary(_, inner)
+            | Expr::Update(_, _, inner) => {
+                Self::reject_duplicate_proto_object_literal(inner)?;
+            }
+            Expr::Yield(Some(inner)) => {
+                Self::reject_duplicate_proto_object_literal(inner)?;
+            }
+            Expr::Binary(_, left, right) | Expr::Logical(_, left, right) => {
+                Self::reject_duplicate_proto_object_literal(left)?;
+                Self::reject_duplicate_proto_object_literal(right)?;
+            }
+            Expr::Assign(op, left, right) => {
+                if matches!(op, AssignOp::Assign) && Self::is_assignment_target(left) {
+                    Self::reject_duplicate_proto_assignment_pattern(left)?;
+                } else {
+                    Self::reject_duplicate_proto_object_literal(left)?;
+                }
+                Self::reject_duplicate_proto_object_literal(right)?;
+            }
+            Expr::Conditional(cond, then_expr, else_expr) => {
+                Self::reject_duplicate_proto_object_literal(cond)?;
+                Self::reject_duplicate_proto_object_literal(then_expr)?;
+                Self::reject_duplicate_proto_object_literal(else_expr)?;
+            }
+            Expr::Call { callee, args, .. } | Expr::New { callee, args } => {
+                Self::reject_duplicate_proto_object_literal(callee)?;
+                for arg in args {
+                    Self::reject_duplicate_proto_object_literal(arg)?;
+                }
+            }
+            Expr::PrivateGet { object, .. } => {
+                Self::reject_duplicate_proto_object_literal(object)?;
+            }
+            Expr::PrivateSet { object, value, .. } => {
+                Self::reject_duplicate_proto_object_literal(object)?;
+                Self::reject_duplicate_proto_object_literal(value)?;
+            }
+            Expr::PrivateFieldDecl {
+                init: Some(init), ..
+            } => {
+                Self::reject_duplicate_proto_object_literal(init)?;
+            }
+            Expr::Function(_) | Expr::Arrow(_) | Expr::Class(_) => {}
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn reject_duplicate_proto_assignment_pattern(pattern: &Expr) -> error::Result<()> {
+        match pattern {
+            Expr::Ident(_) => {}
+            Expr::Member {
+                object, property, ..
+            } => {
+                Self::reject_duplicate_proto_object_literal(object)?;
+                Self::reject_duplicate_proto_object_literal(property)?;
+            }
+            Expr::PrivateGet { object, .. } => {
+                Self::reject_duplicate_proto_object_literal(object)?;
+            }
+            Expr::Array(elements) => {
+                for element in elements {
+                    match element {
+                        Expr::Undefined => {}
+                        Expr::Spread(inner) => {
+                            Self::reject_duplicate_proto_assignment_pattern(inner)?;
+                        }
+                        other => Self::reject_duplicate_proto_assignment_pattern(other)?,
+                    }
+                }
+            }
+            Expr::Object(props) => {
+                for prop in props {
+                    Self::reject_duplicate_proto_property_key(&prop.key)?;
+                    Self::reject_duplicate_proto_assignment_pattern(&prop.value)?;
+                }
+            }
+            Expr::Assign(AssignOp::Assign, left, default) => {
+                Self::reject_duplicate_proto_assignment_pattern(left)?;
+                Self::reject_duplicate_proto_object_literal(default)?;
+            }
+            other => {
+                Self::reject_duplicate_proto_object_literal(other)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn reject_duplicate_proto_property_key(key: &PropertyKey) -> error::Result<()> {
+        match key {
+            PropertyKey::Computed(expr) | PropertyKey::Spread(expr) => {
+                Self::reject_duplicate_proto_object_literal(expr)
+            }
+            _ => Ok(()),
         }
     }
 
@@ -3634,6 +3812,21 @@ mod tests {
     #[test]
     fn parse_import_meta_is_not_assignment_target() {
         for src in ["import.meta = 1;", "(import.meta) = 1;"] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_proto_object_assignment_pattern() {
+        assert!(Parser::parse("result = { __proto__: x, __proto__: y } = value;").is_ok());
+        assert!(Parser::parse("({ __proto__: x, __proto__: y } = value);").is_ok());
+        assert!(Parser::parse("({ a: { __proto__: x, __proto__: y } } = value);").is_ok());
+
+        for src in [
+            "({ __proto__: null, '__proto__': null });",
+            "var obj = { a: { __proto__: null, __proto__: null } };",
+            "({ x = { __proto__: null, __proto__: null } } = value);",
+        ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
     }

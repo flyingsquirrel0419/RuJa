@@ -269,10 +269,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   evaluation or target assignment while preserving the original throw, and
   read lazy iterator `done` before `value`. This reduces
   `language/expressions/assignment/destructuring` to **5 pass / 1 fail**.
+- **Duplicate `__proto__` object assignment properties** — object assignment
+  patterns now allow duplicate static `__proto__` colon properties while
+  object literals still reject duplicate prototype-mutation entries. Plain
+  destructuring assignment expressions also leave the RHS value on the stack as
+  their result. This brings `language/expressions/assignment/destructuring` to
+  **6 pass / 0 fail**.
 
 ## Why the rate is not higher
 
-The remaining 231 failures plus 2 timeouts in the supported subset cluster
+The remaining 230 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
-super semantics, and destructuring assignment. These are tracked in
+super semantics, and expression/operator edge cases. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.
