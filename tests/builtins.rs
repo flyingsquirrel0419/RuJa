@@ -616,6 +616,18 @@ fn promise_keyword_method_names() {
     assert_eq!(r, Value::String(Arc::from("function")));
 }
 
+#[test]
+fn promise_subclass_requires_callable_executor_and_uses_new_target_prototype() {
+    assert_eq!(
+        run("class Prom extends Promise {} try { new Prom(); false; } catch (e) { e instanceof TypeError; }"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class Prom extends Promise {} Object.getPrototypeOf(new Prom(function() {})) === Prom.prototype;"),
+        Value::Bool(true)
+    );
+}
+
 // --- RegExp ---
 
 #[test]

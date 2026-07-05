@@ -627,7 +627,10 @@ pub(crate) fn promise_constructor(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     let executor = args.first().cloned().unwrap_or(Value::Undefined);
-    // create the promise object
+    if !is_callable(&executor, &vm.heap) {
+        return Err(Error::type_err("Promise resolver is not a function"));
+    }
+    let proto = native_constructor_prototype(vm, vm.promise_proto.clone())?;
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -635,7 +638,7 @@ pub(crate) fn promise_constructor(
             result: Mutex::new(Value::Undefined),
             handlers: Mutex::new(Vec::new()),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
+            proto: Mutex::new(Some(proto)),
         }))?;
     let p_val = Value::Object(GcIdx(p_idx));
     // create resolve/reject native functions bound via `this` = promise

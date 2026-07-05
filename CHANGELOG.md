@@ -5,8 +5,13 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.8%** (up from 88.6%).
-Current supported subset count: **4171 pass / 9 fail / 0 timeout**.
+Current supported subset count: **4172 pass / 8 fail / 0 timeout**.
 
+- **Promise subclass executor validation**: `Promise` construction now rejects
+  non-callable executors before allocating the promise object and uses
+  `new.target.prototype` when creating subclass promise instances. This closes
+  the Promise subclass regular-construction check, raising the supported
+  subset to **4172 pass / 8 fail / 0 timeout**.
 - **Date subclass component semantics**: `Date` construction with multiple
   date/time components now stores a clipped time value instead of treating the
   year as a raw timestamp, and Date component getters now derive calendar
