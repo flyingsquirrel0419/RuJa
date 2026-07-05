@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.2%** (up from 88.6%).
-Current supported subset count: **3894 pass / 284 fail / 2 timeout**.
+Supported-subset pass rate: **93.3%** (up from 88.6%).
+Current supported subset count: **3897 pass / 281 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -83,6 +83,13 @@ Current supported subset count: **3894 pass / 284 fail / 2 timeout**.
   JS `throw`. Re-thrown Error objects also preserve their specific error kind
   in host error reporting. This fixes test262 `S12.14_A3` and `S12.14_A13_T2`
   and reduces the `try` statement subset to **7 failures**.
+- **Native Error constructor call branding**: plain calls to native Error
+  subclasses, such as `EvalError(1)` and `TypeError(1)`, now allocate through
+  the active callee's `prototype` instead of always using `Error.prototype`.
+  Native constructor dispatch also clears consumed `new.target` state so a
+  native `new Error(...)` call cannot leak construct state into the next call.
+  This fixes test262 `S12.14_A19_T1` and `S12.14_A19_T2` and reduces the
+  `try` statement subset to **5 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

@@ -1415,6 +1415,28 @@ fn object_define_property(
 
 // Minimal stubs to keep the crate compiling while parser/lexer work is in progress.
 
+fn active_error_constructor_prototype(vm: &mut Vm) -> error::Result<Value> {
+    if let Some(callee) = vm.current_native_callee.clone() {
+        let proto = vm.get_property_by_key(&callee, &PropertyKey::from("prototype"))?;
+        if matches!(proto, Value::Object(_)) {
+            return Ok(proto);
+        }
+    }
+    Ok(vm.error_proto.clone())
+}
+
+fn new_error_object(vm: &mut Vm, proto: Value) -> error::Result<GcIdx> {
+    let obj = HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(proto)),
+        extensible: AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    });
+    Ok(GcIdx(vm.heap.allocate(obj)?))
+}
+
 fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let msg = args
         .first()
@@ -1440,24 +1462,17 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
                 }
             });
             if is_global {
-                vm.new_object()?
+                let proto = active_error_constructor_prototype(vm)?;
+                new_error_object(vm, proto)?
             } else {
                 i
             }
         }
         _ => {
-            // Called as Error(msg) without new: create a new object with
-            // error_proto as its prototype (not Object.prototype).
-            let proto = vm.error_proto.clone();
-            let obj = HeapObj::Object(ObjectData {
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(proto)),
-                extensible: AtomicBool::new(true),
-                class_name: None,
-                private_fields: Mutex::new(std::collections::HashMap::new()),
-                primitive: Mutex::new(None),
-            });
-            GcIdx(vm.heap.allocate(obj)?)
+            // Called as Error(msg) or TypeError(msg) without new: create a
+            // fresh object from the active constructor's prototype.
+            let proto = active_error_constructor_prototype(vm)?;
+            new_error_object(vm, proto)?
         }
     };
     // Inherit `name` from the prototype (each Error subclass proto sets it),

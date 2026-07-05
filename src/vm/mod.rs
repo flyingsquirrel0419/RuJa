@@ -28,6 +28,9 @@ pub struct Vm {
     pub(crate) global_this: Value,
     /// `new.target` to set on the next pushed frame (used by `construct`).
     pub(crate) pending_new_target: Option<Value>,
+    /// Native functions sometimes need the active callee object, for example
+    /// Error subclass constructors called without `new`.
+    pub(crate) current_native_callee: Option<Value>,
     pub(crate) stack: Vec<Value>,
     pub(crate) frames: Vec<CallFrame>,
     pub(crate) object_proto: Value,
@@ -256,6 +259,7 @@ impl Vm {
             global,
             global_this: Value::Undefined,
             pending_new_target: None,
+            current_native_callee: None,
             stack: Vec::new(),
             frames: Vec::new(),
             object_proto: Value::Undefined,

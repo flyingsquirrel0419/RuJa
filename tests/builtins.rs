@@ -184,6 +184,38 @@ fn error_subclass() {
 }
 
 #[test]
+fn error_subclass_plain_call_uses_active_constructor_prototype() {
+    assert_eq!(
+        run(
+            r#"[
+                EvalError(1).toString(),
+                RangeError(1).toString(),
+                ReferenceError(1).toString(),
+                SyntaxError(1).toString(),
+                TypeError(1).toString(),
+                URIError("message", "fileName", "1").toString()
+            ].join("|");"#
+        ),
+        Value::String(Arc::from(
+            "EvalError: 1|RangeError: 1|ReferenceError: 1|SyntaxError: 1|TypeError: 1|URIError: message"
+        ))
+    );
+    assert_eq!(
+        run("var T = TypeError; TypeError = Error; var e = T(1); e instanceof T && e instanceof Error;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn native_constructor_new_target_does_not_leak_to_next_call() {
+    let msg = run_err("new Error('x'); class C {} C();");
+    assert!(
+        msg.contains("Class constructor cannot be invoked without 'new'"),
+        "got: {msg}"
+    );
+}
+
+#[test]
 fn json_parse_object() {
     assert_eq!(run(r#"JSON.parse("{\"a\":1}").a;"#), Value::Number(1.0));
     // HashMap key order is non-deterministic; just check both props round-trip.

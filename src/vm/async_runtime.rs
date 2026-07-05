@@ -327,6 +327,8 @@ impl Vm {
         });
         match kind_info {
             Some(FuncCallInfo::Native(f)) => {
+                let saved_native_callee = self.current_native_callee.replace(Value::Object(idx));
+                let _new_target = self.pending_new_target.take();
                 // Workaround: in release builds, the function pointer for
                 // Object.prototype.toString doesn't dispatch correctly.
                 // When the callee is named "toString" and the receiver's
@@ -360,12 +362,17 @@ impl Vm {
                                 }
                             });
                             if inherits_default {
-                                return crate::builtins::object_to_string(self, this.clone(), None);
+                                let result =
+                                    crate::builtins::object_to_string(self, this.clone(), None);
+                                self.current_native_callee = saved_native_callee;
+                                return result;
                             }
                         }
                     }
                 }
-                f(self, args, this)
+                let result = f(self, args, this);
+                self.current_native_callee = saved_native_callee;
+                result
             }
             Some(FuncCallInfo::Interpreted {
                 func,
