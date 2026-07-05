@@ -2027,7 +2027,7 @@ impl Parser {
                         }
                         TokenKind::LBracket => {
                             self.advance();
-                            let prop = self.parse_expr()?;
+                            let prop = self.with_in_allowed(|p| p.parse_expr())?;
                             self.expect(&TokenKind::RBracket, "]")?;
                             e = Expr::Member {
                                 object: Box::new(e),
@@ -2050,7 +2050,7 @@ impl Parser {
                 }
                 TokenKind::LBracket => {
                     self.advance();
-                    let prop = self.parse_expr()?;
+                    let prop = self.with_in_allowed(|p| p.parse_expr())?;
                     self.expect(&TokenKind::RBracket, "]")?;
                     e = Expr::Member {
                         object: Box::new(e),
@@ -2512,7 +2512,7 @@ impl Parser {
                 }
                 TokenKind::LBracket => {
                     self.advance();
-                    let e = self.parse_assign()?;
+                    let e = self.with_in_allowed(|p| p.parse_assign())?;
                     self.expect(&TokenKind::RBracket, "]")?;
                     // Computed keys have no static PropName, even when the
                     // expression is a literal such as ["__proto__"].
@@ -3146,6 +3146,17 @@ impl Parser {
         result
     }
 
+    fn with_in_allowed<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved = self.no_in;
+        self.no_in = false;
+        let result = f(self);
+        self.no_in = saved;
+        result
+    }
+
     fn is_proto_mutation_property(prop: &Property) -> bool {
         !prop.computed
             && !prop.shorthand
@@ -3444,7 +3455,7 @@ impl Parser {
             // Computed method name: [expr]
             let computed_name = if !is_getter && !is_setter && self.check(&TokenKind::LBracket) {
                 self.advance();
-                let e = self.parse_assign()?;
+                let e = self.with_in_allowed(|p| p.parse_assign())?;
                 self.expect(&TokenKind::RBracket, "]")?;
                 Some(Box::new(e))
             } else {
@@ -3636,7 +3647,7 @@ impl Parser {
                         }
                         TokenKind::LBracket => {
                             self.advance();
-                            let e = self.parse_assign()?;
+                            let e = self.with_in_allowed(|p| p.parse_assign())?;
                             self.expect(&TokenKind::RBracket, "]")?;
                             PropertyKey::Computed(Box::new(e))
                         }
@@ -3829,6 +3840,18 @@ mod tests {
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
+    }
+
+    #[test]
+    fn parse_computed_property_names_allow_in_inside_for_heads() {
+        assert!(Parser::parse(
+            r#"for (obj = { get ["x" in empty]() { return 1; } }; ; ) { break; }"#,
+        )
+        .is_ok());
+        assert!(Parser::parse(r#"for (value = obj["x" in empty]; ; ) { break; }"#,).is_ok());
+        assert!(
+            Parser::parse(r#"for (({ ["x" in empty]: value } = obj); ; ) { break; }"#,).is_ok()
+        );
     }
 
     #[test]

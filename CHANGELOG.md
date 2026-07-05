@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **94.5%** (up from 88.6%).
-Current supported subset count: **3948 pass / 230 fail / 2 timeout**.
+Current supported subset count: **3949 pass / 229 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -176,6 +176,12 @@ Current supported subset count: **3948 pass / 230 fail / 2 timeout**.
   expression result, so nested assignments such as `result = ({ x } = obj)`
   store `obj`. This brings `language/expressions/assignment/destructuring` to
   **6 pass / 0 fail**.
+- **Computed property names in `for` heads**: computed property names and
+  computed member keys now parse their bracketed expressions with `in`
+  allowed, even when the surrounding expression is being parsed under
+  `for (... in ...)` lookahead. This fixes object accessor names such as
+  `{ get ["x" in obj]() {} }` inside `for` initializers and reduces
+  `language/expressions/object` to **271 pass / 14 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

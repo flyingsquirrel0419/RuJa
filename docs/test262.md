@@ -275,10 +275,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   destructuring assignment expressions also leave the RHS value on the stack as
   their result. This brings `language/expressions/assignment/destructuring` to
   **6 pass / 0 fail**.
+- **Computed property names in `for` heads** — computed property names and
+  computed member keys now allow `in` inside their bracketed expressions even
+  when the surrounding expression is parsed under `for (... in ...)`
+  lookahead. This reduces `language/expressions/object` to
+  **271 pass / 14 fail**.
 
 ## Why the rate is not higher
 
-The remaining 230 failures plus 2 timeouts in the supported subset cluster
+The remaining 229 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and expression/operator edge cases. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.

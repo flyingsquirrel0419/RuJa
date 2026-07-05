@@ -610,6 +610,28 @@ fn computed_accessor_key_to_property_key_errors() {
 }
 
 #[test]
+fn computed_property_names_allow_in_inside_for_heads() {
+    let src = r#"
+        var empty = Object.create(null);
+        var obj, value;
+        for (obj = { get ["x" in empty]() { return "via get"; } }; ; ) {
+            value = obj.false;
+            break;
+        }
+        for (obj = { set ["x" in empty](param) { value += "," + param; } }; ; ) {
+            obj.false = "via set";
+            break;
+        }
+        var container = { false: 41 };
+        for (value += "," + container["x" in empty]; ; ) {
+            break;
+        }
+        value;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("via get,via set,41")));
+}
+
+#[test]
 fn object_methods_are_not_constructors() {
     let err = common::run_err("let obj = { method() {} }; new obj.method();");
     assert!(
