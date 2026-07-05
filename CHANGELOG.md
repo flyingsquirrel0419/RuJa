@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **97.9%** (up from 88.6%).
-Current supported subset count: **4089 pass / 89 fail / 2 timeout**.
+Supported-subset pass rate: **98.2%** (up from 88.6%).
+Current supported subset count: **4103 pass / 77 fail / 0 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -339,6 +339,15 @@ Current supported subset count: **4089 pass / 89 fail / 2 timeout**.
   arguments. This raises `language/statements/class/subclass` to
   **75 pass / 19 fail** and the supported subset to
   **4089 pass / 89 fail / 2 timeout**.
+- **C-style `for` lexical head environments**: `for (let/const ...; ...; ...)`
+  now creates a runtime loop-head lexical environment, evaluates the first
+  condition/body/update in a per-iteration child environment, and reclones a
+  sibling environment before each update so body closures keep pre-update
+  bindings while the update prepares the next iteration. The parser also
+  applies the head/body `var` redeclaration early error to ordinary `for`
+  loops and accepts `async of => {}` as a normal async-arrow initializer. This
+  closes `language/statements/for` at **93 pass / 0 fail** and raises the
+  supported subset to **4103 pass / 77 fail / 0 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

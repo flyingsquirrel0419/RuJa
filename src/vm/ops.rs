@@ -1038,6 +1038,20 @@ impl Vm {
                     let child = env::clone_loop_vars(&self.heap, cur_env, &names)?;
                     self.current_frame_mut()?.env = child;
                 }
+                Op::RecloneLetNames(idx) => {
+                    // Between a `for (let ...)` body and its update
+                    // expression, create the next iteration env as a sibling
+                    // of the current one. The update mutates the sibling, so
+                    // body closures keep the pre-update binding.
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let names = self
+                        .frames
+                        .last()
+                        .map(|f| f.chunk.let_names.get(idx).cloned().unwrap_or_default())
+                        .unwrap_or_default();
+                    let sibling = env::clone_loop_vars_to_sibling(&self.heap, cur_env, &names)?;
+                    self.current_frame_mut()?.env = sibling;
+                }
                 Op::RestoreParentEnv => {
                     // After the loop body (which ran in a CloneLetEnv child),
                     // restore the frame env to the child's parent (the loop

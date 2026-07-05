@@ -718,11 +718,35 @@ impl Compiler {
                 update,
                 body,
             } => {
-                self.push_scope(false);
+                let lexical_head = init.as_deref().and_then(Self::lexical_for_head_bindings);
+                if let Some((kind, names)) = &lexical_head {
+                    let bindings = Self::lexical_bindings_from_names(*kind, names);
+                    self.chunk.emit(Op::PushScope, self.current_line);
+                    self.push_scope_with_runtime(false, true);
+                    self.emit_lexical_hoist(&bindings)?;
+                } else {
+                    self.push_scope(false);
+                }
                 if let Some(init_stmt) = init {
                     self.compile_stmt(init_stmt)?;
                 }
                 self.reset_completion();
+                let per_iteration_let = lexical_head.is_some();
+                let loop_names: Vec<Arc<str>> = lexical_head
+                    .as_ref()
+                    .map(|(_, names)| names.clone())
+                    .unwrap_or_default();
+                let loop_names_idx = if loop_names.is_empty() {
+                    usize::MAX
+                } else {
+                    let idx = self.chunk.let_names.len();
+                    self.chunk.let_names.push(loop_names);
+                    idx
+                };
+                if per_iteration_let {
+                    self.chunk
+                        .emit(Op::CloneLetNames(loop_names_idx), self.current_line);
+                }
                 let loop_start = self.chunk.code.len();
                 // continue should re-run the update, then the condition: insert the
                 // update block as the continue target after loop_start.
@@ -736,52 +760,12 @@ impl Compiler {
                 };
                 // continue target is the update block (known after the body); mark unknown.
                 self.begin_loop(usize::MAX);
-                // Per-iteration environment for `for (let ...)`: clone the
-                // lexical bindings into a fresh child env before each body so
-                // closures created in the body capture a distinct binding per
-                // iteration. (Spec: CreatePerIterationEnvironment; an
-                // approximation: the update still mutates this iteration's
-                // env, so closures see the post-update value for their
-                // iteration -- but each iteration gets its own env.)
-                let per_iteration_let = matches!(
-                    init.as_ref().map(|s| &s.node),
-                    Some(StmtNode::VarDecl {
-                        kind: VarKind::Let,
-                        ..
-                    }) | Some(StmtNode::VarDecl {
-                        kind: VarKind::Const,
-                        ..
-                    })
-                );
-                // Collect the loop's declared lexical names so only those are
-                // rebound per iteration (outer lets are shared via the chain).
-                let loop_names: Vec<Arc<str>> = match init.as_ref().map(|s| &s.node) {
-                    Some(StmtNode::VarDecl {
-                        kind: VarKind::Let | VarKind::Const,
-                        decls,
-                        ..
-                    }) => decls.iter().map(|(n, _)| n.clone()).collect(),
-                    _ => Vec::new(),
-                };
-                let loop_names_idx = if loop_names.is_empty() {
-                    usize::MAX
-                } else {
-                    let idx = self.chunk.let_names.len();
-                    self.chunk.let_names.push(loop_names);
-                    idx
-                };
+                self.compile_stmt(body)?;
+                let continue_target = self.chunk.code.len();
                 if per_iteration_let {
                     self.chunk
-                        .emit(Op::CloneLetNames(loop_names_idx), self.current_line);
+                        .emit(Op::RecloneLetNames(loop_names_idx), self.current_line);
                 }
-                self.compile_stmt(body)?;
-                // Restore the frame env to the loop-scope env (the CloneLetEnv
-                // child's parent) so the update and next iteration run in the
-                // original env and the chain does not grow per iteration.
-                if per_iteration_let {
-                    self.chunk.emit(Op::RestoreParentEnv, self.current_line);
-                }
-                let continue_target = self.chunk.code.len();
                 if let Some(u) = update {
                     self.compile_expr(u)?;
                     self.chunk.emit(Op::Pop, self.current_line);
@@ -789,11 +773,17 @@ impl Compiler {
                 // if there's no update, continue jumps to the condition (loop_start).
                 self.set_continue_target(continue_target);
                 self.chunk.emit(Op::Jump(loop_start), self.current_line);
+                let normal_cleanup = self.chunk.code.len();
                 if let Some(jf) = jump_false {
-                    let end = self.chunk.code.len();
-                    self.chunk.patch_jump(jf, end);
+                    self.chunk.patch_jump(jf, normal_cleanup);
                 }
-                self.end_loop(self.chunk.code.len());
+                if lexical_head.is_some() {
+                    if per_iteration_let {
+                        self.chunk.emit(Op::RestoreParentEnv, self.current_line);
+                    }
+                    self.chunk.emit(Op::PopScope, self.current_line);
+                }
+                self.end_loop(normal_cleanup);
                 self.pop_scope();
             }
             StmtNode::ForOf {

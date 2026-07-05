@@ -804,6 +804,43 @@ fn for_of_lexical_head_tdz_and_iteration_scope() {
 }
 
 #[test]
+fn for_lexical_head_scope_and_early_errors() {
+    assert!(
+        run_err("for (let x; false;) { var x; }").contains("SyntaxError"),
+        "let head/body var redeclaration should be a SyntaxError"
+    );
+    assert!(
+        run_err("for (const x = 0; false;) { var x; }").contains("SyntaxError"),
+        "const head/body var redeclaration should be a SyntaxError"
+    );
+
+    assert_eq!(
+        run("var i = 0, counter = 0; for (async of => {}; i < 10; ++i) { ++counter; } counter;"),
+        Value::Number(10.0)
+    );
+
+    assert_eq!(
+        run("var value; for (let [x] = [23]; ; ) { value = x; break; } typeof x + ':' + value;"),
+        Value::String(Arc::from("undefined:23"))
+    );
+
+    assert_eq!(
+        run("let x = 'outside'; var run = true, probeTest, probeIncr, probeBody; for (let x = 'inside'; (probeTest = function(){ return x; }) && run; probeIncr = function(){ return x; }) probeBody = function(){ return x; }, run = false; [probeBody(), probeIncr(), probeTest(), x].join(',');"),
+        Value::String(Arc::from("inside,inside,inside,outside"))
+    );
+
+    assert_eq!(
+        run("var probeBefore, probeTest, probeIncr, probeBody; var run = true; for (let x = 'outside', _ = probeBefore = function(){ return x; }; run && (x = 'inside', probeTest = function(){ return x; }); probeIncr = function(){ return x; }) probeBody = function(){ return x; }, run = false; [probeBefore(), probeTest(), probeBody(), probeIncr()].join(',');"),
+        Value::String(Arc::from("outside,inside,inside,inside"))
+    );
+
+    assert_eq!(
+        run("var probeFirst, probeSecond = null; for (let x = 'first'; probeSecond === null; x = 'second') if (!probeFirst) probeFirst = function(){ return x; }; else probeSecond = function(){ return x; }; probeFirst() + ':' + probeSecond();"),
+        Value::String(Arc::from("first:second"))
+    );
+}
+
+#[test]
 fn for_in_lexical_head_tdz_and_iteration_scope() {
     let msg = run_err("let x = 1; for (let x in { x }) {}");
     assert!(

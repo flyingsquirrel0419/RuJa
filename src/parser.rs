@@ -1357,6 +1357,7 @@ impl Parser {
             if matches!(self.peek(), TokenKind::Async)
                 && !self.peek_at_tok(0).had_escape
                 && self.is_raw_of_at(1)
+                && !matches!(self.peek_at_tok(2).kind, TokenKind::Arrow)
             {
                 return Err(error::Error::syntax(
                     "async cannot be the for-of left-hand side".to_string(),
@@ -1434,6 +1435,9 @@ impl Parser {
         self.loop_depth += 1;
         let body = Box::new(self.parse_single_stmt()?);
         self.loop_depth -= 1;
+        if let Some(init_stmt) = &init {
+            self.check_for_head_body_clash(&init_stmt.node, &body)?;
+        }
         Ok(self.stmt(StmtNode::For {
             init,
             cond,
@@ -2304,8 +2308,10 @@ impl Parser {
                 // async arrow: `async (params) => body` or `async ident => body`
                 let is_async_arrow_paren = !self.peek_at_tok(1).preceded_by_newline
                     && matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
-                let is_async_arrow_ident = matches!(self.peek_at_tok(1).kind, TokenKind::Ident(_))
-                    && !self.peek_at_tok(1).preceded_by_newline
+                let is_async_arrow_ident = matches!(
+                    self.peek_at_tok(1).kind,
+                    TokenKind::Ident(_) | TokenKind::Of
+                ) && !self.peek_at_tok(1).preceded_by_newline
                     && matches!(self.peek_at_tok(2).kind, TokenKind::Arrow);
                 if is_async_arrow_paren {
                     self.advance(); // async
@@ -2331,6 +2337,10 @@ impl Parser {
                         TokenKind::Ident(s) => {
                             self.advance();
                             Arc::from(s.as_str())
+                        }
+                        TokenKind::Of => {
+                            self.advance();
+                            Arc::from("of")
                         }
                         _ => unreachable!(),
                     };

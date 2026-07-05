@@ -110,6 +110,54 @@ pub fn clone_loop_vars(
     Ok(child)
 }
 
+/// Clone loop variables from the current per-iteration env into a fresh
+/// sibling env. The sibling has the same parent as `env`, so repeated
+/// `for (let ...)` iterations do not grow the environment chain.
+pub fn clone_loop_vars_to_sibling(
+    heap: &Heap,
+    env: GcIdx,
+    names: &[Arc<str>],
+) -> Result<GcIdx, crate::gc::HeapLimitExceeded> {
+    let parent = heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            *e.parent.lock()
+        } else {
+            None
+        }
+    });
+    let sibling = new_env(heap, parent, false)?;
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            let vars = e.vars.lock();
+            let cloned: Vec<(Arc<str>, crate::value::Binding)> = vars
+                .iter()
+                .filter(|(k, _)| names.iter().any(|n| n.as_ref() == k.as_ref()))
+                .map(|(k, b)| {
+                    (
+                        k.clone(),
+                        crate::value::Binding {
+                            value: Mutex::new(b.value.lock().clone()),
+                            kind: b.kind,
+                            initialized: AtomicBool::new(
+                                b.initialized.load(std::sync::atomic::Ordering::Relaxed),
+                            ),
+                        },
+                    )
+                })
+                .collect();
+            drop(vars);
+            heap.with_obj(sibling.0, |sobj| {
+                if let HeapObj::Environment(se) = sobj {
+                    for (k, b) in cloned {
+                        se.vars.lock().insert(k, b);
+                    }
+                }
+            });
+        }
+    });
+    Ok(sibling)
+}
+
 /// Create a `with`-statement environment record wrapping `object`: name lookups
 /// that miss the lexical chain fall back to `object`'s own properties.
 pub fn new_with_env(

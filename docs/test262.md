@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.2% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 97.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.2% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (97.9%).** It reflects the portion of the spec
+supported-subset rate (98.2%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 97.9%:
+~56% to 98.2%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -144,6 +144,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending
   classes throws `TypeError`, and `new (Sub.bind(...))` delegates construction
   to `Sub` with prepended bound arguments while ignoring bound `this`.
+- **C-style `for` lexical head environments** — `for (let/const ...; ...; ...)`
+  creates the loop-head lexical environment and per-iteration sibling
+  environments required for initializer/test/body/update closures, rejects
+  body `var` redeclarations of head lexical names, and parses `async of => {}`
+  as an async-arrow initializer in ordinary `for` loops.
 - **BigInt increment/decrement** — `x++` on BigInt returns BigInt.
 - **Object.prototype.toString** — returns `[object Object]` for plain
   objects; `String.prototype.toString` added.
@@ -440,10 +445,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   to the target constructor with bound arguments. This raises
   `language/statements/class/subclass` to **75 pass / 19 fail** and the
   supported subset to **4089 pass / 89 fail / 2 timeout**.
+- **C-style `for` lexical head environments** — ordinary `for` loops now use
+  runtime loop-head and per-iteration environments for lexical declarations,
+  including destructuring heads and the update-before-next-iteration boundary.
+  Parser early errors now reject body `var` redeclarations of head lexical
+  names, while `async of => {}` remains a normal async-arrow initializer. This
+  closes `language/statements/for` at **93 pass / 0 fail** and raises the
+  supported subset to **4103 pass / 77 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 89 failures plus 2 timeouts in the supported subset cluster
+The remaining 77 failures in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

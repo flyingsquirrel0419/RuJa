@@ -301,6 +301,11 @@ pub enum Op {
     /// fresh child env whose parent is the current env. Other bindings stay
     /// reachable through the chain so mutations to outer `let`s persist.
     CloneLetNames(usize),
+    /// Clone the loop variables from the current per-iteration env into a
+    /// fresh sibling env with the same parent. Used between a `for (let ...)`
+    /// body and update expression so body closures keep the pre-update
+    /// binding while the update initializes the next iteration's binding.
+    RecloneLetNames(usize),
     /// Restore the frame env to the current env's parent (undo a CloneLetEnv
     /// after the loop body so the update and next iteration's cond run in the
     /// original loop-scope env, and the env chain does not grow per iteration).
