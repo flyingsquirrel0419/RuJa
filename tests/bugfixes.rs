@@ -698,6 +698,33 @@ fn named_function_expression_binding_is_immutable() {
     .contains("TypeError"));
 }
 
+#[test]
+fn named_function_expression_binding_is_outside_body_var_env() {
+    assert_eq!(
+        run("var n = 'outside';\
+             var probeBefore = function() { return n; };\
+             var probeBody;\
+             var func = function n() {\
+               var n;\
+               probeBody = function() { return n; };\
+             };\
+             func();\
+             probeBefore() === 'outside' && probeBody() === undefined;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn member_call_checks_callee_before_arguments() {
+    assert_eq!(
+        run("var called = false;\
+             function arg() { called = true; }\
+             try { ({}).missing.method(arg()); } catch (e) {}\
+             called;"),
+        Value::Bool(false)
+    );
+}
+
 // ---------------------------------------------------------------------------
 // #5 try/finally control flow (return/throw override)
 // ---------------------------------------------------------------------------

@@ -164,6 +164,10 @@ pub struct FunctionExpr {
     pub is_strict: bool,
     /// True for object literal methods and class methods (enables super).
     pub is_method: bool,
+    /// True only for explicit named function expressions. This creates the
+    /// immutable inner name binding used for recursion; inferred display names
+    /// and declarations do not get this binding.
+    pub has_name_binding: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

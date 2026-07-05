@@ -425,20 +425,6 @@ impl Vm {
                         crate::value::BindingKind::Param,
                     );
                 }
-                // Named function expressions need an inner name binding for
-                // recursion. Method/class/arrow names are display names only
-                // and must not shadow outer bindings in the function body.
-                if !func.is_method && !is_arrow && !is_class_ctor {
-                    if let Some(name) = &func.name {
-                        env::declare(
-                            &self.heap,
-                            call_env,
-                            name,
-                            Value::Object(idx),
-                            crate::value::BindingKind::FunctionName,
-                        );
-                    }
-                }
                 if !is_arrow {
                     let mut arg_array =
                         crate::value::ArrayData::new(args.to_vec(), Some(self.array_proto.clone()));

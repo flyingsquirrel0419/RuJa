@@ -4,9 +4,18 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.5%** (up from 88.6%).
-Current supported subset count: **4118 pass / 62 fail / 0 timeout**.
+Supported-subset pass rate: **98.6%** (up from 88.6%).
+Current supported subset count: **4121 pass / 59 fail / 0 timeout**.
 
+- **Call-expression environment and argument ordering**: explicit named
+  function-expression bindings now live in the function closure environment
+  rather than the call body's variable environment, so body `var` declarations
+  with the same name create the required separate binding. Sloppy direct eval
+  now accepts `static` as a contextual `var` binding name, and member calls now
+  perform the property lookup before evaluating arguments while leaving the
+  callability check after argument evaluation. This improves
+  `language/expressions/call` to **48 pass / 1 fail** and raises the
+  supported subset to **4121 pass / 59 fail / 0 timeout**.
 - **Named function-expression bindings**: named function expressions now create
   an immutable inner name binding. Sloppy assignments to that binding are
   ignored, while strict assignments throw `TypeError`; direct eval and lexical

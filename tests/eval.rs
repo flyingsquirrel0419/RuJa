@@ -279,6 +279,18 @@ fn direct_eval_inherits_caller_strictness_for_with() {
 }
 
 #[test]
+fn direct_eval_non_strict_allows_contextual_static_binding() {
+    assert_eq!(
+        run("var count = 0;\
+             eval('var static; count += 1;');\
+             eval('with ({}) {} count += 1;');\
+             eval('unresolvable = null; count += 1;');\
+             count;"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
 fn eval_function_indices_are_offset_from_existing_functions() {
     assert_eq!(
         run(r#"

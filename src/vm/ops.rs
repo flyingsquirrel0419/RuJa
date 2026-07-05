@@ -1641,6 +1641,13 @@ impl Vm {
                     let v = self.get_property_key(&obj, &key)?;
                     self.stack.push(v);
                 }
+                Op::GetMethodForCall => {
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    let method = self.get_property_key(&obj, &key)?;
+                    self.stack.push(obj);
+                    self.stack.push(method);
+                }
                 Op::SetProp => {
                     // stack (bottom->top): [obj, key, value]
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2879,6 +2886,7 @@ impl Vm {
             let is_method = fdef.is_method;
             let fn_length = fdef.length;
             let fn_name = fdef.name.clone();
+            let has_name_binding = fdef.has_name_binding && fn_name.is_some() && !is_arrow;
             // Generator methods are non-constructors, but still have an own
             // prototype. Other concise methods do not.
             let has_prototype = !is_arrow && (!is_method || fdef.is_generator);
@@ -2895,10 +2903,17 @@ impl Vm {
             } else {
                 Value::Undefined
             };
+            let closure_env = if has_name_binding {
+                let name_env = crate::environment::new_env(&self.heap, Some(env_idx), false)?;
+                self.gc_pins.push(name_env.0);
+                name_env
+            } else {
+                env_idx
+            };
             let fd = crate::value::FunctionData {
                 name: fdef.name.clone(),
                 kind: crate::value::FunctionKind::Interpreted { func: fdef },
-                closure: env_idx,
+                closure: closure_env,
                 is_class_ctor: std::sync::atomic::AtomicBool::new(false),
                 prototype: Mutex::new(if has_prototype {
                     Some(proto_val.clone())
@@ -2911,7 +2926,22 @@ impl Vm {
                 }),
                 props: Mutex::new(IndexMap::new()),
             };
-            let idx = self.alloc(HeapObj::Function(fd))?;
+            let idx_result = self.alloc(HeapObj::Function(fd));
+            if has_name_binding {
+                self.gc_pins.pop();
+            }
+            let idx = idx_result?;
+            if has_name_binding {
+                if let Some(name) = fn_name.as_ref() {
+                    crate::environment::declare(
+                        &self.heap,
+                        closure_env,
+                        name,
+                        Value::Object(idx),
+                        crate::value::BindingKind::FunctionName,
+                    );
+                }
+            }
             // Set function.length, function.name, and function.prototype as own properties.
             self.heap.with_obj(idx.0, |obj| {
                 if let HeapObj::Function(f) = obj {

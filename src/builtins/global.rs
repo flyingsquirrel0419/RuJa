@@ -278,6 +278,7 @@ pub(crate) fn function_constructor(
         param_decls: Vec::new(),
         is_strict,
         is_method: false,
+        has_name_binding: false,
     };
     let mut compiler = crate::compiler::Compiler::new();
     let (chunk, param_slots) = compiler.compile_function(&f)?;
@@ -294,6 +295,7 @@ pub(crate) fn function_constructor(
         has_parameter_expressions: crate::compiler::Compiler::has_parameter_expressions(&f),
         length: crate::compiler::Compiler::fn_length(&f),
         is_method: false,
+        has_name_binding: false,
         is_derived: false,
     });
     vm.functions.push(fdef.clone());

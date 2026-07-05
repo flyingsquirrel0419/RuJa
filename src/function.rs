@@ -25,5 +25,9 @@ pub struct FunctionDef {
     pub length: usize,
     /// True for object/class methods (enables super property access).
     pub is_method: bool,
+    /// Explicit named function expressions carry an immutable inner name
+    /// binding in their closure environment. Declarations and inferred display
+    /// names do not.
+    pub has_name_binding: bool,
     pub is_derived: bool,
 }

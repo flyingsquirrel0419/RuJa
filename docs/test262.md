@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.3% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.5% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (98.5%).** It reflects the portion of the spec
+supported-subset rate (98.6%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -91,8 +91,8 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 |--------|-------|
 | Total matrix files | 47,717 |
 | Actually run | 23,163 |
-| Pass | 11,179 |
-| Fail | 11,984 |
+| Pass | 11,185 |
+| Fail | 11,978 |
 | Timeout | 12 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **48.3%** |
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 98.5%:
+~56% to 98.6%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -160,6 +160,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Named function-expression bindings** — named function expressions create
   an immutable inner name binding; sloppy assignments to that binding are
   ignored, while strict assignments throw `TypeError`.
+- **Call-expression environment and argument ordering** — named function
+  expression body `var` declarations can shadow the explicit function name
+  binding, sloppy direct eval accepts `static` as a contextual `var` name, and
+  member calls perform property lookup before argument evaluation.
 - **BigInt increment/decrement** — `x++` on BigInt returns BigInt.
 - **Object.prototype.toString** — returns `[object Object]` for plain
   objects; `String.prototype.toString` added.
@@ -485,10 +489,19 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `TypeError`. This closes `language/expressions/function` at
   **53 pass / 0 fail** and raises the supported subset to
   **4118 pass / 62 fail / 0 timeout**.
+- **Call-expression environment and argument ordering** — explicit named
+  function-expression bindings now live in the function closure environment
+  rather than the call body's variable environment, so body `var` declarations
+  with the same name create the required separate binding. Sloppy direct eval
+  accepts `static` as a contextual `var` binding name, and member calls perform
+  property lookup before argument evaluation while keeping the callability
+  check after argument evaluation. This improves `language/expressions/call`
+  to **48 pass / 1 fail** and raises the supported subset to
+  **4121 pass / 59 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 62 failures in the supported subset cluster
-around class behavior, super semantics, call/property access, and
+The remaining 59 failures in the supported subset cluster
+around class behavior, super semantics, property access, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

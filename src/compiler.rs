@@ -1023,6 +1023,7 @@ impl Compiler {
                     has_parameter_expressions: Self::has_parameter_expressions(f),
                     length: Self::fn_length(f),
                     is_method: f.is_method,
+                    has_name_binding: false,
                     is_derived: false,
                 };
                 self.funcs.push(Arc::new(fdef));
@@ -2889,21 +2890,29 @@ impl Compiler {
                                 .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
-                        // push args
-                        for a in args {
-                            if let Expr::Spread(_) = a {
-                            } else {
-                                self.compile_expr(a)?;
-                            }
-                        }
-                        self.chunk
-                            .emit(Op::CallMethod(args.len()), self.current_line);
                         if *call_opt {
-                            // `a?.b?.()`: the method value was fetched; if it was
-                            // nullish the optional call short-circuits to undefined.
-                            // Replace the just-emitted CallMethod with CallMethodOpt.
-                            let pos = self.chunk.code.len() - 1;
-                            self.chunk.code[pos] = Op::CallMethodOpt(args.len());
+                            // `a?.b?.()`: keep the optional-call path, which
+                            // short-circuits if the method value is nullish.
+                            for a in args {
+                                if let Expr::Spread(_) = a {
+                                } else {
+                                    self.compile_expr(a)?;
+                                }
+                            }
+                            self.chunk
+                                .emit(Op::CallMethodOpt(args.len()), self.current_line);
+                        } else {
+                            // Ordinary member calls resolve the property
+                            // before evaluating arguments. Callability is
+                            // still checked by CallThis after args run.
+                            self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                            for a in args {
+                                if let Expr::Spread(_) = a {
+                                } else {
+                                    self.compile_expr(a)?;
+                                }
+                            }
+                            self.chunk.emit(Op::CallThis(args.len()), self.current_line);
                         }
                         if *m_opt {
                             let end = self.chunk.code.len();
@@ -3187,6 +3196,7 @@ impl Compiler {
                     has_parameter_expressions: Self::has_parameter_expressions(f),
                     length: Self::fn_length(f),
                     is_method: f.is_method,
+                    has_name_binding: f.has_name_binding,
                     is_derived: false,
                 };
                 self.funcs.push(Arc::new(fdef));
@@ -3296,6 +3306,7 @@ impl Compiler {
                                     param_decls: Vec::new(),
                                     is_strict: true,
                                     is_method: false,
+                                    has_name_binding: false,
                                 }))),
                             })
                             .collect();
@@ -3326,6 +3337,7 @@ impl Compiler {
                     param_decls: Vec::new(),
                     is_strict: true, // classes are always strict
                     is_method: true,
+                    has_name_binding: false,
                 };
                 let (func_chunk, param_slots) = self.compile_function(&ctor_fn)?;
                 let func_idx = self.funcs.len();
@@ -3342,6 +3354,7 @@ impl Compiler {
                     has_parameter_expressions: Self::has_parameter_expressions(&ctor_fn),
                     length: Self::fn_length(&ctor_fn),
                     is_method: false,
+                    has_name_binding: false,
                     is_derived: cls.superclass.is_some(),
                 };
                 self.funcs.push(Arc::new(fdef));
@@ -3435,6 +3448,7 @@ impl Compiler {
                         param_decls: Vec::new(),
                         is_strict: true, // class methods are always strict
                         is_method: true,
+                        has_name_binding: false,
                     };
                     let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
                     let m_idx = self.funcs.len();
@@ -3451,6 +3465,7 @@ impl Compiler {
                         has_parameter_expressions: Self::has_parameter_expressions(&m_fn),
                         length: Self::fn_length(&m_fn),
                         is_method: true,
+                        has_name_binding: false,
                         is_derived: false,
                     };
                     self.funcs.push(Arc::new(mdef));
@@ -3590,6 +3605,7 @@ impl Compiler {
                         param_decls: Vec::new(),
                         is_strict: true,
                         is_method: false,
+                        has_name_binding: false,
                     };
                     let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
                     let sb_idx = self.funcs.len();
@@ -3606,6 +3622,7 @@ impl Compiler {
                         has_parameter_expressions: false,
                         length: 0,
                         is_method: false,
+                        has_name_binding: false,
                         is_derived: false,
                     };
                     self.funcs.push(Arc::new(sbdef));

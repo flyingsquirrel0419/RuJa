@@ -817,6 +817,7 @@ impl Parser {
             param_decls: Vec::new(),
             is_strict,
             is_method: false,
+            has_name_binding: false,
         })))
     }
 
@@ -1530,6 +1531,7 @@ impl Parser {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
                 TokenKind::Of => Arc::from("of"),
                 TokenKind::Async => Arc::from("async"),
+                TokenKind::Static if !self.is_strict_context => Arc::from("static"),
                 TokenKind::Await if self.await_as_identifier_allowed() => Arc::from("await"),
                 TokenKind::Yield if self.yield_as_identifier_allowed() => Arc::from("yield"),
                 TokenKind::Let if kind == VarKind::Var && !self.is_strict_context => {
@@ -2791,6 +2793,7 @@ impl Parser {
                         param_decls: Vec::new(),
                         is_strict,
                         is_method: true,
+                        has_name_binding: false,
                     }),
                     computed,
                     method: false,
@@ -2844,6 +2847,7 @@ impl Parser {
                         param_decls: Vec::new(),
                         is_strict,
                         is_method: true,
+                        has_name_binding: false,
                     }),
                     computed,
                     method: true,
@@ -2994,6 +2998,7 @@ impl Parser {
                 }
             }
         }
+        let has_name_binding = name.is_some();
         Ok(Expr::Function(FunctionExpr {
             name,
             params,
@@ -3006,6 +3011,7 @@ impl Parser {
             param_decls: Vec::new(),
             is_strict,
             is_method: false,
+            has_name_binding,
         }))
     }
 
@@ -3347,6 +3353,7 @@ impl Parser {
                 param_decls: Vec::new(),
                 is_strict,
                 is_method: false,
+                has_name_binding: false,
             }))
         } else {
             self.validate_arrow_params(
@@ -3371,6 +3378,7 @@ impl Parser {
                 // Arrow with expression body has no directive prologue; inherit.
                 is_strict: self.is_strict_context,
                 is_method: false,
+                has_name_binding: false,
             }))
         }
     }
