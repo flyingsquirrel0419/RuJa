@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::value::Value;
+use crate::value::{PropertyKey, Value};
 
 #[derive(Debug, Clone)]
 pub struct Error {
@@ -109,14 +109,42 @@ impl Error {
     }
     pub fn thrown(v: Value, heap: &crate::gc::Heap) -> Arc<Error> {
         let msg = value_to_message(&v, heap);
+        let kind = error_kind_from_value(&v, heap).unwrap_or(ErrorKind::User);
         Arc::new(Error {
-            kind: ErrorKind::User,
+            kind,
             message: msg,
             stack: Vec::new(),
             thrown_value: Some(v),
             line: None,
         })
     }
+}
+
+fn error_kind_from_value(v: &Value, heap: &crate::gc::Heap) -> Option<ErrorKind> {
+    let Value::Object(idx) = v else {
+        return None;
+    };
+    heap.with_obj(idx.0, |obj| {
+        let name = obj
+            .props()
+            .lock()
+            .get(&PropertyKey::from("name"))
+            .and_then(|desc| match &desc.value {
+                Value::String(s) => Some(s.as_ref().to_string()),
+                _ => None,
+            })
+            .unwrap_or_else(|| obj.class_name().to_string());
+        match name.as_str() {
+            "SyntaxError" => Some(ErrorKind::Syntax),
+            "ReferenceError" => Some(ErrorKind::Reference),
+            "TypeError" => Some(ErrorKind::Type),
+            "RangeError" => Some(ErrorKind::Range),
+            "EvalError" => Some(ErrorKind::Eval),
+            "URIError" => Some(ErrorKind::Uri),
+            "Error" => Some(ErrorKind::User),
+            _ => None,
+        }
+    })
 }
 
 fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {

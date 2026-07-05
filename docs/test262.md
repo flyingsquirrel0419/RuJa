@@ -210,10 +210,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Catch parameter early errors** — catch parameters now reject duplicate
   bound names and direct catch-block lexical/function redeclarations of the
   same name while preserving allowed `var` and nested block shadowing.
+- **Native runtime errors through `finally`** — catchable VM-raised
+  `ReferenceError`/`TypeError` completions now run active `finally` blocks
+  before reaching an outer `catch`, matching explicit `throw` control flow,
+  while re-thrown Error objects preserve their specific error kind.
 
 ## Why the rate is not higher
 
-The remaining 286 failures plus 2 timeouts in the supported subset cluster
+The remaining 284 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, try completion edges, and destructuring assignment. These are
 tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

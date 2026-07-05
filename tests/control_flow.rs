@@ -139,6 +139,29 @@ fn throw_runs_inner_finally_before_catch() {
     assert_eq!(run(src), Value::String(Arc::from("if,c,of")));
 }
 
+#[test]
+fn native_reference_error_runs_inner_finally_before_outer_catch() {
+    let src =
+        "let r=[];try{try{missing;}finally{r.push('fin');}}catch(e){r.push(e.name);}r.join(',');";
+    assert_eq!(run(src), Value::String(Arc::from("fin,ReferenceError")));
+}
+
+#[test]
+fn native_type_error_runs_inner_finally_before_outer_catch() {
+    let src =
+        "let r=[];try{try{null.x;}finally{r.push('fin');}}catch(e){r.push(e.name);}r.join(',');";
+    assert_eq!(run(src), Value::String(Arc::from("fin,TypeError")));
+}
+
+#[test]
+fn native_errors_preserve_kind_after_uncaught_finally() {
+    let msg = run_err("try { null.x; } finally {}");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("try { missing; } finally {}");
+    assert!(msg.contains("ReferenceError"), "got: {msg}");
+}
+
 // --- operators ---
 
 #[test]

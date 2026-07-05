@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **93.2%** (up from 88.6%).
-Current supported subset count: **3892 pass / 286 fail / 2 timeout**.
+Current supported subset count: **3894 pass / 284 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -77,6 +77,12 @@ Current supported subset count: **3892 pass / 286 fail / 2 timeout**.
   block shadowing. This fixes the `early-catch-duplicates`,
   `early-catch-lex`, and `early-catch-function` test262 cases and reduces the
   `try` statement subset to **9 failures**.
+- **Native runtime errors through `finally`**: catchable native VM errors such
+  as `ReferenceError` and `TypeError` now divert through active `finally`
+  guards before reaching an outer `catch`, matching the same path as explicit
+  JS `throw`. Re-thrown Error objects also preserve their specific error kind
+  in host error reporting. This fixes test262 `S12.14_A3` and `S12.14_A13_T2`
+  and reduces the `try` statement subset to **7 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

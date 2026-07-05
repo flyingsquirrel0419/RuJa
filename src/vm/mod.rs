@@ -816,34 +816,69 @@ impl Vm {
             match self.interpret_inner(return_depth) {
                 Ok(v) => return Ok(v),
                 Err(e) => {
-                    // If a catch handler is active, convert the error to a thrown
-                    // value and resume at the handler.
+                    if !e.catchable() {
+                        return Err(e);
+                    }
+
+                    let has_guard = self
+                        .frames
+                        .last()
+                        .is_some_and(|f| !f.catch_stack.is_empty() || !f.finally_stack.is_empty());
+                    if !has_guard {
+                        return Err(e);
+                    }
+
+                    let thrown = match e.thrown_value.clone() {
+                        Some(v) => v,
+                        None => {
+                            // Synthesize an Error object for native errors.
+                            self.make_error_value(&e)?
+                        }
+                    };
+
+                    let divert_to_finally = self.frames.last().is_some_and(|frame| {
+                        match (frame.finally_stack.last(), frame.catch_stack.last()) {
+                            (Some(&(_, _)), None) => true,
+                            (Some(&(_, fseq)), Some(&(_, cseq, _))) => fseq > cseq,
+                            _ => false,
+                        }
+                    });
+                    if divert_to_finally {
+                        let target = self
+                            .frames
+                            .last()
+                            .and_then(|f| f.finally_stack.last().map(|(ip, _)| *ip))
+                            .ok_or_else(|| {
+                                crate::error::Error::internal(
+                                    "finally stack empty during native error diversion",
+                                )
+                            })?;
+                        let frame = self.current_frame_mut()?;
+                        frame.finally_completion_tag.store(4, Ordering::Relaxed);
+                        *frame.finally_completion_val.lock() = thrown;
+                        frame.ip = target;
+                        continue;
+                    }
+
+                    // If a catch handler is active, convert the error to a
+                    // thrown value and resume at the handler.
                     let handler = self
                         .frames
                         .last()
                         .and_then(|f| f.catch_stack.last().map(|(ip, _, _)| *ip));
-                    match handler {
-                        _ if !e.catchable() => return Err(e),
-                        Some(handler) => {
-                            let thrown = match e.thrown_value.clone() {
-                                Some(v) => v,
-                                None => {
-                                    // Synthesize an Error object for native errors.
-                                    self.make_error_value(&e)?
-                                }
-                            };
-                            // Pop the handler so we don't loop, push the thrown value
-                            // for the catch binding, and jump to the handler ip.
-                            let (_, _, saved_env) =
-                                self.current_frame_mut()?.catch_stack.pop().unwrap();
-                            // Unwind scopes opened in the try body.
-                            self.current_frame_mut()?.env = saved_env;
-                            self.stack.push(thrown);
-                            self.current_frame_mut()?.ip = handler;
-                            continue;
-                        }
-                        None => return Err(e),
+                    if let Some(handler) = handler {
+                        // Pop the handler so we don't loop, push the thrown value
+                        // for the catch binding, and jump to the handler ip.
+                        let (_, _, saved_env) =
+                            self.current_frame_mut()?.catch_stack.pop().unwrap();
+                        // Unwind scopes opened in the try body.
+                        self.current_frame_mut()?.env = saved_env;
+                        self.stack.push(thrown);
+                        self.current_frame_mut()?.ip = handler;
+                        continue;
                     }
+
+                    return Err(e);
                 }
             }
         }
