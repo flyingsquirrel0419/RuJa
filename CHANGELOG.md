@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **95.6%** (up from 88.6%).
-Current supported subset count: **3996 pass / 182 fail / 2 timeout**.
+Supported-subset pass rate: **95.7%** (up from 88.6%).
+Current supported subset count: **3997 pass / 181 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -223,6 +223,12 @@ Current supported subset count: **3996 pass / 182 fail / 2 timeout**.
   `language/expressions/arrow-function/syntax` to **45 pass / 0 fail**,
   raises `language/expressions/arrow-function` to **88 pass / 2 fail**, and
   raises the supported subset to **3996 pass / 182 fail / 2 timeout**.
+- **Arrow lexical `arguments`**: arrow function calls no longer create their
+  own `arguments` object binding, so `arguments` references inside an arrow
+  resolve through the captured lexical environment unless shadowed by an
+  explicit parameter. This raises `language/expressions/arrow-function` to
+  **89 pass / 1 fail** and the supported subset to
+  **3997 pass / 181 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

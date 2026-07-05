@@ -105,6 +105,18 @@ fn arrow_default_param() {
 }
 
 #[test]
+fn arrow_uses_lexical_arguments_binding() {
+    assert_eq!(
+        run("function f(){ var args = arguments; var af = _ => arguments; return args === af(); } f(1,2);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("function f(){ var af = arguments => arguments; return af(7); } f(1,2);"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
 fn array_destructure() {
     assert_eq!(run("let [a,b]=[1,2]; a+b;"), Value::Number(3.0));
 }

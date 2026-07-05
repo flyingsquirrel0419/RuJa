@@ -441,48 +441,51 @@ impl Vm {
                         },
                     );
                 }
-                let mut arg_array =
-                    crate::value::ArrayData::new(args.to_vec(), Some(self.array_proto.clone()));
-                arg_array
-                    .is_arguments
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                if !func.chunk.is_strict {
-                    let mut seen = std::collections::HashSet::new();
-                    let mut names = vec![None; func.params.len()];
-                    for (i, name) in func.params.iter().enumerate().rev() {
-                        if i < args.len() && seen.insert(name.clone()) {
-                            names[i] = Some(name.clone());
+                if !is_arrow {
+                    let mut arg_array =
+                        crate::value::ArrayData::new(args.to_vec(), Some(self.array_proto.clone()));
+                    arg_array
+                        .is_arguments
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    if !func.chunk.is_strict {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut names = vec![None; func.params.len()];
+                        for (i, name) in func.params.iter().enumerate().rev() {
+                            if i < args.len() && seen.insert(name.clone()) {
+                                names[i] = Some(name.clone());
+                            }
                         }
+                        arg_array.arguments_map = Mutex::new(Some(crate::value::ArgumentsMap {
+                            env: call_env,
+                            names,
+                        }));
                     }
-                    arg_array.arguments_map = Mutex::new(Some(crate::value::ArgumentsMap {
-                        env: call_env,
-                        names,
-                    }));
+                    let arr = HeapObj::Array(arg_array);
+                    let arg_idx = GcIdx(self.heap.allocate(arr)?);
+                    // In non-strict mode, arguments has a `callee` property
+                    // pointing to the executing function. (Strict mode forbids it.)
+                    if !func.chunk.is_strict {
+                        self.heap.with_obj(arg_idx.0, |obj| {
+                            if let HeapObj::Array(a) = obj {
+                                let mut props = a.props.lock();
+                                let mut callee_desc =
+                                    crate::value::PropertyDescriptor::data(Value::Object(idx));
+                                callee_desc.writable = true;
+                                callee_desc.enumerable = false;
+                                callee_desc.configurable = true;
+                                props
+                                    .insert(crate::value::PropertyKey::from("callee"), callee_desc);
+                            }
+                        });
+                    }
+                    env::declare(
+                        &self.heap,
+                        call_env,
+                        "arguments",
+                        Value::Object(arg_idx),
+                        crate::value::BindingKind::Var,
+                    );
                 }
-                let arr = HeapObj::Array(arg_array);
-                let arg_idx = GcIdx(self.heap.allocate(arr)?);
-                // In non-strict mode, arguments has a `callee` property
-                // pointing to the executing function. (Strict mode forbids it.)
-                if !func.chunk.is_strict {
-                    self.heap.with_obj(arg_idx.0, |obj| {
-                        if let HeapObj::Array(a) = obj {
-                            let mut props = a.props.lock();
-                            let mut callee_desc =
-                                crate::value::PropertyDescriptor::data(Value::Object(idx));
-                            callee_desc.writable = true;
-                            callee_desc.enumerable = false;
-                            callee_desc.configurable = true;
-                            props.insert(crate::value::PropertyKey::from("callee"), callee_desc);
-                        }
-                    });
-                }
-                env::declare(
-                    &self.heap,
-                    call_env,
-                    "arguments",
-                    Value::Object(arg_idx),
-                    crate::value::BindingKind::Var,
-                );
                 // In sloppy (non-strict) mode, an unbound `this` (plain
                 // function call with no receiver) defaults to the global
                 // object. In strict mode it stays `undefined`. Arrow functions
