@@ -494,6 +494,11 @@ impl Compiler {
                         out.push((n, *kind));
                     }
                 }
+                StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
+                    if let Some(name) = &c.name {
+                        out.push((name.clone(), VarKind::Const));
+                    }
+                }
                 _ => {}
             }
         }
@@ -3196,14 +3201,11 @@ impl Compiler {
                     .emit(Op::MakeClosure(func_idx), self.current_line);
             }
             Expr::Class(cls) => {
-                let class_expr_name = if cls.is_declaration {
-                    None
-                } else {
-                    cls.name.as_ref()
-                };
+                let explicit_class_name = cls.name.as_ref();
+                let display_name = cls.name.as_ref().or(cls.inferred_name.as_ref()).cloned();
                 self.chunk.emit(Op::PushScope, self.current_line);
                 self.push_scope_with_runtime(false, true);
-                if let Some(name) = class_expr_name {
+                if let Some(name) = explicit_class_name {
                     self.declare(name, VarKind::Const)?;
                     let name_idx = self.intern(name);
                     self.chunk
@@ -3221,7 +3223,7 @@ impl Compiler {
                     Vec::new()
                 };
                 let ctor_fn = FunctionExpr {
-                    name: cls.name.clone(),
+                    name: display_name.clone(),
                     params: cls
                         .methods
                         .iter()
@@ -3335,7 +3337,7 @@ impl Compiler {
                 let (func_chunk, param_slots) = self.compile_function(&ctor_fn)?;
                 let func_idx = self.funcs.len();
                 let fdef = crate::function::FunctionDef {
-                    name: cls.name.clone(),
+                    name: display_name,
                     params: ctor_fn.params.clone(),
                     param_slots,
                     rest_param: ctor_fn.rest_param.clone(),
@@ -3361,22 +3363,19 @@ impl Compiler {
                     self.compile_expr(super_expr)?;
                     // Validate the superclass is a constructor with valid prototype.
                     self.chunk.emit(Op::ValidateExtends, self.current_line);
+                    // stack: [ctor, parentCtor, parentProto]
+                    // `ValidateExtends` performs the single spec [[Get]] of
+                    // parentCtor.prototype, so superclass prototype getters
+                    // are not invoked twice during class definition.
+                    let super_proto_idx = self.intern("#super_proto");
+                    self.chunk
+                        .emit(Op::DeclareEnv(super_proto_idx), self.current_line);
                     // stack: [ctor, parentCtor]
                     // Bind parentCtor as `#superctor` so `super(...)` calls can find it.
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, parentCtor, parentCtor]
                     let superctor_idx = self.intern("#superctor");
                     self.chunk
                         .emit(Op::DeclareEnv(superctor_idx), self.current_line); // [ctor, parentCtor]
-                    let proto_key = self
-                        .chunk
-                        .add_constant(Value::String(Arc::from("prototype")));
-                    self.chunk.emit(Op::Const(proto_key), self.current_line);
-                    // stack: [ctor, parentCtor, "prototype"]; GetProp pops key then obj
-                    self.chunk.emit(Op::GetProp, self.current_line); // -> [ctor, parentProto]
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, parentProto, parentProto]
-                    let super_proto_idx = self.intern("#super_proto");
-                    self.chunk
-                        .emit(Op::DeclareEnv(super_proto_idx), self.current_line); // [ctor, parentProto]
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
 
                     // Set childCtor.prototype.__proto__ = parentProto (link prototype chain).
@@ -3577,18 +3576,13 @@ impl Compiler {
                         self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     }
                 }
-                // store the constructor under the class name (but keep it on stack)
+                // Initialize the explicit class-name binding captured by the
+                // constructor, methods, and static blocks (but keep ctor on stack).
                 if let Some(name) = &cls.name {
                     let name_idx = self.intern(name);
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    if cls.is_declaration {
-                        self.chunk.emit(Op::StoreEnv(name_idx), self.current_line); // [ctor, undefined]
-                        self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                    } else {
-                        self.chunk
-                            .emit(Op::InitEnvConst(name_idx), self.current_line);
-                        // [ctor]
-                    }
+                    self.chunk
+                        .emit(Op::InitEnvConst(name_idx), self.current_line); // [ctor]
                 }
                 // Static initialization blocks: each runs with `this` = the
                 // class (constructor), in source order. We bind `this` in a
@@ -3639,6 +3633,15 @@ impl Compiler {
                 }
                 self.chunk.emit(Op::PopScope, self.current_line);
                 self.pop_scope();
+                if cls.is_declaration {
+                    if let Some(name) = &cls.name {
+                        let name_idx = self.intern(name);
+                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                        self.chunk
+                            .emit(Op::InitEnvConst(name_idx), self.current_line);
+                        // [ctor]
+                    }
+                }
             }
             Expr::PrivateGet { object, name } => {
                 self.compile_expr(object)?;

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **97.4%** (up from 88.6%).
-Current supported subset count: **4069 pass / 109 fail / 2 timeout**.
+Supported-subset pass rate: **97.7%** (up from 88.6%).
+Current supported subset count: **4080 pass / 98 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -309,6 +309,17 @@ Current supported subset count: **4069 pass / 109 fail / 2 timeout**.
   `super.x` lookup on subclasses, closes `language/statements/class/super` and
   `language/statements/class/syntax` at **21 pass / 0 fail**, and raises the
   supported subset to **4069 pass / 109 fail / 2 timeout**.
+- **Class definition/name-binding semantics**: class declarations now hoist as
+  immutable lexical bindings, anonymous class assignment infers constructor
+  display names, class bodies parse nested functions in strict context, and
+  method/accessor display names no longer create body bindings that shadow
+  outer variables. Class `extends` now performs the superclass `prototype`
+  getter exactly once and reuses that value for prototype wiring, while
+  derived constructors return the `this` object bound by `super()` when no
+  object is explicitly returned. This closes
+  `language/statements/class/definition` and
+  `language/statements/class/name-binding` at **41 pass / 0 fail** and raises
+  the supported subset to **4080 pass / 98 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

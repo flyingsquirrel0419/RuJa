@@ -469,23 +469,6 @@ impl Vm {
     /// a property whose value is `undefined` is still "present" (per spec
     /// `[[HasProperty]]`). Used by the `with` statement.
     pub fn has_property(&mut self, obj: &Value, name: &str) -> error::Result<bool> {
-        // Strict-mode functions have poisoned 'caller' and 'arguments' properties
-        // that exist (for 'in' operator) but throw on access.
-        if matches!(name, "caller" | "arguments") {
-            if let Value::Object(idx) = obj {
-                let is_strict_fn = self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Function(f) = o {
-                        if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                            return func.chunk.is_strict;
-                        }
-                    }
-                    false
-                });
-                if is_strict_fn {
-                    return Ok(true);
-                }
-            }
-        }
         // Fast path: objects with a props map walk own + proto for the key.
         let pkey = crate::value::PropertyKey::from(name);
         if self.has_property_key(obj, &pkey) {
@@ -759,24 +742,6 @@ impl Vm {
                 if is_global_this {
                     if let Some(v) = crate::environment::get(&self.heap, self.global, key) {
                         return Ok(v);
-                    }
-                }
-                // Strict-mode function: reading "caller" or "arguments"
-                // throws TypeError (ES5 13.2.3, ES2025).
-                if matches!(key, "caller" | "arguments") {
-                    let is_strict_fn = self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Function(f) = o {
-                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                                return func.chunk.is_strict;
-                            }
-                        }
-                        false
-                    });
-                    if is_strict_fn {
-                        return Err(Error::type_err(format!(
-                            "'{}' is not allowed on a strict-mode function",
-                            key
-                        )));
                     }
                 }
                 // array

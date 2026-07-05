@@ -425,21 +425,25 @@ impl Vm {
                         crate::value::BindingKind::Param,
                     );
                 }
-                // make the function visible to itself by its name (for recursion)
-                if let Some(name) = &func.name {
-                    env::declare(
-                        &self.heap,
-                        call_env,
-                        name,
-                        Value::Object(idx),
-                        // Function name binding: const in strict mode,
-                        // var-like (mutable but non-deletable) in sloppy.
-                        if func.chunk.is_strict {
-                            crate::value::BindingKind::Const
-                        } else {
-                            crate::value::BindingKind::Var
-                        },
-                    );
+                // Named function expressions need an inner name binding for
+                // recursion. Method/class/arrow names are display names only
+                // and must not shadow outer bindings in the function body.
+                if !func.is_method && !is_arrow && !is_class_ctor {
+                    if let Some(name) = &func.name {
+                        env::declare(
+                            &self.heap,
+                            call_env,
+                            name,
+                            Value::Object(idx),
+                            // Function name binding: const in strict mode,
+                            // var-like (mutable but non-deletable) in sloppy.
+                            if func.chunk.is_strict {
+                                crate::value::BindingKind::Const
+                            } else {
+                                crate::value::BindingKind::Var
+                            },
+                        );
+                    }
                 }
                 if !is_arrow {
                     let mut arg_array =
@@ -574,7 +578,8 @@ impl Vm {
                     Ok(Value::Object(GcIdx(g_idx)))
                 } else {
                     // execute the compiled function chunk
-                    let result = self.execute_chunk_func(func.clone(), call_env, this_val, args);
+                    let mut result =
+                        self.execute_chunk_func(func.clone(), call_env, this_val, args);
                     // For derived class constructors, check that `super()` was
                     // called (i.e. `this` is no longer in the TDZ). If the
                     // constructor returned without calling super, throw a
@@ -592,22 +597,26 @@ impl Vm {
                                 ));
                             }
                             if !matches!(rv, Value::Object(_)) {
-                                let initialized = self.heap.with_obj(call_env.0, |obj| {
+                                let bound_this = self.heap.with_obj(call_env.0, |obj| {
                                     if let HeapObj::Environment(e) = obj {
-                                        e.vars
-                                            .lock()
-                                            .get("this")
-                                            .map(|b| b.initialized.load(Ordering::Relaxed))
-                                            .unwrap_or(false)
+                                        let vars = e.vars.lock();
+                                        vars.get("this").and_then(|b| {
+                                            if b.initialized.load(Ordering::Relaxed) {
+                                                Some(b.value.lock().clone())
+                                            } else {
+                                                None
+                                            }
+                                        })
                                     } else {
-                                        false
+                                        None
                                     }
                                 });
-                                if !initialized {
-                                    return Err(Error::reference(
+                                result = match bound_this {
+                                    Some(this_val) => Ok(this_val),
+                                    None => Err(Error::reference(
                                         "must call super constructor before accessing 'this' or returning"
-                                    ));
-                                }
+                                    )),
+                                };
                             }
                         }
                     }

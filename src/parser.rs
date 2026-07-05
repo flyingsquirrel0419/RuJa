@@ -3510,12 +3510,16 @@ impl Parser {
         }
     }
 
-    /// SetFunctionName for `var x = <function>`: if `value` is an anonymous
-    /// function/arrow and `name` is a plain identifier, set its `name` to it.
+    /// SetFunctionName for `var x = <function/class>`: if `value` is an
+    /// anonymous function/arrow/class and `name` is a plain identifier, set
+    /// its display name to it.
     fn name_function_from_ident(value: &mut Expr, name: &Arc<str>) {
         match value {
             Expr::Function(f) if f.name.is_none() => f.name = Some(name.clone()),
             Expr::Arrow(f) if f.name.is_none() => f.name = Some(name.clone()),
+            Expr::Class(c) if c.name.is_none() && c.inferred_name.is_none() => {
+                c.inferred_name = Some(name.clone());
+            }
             _ => {}
         }
     }
@@ -3574,6 +3578,8 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::LBrace, "{")?;
+        let saved_strict_context = self.is_strict_context;
+        self.is_strict_context = true;
         let mut methods = Vec::new();
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
@@ -3743,8 +3749,10 @@ impl Parser {
             });
         }
         self.expect(&TokenKind::RBrace, "}")?;
+        self.is_strict_context = saved_strict_context;
         Ok(ClassExpr {
             name,
+            inferred_name: None,
             is_declaration,
             superclass,
             methods,

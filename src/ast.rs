@@ -4,6 +4,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassExpr {
     pub name: Option<Arc<str>>,
+    pub inferred_name: Option<Arc<str>>,
     pub is_declaration: bool,
     pub superclass: Option<Box<Expr>>,
     pub methods: Vec<ClassMethod>,

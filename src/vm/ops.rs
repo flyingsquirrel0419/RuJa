@@ -1558,12 +1558,22 @@ impl Vm {
                     // `for (let i = 0; i < arr.length; i++)` where the same
                     // property is read repeatedly.
                     let v = if let Value::Object(idx) = &obj {
-                        if let Some(cached) = self.ic_get(idx.0, &key_str) {
-                            cached
+                        let cacheable_own_data = self.heap.with_obj(idx.0, |o| {
+                            o.props()
+                                .lock()
+                                .get(&crate::value::PropertyKey::from(key_str.as_str()))
+                                .is_some_and(|desc| !desc.is_accessor)
+                        });
+                        if cacheable_own_data {
+                            if let Some(cached) = self.ic_get(idx.0, &key_str) {
+                                cached
+                            } else {
+                                let val = self.get_property(&obj, &key_str)?;
+                                self.ic_put(idx.0, key_str.clone(), val.clone());
+                                val
+                            }
                         } else {
-                            let val = self.get_property(&obj, &key_str)?;
-                            self.ic_put(idx.0, key_str.clone(), val.clone());
-                            val
+                            self.get_property(&obj, &key_str)?
                         }
                     } else {
                         self.get_property(&obj, &key_str)?
@@ -1877,7 +1887,9 @@ impl Vm {
                 }
                 Op::ValidateExtends => {
                     // Pop the superclass value and validate it's a constructor
-                    // whose .prototype is an object or null.
+                    // whose .prototype is an object or null. Leave both the
+                    // constructor and the already-read prototype on the stack
+                    // so class definition invokes prototype getters once.
                     let parent = self.stack.pop().unwrap_or(Value::Undefined);
                     let is_ctor = match &parent {
                         Value::Object(idx) => self.heap.with_obj(idx.0, |o| o.is_function()),
@@ -1888,9 +1900,7 @@ impl Vm {
                         return Err(Error::type_err("Class extends value is not a constructor"));
                     }
                     // Check parent.prototype is an object or null.
-                    let proto = self
-                        .get_property_by_key(&parent, &crate::value::PropertyKey::from("prototype"))
-                        .unwrap_or(Value::Undefined);
+                    let proto = self.get_property(&parent, "prototype")?;
                     if !matches!(proto, Value::Object(_) | Value::Null) {
                         self.stack.push(parent);
                         return Err(Error::type_err(
@@ -1898,6 +1908,7 @@ impl Vm {
                         ));
                     }
                     self.stack.push(parent);
+                    self.stack.push(proto);
                 }
                 Op::Inc => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);

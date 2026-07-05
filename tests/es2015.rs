@@ -36,6 +36,30 @@ fn class_extends() {
 }
 
 #[test]
+fn class_extends_reads_superclass_prototype_once() {
+    assert_eq!(
+        run("var calls=0; var Base=function(){}.bind(); Object.defineProperty(Base,'prototype',{get:function(){calls++; return null;}, configurable:true}); class C extends Base{} calls;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var calls=0; var Base=function(){}.bind(); Object.defineProperty(Base,'prototype',{get:function(){calls++; return 42;}, configurable:true}); try{class C extends Base{}}catch(e){} calls;"),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
+fn derived_constructor_returns_bound_super_this() {
+    assert_eq!(
+        run("class Base{constructor(a,b){var o=new Object(); o.prp=a+b; return o;}} class Sub extends Base{constructor(){super(1,2);}} new Sub().prp;"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("class Base{constructor(a,b){var o=new Object(); o.prp=a+b; return o;}} class Sub extends Base{constructor(){super(1,2); var called=false; function tmp(){called=true; return 3;} var exn=null; try{super(tmp(),4);}catch(e){exn=e;} this.ok=called && exn instanceof ReferenceError;}} var s=new Sub(); [s.prp,s.ok].join(',');"),
+        Value::String(Arc::from("3,true"))
+    );
+}
+
+#[test]
 fn super_call() {
     assert_eq!(
         run("class A{f(){return 10;}} class B extends A{f(){return super.f()+5;}} new B().f();"),
@@ -112,6 +136,14 @@ fn class_computed_accessor_names() {
 }
 
 #[test]
+fn class_accessor_getter_results_are_not_cached() {
+    assert_eq!(
+        run("class C{static get x(){return this._x;} static set x(v){this._x=v;}} C._x=3; var a=C.x; C._x=4; a + C.x;"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
 fn named_class_expression_uses_inner_immutable_binding() {
     assert_eq!(
         run("var C='outside'; var cls=class C{method(){return C;}}; [C, cls.prototype.method() === cls].join(',');"),
@@ -124,6 +156,57 @@ fn named_class_expression_uses_inner_immutable_binding() {
     assert_eq!(
         run("var probe; var C='outside'; var cls=class C extends (probe=function(){return C;}, Object){}; [C, probe() === cls].join(',');"),
         Value::String(Arc::from("outside,true"))
+    );
+}
+
+#[test]
+fn class_declaration_name_is_immutable_inside_body() {
+    assert!(run_err("class C{constructor(){C=42;}} new C();")
+        .contains("Assignment to constant variable"));
+    assert!(run_err("class C{m(){C=42;}} new C().m();").contains("Assignment to constant variable"));
+}
+
+#[test]
+fn class_bodies_make_nested_functions_strict() {
+    assert_eq!(
+        run("var r; class C{constructor(){try{(function(){missing=1;})(); r='no';}catch(e){r=e.constructor.name;}}} new C(); r;"),
+        Value::String(Arc::from("ReferenceError"))
+    );
+}
+
+#[test]
+fn anonymous_class_assignment_infers_constructor_name() {
+    assert_eq!(
+        run("var E = class {}; E.name;"),
+        Value::String(Arc::from("E"))
+    );
+    assert_eq!(
+        run("var F = class { constructor() {} }; F.name;"),
+        Value::String(Arc::from("F"))
+    );
+}
+
+#[test]
+fn class_methods_named_eval_arguments_override_restricted_function_props() {
+    assert_eq!(
+        run("class C{eval(){return 1;} arguments(){return 2;} static eval(){return 3;} static arguments(){return 4;}} [new C().eval(), new C().arguments(), C.eval(), C.arguments()].join(',');"),
+        Value::String(Arc::from("1,2,3,4"))
+    );
+}
+
+#[test]
+fn class_method_names_do_not_shadow_outer_bindings() {
+    assert_eq!(
+        run("var x; class C{set x(v){x=v;}} new C().x=1; x;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var x=1; class C{m(){x=2;}} new C().m(); x;"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run("var f=function inner(n){return n ? inner(n-1)+1 : 0;}; f(2);"),
+        Value::Number(2.0)
     );
 }
 
