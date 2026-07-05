@@ -1805,8 +1805,17 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "ArrayBuffer", Value::Object(array_buffer_ctor));
 
-    let (data_view_ctor, data_view_proto) =
-        make_builtin_constructor_with(vm, "DataView", data_view_constructor, &[])?;
+    let (data_view_ctor, data_view_proto) = make_builtin_constructor_with(
+        vm,
+        "DataView",
+        data_view_constructor,
+        &[
+            ("getInt8", data_view_get_int8, 1),
+            ("getUint8", data_view_get_uint8, 1),
+            ("setInt8", data_view_set_int8, 2),
+            ("setUint8", data_view_set_uint8, 2),
+        ],
+    )?;
     let data_view_buffer_getter = vm.new_native_function("get buffer", data_view_buffer_get, 0)?;
     let data_view_byte_length_getter =
         vm.new_native_function("get byteLength", data_view_byte_length_get, 0)?;

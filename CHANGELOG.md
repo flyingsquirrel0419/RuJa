@@ -24,6 +24,12 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   detached ArrayBuffers/DataViews report the required byteLength/byteOffset
   behavior. The focused built-ins accessor cluster now runs at **29 pass / 0
   fail / 19 skip**.
+- **DataView 8-bit element accessors**: implemented
+  `DataView.prototype.getUint8`, `getInt8`, `setUint8`, and `setInt8` with
+  DataView receiver validation, `ToIndex` byte-offset conversion, setter value
+  conversion ordering, detached-buffer checks, byte-range validation, Uint8
+  wrapping writes, and signed Int8 reads. The focused DataView 8-bit method
+  cluster now runs at **49 pass / 0 fail / 29 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

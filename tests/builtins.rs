@@ -277,6 +277,85 @@ fn array_buffer_and_data_view_prototype_accessors_validate_receivers() {
 }
 
 #[test]
+fn data_view_int8_uint8_methods_read_write_and_validate_order() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(4);
+            var dv = new DataView(buffer, 1, 2);
+            var values = [];
+            values.push(dv.setUint8(0, 255) === undefined);
+            values.push(dv.setInt8(1, -2) === undefined);
+            values.push(dv.getUint8(0));
+            values.push(dv.getInt8(0));
+            values.push(dv.getUint8(1));
+            values.push(dv.getInt8(1));
+            values.push(DataView.prototype.getUint8.length);
+            values.push(DataView.prototype.setInt8.length);
+            values.push(DataView.prototype.getInt8.name);
+            values.push(DataView.prototype.setUint8.name);
+            values.join(",");
+            "#),
+        Value::String(Arc::from("true,true,255,-1,254,-2,1,2,getInt8,setUint8"))
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(2));
+            dv.setUint8(NaN, 7);
+            dv.setUint8(-0.9, 8);
+            dv.setUint8(1.9, 9);
+            [dv.getUint8(), dv.getUint8(-0.1), dv.getUint8(1.1)].join(",");
+            "#),
+        Value::String(Arc::from("8,8,9"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(1));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setUint8(-1, poisoned);
+            "#
+        )
+        .contains("RangeError"),
+        "invalid byteOffset should be rejected before value conversion"
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(1));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setUint8(2, poisoned);
+            "#
+        )
+        .contains("Error"),
+        "value conversion should run before range check for valid ToIndex values"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(1);
+            var dv = new DataView(buffer);
+            $262.detachArrayBuffer(buffer);
+            dv.getUint8(Infinity);
+            "#
+        )
+        .contains("RangeError"),
+        "ToIndex should run before detached-buffer validation"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(1);
+            var dv = new DataView(buffer);
+            $262.detachArrayBuffer(buffer);
+            dv.getUint8(0);
+            "#
+        )
+        .contains("TypeError"),
+        "detached buffers should reject DataView element reads"
+    );
+}
+
+#[test]
 fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
     assert_eq!(
         run(r#"

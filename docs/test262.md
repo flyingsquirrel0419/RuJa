@@ -143,6 +143,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   receiver validation, and detached-buffer semantics. `$262.detachArrayBuffer`
   is implemented for the test262 host surface, closing the focused
   ArrayBuffer/DataView accessor cluster at 29 pass / 0 fail / 19 skip.
+- **DataView 8-bit element accessors** — `DataView.prototype.getUint8`,
+  `getInt8`, `setUint8`, and `setInt8` now validate DataView receivers,
+  convert byte offsets with `ToIndex`, preserve setter value-conversion order,
+  reject detached buffers, validate byte ranges, write Uint8-wrapped bytes,
+  and read Int8 values with signed interpretation. This closes the focused
+  DataView 8-bit method cluster at 49 pass / 0 fail / 29 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass
