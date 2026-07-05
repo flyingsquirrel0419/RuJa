@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.2% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.3% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.1%).** It reflects the portion of the spec
+supported-subset rate (99.3%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -85,15 +85,16 @@ python3 tools/analyze_failures.py
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
-`intl402`/`staging`) in parallel. Latest confirmed full run:
+`intl402`/`staging`) in parallel. Recent successful full runs for this code
+vary slightly because a small number of tests can cross the timeout boundary:
 
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,162 |
-| Pass | 11,563 |
-| Fail | 11,599 |
-| Timeout | 13 |
+| Actually run | 23,162-23,164 |
+| Pass | 11,568-11,570 |
+| Fail | 11,594 |
+| Timeout | 11-13 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **49.9%** |
 | **Pass rate (of total)** | **24.2%** |
@@ -139,6 +140,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Class constructors** — `TypeError` when called without `new`;
   non-object return from derived constructor throws; double `super()`
   throws; `extends` validates the parent is a constructor.
+- **Class declaration completion and binding mutability** — class declarations
+  produce an empty statement completion; their outer lexical binding is
+  mutable, while the inner class-name binding captured by methods and
+  heritage remains immutable.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending

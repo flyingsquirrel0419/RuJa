@@ -29,6 +29,26 @@ fn static_block_references_class_name() {
 }
 
 #[test]
+fn class_declaration_outer_name_is_mutable_inner_name_is_immutable() {
+    assert_eq!(
+        run(r#"
+            class C {
+              probe() { return C; }
+              modify() { C = null; }
+            }
+            var cls = C;
+            C = null;
+            var outer = C === null;
+            var inner = cls.prototype.probe() === cls;
+            var rejected = false;
+            try { cls.prototype.modify(); } catch (e) { rejected = e instanceof TypeError; }
+            outer && inner && rejected;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn static_block_local_bindings() {
     assert_eq!(
         run("class A{static{let x=100,y=200;this.sum=x+y;}}A.sum;"),

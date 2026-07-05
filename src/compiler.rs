@@ -517,7 +517,7 @@ impl Compiler {
                 }
                 StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
                     if let Some(name) = &c.name {
-                        out.push((name.clone(), VarKind::Const));
+                        out.push((name.clone(), VarKind::Let));
                     }
                 }
                 _ => {}
@@ -552,7 +552,7 @@ impl Compiler {
                     }
                     StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
                         if let Some(name) = &c.name {
-                            out.push((name.clone(), VarKind::Const));
+                            out.push((name.clone(), VarKind::Let));
                         }
                     }
                     _ => {}
@@ -627,6 +627,10 @@ impl Compiler {
         self.current_line = stmt.line as usize;
         match &stmt.node {
             StmtNode::Empty => {}
+            StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
+                self.compile_expr(&Expr::Class(c.clone()))?;
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
             StmtNode::ExprStmt(e) => {
                 self.compile_expr(e)?;
                 if let Some(sv) = self.switch_val_depth {
@@ -3726,8 +3730,7 @@ impl Compiler {
                     if let Some(name) = &cls.name {
                         let name_idx = self.intern(name);
                         self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                        self.chunk
-                            .emit(Op::InitEnvConst(name_idx), self.current_line);
+                        self.chunk.emit(Op::InitEnv(name_idx), self.current_line);
                         // [ctor]
                     }
                 }

@@ -83,6 +83,12 @@ fn eval_can_define_and_call_function() {
 }
 
 #[test]
+fn eval_class_declaration_completion_is_empty() {
+    assert_eq!(run(r#"eval("class C {}")"#), Value::Undefined);
+    assert_eq!(run(r#"eval("1; class C {}")"#), Value::Number(1.0));
+}
+
+#[test]
 fn direct_eval_inherits_lexical_super_property_context() {
     assert_eq!(
         run("var A={x:1}; var B={}; Object.setPrototypeOf(B,A); var obj={m(){return eval('super.x;');}}; Object.setPrototypeOf(obj,B); obj.m();"),

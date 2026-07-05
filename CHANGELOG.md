@@ -4,9 +4,17 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.2%** (up from 88.6%).
-Current supported subset count: **4147 pass / 33 fail / 0 timeout**.
+Supported-subset pass rate: **99.3%** (up from 88.6%).
+Current supported subset count: **4151 pass / 29 fail / 0 timeout**.
 
+- **Class declaration completion and binding mutability**: class declarations
+  now produce an empty statement completion, so direct eval returns
+  `undefined` or the previous non-empty completion rather than the constructor.
+  The outer class declaration binding is now initialized as a mutable lexical
+  binding while the inner class-name binding captured by methods and heritage
+  remains immutable. This improves `language/statements/class` to **186 pass /
+  23 fail** and raises the supported subset to **4151 pass / 29 fail / 0
+  timeout**.
 - **Var initializer Reference resolution**: `var x = init` now resolves the
   binding Reference before evaluating `init`, matching the spec's
   `BindingInitialization` order for `VariableDeclaration`. This preserves
