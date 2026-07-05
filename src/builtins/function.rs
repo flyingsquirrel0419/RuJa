@@ -163,3 +163,15 @@ pub(crate) fn function_proto_noop(
 ) -> error::Result<Value> {
     Ok(Value::Undefined)
 }
+
+/// %ThrowTypeError% used by the restricted `caller` and `arguments`
+/// accessors on Function.prototype.
+pub(crate) fn function_throw_type_error(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Err(error::Error::type_err(
+        "'caller' and 'arguments' are restricted function properties",
+    ))
+}

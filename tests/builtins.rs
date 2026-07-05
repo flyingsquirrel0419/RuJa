@@ -216,6 +216,28 @@ fn native_constructor_new_target_does_not_leak_to_next_call() {
 }
 
 #[test]
+fn bound_functions_inherit_restricted_caller_arguments_accessors() {
+    assert_eq!(
+        run("function target() {}\
+             var bound = target.bind({});\
+             bound.hasOwnProperty('caller') + ':' + bound.hasOwnProperty('arguments');"),
+        Value::String(Arc::from("false:false"))
+    );
+
+    let msg = run_err("function target() {} var bound = target.bind({}); bound.caller;");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("function target() {} var bound = target.bind({}); bound.caller = {};");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("function target() {} var bound = target.bind({}); bound.arguments;");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("function target() {} var bound = target.bind({}); bound.arguments = {};");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+}
+
+#[test]
 fn json_parse_object() {
     assert_eq!(run(r#"JSON.parse("{\"a\":1}").a;"#), Value::Number(1.0));
     // HashMap key order is non-deterministic; just check both props round-trip.

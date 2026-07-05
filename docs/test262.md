@@ -228,10 +228,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `finally` body. Non-throw abrupt completions also disable skipped catch
   guards before entering `finally`, bringing `language/statements/try` to
   **98 pass / 0 fail**.
+- **Function.prototype restricted properties** — bound functions now inherit
+  the `%Function.prototype%` `caller`/`arguments` accessors that throw
+  `TypeError`, while still reporting no own `caller` or `arguments`
+  properties.
 
 ## Why the rate is not higher
 
-The remaining 276 failures plus 2 timeouts in the supported subset cluster
+The remaining 274 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and destructuring assignment. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.

@@ -2001,6 +2001,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let apply_fn = vm.new_native_function("apply", function_apply, 2)?;
     let bind_fn = vm.new_native_function("bind", function_bind, 1)?;
     let tostring_fn = vm.new_native_function("toString", function_to_string, 0)?;
+    let throw_type_error_fn =
+        vm.new_native_function("ThrowTypeError", function_throw_type_error, 0)?;
     install_methods(
         vm,
         &Value::Object(function_proto_idx),
@@ -2020,10 +2022,23 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     // The function prototype's `constructor` is the Function constructor.
     vm.heap.with_obj(function_proto_idx.0, |obj| {
-        obj.props().lock().insert(
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(function_ctor_idx)),
         );
+        let restricted = PropertyDescriptor {
+            value: Value::Undefined,
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: Some(Value::Object(throw_type_error_fn)),
+            set: Some(Value::Object(throw_type_error_fn)),
+            is_accessor: true,
+        };
+        props.insert(PropertyKey::from("caller"), restricted.clone());
+        props.insert(PropertyKey::from("arguments"), restricted);
     });
     setup_collections(vm)?;
     Ok(())

@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **93.4%** (up from 88.6%).
-Current supported subset count: **3902 pass / 276 fail / 2 timeout**.
+Current supported subset count: **3904 pass / 274 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -104,6 +104,12 @@ Current supported subset count: **3902 pass / 276 fail / 2 timeout**.
   before entering `finally`, so a `finally`-body `throw` cannot be caught by
   the catch clause of the same already-completed try statement. This brings
   `language/statements/try` to **98 pass / 0 fail**.
+- **Function.prototype restricted properties**: `%Function.prototype%` now has
+  inherited `caller` and `arguments` accessor properties whose getter and
+  setter throw `TypeError`. Bound functions created by
+  `Function.prototype.bind` therefore do not gain own `caller`/`arguments`
+  properties but still inherit the required restricted accessors, reducing the
+  `function` statement subset to **7 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
