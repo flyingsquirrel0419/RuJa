@@ -284,6 +284,75 @@ fn array_buffer_set_byte_at(
     }
 }
 
+fn array_buffer_bytes_at(
+    vm: &Vm,
+    buffer: &Value,
+    byte_index: usize,
+    byte_count: usize,
+) -> error::Result<Vec<u8>> {
+    match buffer {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(array_buffer) = o {
+                    if array_buffer
+                        .detached
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return Some(Err(Error::type_err("DataView getter on detached buffer")));
+                    }
+                    let bytes = array_buffer.bytes.lock();
+                    let end = match byte_index.checked_add(byte_count) {
+                        Some(end) => end,
+                        None => return Some(Err(Error::range("Invalid DataView byte offset"))),
+                    };
+                    if let Some(slice) = bytes.get(byte_index..end) {
+                        return Some(Ok(slice.to_vec()));
+                    }
+                    return Some(Err(Error::range("Invalid DataView byte offset")));
+                }
+                None
+            })
+            .unwrap_or_else(|| Err(Error::type_err("DataView buffer is not an ArrayBuffer"))),
+        _ => Err(Error::type_err("DataView buffer is not an object")),
+    }
+}
+
+fn array_buffer_set_bytes_at(
+    vm: &Vm,
+    buffer: &Value,
+    byte_index: usize,
+    new_bytes: &[u8],
+) -> error::Result<()> {
+    match buffer {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(array_buffer) = o {
+                    if array_buffer
+                        .detached
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        return Some(Err(Error::type_err("DataView setter on detached buffer")));
+                    }
+                    let mut bytes = array_buffer.bytes.lock();
+                    let end = match byte_index.checked_add(new_bytes.len()) {
+                        Some(end) => end,
+                        None => return Some(Err(Error::range("Invalid DataView byte offset"))),
+                    };
+                    if let Some(slot) = bytes.get_mut(byte_index..end) {
+                        slot.copy_from_slice(new_bytes);
+                        return Some(Ok(()));
+                    }
+                    return Some(Err(Error::range("Invalid DataView byte offset")));
+                }
+                None
+            })
+            .unwrap_or_else(|| Err(Error::type_err("DataView buffer is not an ArrayBuffer"))),
+        _ => Err(Error::type_err("DataView buffer is not an object")),
+    }
+}
+
 fn data_view_read_u8(
     vm: &mut Vm,
     args: &[Value],
@@ -332,6 +401,72 @@ fn data_view_write_u8(
     }
     let byte_index = view_offset + request_index;
     array_buffer_set_byte_at(vm, &buffer, byte_index, to_uint8_element(number_value))?;
+    Ok(Value::Undefined)
+}
+
+fn data_view_read_u16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    signed: bool,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView getter on detached buffer"));
+    }
+    if request_index
+        .checked_add(2)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let bytes = array_buffer_bytes_at(vm, &buffer, byte_index, 2)?;
+    let raw = [bytes[0], bytes[1]];
+    let value = if signed {
+        if little_endian {
+            i16::from_le_bytes(raw) as f64
+        } else {
+            i16::from_be_bytes(raw) as f64
+        }
+    } else if little_endian {
+        u16::from_le_bytes(raw) as f64
+    } else {
+        u16::from_be_bytes(raw) as f64
+    };
+    Ok(Value::Number(value))
+}
+
+fn data_view_write_u16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView setter on detached buffer"));
+    }
+    if request_index
+        .checked_add(2)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let value = to_uint16_element(number_value);
+    let bytes = if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    array_buffer_set_bytes_at(vm, &buffer, byte_index, &bytes)?;
     Ok(Value::Undefined)
 }
 
@@ -404,11 +539,50 @@ pub(crate) fn data_view_set_int8(
     data_view_write_u8(vm, args, this, "setInt8")
 }
 
+pub(crate) fn data_view_get_uint16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_u16(vm, args, this, false, "getUint16")
+}
+
+pub(crate) fn data_view_get_int16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_u16(vm, args, this, true, "getInt16")
+}
+
+pub(crate) fn data_view_set_uint16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_u16(vm, args, this, "setUint16")
+}
+
+pub(crate) fn data_view_set_int16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_u16(vm, args, this, "setInt16")
+}
+
 pub(crate) fn to_uint8_element(n: f64) -> u8 {
     if !n.is_finite() || n == 0.0 {
         return 0;
     }
     n.trunc().rem_euclid(256.0) as u8
+}
+
+fn to_uint16_element(n: f64) -> u16 {
+    if !n.is_finite() || n == 0.0 {
+        return 0;
+    }
+    n.trunc().rem_euclid(65536.0) as u16
 }
 
 pub(crate) fn uint8array_constructor(

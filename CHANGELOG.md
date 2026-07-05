@@ -30,6 +30,12 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   conversion ordering, detached-buffer checks, byte-range validation, Uint8
   wrapping writes, and signed Int8 reads. The focused DataView 8-bit method
   cluster now runs at **49 pass / 0 fail / 29 skip**.
+- **DataView 16-bit element accessors**: implemented
+  `DataView.prototype.getUint16`, `getInt16`, `setUint16`, and `setInt16` with
+  big-endian defaults, `ToBoolean` little-endian handling, Uint16 wrapping
+  writes, signed Int16 reads, and the same `ToIndex`/value/detached/range
+  validation ordering as the 8-bit methods. The focused DataView 16-bit
+  method cluster now runs at **56 pass / 0 fail / 28 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/
