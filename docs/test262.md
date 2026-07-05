@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 93.7% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 93.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (93.7%).** It reflects the portion of the spec
+supported-subset rate (93.9%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 93.7%:
+~56% to 93.9%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -240,10 +240,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   object methods plus class/private methods reject duplicate formal parameter
   bound names, including destructuring duplicates, and object async methods
   enforce no line terminator between `async` and the property name.
+- **`yield` contextual identifier parsing** — sloppy non-generator code now
+  treats `yield` as an identifier for bindings, expressions, destructuring
+  patterns, object method parameters/defaults, and computed property names,
+  while generator contexts keep `yield` as the generator keyword.
 
 ## Why the rate is not higher
 
-The remaining 264 failures plus 2 timeouts in the supported subset cluster
+The remaining 254 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and destructuring assignment. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.

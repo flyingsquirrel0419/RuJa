@@ -53,6 +53,10 @@ pub struct Parser {
     /// Current function nesting depth. 0 = top-level program code.
     /// `return` at depth 0 is a SyntaxError.
     function_depth: usize,
+    /// Current generator-function parsing depth. `yield` is an expression
+    /// keyword only inside generator parameter/body contexts; outside strict
+    /// mode non-generator code it remains an ordinary identifier.
+    generator_depth: usize,
     super_depth: usize,
     super_call_depth: usize,
 }
@@ -78,6 +82,7 @@ impl Parser {
             switch_depth: 0,
             label_stack: Vec::new(),
             function_depth: 0,
+            generator_depth: 0,
             super_depth: 0,
             super_call_depth: 0,
         }
@@ -183,6 +188,22 @@ impl Parser {
             )));
         }
         Ok(())
+    }
+
+    fn yield_as_identifier_allowed(&self) -> bool {
+        !self.is_strict_context && self.generator_depth == 0
+    }
+
+    fn with_generator_context<T>(
+        &mut self,
+        enabled: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved_generator_depth = self.generator_depth;
+        self.generator_depth = if enabled { 1 } else { 0 };
+        let result = f(self);
+        self.generator_depth = saved_generator_depth;
+        result
     }
 
     /// Determine if `let` at the current position is a lexical declaration
@@ -529,10 +550,10 @@ impl Parser {
                 )))
             }
         };
-        let params = self.parse_params()?;
+        let params = self.with_generator_context(is_generator, |p| p.parse_params())?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body(false, false)?;
+        let mut body = self.parse_fn_body(false, false, is_generator)?;
         let body_contains_use_strict = Self::scan_directive_prologue(&body);
         let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
@@ -611,14 +632,23 @@ impl Parser {
                     self.cur_param_destructure_decls.push((p, tmp, None));
                     break;
                 }
-                if let TokenKind::Ident(s) = self.advance() {
-                    self.check_binding_name(&s)?;
-                    self.cur_rest_param = Some(Arc::from(s.as_str()));
-                } else {
-                    return Err(error::Error::syntax(
-                        "Expected rest parameter name".to_string(),
-                    ));
-                }
+                let rest = match self.peek().clone() {
+                    TokenKind::Ident(s) => {
+                        self.advance();
+                        s
+                    }
+                    TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                        self.advance();
+                        "yield".to_string()
+                    }
+                    _ => {
+                        return Err(error::Error::syntax(
+                            "Expected rest parameter name".to_string(),
+                        ))
+                    }
+                };
+                self.check_binding_name(&rest)?;
+                self.cur_rest_param = Some(Arc::from(rest.as_str()));
                 break;
             }
             match self.peek().clone() {
@@ -626,6 +656,18 @@ impl Parser {
                     self.advance();
                     self.check_binding_name(&s)?;
                     params.push(Arc::from(s.as_str()));
+                    let default = if self.eat(&TokenKind::Assign) {
+                        Some(self.parse_assign()?)
+                    } else {
+                        None
+                    };
+                    self.cur_param_defaults.push(default);
+                }
+                TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                    self.advance();
+                    let s = "yield";
+                    self.check_binding_name(s)?;
+                    params.push(Arc::from(s));
                     let default = if self.eat(&TokenKind::Assign) {
                         Some(self.parse_assign()?)
                     } else {
@@ -661,6 +703,17 @@ impl Parser {
     }
 
     fn parse_fn_body(
+        &mut self,
+        super_allowed: bool,
+        super_call_allowed: bool,
+        generator_body: bool,
+    ) -> error::Result<Vec<Stmt>> {
+        self.with_generator_context(generator_body, |p| {
+            p.parse_fn_body_inner(super_allowed, super_call_allowed)
+        })
+    }
+
+    fn parse_fn_body_inner(
         &mut self,
         super_allowed: bool,
         super_call_allowed: bool,
@@ -1181,6 +1234,7 @@ impl Parser {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
                 TokenKind::Of => Arc::from("of"),
                 TokenKind::Async => Arc::from("async"),
+                TokenKind::Yield if self.yield_as_identifier_allowed() => Arc::from("yield"),
                 TokenKind::Let if kind == VarKind::Var && !self.is_strict_context => {
                     Arc::from("let")
                 }
@@ -1900,6 +1954,10 @@ impl Parser {
                 Ok(Expr::Await(Box::new(inner)))
             }
             TokenKind::Yield => {
+                if self.yield_as_identifier_allowed() {
+                    self.advance();
+                    return Ok(Expr::Ident(Arc::from("yield")));
+                }
                 self.advance();
                 // `yield* expr` - delegate to another iterable/generator.
                 if matches!(self.peek(), TokenKind::Star) {
@@ -2320,7 +2378,7 @@ impl Parser {
                 }
             };
             if is_getter || is_setter {
-                let params = self.parse_params()?;
+                let params = self.with_generator_context(false, |p| p.parse_params())?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 Self::reject_duplicate_formal_params(
@@ -2328,7 +2386,7 @@ impl Parser {
                     &self.cur_param_destructure_decls,
                     rest_param.as_ref(),
                 )?;
-                let mut body = self.parse_fn_body(true, false)?;
+                let mut body = self.parse_fn_body(true, false, false)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
                 let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
@@ -2373,7 +2431,8 @@ impl Parser {
                 });
             } else if self.check(&TokenKind::LParen) {
                 // method shorthand or value
-                let params = self.parse_params()?;
+                let params =
+                    self.with_generator_context(is_generator_method, |p| p.parse_params())?;
                 let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                 let rest_param = self.cur_rest_param.take();
                 Self::reject_duplicate_formal_params(
@@ -2381,7 +2440,7 @@ impl Parser {
                     &self.cur_param_destructure_decls,
                     rest_param.as_ref(),
                 )?;
-                let mut body = self.parse_fn_body(true, false)?;
+                let mut body = self.parse_fn_body(true, false, is_generator_method)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
                 let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
@@ -2503,10 +2562,10 @@ impl Parser {
             }
             _ => None,
         };
-        let params = self.parse_params()?;
+        let params = self.with_generator_context(is_generator, |p| p.parse_params())?;
         let param_defaults = std::mem::take(&mut self.cur_param_defaults);
         let rest_param = self.cur_rest_param.take();
-        let mut body = self.parse_fn_body(false, false)?;
+        let mut body = self.parse_fn_body(false, false, is_generator)?;
         let body_contains_use_strict = Self::scan_directive_prologue(&body);
         let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
@@ -2819,7 +2878,7 @@ impl Parser {
             .collect();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
-            let mut body = self.parse_fn_body(false, false)?;
+            let mut body = self.parse_fn_body(false, false, false)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
             Self::reject_use_strict_with_non_simple_params(
                 body_contains_use_strict,
@@ -2951,7 +3010,7 @@ impl Parser {
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
                 self.advance(); // static
-                let block = self.parse_fn_body(false, false)?;
+                let block = self.parse_fn_body(false, false, false)?;
                 static_blocks.push(block);
                 continue;
             }
@@ -2963,7 +3022,7 @@ impl Parser {
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
                     self.advance(); // consume #name
-                    let params = self.parse_params()?;
+                    let params = self.with_generator_context(false, |p| p.parse_params())?;
                     let param_defaults = std::mem::take(&mut self.cur_param_defaults);
                     let rest_param = self.cur_rest_param.take();
                     Self::reject_duplicate_formal_params(
@@ -2971,7 +3030,7 @@ impl Parser {
                         &self.cur_param_destructure_decls,
                         rest_param.as_ref(),
                     )?;
-                    let mut body = self.parse_fn_body(true, false)?;
+                    let mut body = self.parse_fn_body(true, false, false)?;
                     let body_contains_use_strict = Self::scan_directive_prologue(&body);
                     let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
                     Self::reject_use_strict_with_non_simple_params(
@@ -3062,7 +3121,7 @@ impl Parser {
                     _ => Arc::from(self.read_property_name()?.as_str()),
                 }
             };
-            let params = self.parse_params()?;
+            let params = self.with_generator_context(false, |p| p.parse_params())?;
             let param_defaults = std::mem::take(&mut self.cur_param_defaults);
             let rest_param = self.cur_rest_param.take();
             Self::reject_duplicate_formal_params(
@@ -3071,7 +3130,7 @@ impl Parser {
                 rest_param.as_ref(),
             )?;
             let super_call_allowed = superclass.is_some() && is_constructor;
-            let mut body = self.parse_fn_body(true, super_call_allowed)?;
+            let mut body = self.parse_fn_body(true, super_call_allowed, false)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
             let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
             Self::reject_use_strict_with_non_simple_params(
@@ -3209,6 +3268,10 @@ impl Parser {
                             self.advance();
                             PropertyKey::Ident(Arc::from(s.as_str()))
                         }
+                        TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                            self.advance();
+                            PropertyKey::Ident(Arc::from("yield"))
+                        }
                         TokenKind::String(s) => {
                             self.advance();
                             PropertyKey::String(Arc::from(s.as_str()))
@@ -3263,6 +3326,10 @@ impl Parser {
             TokenKind::Ident(s) => {
                 self.advance();
                 Ok(Pattern::Ident(Arc::from(s.as_str())))
+            }
+            TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                self.advance();
+                Ok(Pattern::Ident(Arc::from("yield")))
             }
             other => Err(error::Error::syntax(format!(
                 "Expected pattern, got {:?}",
@@ -3393,6 +3460,26 @@ mod tests {
             "class C { foo(a, a) {} }",
             "class C { #foo(a, a) {} }",
             "({ async\nfoo() {} });",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_yield_identifier_contexts() {
+        for src in [
+            "var yield = 'prop'; var obj = { method(yield) { return yield; } };",
+            "var yield = 'prop'; var obj = { method(x = yield) { return x; } };",
+            "var yield = 'prop'; var obj = { [yield]() {} };",
+            "var obj = { *g() { function h() { yield = 1; } } };",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        for src in [
+            "function* g(yield) {}",
+            "var obj = { *g(yield) {} };",
+            r#""use strict"; var yield = 1;"#,
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }

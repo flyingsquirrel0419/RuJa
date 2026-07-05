@@ -698,6 +698,20 @@ fn object_methods_reject_super_call() {
 }
 
 #[test]
+fn object_methods_allow_yield_identifier_in_sloppy_non_generator_contexts() {
+    let src = r#"
+        var yield = "prop";
+        var obj = {
+            method(yield) { return yield; },
+            defaulted(x = yield) { return x; },
+            [yield]() { return "key"; }
+        };
+        obj.method("arg") + ":" + obj.defaulted() + ":" + obj.prop();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("arg:prop:key")));
+}
+
+#[test]
 fn object_proto_duplicate_colon_is_syntax_error() {
     let err = common::run_err("({ __proto__: null, other: null, '__proto__': null });");
     assert!(
