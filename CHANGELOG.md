@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **96.6%** (up from 88.6%).
-Current supported subset count: **4034 pass / 144 fail / 2 timeout**.
+Supported-subset pass rate: **96.9%** (up from 88.6%).
+Current supported subset count: **4047 pass / 131 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -279,6 +279,14 @@ Current supported subset count: **4034 pass / 144 fail / 2 timeout**.
   `bitwise-xor`, and `unsigned-right-shift`, reduces `unary-plus` to
   **0 failures**, and raises the supported subset to
   **4034 pass / 144 fail / 2 timeout**.
+- **Native Error subclass construction**: `Error.prototype` now inherits
+  `Object.prototype` during bootstrap, NativeError subclass instances no
+  longer receive own `message` properties when the message argument is
+  omitted, and `name` is inherited through the prototype chain so
+  `class Err extends EvalError {}` instances report `EvalError`. This closes
+  `language/statements/class/subclass/builtin-objects/NativeError` at
+  **18 pass / 0 fail** and raises the supported subset to
+  **4047 pass / 131 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

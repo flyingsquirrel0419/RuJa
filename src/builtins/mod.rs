@@ -233,10 +233,14 @@ pub(crate) fn make_builtin_constructor(
 }
 
 pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(GcIdx, GcIdx)> {
-    let error_proto_val = vm.error_proto.clone();
+    let proto_parent = if matches!(vm.error_proto, Value::Object(_)) {
+        vm.error_proto.clone()
+    } else {
+        vm.object_proto.clone()
+    };
     let proto_obj = HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(error_proto_val.clone())),
+        proto: Mutex::new(Some(proto_parent)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from(name)),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -1438,10 +1442,10 @@ fn new_error_object(vm: &mut Vm, proto: Value) -> error::Result<GcIdx> {
 }
 
 fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let msg = args
-        .first()
-        .map(|v| vm.to_string(v).unwrap_or_else(|_| Arc::from("")))
-        .unwrap_or_else(|| Arc::from(""));
+    let msg = match args.first() {
+        Some(Value::Undefined) | None => None,
+        Some(v) => Some(vm.to_string(v)?),
+    };
     // Use the `this` provided by `construct` (already linked to <Error>.prototype).
     // When called as a plain function (Error(msg) without `new`), `this` is
     // undefined (strict) or the global object (sloppy). In sloppy mode we
@@ -1475,33 +1479,6 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
             new_error_object(vm, proto)?
         }
     };
-    // Inherit `name` from the prototype (each Error subclass proto sets it),
-    // falling back to "Error".
-    let proto_idx = vm.heap.with_obj(idx.0, |obj| {
-        obj.proto().lock().as_ref().and_then(|p| {
-            if let Value::Object(pi) = p {
-                Some(*pi)
-            } else {
-                None
-            }
-        })
-    });
-    let name = proto_idx
-        .and_then(|pi| {
-            vm.heap.with_obj(pi.0, |o| {
-                o.props()
-                    .lock()
-                    .get(&PropertyKey::from("name"))
-                    .and_then(|d| {
-                        if let Value::String(s) = &d.value {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
-                    })
-            })
-        })
-        .unwrap_or_else(|| Arc::from("Error"));
     // Optional `cause` from the options object (second argument).
     let cause = args.get(1).and_then(|v| {
         if let Value::Object(oi) = v {
@@ -1517,16 +1494,12 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     });
     vm.heap.with_obj(idx.0, |obj| {
         if let HeapObj::Object(o) = obj {
-            o.props
-                .lock()
-                .insert(PropertyKey::from("message"), data_prop(Value::String(msg)));
-            o.props
-                .lock()
-                .insert(PropertyKey::from("name"), data_prop(Value::String(name)));
+            let mut props = o.props.lock();
+            if let Some(msg) = msg {
+                props.insert(PropertyKey::from("message"), data_prop(Value::String(msg)));
+            }
             if let Some(c) = cause {
-                o.props
-                    .lock()
-                    .insert(PropertyKey::from("cause"), data_prop(c));
+                props.insert(PropertyKey::from("cause"), data_prop(c));
             }
         }
     });

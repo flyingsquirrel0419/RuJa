@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.1% of all matrix files; 47.6% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 96.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.2% of all matrix files; 47.8% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 96.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (96.6%).** It reflects the portion of the spec
+supported-subset rate (96.9%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 96.6%:
+~56% to 96.9%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -381,10 +381,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   failures in `bitwise-and`, `bitwise-or`, `bitwise-xor`, and
   `unsigned-right-shift`, reduces `unary-plus` to **0 failures**, and raises
   the supported subset to **4034 pass / 144 fail / 2 timeout**.
+- **Native Error subclass construction** — `Error.prototype` now inherits
+  `Object.prototype` during bootstrap, NativeError subclass instances no
+  longer receive own `message` properties when the message argument is
+  omitted, and `name` is inherited through the prototype chain so
+  `class Err extends EvalError {}` instances report `EvalError`. This closes
+  `language/statements/class/subclass/builtin-objects/NativeError` at
+  **18 pass / 0 fail** and raises the supported subset to
+  **4047 pass / 131 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 144 failures plus 2 timeouts in the supported subset cluster
+The remaining 131 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

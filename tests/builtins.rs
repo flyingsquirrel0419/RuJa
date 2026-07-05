@@ -207,6 +207,43 @@ fn error_subclass_plain_call_uses_active_constructor_prototype() {
 }
 
 #[test]
+fn native_error_subclass_inherits_name_and_message() {
+    assert_eq!(
+        run(r#"
+            class Err extends EvalError {}
+            var err = new Err();
+            [
+              err.name,
+              err.hasOwnProperty("name"),
+              err.hasOwnProperty("message"),
+              err.message
+            ].join(",");
+            "#),
+        Value::String(Arc::from("EvalError,false,false,"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class Err extends EvalError {}
+            Err.prototype.message = "custom";
+            var err = new Err();
+            err.message + ":" + err.hasOwnProperty("message");
+            "#),
+        Value::String(Arc::from("custom:false"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class Err extends EvalError {}
+            var err = new Err("boom");
+            var d = Object.getOwnPropertyDescriptor(err, "message");
+            [err.message, d.writable, d.enumerable, d.configurable].join(",");
+            "#),
+        Value::String(Arc::from("boom,true,false,true"))
+    );
+}
+
+#[test]
 fn native_constructor_new_target_does_not_leak_to_next_call() {
     let msg = run_err("new Error('x'); class C {} C();");
     assert!(
