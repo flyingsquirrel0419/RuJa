@@ -435,13 +435,7 @@ impl Vm {
                             call_env,
                             name,
                             Value::Object(idx),
-                            // Function name binding: const in strict mode,
-                            // var-like (mutable but non-deletable) in sloppy.
-                            if func.chunk.is_strict {
-                                crate::value::BindingKind::Const
-                            } else {
-                                crate::value::BindingKind::Var
-                            },
+                            crate::value::BindingKind::FunctionName,
                         );
                     }
                 }

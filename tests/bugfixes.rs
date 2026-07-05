@@ -678,6 +678,26 @@ fn function_bodies_reset_statement_control_context_and_raw_new_target() {
     assert_eq!(run("debugger; 5;"), Value::Number(5.0));
 }
 
+#[test]
+fn named_function_expression_binding_is_immutable() {
+    assert_eq!(
+        run("var ref = function BindingIdentifier() { BindingIdentifier = 1; return BindingIdentifier; }; ref() === ref;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var ref = function BindingIdentifier() { eval('BindingIdentifier = 1'); return BindingIdentifier; }; ref() === ref;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var ref = function BindingIdentifier() { (() => { BindingIdentifier = 1; })(); return BindingIdentifier; }; ref() === ref;"),
+        Value::Bool(true)
+    );
+    assert!(run_err(
+        "var ref = function BindingIdentifier() { 'use strict'; BindingIdentifier = 1; }; ref();"
+    )
+    .contains("TypeError"));
+}
+
 // ---------------------------------------------------------------------------
 // #5 try/finally control flow (return/throw override)
 // ---------------------------------------------------------------------------

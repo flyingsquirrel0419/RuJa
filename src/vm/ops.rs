@@ -226,6 +226,14 @@ impl Vm {
                                 name
                             )));
                         }
+                        crate::environment::SetOutcome::FunctionName => {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Assignment to constant variable '{}'",
+                                    name
+                                )));
+                            }
+                        }
                         crate::environment::SetOutcome::Tdz => {
                             return Err(Error::reference(format!(
                                 "Cannot access '{}' before initialization",
@@ -338,6 +346,14 @@ impl Vm {
                                 "Assignment to constant variable '{}'",
                                 name
                             )));
+                        }
+                        crate::environment::SetOutcome::FunctionName => {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Assignment to constant variable '{}'",
+                                    name
+                                )));
+                            }
                         }
                         crate::environment::SetOutcome::Tdz => {
                             return Err(Error::reference(format!(
@@ -674,6 +690,14 @@ impl Vm {
                                 name
                             )));
                         }
+                        crate::environment::SetOutcome::FunctionName => {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Assignment to constant variable '{}'",
+                                    name
+                                )));
+                            }
+                        }
                         crate::environment::SetOutcome::Tdz => {
                             return Err(Error::reference(format!(
                                 "Cannot access '{}' before initialization",
@@ -842,6 +866,14 @@ impl Vm {
                                 "Assignment to constant variable '{}'",
                                 name
                             )));
+                        }
+                        crate::environment::SetOutcome::FunctionName => {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Assignment to constant variable '{}'",
+                                    name
+                                )));
+                            }
                         }
                         crate::environment::SetOutcome::Tdz => {
                             return Err(Error::reference(format!(

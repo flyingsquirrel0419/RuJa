@@ -432,7 +432,11 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
         let (found, is_const, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
                 if let Some(b) = e.vars.lock().get(name) {
-                    return (true, b.kind == BindingKind::Const, None);
+                    return (
+                        true,
+                        matches!(b.kind, BindingKind::Const | BindingKind::FunctionName),
+                        None,
+                    );
                 }
                 return (false, false, *e.parent.lock());
             }
@@ -461,6 +465,7 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
 pub enum SetOutcome {
     Set,
     Const,
+    FunctionName,
     /// Binding exists but is in the TDZ (not yet initialized).
     Tdz,
     NotFound,
@@ -475,6 +480,9 @@ pub fn set_checked(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutc
                 if let Some(b) = e.vars.lock().get(name) {
                     if !b.initialized.load(Ordering::Relaxed) {
                         return (SetOutcome::Tdz, None);
+                    }
+                    if b.kind == BindingKind::FunctionName {
+                        return (SetOutcome::FunctionName, None);
                     }
                     if b.kind == BindingKind::Const {
                         return (SetOutcome::Const, None);

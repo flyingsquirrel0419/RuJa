@@ -4,9 +4,15 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.4%** (up from 88.6%).
-Current supported subset count: **4114 pass / 66 fail / 0 timeout**.
+Supported-subset pass rate: **98.5%** (up from 88.6%).
+Current supported subset count: **4118 pass / 62 fail / 0 timeout**.
 
+- **Named function-expression bindings**: named function expressions now create
+  an immutable inner name binding. Sloppy assignments to that binding are
+  ignored, while strict assignments throw `TypeError`; direct eval and lexical
+  arrows inside the function body resolve to the same protected binding. This
+  closes `language/expressions/function` at **53 pass / 0 fail** and raises
+  the supported subset to **4118 pass / 62 fail / 0 timeout**.
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
   index enumerability, and nullish receiver errors. This unblocks test262

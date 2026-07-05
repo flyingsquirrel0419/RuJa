@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.3% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.4% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.5% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (98.4%).** It reflects the portion of the spec
+supported-subset rate (98.5%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -90,12 +90,12 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,168 |
-| Pass | 11,157 |
-| Fail | 12,011 |
-| Timeout | 7 |
+| Actually run | 23,163 |
+| Pass | 11,179 |
+| Fail | 11,984 |
+| Timeout | 12 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **48.2%** |
+| **Pass rate (of run)** | **48.3%** |
 | **Pass rate (of total)** | **23.4%** |
 
 This number is dominated by tests for features RuJa does not support.
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 98.4%:
+~56% to 98.5%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -157,6 +157,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   tokens** — nested function bodies reset loop/switch/label parse context,
   `async function` honors the no-LineTerminator rule, escaped `new.target`
   forms are rejected, and `debugger` is statement-only.
+- **Named function-expression bindings** — named function expressions create
+  an immutable inner name binding; sloppy assignments to that binding are
+  ignored, while strict assignments throw `TypeError`.
 - **BigInt increment/decrement** — `x++` on BigInt returns BigInt.
 - **Object.prototype.toString** — returns `[object Object]` for plain
   objects; `String.prototype.toString` added.
@@ -476,10 +479,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/statements/debugger`, `language/statements/async-function`, and
   `language/expressions/new.target` in the supported subset, raising it to
   **4114 pass / 66 fail / 0 timeout**.
+- **Named function-expression bindings** — named function expressions now
+  create an immutable inner name binding. Sloppy assignment, including through
+  direct eval or a nested lexical arrow, is ignored; strict assignment throws
+  `TypeError`. This closes `language/expressions/function` at
+  **53 pass / 0 fail** and raises the supported subset to
+  **4118 pass / 62 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 66 failures in the supported subset cluster
-around class behavior, super semantics, function early errors, and
+The remaining 62 failures in the supported subset cluster
+around class behavior, super semantics, call/property access, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

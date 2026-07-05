@@ -534,6 +534,9 @@ pub enum BindingKind {
     Var,
     Param,
     Let,
+    /// Immutable named function-expression binding. Assignments are early-bound
+    /// to this environment binding; strict code throws, sloppy code ignores.
+    FunctionName,
     Const,
 }
 

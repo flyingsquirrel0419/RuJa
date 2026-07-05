@@ -1074,6 +1074,7 @@ impl Vm {
                             let (
                                 has_binding,
                                 is_const,
+                                is_function_name,
                                 in_tdz,
                                 global_readonly_binding,
                                 has_with,
@@ -1084,20 +1085,34 @@ impl Vm {
                                     // Check var/let/const bindings.
                                     if let Some(b) = e.vars.lock().get(name.as_str()) {
                                         if !b.initialized.load(Ordering::Relaxed) {
-                                            return (false, false, true, false, false, None, None);
+                                            return (
+                                                false, false, false, true, false, false, None, None,
+                                            );
                                         }
                                         if e_idx == self.global && global_readonly {
-                                            return (false, false, false, true, false, None, None);
+                                            return (
+                                                false, false, false, false, true, false, None, None,
+                                            );
+                                        }
+                                        if b.kind == crate::value::BindingKind::FunctionName {
+                                            return (
+                                                false, false, true, false, false, false, None, None,
+                                            );
                                         }
                                         if b.kind == crate::value::BindingKind::Const {
-                                            return (false, true, false, false, false, None, None);
+                                            return (
+                                                false, true, false, false, false, false, None, None,
+                                            );
                                         }
                                         *b.value.lock() = value.clone();
-                                        return (true, false, false, false, false, None, None);
+                                        return (
+                                            true, false, false, false, false, false, None, None,
+                                        );
                                     }
                                     // Check with-object.
                                     if let Some(with_obj) = e.with_object.lock().clone() {
                                         return (
+                                            false,
                                             false,
                                             false,
                                             false,
@@ -1113,11 +1128,12 @@ impl Vm {
                                         false,
                                         false,
                                         false,
+                                        false,
                                         None,
                                         *e.parent.lock(),
                                     );
                                 }
-                                (false, false, false, false, false, None, None)
+                                (false, false, false, false, false, false, None, None)
                             });
                             if in_tdz {
                                 return Err(Error::reference(format!(
@@ -1130,6 +1146,15 @@ impl Vm {
                                     "Assignment to constant variable '{}'",
                                     name
                                 )));
+                            }
+                            if is_function_name {
+                                if r.strict {
+                                    return Err(Error::type_err(format!(
+                                        "Assignment to constant variable '{}'",
+                                        name
+                                    )));
+                                }
+                                return Ok(());
                             }
                             if global_readonly_binding {
                                 let global_this = self.global_this.clone();
