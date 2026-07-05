@@ -93,7 +93,7 @@ vary slightly because a small number of tests can cross the timeout boundary:
 | Total matrix files | 48,465 |
 | Actually run | 23,162-23,167 |
 | Pass | 11,615-11,652 |
-| Fail | 11,513-11,547 |
+| Fail | 11,512-11,547 |
 | Timeout | 8-13 |
 | Skip | 25,290 |
 | **Pass rate (of run)** | **50.1-50.3%** |
