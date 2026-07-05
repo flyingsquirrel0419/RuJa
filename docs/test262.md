@@ -330,10 +330,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   explicit parameter. This raises `language/expressions/arrow-function` to
   **89 pass / 1 fail** and the supported subset to
   **3997 pass / 181 fail / 2 timeout**.
+- **Lexical arrow `super()` binding order** — `super()` calls now perform the
+  superclass constructor call before rebinding the derived constructor's
+  lexical `this` environment and forward the active constructor's
+  `new.target`. A repeated `super()` call, including one captured in an arrow
+  and invoked after the constructor returns, now throws `ReferenceError` only
+  after the superclass constructor has run. This closes
+  `language/expressions/arrow-function` at **90 pass / 0 fail** and raises the
+  supported subset to **3999 pass / 179 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 181 failures plus 2 timeouts in the supported subset cluster
-around class behavior, super semantics, function/arrow early errors, and
+The remaining 179 failures plus 2 timeouts in the supported subset cluster
+around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

@@ -273,6 +273,59 @@ pub fn initialize(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
     false
 }
 
+pub fn find_binding_env(heap: &Heap, env: GcIdx, name: &str) -> Option<GcIdx> {
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (found, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                if e.vars.lock().contains_key(name) {
+                    return (true, None);
+                }
+                return (false, *e.parent.lock());
+            }
+            (false, None)
+        });
+        if found {
+            return Some(e_idx);
+        }
+        cur = parent;
+    }
+    None
+}
+
+pub fn binding_initialized(heap: &Heap, env: GcIdx, name: &str) -> Option<bool> {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            return e
+                .vars
+                .lock()
+                .get(name)
+                .map(|b| b.initialized.load(Ordering::Relaxed));
+        }
+        None
+    })
+}
+
+pub fn bind_this_value(heap: &Heap, env: GcIdx, value: Value) -> crate::error::Result<()> {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            if let Some(b) = e.vars.lock().get("this") {
+                if b.initialized.load(Ordering::Relaxed) {
+                    return Err(crate::error::Error::reference(
+                        "super() has already been called",
+                    ));
+                }
+                *b.value.lock() = value;
+                b.initialized.store(true, Ordering::Relaxed);
+                return Ok(());
+            }
+        }
+        Err(crate::error::Error::reference(
+            "super() called outside derived constructor",
+        ))
+    })
+}
+
 /// Initialize a binding in the *current* environment only (no parent walk).
 /// Used for TDZ: the binding was declared uninitialized at scope entry; this
 /// sets its value and lifts the TDZ. Returns false if no binding exists here.

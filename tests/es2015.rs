@@ -344,6 +344,18 @@ fn explicit_super_constructor() {
     );
 }
 
+#[test]
+fn arrow_super_call_rebinds_lexical_constructor_this() {
+    assert_eq!(
+        run("var count=0; class A{constructor(){count++;}} class B extends A{constructor(){super(); this.af=_=>super();}} var b=new B(); var threw=false; try{b.af();}catch(e){threw=e instanceof ReferenceError;} threw + ':' + count;"),
+        Value::String(Arc::from("true:2"))
+    );
+    assert_eq!(
+        run("var count=0; class A{constructor(){count++;}} class B extends A{constructor(){super(); super();}} var threw=false; try{new B();}catch(e){threw=e instanceof ReferenceError;} threw + ':' + count;"),
+        Value::String(Arc::from("true:2"))
+    );
+}
+
 // ---- Symbol-keyed properties ----
 
 #[test]

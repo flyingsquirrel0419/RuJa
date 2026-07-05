@@ -19,6 +19,45 @@ impl Vm {
         }
     }
 
+    fn prepare_super_constructor_call(&self) -> error::Result<(GcIdx, Value, Value)> {
+        let frame = self.current_frame()?;
+        let current_env = frame.env;
+        let current_this = frame.this_val.clone();
+        let current_new_target = frame.new_target.clone();
+        let this_env = crate::environment::find_binding_env(&self.heap, current_env, "this")
+            .ok_or_else(|| Error::reference("super() called outside derived constructor"))?;
+        let this_val = match crate::environment::binding_initialized(&self.heap, this_env, "this") {
+            Some(true) => crate::environment::get_checked(&self.heap, this_env, "this")
+                .map_err(|_| Error::reference("Cannot access 'this' before initialization"))?
+                .unwrap_or(Value::Undefined),
+            Some(false) => self
+                .frames
+                .iter()
+                .rev()
+                .find(|f| f.env == this_env)
+                .map(|f| f.this_val.clone())
+                .unwrap_or(current_this),
+            None => {
+                return Err(Error::reference(
+                    "super() called outside derived constructor",
+                ))
+            }
+        };
+        Ok((this_env, this_val, current_new_target))
+    }
+
+    fn bind_super_constructor_result(
+        &mut self,
+        this_env: GcIdx,
+        new_this: Value,
+    ) -> error::Result<()> {
+        crate::environment::bind_this_value(&self.heap, this_env, new_this.clone())?;
+        if let Some(frame) = self.frames.iter_mut().rev().find(|f| f.env == this_env) {
+            frame.this_val = new_this;
+        }
+        Ok(())
+    }
+
     pub(crate) fn interpret_inner_raw(
         &mut self,
         return_depth: Option<usize>,
@@ -2242,14 +2281,6 @@ impl Vm {
                 }
                 Op::CallSuperCtor(arg_count) => {
                     // stack: [this, superCtor, args...]; call superCtor with this.
-                    // Calling super() twice is a ReferenceError.
-                    if self
-                        .current_frame()?
-                        .super_called
-                        .swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        return Err(Error::reference("super() has already been called"));
-                    }
                     let mut args = Vec::with_capacity(arg_count);
                     for _ in 0..arg_count {
                         args.push(self.stack.pop().unwrap_or(Value::Undefined));
@@ -2257,13 +2288,16 @@ impl Vm {
                     args.reverse();
                     let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
-                    // Use the frame's this_val (the object created by the
-                    // outer `construct` call), not the environment's `this`
-                    // which is in the TDZ for derived constructors.
-                    let this_val = self.current_frame()?.this_val.clone();
+                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
                     // Call the parent constructor. Set pending_new_target so
-                    // that class constructors accept this as a [[Construct]] call.
-                    self.pending_new_target = Some(super_ctor.clone());
+                    // that class constructors accept this as a [[Construct]]
+                    // call. `super()` forwards the active constructor's
+                    // new.target, not the superclass constructor.
+                    self.pending_new_target = Some(if matches!(new_target, Value::Undefined) {
+                        super_ctor.clone()
+                    } else {
+                        new_target
+                    });
                     let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     // If the parent constructor returned an object, use it as the new `this`.
                     let new_this = if matches!(result, Value::Object(_)) {
@@ -2271,28 +2305,18 @@ impl Vm {
                     } else {
                         this_val
                     };
-                    // Rebind `this` in the current environment to the (possibly updated) value.
-                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    // Use `initialize` (not `set`) so the TDZ flag is lifted
-                    // for derived constructors where `this` was declared
-                    // uninitialized until `super()` ran.
-                    crate::environment::initialize(&self.heap, cur_env, "this", new_this.clone());
-                    self.current_frame_mut()?.this_val = new_this.clone();
+                    // BindThisValue happens after Construct. If `this` was
+                    // already initialized, the superclass constructor has
+                    // still run and this step throws ReferenceError.
+                    self.bind_super_constructor_result(this_env, new_this.clone())?;
                     self.stack.push(new_this);
                 }
                 Op::CallSuperCtorSpread => {
                     // stack: [this, superCtor, argsArray]
-                    if self
-                        .current_frame()?
-                        .super_called
-                        .swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        return Err(Error::reference("super() has already been called"));
-                    }
                     let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
                     let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
-                    let this_val = self.current_frame()?.this_val.clone();
+                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
                     // Expand the array into individual args.
                     let args = if let Value::Object(idx) = &args_arr {
                         self.heap.with_obj(idx.0, |o| {
@@ -2305,16 +2329,18 @@ impl Vm {
                     } else {
                         Vec::new()
                     };
-                    self.pending_new_target = Some(super_ctor.clone());
+                    self.pending_new_target = Some(if matches!(new_target, Value::Undefined) {
+                        super_ctor.clone()
+                    } else {
+                        new_target
+                    });
                     let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     let new_this = if matches!(result, Value::Object(_)) {
                         result
                     } else {
                         this_val
                     };
-                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    crate::environment::initialize(&self.heap, cur_env, "this", new_this.clone());
-                    self.current_frame_mut()?.this_val = new_this.clone();
+                    self.bind_super_constructor_result(this_env, new_this.clone())?;
                     self.stack.push(new_this);
                 }
                 Op::CallSuper(arg_count) => {

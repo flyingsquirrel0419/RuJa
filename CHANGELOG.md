@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **95.7%** (up from 88.6%).
-Current supported subset count: **3997 pass / 181 fail / 2 timeout**.
+Current supported subset count: **3999 pass / 179 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -229,6 +229,14 @@ Current supported subset count: **3997 pass / 181 fail / 2 timeout**.
   explicit parameter. This raises `language/expressions/arrow-function` to
   **89 pass / 1 fail** and the supported subset to
   **3997 pass / 181 fail / 2 timeout**.
+- **Lexical arrow `super()` binding order**: `super()` calls now perform the
+  superclass constructor call before rebinding the derived constructor's
+  lexical `this` environment and forward the active constructor's
+  `new.target`. A repeated `super()` call, including one captured in an arrow
+  and invoked after the constructor returns, now throws `ReferenceError` only
+  after the superclass constructor has run. This closes
+  `language/expressions/arrow-function` at **90 pass / 0 fail** and raises the
+  supported subset to **3999 pass / 179 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
