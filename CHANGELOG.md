@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **97.7%** (up from 88.6%).
-Current supported subset count: **4082 pass / 96 fail / 2 timeout**.
+Supported-subset pass rate: **97.9%** (up from 88.6%).
+Current supported subset count: **4089 pass / 89 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -330,6 +330,15 @@ Current supported subset count: **4082 pass / 96 fail / 2 timeout**.
   dynamic super base is `null`. This closes `language/expressions/assignment`
   at **110 pass / 0 fail** and raises the supported subset to
   **4082 pass / 96 fail / 2 timeout**.
+- **Null-extending classes and bound subclass construction**:
+  `class C extends null {}` now wires `C.prototype.[[Prototype]]` to `null`
+  while making the constructor inherit from `%Function.prototype%`, and
+  `super()` in such a class throws `TypeError` because `%Function.prototype%`
+  is not a constructor. Constructing a bound class now ignores the bound
+  `this` value and delegates to the target constructor with prepended bound
+  arguments. This raises `language/statements/class/subclass` to
+  **75 pass / 19 fail** and the supported subset to
+  **4089 pass / 89 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

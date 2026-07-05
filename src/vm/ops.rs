@@ -1886,11 +1886,19 @@ impl Vm {
                     }
                 }
                 Op::ValidateExtends => {
-                    // Pop the superclass value and validate it's a constructor
-                    // whose .prototype is an object or null. Leave both the
-                    // constructor and the already-read prototype on the stack
-                    // so class definition invokes prototype getters once.
+                    // Pop the superclass value and validate it. `extends null`
+                    // is special: the instance prototype parent is null, while
+                    // the constructor inherits from %Function.prototype%.
+                    // Otherwise the superclass must be a constructor whose
+                    // .prototype is an object or null. Leave both constructor
+                    // parent and already-read prototype parent on the stack so
+                    // class definition invokes prototype getters once.
                     let parent = self.stack.pop().unwrap_or(Value::Undefined);
+                    if matches!(parent, Value::Null) {
+                        self.stack.push(self.function_proto.clone());
+                        self.stack.push(Value::Null);
+                        continue;
+                    }
                     let is_ctor = match &parent {
                         Value::Object(idx) => self.heap.with_obj(idx.0, |o| o.is_function()),
                         _ => false,
@@ -2326,6 +2334,13 @@ impl Vm {
                     let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
                     let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
+                    let is_function_prototype = match (&super_ctor, &self.function_proto) {
+                        (Value::Object(a), Value::Object(b)) => a == b,
+                        _ => false,
+                    };
+                    if is_function_prototype {
+                        return Err(Error::type_err("not a constructor"));
+                    }
                     // Call the parent constructor. Set pending_new_target so
                     // that class constructors accept this as a [[Construct]]
                     // call. `super()` forwards the active constructor's
@@ -2354,6 +2369,13 @@ impl Vm {
                     let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
                     let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
+                    let is_function_prototype = match (&super_ctor, &self.function_proto) {
+                        (Value::Object(a), Value::Object(b)) => a == b,
+                        _ => false,
+                    };
+                    if is_function_prototype {
+                        return Err(Error::type_err("not a constructor"));
+                    }
                     // Expand the array into individual args.
                     let args = if let Value::Object(idx) = &args_arr {
                         self.heap.with_obj(idx.0, |o| {

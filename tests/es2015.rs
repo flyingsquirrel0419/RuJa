@@ -48,6 +48,37 @@ fn class_extends_reads_superclass_prototype_once() {
 }
 
 #[test]
+fn class_extends_null_uses_function_prototype_parent() {
+    assert_eq!(
+        run("class C extends null{} Object.getPrototypeOf(C.prototype) === null && Object.getPrototypeOf(C) === Function.prototype && C.prototype.constructor === C;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C extends null{constructor(){return Object.create(null);}} Object.getPrototypeOf(new C()) === null;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var before=0, after=0; class C extends null{constructor(){before++; super(); after++;}} try{new C();}catch(e){} before + ':' + after;"),
+        Value::String(Arc::from("1:0"))
+    );
+    assert!(
+        run_err("class C extends null{constructor(){super();}} new C();").contains("TypeError")
+    );
+}
+
+#[test]
+fn bound_class_construction_ignores_bound_this() {
+    assert_eq!(
+        run("class Base{constructor(x,y){this.x=x; this.y=y;}} class Sub extends Base{} var f=Sub.bind({bad:true},1); var s=new f(2); [s.x,s.y,Object.getPrototypeOf(s)===Sub.prototype].join(',');"),
+        Value::String(Arc::from("1,2,true"))
+    );
+    assert!(
+        run_err("class Base{} class Sub extends Base{} var f=Sub.bind({}); f();")
+            .contains("TypeError")
+    );
+}
+
+#[test]
 fn derived_constructor_returns_bound_super_this() {
     assert_eq!(
         run("class Base{constructor(a,b){var o=new Object(); o.prp=a+b; return o;}} class Sub extends Base{constructor(){super(1,2);}} new Sub().prp;"),

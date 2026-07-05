@@ -674,6 +674,22 @@ impl Vm {
             Value::Object(idx) => *idx,
             _ => return Err(Error::type_err("not a constructor".to_string())),
         };
+        let bound_construct = self.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                if let crate::value::FunctionKind::Bound {
+                    target, bound_args, ..
+                } = &f.kind
+                {
+                    return Some((*target, bound_args.clone()));
+                }
+            }
+            None
+        });
+        if let Some((target, bound_args)) = bound_construct {
+            let mut all = bound_args;
+            all.extend_from_slice(args);
+            return self.construct(&Value::Object(target), &all);
+        }
         let is_non_constructor = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {
                 match &f.kind {
