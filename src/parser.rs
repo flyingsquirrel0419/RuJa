@@ -57,6 +57,11 @@ pub struct Parser {
     /// keyword only inside generator parameter/body contexts; outside strict
     /// mode non-generator code it remains an ordinary identifier.
     generator_depth: usize,
+    /// Whether the current statement position accepts LexicalDeclaration as a
+    /// StatementListItem. Single-statement bodies (`if (x) stmt`, labels,
+    /// `with (x) stmt`, etc.) parse `let` with ExpressionStatement lookahead
+    /// rules instead.
+    lexical_declaration_allowed: bool,
     super_depth: usize,
     super_call_depth: usize,
 }
@@ -83,6 +88,7 @@ impl Parser {
             label_stack: Vec::new(),
             function_depth: 0,
             generator_depth: 0,
+            lexical_declaration_allowed: true,
             super_depth: 0,
             super_call_depth: 0,
         }
@@ -206,25 +212,42 @@ impl Parser {
         result
     }
 
+    fn with_lexical_declaration_context<T>(
+        &mut self,
+        allowed: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved = self.lexical_declaration_allowed;
+        self.lexical_declaration_allowed = allowed;
+        let result = f(self);
+        self.lexical_declaration_allowed = saved;
+        result
+    }
+
     /// Determine if `let` at the current position is a lexical declaration
     /// (as opposed to an identifier). Per spec, `let` is a declaration when
-    /// followed by `[`, `{`, or an identifier name. When followed by `=`, `in`,
-    /// `of`, `;`, etc., it's an identifier (in non-strict mode).
+    /// followed by `[`, `{`, or an identifier name. ASI does not apply between
+    /// `let` and a following binding name just because a line terminator
+    /// appears there; the lexical declaration is selected first and then
+    /// static semantics may reject the binding name.
     fn is_let_lexical_position(&self) -> bool {
+        if self.peek_at_tok(0).had_escape {
+            return false;
+        }
         // In strict mode, `let` is always a lexical declaration.
         if self.is_strict_context {
             return true;
         }
         // Non-strict: `let` is lexical only when followed by `[`, `{`, or an
-        // identifier (the start of a binding pattern or name) ON THE SAME LINE.
-        // If a newline separates `let` from the next token, ASI applies and
-        // `let` is treated as an identifier (expression statement).
-        if self.pos + 1 < self.tokens.len() && self.tokens[self.pos + 1].preceded_by_newline {
-            return false;
-        }
+        // identifier-name token (the start of a binding pattern or name).
         match self.peek_at_tok(1).kind {
             TokenKind::LBracket | TokenKind::LBrace => true,
-            TokenKind::Ident(_) | TokenKind::Async => true,
+            TokenKind::Ident(_)
+            | TokenKind::Async
+            | TokenKind::Await
+            | TokenKind::Yield
+            | TokenKind::Let
+            | TokenKind::Of => true,
             _ => false,
         }
     }
@@ -399,19 +422,19 @@ impl Parser {
                     self.peek(),
                     TokenKind::While | TokenKind::Do | TokenKind::For
                 );
-                // ES spec: lexical declarations (let/const/class) cannot be
-                // the body of a labelled statement.
-                if matches!(
-                    self.peek(),
-                    TokenKind::Let | TokenKind::Const | TokenKind::Class
-                ) {
+                // ES spec: lexical declarations cannot be the body of a
+                // labelled statement. `let` is contextual here: if it does
+                // not hit the `let [` ExpressionStatement lookahead
+                // restriction, parse it as an expression statement under ASI.
+                if matches!(self.peek(), TokenKind::Const | TokenKind::Class) {
                     return Err(error::Error::syntax(
                         "Lexical declaration cannot be the body of a labelled statement"
                             .to_string(),
                     ));
                 }
                 self.label_stack.push((label.clone(), is_loop));
-                let body = self.parse_stmt_inner()?;
+                let body =
+                    self.with_lexical_declaration_context(false, |p| p.parse_stmt_inner())?;
                 self.label_stack.pop();
                 return Ok(self.stmt(StmtNode::Labeled(label, Box::new(body))));
             }
@@ -419,7 +442,11 @@ impl Parser {
         match self.peek().clone() {
             TokenKind::LBrace => self.parse_block(),
             TokenKind::Var | TokenKind::Const => self.parse_var_decl(),
-            TokenKind::Let if self.is_let_lexical_position() => self.parse_var_decl(),
+            TokenKind::Let
+                if self.lexical_declaration_allowed && self.is_let_lexical_position() =>
+            {
+                self.parse_var_decl()
+            }
             TokenKind::Let if matches!(self.peek_at_tok(1).kind, TokenKind::LBracket) => Err(
                 error::Error::syntax("Expression statement cannot start with 'let ['".to_string()),
             ),
@@ -525,9 +552,12 @@ impl Parser {
     fn parse_block(&mut self) -> error::Result<Stmt> {
         self.expect(&TokenKind::LBrace, "{")?;
         let mut body = Vec::new();
-        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
-            body.push(self.parse_stmt()?);
-        }
+        self.with_lexical_declaration_context(true, |p| {
+            while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                body.push(p.parse_stmt()?);
+            }
+            Ok(())
+        })?;
         self.expect(&TokenKind::RBrace, "}")?;
         Ok(self.stmt(StmtNode::Block(body)))
     }
@@ -741,9 +771,12 @@ impl Parser {
         }
         self.function_depth += 1;
         let mut body = Vec::new();
-        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
-            body.push(self.parse_stmt()?);
-        }
+        self.with_lexical_declaration_context(true, |p| {
+            while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                body.push(p.parse_stmt()?);
+            }
+            Ok(())
+        })?;
         self.expect(&TokenKind::RBrace, "}")?;
         self.function_depth -= 1;
         self.is_strict_context = saved_strict;
@@ -799,7 +832,7 @@ impl Parser {
     /// are not allowed (if/else/while/for/with body). ES6 spec forbids
     /// class declarations as the body of a single statement.
     fn parse_single_stmt(&mut self) -> error::Result<Stmt> {
-        let stmt = self.parse_stmt()?;
+        let stmt = self.with_lexical_declaration_context(false, |p| p.parse_stmt())?;
         match &stmt.node {
             StmtNode::ExprStmt(Expr::Class(_)) => {
                 return Err(error::Error::syntax(
@@ -1234,6 +1267,7 @@ impl Parser {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
                 TokenKind::Of => Arc::from("of"),
                 TokenKind::Async => Arc::from("async"),
+                TokenKind::Await if !self.is_strict_context => Arc::from("await"),
                 TokenKind::Yield if self.yield_as_identifier_allowed() => Arc::from("yield"),
                 TokenKind::Let if kind == VarKind::Var && !self.is_strict_context => {
                     Arc::from("let")
@@ -1335,31 +1369,34 @@ impl Parser {
         self.switch_depth += 1;
         let mut cases = Vec::new();
         let mut seen_default = false;
-        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
-            let test = if self.eat(&TokenKind::Case) {
-                Some(self.parse_expr()?)
-            } else if self.eat(&TokenKind::Default) {
-                if seen_default {
-                    return Err(error::Error::syntax(
-                        "Duplicate default clause in switch".to_string(),
-                    ));
+        self.with_lexical_declaration_context(true, |p| {
+            while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                let test = if p.eat(&TokenKind::Case) {
+                    Some(p.parse_expr()?)
+                } else if p.eat(&TokenKind::Default) {
+                    if seen_default {
+                        return Err(error::Error::syntax(
+                            "Duplicate default clause in switch".to_string(),
+                        ));
+                    }
+                    seen_default = true;
+                    None
+                } else {
+                    return Err(error::Error::syntax("Expected case or default".to_string()));
+                };
+                p.expect(&TokenKind::Colon, ":")?;
+                let mut body = Vec::new();
+                while !p.check(&TokenKind::Case)
+                    && !p.check(&TokenKind::Default)
+                    && !p.check(&TokenKind::RBrace)
+                    && !p.check(&TokenKind::Eof)
+                {
+                    body.push(p.parse_stmt()?);
                 }
-                seen_default = true;
-                None
-            } else {
-                return Err(error::Error::syntax("Expected case or default".to_string()));
-            };
-            self.expect(&TokenKind::Colon, ":")?;
-            let mut body = Vec::new();
-            while !self.check(&TokenKind::Case)
-                && !self.check(&TokenKind::Default)
-                && !self.check(&TokenKind::RBrace)
-                && !self.check(&TokenKind::Eof)
-            {
-                body.push(self.parse_stmt()?);
+                cases.push(SwitchCase { test, body });
             }
-            cases.push(SwitchCase { test, body });
-        }
+            Ok(())
+        })?;
         self.expect(&TokenKind::RBrace, "}")?;
         self.switch_depth -= 1;
         // Static semantic early errors: detect duplicate lexical names
@@ -3425,6 +3462,21 @@ mod tests {
             }
             other => panic!("{:?}", other),
         }
+    }
+
+    #[test]
+    fn parse_let_declaration_across_newline() {
+        for src in [
+            "let\nlet;",
+            "let\nlet = 1;",
+            "function f() { let\nawait 0; }",
+            "function f() { let\nyield 0; }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        assert!(Parser::parse("function f() { let await; }").is_ok());
+        assert!(Parser::parse("l\\u0065t\na;\nvar a;").is_ok());
     }
 
     #[test]

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **93.9%** (up from 88.6%).
-Current supported subset count: **3924 pass / 254 fail / 2 timeout**.
+Supported-subset pass rate: **94.1%** (up from 88.6%).
+Current supported subset count: **3931 pass / 247 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -129,6 +129,13 @@ Current supported subset count: **3924 pass / 254 fail / 2 timeout**.
   while generator parameter/body contexts continue to parse `yield` as the
   generator keyword. This brings the object method-definition subset to
   **40 pass / 0 fail**.
+- **`let` declaration ASI/lookahead parsing**: `let` followed by a binding
+  name now remains a LexicalDeclaration across line terminators in
+  StatementListItem positions, so cases like `let\nlet` and `let\nawait 0`
+  fail during parse instead of executing. Escaped `l\u0065t` stays an
+  identifier, and single-statement bodies still use ExpressionStatement
+  lookahead rules, reducing `language/statements/let/syntax` to
+  **26 pass / 4 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
