@@ -5,8 +5,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.1%** (up from 88.6%).
-Current supported subset count: **4142 pass / 38 fail / 0 timeout**.
+Current supported subset count: **4144 pass / 36 fail / 0 timeout**.
 
+- **Addition primitive coercion**: binary `+` now performs `ToPrimitive`
+  before BigInt mixing checks, concatenates when either primitive is a string
+  so BigInt-to-string concatenation is allowed, and treats Date objects with
+  the default hint as string-hinted ordinary primitives. This closes
+  `language/expressions/addition` at **38 pass / 0 fail** and raises the
+  supported subset to **4144 pass / 36 fail / 0 timeout**.
 - **Operator edge semantics**: BigInt exponentiation now throws `RangeError`
   for negative exponents, BigInt relational comparisons now coerce
   Boolean/nullish numeric operands through `ToNumeric`, `in` now rejects

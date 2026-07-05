@@ -247,10 +247,22 @@ impl Vm {
                         return Ok(result);
                     }
                 }
+                let is_date_default = if hint == "default" {
+                    match v {
+                        Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                            o.proto().lock().as_ref() == Some(&self.date_proto)
+                        }),
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+                let effective_string_hint = string_hint || is_date_default;
+
                 // Boxed primitives (`new Number(5)`, `Object("x")`):
                 // ToPrimitive returns the wrapped primitive via valueOf,
                 // unless a string hint asks for toString (e.g. `${...}`).
-                if !string_hint {
+                if !effective_string_hint {
                     if let Value::Object(idx) = v {
                         let prim = self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Object(od) = o {
@@ -273,12 +285,12 @@ impl Vm {
                         .with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_))),
                     _ => false,
                 };
-                let methods: [&str; 2] = if string_hint {
+                let methods: [&str; 2] = if effective_string_hint {
                     ["toString", "valueOf"]
                 } else {
                     ["valueOf", "toString"]
                 };
-                if is_array && !string_hint {
+                if is_array && !effective_string_hint {
                     // valueOf on an array returns the array (object), so skip
                     // straight to toString to avoid a pointless call.
                     return Ok(Value::String(self.to_string(v)?));

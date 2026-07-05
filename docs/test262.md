@@ -174,6 +174,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `RangeError`.
 - **BigInt exponent overflow** — huge exponents no longer clamp to zero
   and return a wrong value; they throw `RangeError`.
+- **Addition primitive coercion** — binary `+` now runs `ToPrimitive` before
+  BigInt mixing checks, performs string concatenation before mixed-BigInt
+  errors, and gives Date default-hint coercion the Date string-order behavior.
 - **Arrow function early errors** — arrow functions reject duplicate
   parameter names in sloppy and strict mode, and reject `eval`/`arguments`
   parameter names when strict mode applies.

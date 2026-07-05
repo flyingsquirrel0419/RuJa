@@ -3146,23 +3146,15 @@ impl Vm {
         _strf: G,
     ) -> error::Result<()> {
         let (a, b) = self.pop2();
-        // BigInt + BigInt stays BigInt; mixing with other types is a TypeError.
-        match (&a, &b) {
-            (Value::BigInt(x), Value::BigInt(y)) => {
-                self.stack.push(Value::BigInt(x + y));
-                return Ok(());
-            }
-            (Value::BigInt(_), _) | (_, Value::BigInt(_)) => {
-                return Err(Error::type_err(
-                    "Cannot mix BigInt and other types, use explicit conversions".to_string(),
-                ));
-            }
-            _ => {}
-        }
-        // string concatenation
         let ap = self.to_primitive(&a)?;
         let bp = self.to_primitive(&b)?;
         match (&ap, &bp) {
+            (Value::String(_), _) | (_, Value::String(_)) => {
+                let sa = self.to_string(&ap)?;
+                let sb = self.to_string(&bp)?;
+                self.stack
+                    .push(Value::String(Arc::from(format!("{}{}", sa, sb).as_str())));
+            }
             // BigInt + BigInt stays BigInt; mixing with other types is a TypeError.
             (Value::BigInt(x), Value::BigInt(y)) => {
                 self.stack.push(Value::BigInt(x + y));
@@ -3172,12 +3164,6 @@ impl Vm {
                 return Err(Error::type_err(
                     "Cannot mix BigInt and other types, use explicit conversions".to_string(),
                 ));
-            }
-            (Value::String(_), _) | (_, Value::String(_)) => {
-                let sa = self.to_string(&ap)?;
-                let sb = self.to_string(&bp)?;
-                self.stack
-                    .push(Value::String(Arc::from(format!("{}{}", sa, sb).as_str())));
             }
             _ => {
                 let av = self.to_number(&ap)?;

@@ -791,6 +791,33 @@ fn boxed_number_addition_uses_valueof() {
 }
 
 #[test]
+fn date_addition_uses_default_string_hint() {
+    assert_eq!(
+        run("var d = new Date(0); d + d;"),
+        Value::String(Arc::from("DateDate"))
+    );
+    assert_eq!(
+        run("var d = new Date(0); d + 0;"),
+        Value::String(Arc::from("Date0"))
+    );
+    assert_eq!(
+        run("var d = new Date(0); d + true;"),
+        Value::String(Arc::from("Datetrue"))
+    );
+    assert_eq!(
+        run("var d = new Date(0); d + {};"),
+        Value::String(Arc::from("Date[object Object]"))
+    );
+}
+
+#[test]
+fn bigint_string_addition_concatenates() {
+    assert_eq!(run("1n + '';"), Value::String(Arc::from("1")));
+    assert_eq!(run("'' + -1n;"), Value::String(Arc::from("-1")));
+    assert_eq!(run("Object(1n) + '';"), Value::String(Arc::from("1")));
+}
+
+#[test]
 fn boxed_bigint_mixed_throws() {
     let err = run_err("Object(1n) + 1;");
     assert!(err.contains("TypeError"), "got: {}", err);
