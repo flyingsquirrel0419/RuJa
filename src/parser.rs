@@ -3661,14 +3661,14 @@ impl Parser {
             }
             _ => None,
         };
+        let saved_strict_context = self.is_strict_context;
+        self.is_strict_context = true;
         let superclass = if self.eat(&TokenKind::Extends) {
             Some(Box::new(self.parse_postfix()?))
         } else {
             None
         };
         self.expect(&TokenKind::LBrace, "{")?;
-        let saved_strict_context = self.is_strict_context;
-        self.is_strict_context = true;
         let mut methods = Vec::new();
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();

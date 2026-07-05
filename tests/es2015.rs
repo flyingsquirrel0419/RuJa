@@ -20,6 +20,15 @@ fn class_basic() {
 }
 
 #[test]
+fn class_name_may_be_await_in_script_goal() {
+    assert_eq!(run("class await {} 1;"), Value::Number(1.0));
+    assert_eq!(
+        run("var C = class await {}; C.name;"),
+        Value::String(Arc::from("await"))
+    );
+}
+
+#[test]
 fn class_constructor_field() {
     assert_eq!(
         run("class A { constructor(x) { this.x = x; } } new A(42).x;"),

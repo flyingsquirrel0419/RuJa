@@ -446,9 +446,43 @@ impl Vm {
                     }
                     let arr = HeapObj::Array(arg_array);
                     let arg_idx = GcIdx(self.heap.allocate(arr)?);
-                    // In non-strict mode, arguments has a `callee` property
-                    // pointing to the executing function. (Strict mode forbids it.)
-                    if !func.chunk.is_strict {
+                    if func.chunk.is_strict {
+                        let thrower = match &self.function_proto {
+                            Value::Object(proto_idx) => self.heap.with_obj(proto_idx.0, |obj| {
+                                obj.props()
+                                    .lock()
+                                    .get(&crate::value::PropertyKey::from("caller"))
+                                    .and_then(|desc| {
+                                        if desc.is_accessor {
+                                            desc.get.clone()
+                                        } else {
+                                            None
+                                        }
+                                    })
+                            }),
+                            _ => None,
+                        };
+                        if let Some(thrower) = thrower {
+                            self.heap.with_obj(arg_idx.0, |obj| {
+                                if let HeapObj::Array(a) = obj {
+                                    a.props.lock().insert(
+                                        crate::value::PropertyKey::from("callee"),
+                                        crate::value::PropertyDescriptor {
+                                            value: Value::Undefined,
+                                            writable: false,
+                                            enumerable: false,
+                                            configurable: false,
+                                            get: Some(thrower.clone()),
+                                            set: Some(thrower),
+                                            is_accessor: true,
+                                        },
+                                    );
+                                }
+                            });
+                        }
+                    } else {
+                        // In non-strict mode, arguments has a `callee` property
+                        // pointing to the executing function.
                         self.heap.with_obj(arg_idx.0, |obj| {
                             if let HeapObj::Array(a) = obj {
                                 let mut props = a.props.lock();

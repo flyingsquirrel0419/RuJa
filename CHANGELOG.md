@@ -5,8 +5,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **98.9%** (up from 88.6%).
-Current supported subset count: **4133 pass / 47 fail / 0 timeout**.
+Current supported subset count: **4135 pass / 45 fail / 0 timeout**.
 
+- **Class heritage strictness and strict arguments objects**: class heritage
+  expressions now parse under strict mode while preserving script-goal
+  `await` class names, and strict function calls now create an unmapped
+  `arguments` object whose `callee` accessor throws `TypeError`. This closes
+  `language/statements/class/strict-mode` at **2 pass / 0 fail** and raises
+  the supported subset to **4135 pass / 45 fail / 0 timeout**.
 - **Switch CaseBlock scoping and redeclarations**: switch `var`
   declarations now bind in the enclosing variable environment instead of the
   switch lexical environment, while function declarations in case bodies stay

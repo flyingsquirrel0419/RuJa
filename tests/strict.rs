@@ -84,6 +84,61 @@ fn class_methods_are_strict_reject_with() {
     assert!(r.is_err(), "class methods are always strict");
 }
 
+#[test]
+fn class_heritage_is_strict() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    let with_err = vm
+        .run("class C extends (function B() { with ({}) {} return B; }()) {}")
+        .unwrap_err();
+    assert!(
+        with_err.to_string().contains("strict"),
+        "expected strict-mode with rejection, got: {}",
+        with_err
+    );
+
+    let args_err = vm
+        .run(
+            "var D = class extends function() { arguments.callee; } {};
+             Object.getPrototypeOf(D).arguments;",
+        )
+        .unwrap_err();
+    assert!(
+        args_err.to_string().contains("TypeError"),
+        "expected restricted function arguments access, got: {}",
+        args_err
+    );
+
+    let new_err = vm
+        .run(
+            "var D = class extends function() { arguments.callee; } {};
+             new D;",
+        )
+        .unwrap_err();
+    assert!(
+        new_err.to_string().contains("TypeError"),
+        "expected strict arguments.callee rejection, got: {}",
+        new_err
+    );
+}
+
+#[test]
+fn strict_arguments_callee_is_restricted() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    let err = vm
+        .run("function f() { 'use strict'; return arguments.callee; } f();")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("TypeError"),
+        "expected strict arguments.callee rejection, got: {}",
+        err
+    );
+
+    assert_eq!(
+        run("function f() { return arguments.callee === f; } f();"),
+        Value::Bool(true)
+    );
+}
+
 // ---- with rejection variants ----
 
 #[test]

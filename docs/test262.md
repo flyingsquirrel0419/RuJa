@@ -22,7 +22,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2% of all matrix files; 49.8% of executed files | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.8% of all matrix files; 49.9% of executed files | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
@@ -89,14 +89,14 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 
 | Metric | Count |
 |--------|-------|
-| Total matrix files | 47,717 |
+| Total matrix files | 48,465 |
 | Actually run | 23,164 |
-| Pass | 11,538 |
-| Fail | 11,626 |
+| Pass | 11,552 |
+| Fail | 11,612 |
 | Timeout | 11 |
-| Skip | 24,542 |
-| **Pass rate (of run)** | **49.8%** |
-| **Pass rate (of total)** | **24.2%** |
+| Skip | 25,290 |
+| **Pass rate (of run)** | **49.9%** |
+| **Pass rate (of total)** | **23.8%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 98.6%:
+~56% to 98.9%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -265,6 +265,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   the `%Function.prototype%` `caller`/`arguments` accessors that throw
   `TypeError`, while still reporting no own `caller` or `arguments`
   properties.
+- **Class heritage strictness and strict arguments objects** — class
+  heritage expressions parse as strict code without making script-goal
+  `await` class names illegal, and strict function calls create an unmapped
+  `arguments` object with a restricted `callee` accessor.
 - **Function body `"use strict"` with non-simple parameters** — function
   declarations, function expressions, object/class methods, and arrow block
   bodies now reject directive-prologue `"use strict"` when parameters contain
@@ -522,9 +526,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   redeclaration early errors treat function declarations as lexical names.
   This closes `language/statements/switch` at **69 pass / 0 fail** and raises
   the supported subset to **4133 pass / 47 fail / 0 timeout**.
+- **Class heritage strictness and strict arguments objects** — class
+  heritage expressions now parse under strict mode while preserving
+  script-goal `await` class names, and strict function calls now create an
+  unmapped `arguments` object whose `callee` accessor throws `TypeError`.
+  This closes `language/statements/class/strict-mode` at **2 pass / 0 fail**
+  and raises the supported subset to **4135 pass / 45 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 47 failures in the supported subset cluster around class
+The remaining 45 failures in the supported subset cluster around class
 behavior, super semantics, and expression/operator edge cases. These are
 tracked in `HANDOFF.md` and will be addressed in subsequent rounds.
