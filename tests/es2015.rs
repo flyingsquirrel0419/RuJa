@@ -610,6 +610,24 @@ fn computed_accessor_key_to_property_key_errors() {
 }
 
 #[test]
+fn computed_accessor_string_line_continuation_key() {
+    let src = r#"
+        var stringSet;
+        var obj = {
+          get ['line\
+Continuation']() { return 'get string'; },
+          set ['line\
+Continuation'](param) { stringSet = param; }
+        };
+
+        var got = obj['lineContinuation'];
+        obj['lineContinuation'] = 'set string';
+        got + ':' + stringSet;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("get string:set string")));
+}
+
+#[test]
 fn computed_property_names_allow_in_inside_for_heads() {
     let src = r#"
         var empty = Object.create(null);

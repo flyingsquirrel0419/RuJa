@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **94.6%** (up from 88.6%).
-Current supported subset count: **3953 pass / 225 fail / 2 timeout**.
+Current supported subset count: **3954 pass / 224 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -188,6 +188,11 @@ Current supported subset count: **3953 pass / 225 fail / 2 timeout**.
   to formal-parameter `eval`/`arguments` checks. This reduces
   `language/expressions/object` to **275 pass / 10 fail** and raises the
   supported subset to **3953 pass / 225 fail / 2 timeout**.
+- **String literal line continuations**: string literals now treat a backslash
+  followed by a LineTerminatorSequence as a LineContinuation that contributes
+  no cooked characters. This fixes computed object accessor names and reduces
+  `language/expressions/object` to **276 pass / 9 fail**, raising the
+  supported subset to **3954 pass / 224 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

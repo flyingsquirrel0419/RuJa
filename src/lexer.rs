@@ -341,6 +341,10 @@ impl<'a> Lexer<'a> {
             }
             if c == b'\\' {
                 self.advance();
+                if self.is_line_terminator_start() {
+                    self.read_line_terminator_sequence();
+                    continue;
+                }
                 match self.advance() {
                     Some(b'n') => s.push('\n'),
                     Some(b't') => s.push('\t'),
@@ -1432,6 +1436,14 @@ mod tests {
     fn strings() {
         assert_eq!(kinds("\"hi\""), vec![String("hi".into()), Eof]);
         assert_eq!(kinds("'a\\nb'"), vec![String("a\nb".into()), Eof]);
+        assert_eq!(
+            kinds(concat!("'line\\", "\n", "Continuation'")),
+            vec![String("lineContinuation".into()), Eof]
+        );
+        assert_eq!(
+            kinds(concat!("'line\\", "\r\n", "Continuation'")),
+            vec![String("lineContinuation".into()), Eof]
+        );
     }
 
     #[test]

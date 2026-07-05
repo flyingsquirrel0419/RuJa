@@ -164,6 +164,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   through `GetValue`/`PutValue`, and keep BigInt update results as BigInt.
 - **Object literal computed property keys** — computed data/accessor names run
   `ToPropertyKey` before value/function evaluation and preserve Symbol keys.
+- **String literal line continuations** — a backslash followed by a
+  LineTerminatorSequence contributes no cooked characters, including when the
+  string is used as a computed object accessor name.
 - **Object literal method semantics** — concise methods/accessors are
   non-constructors where required, ordinary concise methods lack an own
   `prototype`, and `super` property assignment uses the original receiver.
@@ -285,10 +288,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   and object accessors/methods apply body `"use strict"` directives to
   formal-parameter `eval`/`arguments` checks. This reduces
   `language/expressions/object` to **275 pass / 10 fail**.
+- **String literal line continuations** — a backslash followed by a
+  LineTerminatorSequence contributes no cooked characters inside string
+  literals, including computed object accessor names. This reduces
+  `language/expressions/object` to **276 pass / 9 fail**.
 
 ## Why the rate is not higher
 
-The remaining 225 failures plus 2 timeouts in the supported subset cluster
+The remaining 224 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and expression/operator edge cases. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.
