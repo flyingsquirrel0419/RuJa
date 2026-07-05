@@ -459,7 +459,8 @@ pub fn binding_env_and_kind(heap: &Heap, env: GcIdx, name: &str) -> Option<(GcId
 
 /// Try to delete a binding from the environment chain. Returns:
 /// - `true` if the binding was removed or doesn't exist.
-/// - `false` if the binding exists but is non-configurable (var/function).
+/// - `false` if a declarative binding exists; ordinary var, parameter,
+///   lexical, and catch bindings are non-configurable.
 pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {
@@ -489,15 +490,9 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
                         return (deleted, None);
                     }
                 }
-                let mut vars = e.vars.lock();
-                if let Some(b) = vars.get(name) {
-                    // var, function, and parameter bindings are non-configurable.
-                    if matches!(b.kind, BindingKind::Var | BindingKind::Param) {
-                        return (false, None);
-                    }
-                    // let/const can be deleted (they're block-scoped)
-                    vars.shift_remove(name);
-                    return (true, None);
+                let vars = e.vars.lock();
+                if vars.contains_key(name) {
+                    return (false, None);
                 }
                 return (true, *e.parent.lock());
             }

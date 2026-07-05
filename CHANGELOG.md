@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **93.3%** (up from 88.6%).
-Current supported subset count: **3897 pass / 281 fail / 2 timeout**.
+Current supported subset count: **3898 pass / 280 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -90,6 +90,11 @@ Current supported subset count: **3897 pass / 281 fail / 2 timeout**.
   native `new Error(...)` call cannot leak construct state into the next call.
   This fixes test262 `S12.14_A19_T1` and `S12.14_A19_T2` and reduces the
   `try` statement subset to **5 failures**.
+- **Declarative binding deletion semantics**: `delete` now returns `false`
+  for declarative environment bindings, including lexical bindings and
+  catch parameters, instead of deleting `let`/`const`-classified bindings.
+  This preserves catch parameter values through `delete e`, fixes test262
+  `S12.14_A4`, and reduces the `try` statement subset to **4 failures**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

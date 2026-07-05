@@ -218,10 +218,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   subclasses now allocate through the active callee's `prototype`, so
   `EvalError(1)`, `TypeError(1)`, and aliased constructor calls preserve
   their specific `name`, `toString()`, and `instanceof` behavior.
+- **Declarative binding deletion semantics** — `delete` now returns `false`
+  for lexical/catch declarative bindings instead of removing them, preserving
+  catch parameter values and matching `DeleteBinding` behavior for covered
+  sloppy-mode `delete identifier` cases.
 
 ## Why the rate is not higher
 
-The remaining 281 failures plus 2 timeouts in the supported subset cluster
+The remaining 280 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, try completion edges, and destructuring assignment. These are
 tracked in `HANDOFF.md` and will be addressed in subsequent rounds.

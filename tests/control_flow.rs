@@ -162,6 +162,18 @@ fn native_errors_preserve_kind_after_uncaught_finally() {
     assert!(msg.contains("ReferenceError"), "got: {msg}");
 }
 
+#[test]
+fn delete_catch_parameter_returns_false_and_preserves_binding() {
+    assert_eq!(
+        run("var out; try { throw 'catchme'; } catch (e) { out = (delete e) + ':' + e; } out;"),
+        Value::String(Arc::from("false:catchme"))
+    );
+    assert_eq!(
+        run("try { throw 1; } catch (e) {} typeof e;"),
+        Value::String(Arc::from("undefined"))
+    );
+}
+
 // --- operators ---
 
 #[test]
@@ -195,6 +207,14 @@ fn in_operator() {
 #[test]
 fn delete_operator() {
     assert_eq!(run("delete ({a:1}).a;"), Value::Bool(true));
+}
+
+#[test]
+fn delete_lexical_binding_returns_false() {
+    assert_eq!(
+        run("let x = 1; (delete x) + ':' + x;"),
+        Value::String(Arc::from("false:1"))
+    );
 }
 
 #[test]
