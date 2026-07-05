@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **95.5%** (up from 88.6%).
-Current supported subset count: **3990 pass / 188 fail / 2 timeout**.
+Supported-subset pass rate: **95.6%** (up from 88.6%).
+Current supported subset count: **3996 pass / 182 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -216,6 +216,13 @@ Current supported subset count: **3990 pass / 188 fail / 2 timeout**.
   `language/expressions/arrow-function/syntax/early-errors` to
   **25 pass / 0 fail** and raises the supported subset to
   **3990 pass / 188 fail / 2 timeout**.
+- **Sloppy arrow contextual parameters**: non-strict arrow functions now allow
+  `eval`, `arguments`, and `yield` as formal parameter names where the grammar
+  permits them, while strict enclosing code or a block-body `"use strict"`
+  directive still rejects `eval`/`arguments`. This brings
+  `language/expressions/arrow-function/syntax` to **45 pass / 0 fail**,
+  raises `language/expressions/arrow-function` to **88 pass / 2 fail**, and
+  raises the supported subset to **3996 pass / 182 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
@@ -466,10 +473,9 @@ three distinct pass-rate scopes and what each measures.
   that does not fit in a `u32` now throws a `RangeError` instead of
   silently clamping to zero and returning the wrong value.
 
-- **Arrow function early errors**: arrow functions now reject
-  `eval`/`arguments` parameter names and duplicate parameter names in
-  both sloppy and strict mode, matching the spec's strict-mode parameter
-  rules for arrows.
+- **Arrow function early errors**: arrow functions reject duplicate parameter
+  names in sloppy and strict mode, and reject `eval`/`arguments` parameter
+  names when strict mode applies.
 
 - **Tagged-template objects**: each template-literal site now returns a
   cached, frozen template object with a frozen `raw` property, matching

@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.5% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (95.5%).** It reflects the portion of the spec
+supported-subset rate (95.6%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 95.5%:
+~56% to 95.6%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -147,9 +147,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `RangeError`.
 - **BigInt exponent overflow** — huge exponents no longer clamp to zero
   and return a wrong value; they throw `RangeError`.
-- **Arrow function early errors** — arrow functions reject
-  `eval`/`arguments` parameter names and duplicate parameter names in
-  sloppy as well as strict mode.
+- **Arrow function early errors** — arrow functions reject duplicate
+  parameter names in sloppy and strict mode, and reject `eval`/`arguments`
+  parameter names when strict mode applies.
 - **Tagged-template objects** — template-literal sites return a cached,
   frozen template object with a frozen `raw` property per
   `GetTemplateObject`.
@@ -317,10 +317,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/expressions/arrow-function/syntax/early-errors` to
   **25 pass / 0 fail** and raises the supported subset to
   **3990 pass / 188 fail / 2 timeout**.
+- **Sloppy arrow contextual parameters** — non-strict arrow functions allow
+  `eval`, `arguments`, and `yield` as formal parameter names where the grammar
+  permits them, while strict enclosing code or a block-body `"use strict"`
+  directive still rejects `eval`/`arguments`. This brings
+  `language/expressions/arrow-function/syntax` to **45 pass / 0 fail**,
+  raises `language/expressions/arrow-function` to **88 pass / 2 fail**, and
+  raises the supported subset to **3996 pass / 182 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 188 failures plus 2 timeouts in the supported subset cluster
+The remaining 182 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function/arrow early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

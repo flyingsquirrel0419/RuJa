@@ -2189,6 +2189,18 @@ impl Parser {
             }
             TokenKind::Yield => {
                 if self.yield_as_identifier_allowed() {
+                    if let TokenKind::Arrow = self.peek_at_tok(1).kind {
+                        if self.peek_at_tok(1).preceded_by_newline {
+                            return Err(error::Error::syntax(
+                                "Line terminator not allowed before =>".to_string(),
+                            ));
+                        }
+                        self.arrow_defaults = Vec::new();
+                        self.arrow_rest = None;
+                        self.advance(); // yield
+                        self.advance(); // =>
+                        return self.parse_arrow_body(vec![Arc::from("yield")]);
+                    }
                     self.advance();
                     return Ok(Expr::Ident(Arc::from("yield")));
                 }
@@ -3064,17 +3076,17 @@ impl Parser {
         Ok(false)
     }
 
-    /// Validate arrow-function parameters per strict-mode rules, which apply
-    /// to arrow functions even when the enclosing context is sloppy.
+    /// Validate arrow-function parameter bound names.
     fn validate_arrow_params(
         &self,
         params: &[Arc<str>],
         dstr_decls: &[(Pattern, String, Option<Expr>)],
         rest_param: Option<&Arc<str>>,
+        reject_eval_arguments: bool,
     ) -> error::Result<()> {
         let mut seen = std::collections::HashSet::new();
         for p in params {
-            if matches!(&**p, "eval" | "arguments") {
+            if reject_eval_arguments && matches!(&**p, "eval" | "arguments") {
                 return Err(error::Error::syntax(format!(
                     "Parameter name '{}' is not allowed in arrow function",
                     p
@@ -3088,10 +3100,10 @@ impl Parser {
             }
         }
         for (pattern, _tmp, _default) in dstr_decls {
-            Self::check_pattern_binding_names(pattern, &mut seen)?;
+            Self::check_pattern_binding_names(pattern, &mut seen, reject_eval_arguments)?;
         }
         if let Some(r) = rest_param {
-            if matches!(&**r, "eval" | "arguments") {
+            if reject_eval_arguments && matches!(&**r, "eval" | "arguments") {
                 return Err(error::Error::syntax(format!(
                     "Parameter name '{}' is not allowed in arrow function",
                     r
@@ -3111,9 +3123,16 @@ impl Parser {
     fn check_pattern_binding_names(
         pattern: &Pattern,
         seen: &mut std::collections::HashSet<Arc<str>>,
+        reject_eval_arguments: bool,
     ) -> error::Result<()> {
         match pattern {
             Pattern::Ident(name) => {
+                if reject_eval_arguments && matches!(&**name, "eval" | "arguments") {
+                    return Err(error::Error::syntax(format!(
+                        "Parameter name '{}' is not allowed in arrow function",
+                        name
+                    )));
+                }
                 if !seen.insert(name.clone()) {
                     return Err(error::Error::syntax(format!(
                         "Duplicate parameter '{}' is not allowed in arrow function",
@@ -3124,19 +3143,23 @@ impl Parser {
             Pattern::Hole => {}
             Pattern::Array(elems) => {
                 for el in elems {
-                    Self::check_pattern_binding_names(el, seen)?;
+                    Self::check_pattern_binding_names(el, seen, reject_eval_arguments)?;
                 }
             }
             Pattern::Object(props, rest) => {
                 for (_, target) in props {
-                    Self::check_pattern_binding_names(target, seen)?;
+                    Self::check_pattern_binding_names(target, seen, reject_eval_arguments)?;
                 }
                 if let Some(r) = rest {
-                    Self::check_pattern_binding_names(r, seen)?;
+                    Self::check_pattern_binding_names(r, seen, reject_eval_arguments)?;
                 }
             }
-            Pattern::Assign(inner, _) => Self::check_pattern_binding_names(inner, seen)?,
-            Pattern::Rest(inner) => Self::check_pattern_binding_names(inner, seen)?,
+            Pattern::Assign(inner, _) => {
+                Self::check_pattern_binding_names(inner, seen, reject_eval_arguments)?
+            }
+            Pattern::Rest(inner) => {
+                Self::check_pattern_binding_names(inner, seen, reject_eval_arguments)?
+            }
         }
         Ok(())
     }
@@ -3154,41 +3177,27 @@ impl Parser {
         let rest_param = self.arrow_rest.take();
         let dstr_decls = std::mem::take(&mut self.arrow_destructure_decls);
         let has_destructuring_params = !dstr_decls.is_empty();
-        // Arrow functions always use strict-mode parameter rules, even in
-        // sloppy mode: eval/arguments are forbidden and duplicate bindings are
-        // rejected. Validate before consuming the destructuring declarations.
-        self.validate_arrow_params(&params, &dstr_decls, rest_param.as_ref())?;
-        // Synthesize `let <pattern> = __argN;` prelude statements that bind
-        // each destructuring parameter from its positional temp argument.
-        // A parameter default wraps the pattern so the compiler applies it
-        // when the source value is undefined.
-        let prelude: Vec<Stmt> = dstr_decls
-            .into_iter()
-            .map(|(pattern, tmp, default)| {
-                let pattern = match default {
-                    Some(d) => Pattern::Assign(Box::new(pattern), d),
-                    None => pattern,
-                };
-                Stmt {
-                    line: 0,
-                    node: StmtNode::Destructure {
-                        kind: VarKind::Let,
-                        pattern,
-                        init: Some(Expr::Ident(Arc::from(tmp.as_str()))),
-                    },
-                }
-            })
-            .collect();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
             let mut body = self.parse_fn_body(false, false, false, is_async)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
+            self.validate_arrow_params(
+                &params,
+                &dstr_decls,
+                rest_param.as_ref(),
+                self.is_strict_context || body_contains_use_strict,
+            )?;
             Self::reject_use_strict_with_non_simple_params(
                 body_contains_use_strict,
                 &param_defaults,
                 rest_param.as_ref(),
                 has_destructuring_params,
             )?;
+            // Synthesize `let <pattern> = __argN;` prelude statements that bind
+            // each destructuring parameter from its positional temp argument.
+            // A parameter default wraps the pattern so the compiler applies it
+            // when the source value is undefined.
+            let prelude = Self::arrow_destructuring_prelude(dstr_decls);
             if !prelude.is_empty() {
                 let mut combined = prelude;
                 combined.append(&mut body);
@@ -3209,8 +3218,14 @@ impl Parser {
                 is_method: false,
             }))
         } else {
+            self.validate_arrow_params(
+                &params,
+                &dstr_decls,
+                rest_param.as_ref(),
+                self.is_strict_context,
+            )?;
             let e = self.with_async_context(is_async, |p| p.parse_assign())?;
-            let mut body = prelude;
+            let mut body = Self::arrow_destructuring_prelude(dstr_decls);
             body.push(self.stmt(StmtNode::Return(Some(e))));
             Ok(Expr::Arrow(FunctionExpr {
                 name: None,
@@ -3227,6 +3242,26 @@ impl Parser {
                 is_method: false,
             }))
         }
+    }
+
+    fn arrow_destructuring_prelude(dstr_decls: Vec<(Pattern, String, Option<Expr>)>) -> Vec<Stmt> {
+        dstr_decls
+            .into_iter()
+            .map(|(pattern, tmp, default)| {
+                let pattern = match default {
+                    Some(d) => Pattern::Assign(Box::new(pattern), d),
+                    None => pattern,
+                };
+                Stmt {
+                    line: 0,
+                    node: StmtNode::Destructure {
+                        kind: VarKind::Let,
+                        pattern,
+                        init: Some(Expr::Ident(Arc::from(tmp.as_str()))),
+                    },
+                }
+            })
+            .collect()
     }
 
     /// Derive a function name from an object-literal property key, for the
@@ -4002,6 +4037,10 @@ mod tests {
     #[test]
     fn parse_arrow_formal_parameter_early_errors() {
         for src in [
+            r#""use strict"; var af = eval => 1;"#,
+            r#"var af = eval => { "use strict"; };"#,
+            r#""use strict"; var af = arguments => 1;"#,
+            r#"var af = arguments => { "use strict"; };"#,
             "var af = (x, [x]) => 1;",
             "var af = ([x, x]) => 1;",
             "var af = (x, {x}) => 1;",
@@ -4013,6 +4052,20 @@ mod tests {
             "var af = ()\n=> {};",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_arrow_sloppy_eval_arguments_yield_params() {
+        for src in [
+            "var af = eval => eval;",
+            "var af = arguments => arguments;",
+            "var af = yield => 1;",
+            "var af = (eval) => eval;",
+            "var af = (arguments) => arguments;",
+            "var af = (yield) => 1;",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
         }
     }
 
