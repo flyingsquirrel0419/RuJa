@@ -5,7 +5,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **95.9%** (up from 88.6%).
-Current supported subset count: **4005 pass / 173 fail / 2 timeout**.
+Current supported subset count: **4007 pass / 171 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -251,6 +251,13 @@ Current supported subset count: **4005 pass / 173 fail / 2 timeout**.
   `super` in arrows without an enclosing super binding. This raises
   `language/expressions/super` to **32 pass / 4 fail** and the supported
   subset to **4005 pass / 173 fail / 2 timeout**.
+- **Direct eval lexical `super` parsing**: direct eval now inherits the
+  caller's `super` parse context when the caller environment has a `#super`
+  binding. This allows `eval("super.x")` and computed `super` property access
+  inside object methods while preserving SyntaxError for eval code without an
+  enclosing super binding. This raises `language/expressions/super` to
+  **34 pass / 2 fail** and the supported subset to
+  **4007 pass / 171 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

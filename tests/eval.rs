@@ -83,6 +83,19 @@ fn eval_can_define_and_call_function() {
 }
 
 #[test]
+fn direct_eval_inherits_lexical_super_property_context() {
+    assert_eq!(
+        run("var A={x:1}; var B={}; Object.setPrototypeOf(B,A); var obj={m(){return eval('super.x;');}}; Object.setPrototypeOf(obj,B); obj.m();"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var A={x:1}; var B={}; Object.setPrototypeOf(B,A); var obj={m(){return eval('super[\"x\"];');}}; Object.setPrototypeOf(obj,B); obj.m();"),
+        Value::Number(1.0)
+    );
+    assert!(run_err("eval('super.x;');").contains("SyntaxError"));
+}
+
+#[test]
 fn direct_eval_with_spread_args_still_direct() {
     // eval(src, ...rest) must remain a direct eval (first arg = source).
     let src = r#"

@@ -133,6 +133,27 @@ impl Parser {
         p.parse_program()
     }
 
+    pub fn parse_direct_eval_inherited(
+        src: &str,
+        inherited_strict: bool,
+        super_allowed: bool,
+        super_call_allowed: bool,
+    ) -> error::Result<Program> {
+        let mut lx = crate::lexer::Lexer::new(src);
+        let tokens = lx.tokens();
+        let mut p = Parser::new(tokens);
+        if inherited_strict {
+            p.is_strict_context = true;
+        }
+        if super_allowed {
+            p.super_depth = 1;
+        }
+        if super_call_allowed {
+            p.super_call_depth = 1;
+        }
+        p.parse_program()
+    }
+
     fn peek(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
     }

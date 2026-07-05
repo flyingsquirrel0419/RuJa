@@ -352,10 +352,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `super` in arrows without an enclosing super binding. This raises
   `language/expressions/super` to **32 pass / 4 fail** and the supported
   subset to **4005 pass / 173 fail / 2 timeout**.
+- **Direct eval lexical `super` parsing** — direct eval now inherits the
+  caller's `super` parse context when the caller environment has a `#super`
+  binding. This allows `eval("super.x")` and computed `super` property access
+  inside object methods while preserving SyntaxError for eval code without an
+  enclosing super binding. This raises `language/expressions/super` to
+  **34 pass / 2 fail** and the supported subset to
+  **4007 pass / 171 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 173 failures plus 2 timeouts in the supported subset cluster
+The remaining 171 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.
