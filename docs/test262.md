@@ -177,6 +177,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **Addition primitive coercion** — binary `+` now runs `ToPrimitive` before
   BigInt mixing checks, performs string concatenation before mixed-BigInt
   errors, and gives Date default-hint coercion the Date string-order behavior.
+- **Contextual `of` division lexing** — `/` after contextual `of` remains
+  division in expression contexts while raw `of` delimiters in `for...of`
+  heads still allow a following regex literal.
 - **Arrow function early errors** — arrow functions reject duplicate
   parameter names in sloppy and strict mode, and reject `eval`/`arguments`
   parameter names when strict mode applies.

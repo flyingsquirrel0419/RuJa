@@ -4,9 +4,15 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.1%** (up from 88.6%).
-Current supported subset count: **4144 pass / 36 fail / 0 timeout**.
+Supported-subset pass rate: **99.2%** (up from 88.6%).
+Current supported subset count: **4146 pass / 34 fail / 0 timeout**.
 
+- **Contextual `of` division lexing**: `/` after contextual `of` now remains a
+  division operator in expression contexts such as `instance/of/g`, while
+  raw `of` delimiters in `for...of` heads still allow a following regex
+  literal. This closes `language/expressions/division` at **41 pass / 0
+  fail** and raises the supported subset to **4146 pass / 34 fail / 0
+  timeout**.
 - **Addition primitive coercion**: binary `+` now performs `ToPrimitive`
   before BigInt mixing checks, concatenates when either primitive is a string
   so BigInt-to-string concatenation is allowed, and treats Date objects with

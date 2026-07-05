@@ -105,6 +105,12 @@ pub struct Lexer<'a> {
     /// Whether the previous significant token ended an expression (so a `/`
     /// means division rather than a regex literal).
     prev_value_ending: bool,
+    /// Parenthesis depth after the previous significant token.
+    paren_depth: usize,
+    /// Set after `for` (and preserved across `await`) until the opening `(`.
+    pending_for_head: bool,
+    /// Parenthesis depths that correspond to active `for (...)` heads.
+    for_head_depths: Vec<usize>,
     /// Template-literal scanner state.
     /// 0 = normal, 1 = emit TemplateExprStart next,
     /// 3 = read next segment after an interpolation closed.
@@ -130,6 +136,9 @@ impl<'a> Lexer<'a> {
             col: 1,
             saw_newline: true,
             prev_value_ending: false,
+            paren_depth: 0,
+            pending_for_head: false,
+            for_head_depths: Vec::new(),
             template_state: 0,
             template_expr_depth: 0,
             template_stack: Vec::new(),
@@ -1002,6 +1011,15 @@ impl<'a> Lexer<'a> {
             }
         };
 
+        let is_for_head_top_level = self
+            .for_head_depths
+            .last()
+            .is_some_and(|depth| *depth == self.paren_depth);
+        let is_for_of_delimiter = matches!(&kind, TokenKind::Of)
+            && !self.last_ident_had_escape
+            && self.prev_value_ending
+            && is_for_head_top_level;
+
         // Update the regex/division disambiguator for the next token.
         self.prev_value_ending = matches!(
             &kind,
@@ -1019,7 +1037,37 @@ impl<'a> Lexer<'a> {
                 | TokenKind::RBracket
                 | TokenKind::RBrace
                 | TokenKind::Regex(_, _)
-        );
+        ) || (matches!(&kind, TokenKind::Of) && !is_for_of_delimiter);
+
+        match &kind {
+            TokenKind::For => {
+                self.pending_for_head = true;
+            }
+            TokenKind::Await if self.pending_for_head => {}
+            TokenKind::LParen => {
+                self.paren_depth += 1;
+                if self.pending_for_head {
+                    self.for_head_depths.push(self.paren_depth);
+                    self.pending_for_head = false;
+                }
+            }
+            TokenKind::RParen => {
+                if self
+                    .for_head_depths
+                    .last()
+                    .is_some_and(|depth| *depth == self.paren_depth)
+                {
+                    self.for_head_depths.pop();
+                }
+                self.paren_depth = self.paren_depth.saturating_sub(1);
+                self.pending_for_head = false;
+            }
+            _ => {
+                if self.pending_for_head {
+                    self.pending_for_head = false;
+                }
+            }
+        }
         let mut tok = Token::new(kind, line, col);
         tok.preceded_by_newline = preceded_by_newline;
         tok.had_escape = self.last_ident_had_escape;
@@ -1462,6 +1510,34 @@ mod tests {
         assert_eq!(kinds("..."), vec![Spread, Eof]);
         assert_eq!(kinds("++"), vec![Inc, Eof]);
         assert_eq!(kinds("--"), vec![Dec, Eof]);
+    }
+
+    #[test]
+    fn slash_after_contextual_of() {
+        assert_eq!(
+            kinds("instance/of/g"),
+            vec![
+                Ident("instance".into()),
+                Slash,
+                Of,
+                Slash,
+                Ident("g".into()),
+                Eof,
+            ]
+        );
+        assert_eq!(
+            kinds("for (x of /a/) ;"),
+            vec![
+                For,
+                LParen,
+                Ident("x".into()),
+                Of,
+                Regex("a".into(), "".into()),
+                RParen,
+                Semicolon,
+                Eof,
+            ]
+        );
     }
 
     #[test]

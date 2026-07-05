@@ -608,6 +608,14 @@ fn division_not_regex() {
     // Ensure `/` after a value is division, not a regex.
     assert_eq!(run("10 / 4;"), Value::Number(2.5));
     assert_eq!(run("var x = 20; x / 5;"), Value::Number(4.0));
+    assert_eq!(
+        run("var instance = 60; var of = 6; var g = 2; instance/of/g;"),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        run("var of = 4; var g = 2; eval('{[42]}.8/of/g');"),
+        Value::Number(0.1)
+    );
 }
 
 // --- Array.from / Array.of ---
