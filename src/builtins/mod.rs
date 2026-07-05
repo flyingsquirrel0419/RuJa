@@ -93,6 +93,16 @@ pub(crate) fn const_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
+pub(crate) fn native_constructor_prototype(vm: &mut Vm, fallback: Value) -> error::Result<Value> {
+    if let Some(new_target) = vm.current_native_new_target.clone() {
+        let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
+        if matches!(proto, Value::Object(_)) {
+            return Ok(proto);
+        }
+    }
+    Ok(fallback)
+}
+
 pub(crate) fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Arc<str>, Value)]) {
     if let Value::Object(idx) = proto {
         vm.heap.with_obj(idx.0, |obj| {

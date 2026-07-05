@@ -2,6 +2,12 @@ use super::*;
 
 // RegExp
 // =========================================================================
+fn regexp_last_index_prop(value: Value) -> PropertyDescriptor {
+    let mut desc = data_prop(value);
+    desc.configurable = false;
+    desc
+}
+
 pub(crate) fn regexp_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -35,6 +41,7 @@ pub(crate) fn regexp_constructor(
             _ => vm.object_proto.clone(),
         }
     };
+    let regex_proto_val = native_constructor_prototype(vm, regex_proto_val)?;
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(regex_proto_val)),
@@ -66,7 +73,7 @@ pub(crate) fn regexp_constructor(
     );
     props.insert(
         PropertyKey::from("lastIndex"),
-        data_prop(Value::Number(0.0)),
+        regexp_last_index_prop(Value::Number(0.0)),
     );
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
@@ -81,16 +88,10 @@ pub(crate) fn regexp_test(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let source = read_regexp_source(vm, &this)?;
-    let input = match args.first() {
-        Some(Value::String(s)) => s.to_string(),
-        Some(v) => vm.to_string(v)?.to_string(),
-        None => String::new(),
-    };
-    let flags = read_regexp_flags(vm, &this).unwrap_or_default();
-    let re = compile_regex(&source, &flags)
-        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-    Ok(Value::Bool(re.is_match(&input)))
+    Ok(Value::Bool(!matches!(
+        regexp_exec(vm, args, this)?,
+        Value::Null
+    )))
 }
 
 pub(crate) fn regexp_exec(
@@ -136,7 +137,7 @@ pub(crate) fn regexp_exec(
                 if let HeapObj::Object(obj) = o {
                     obj.props.lock().insert(
                         PropertyKey::from("lastIndex"),
-                        data_prop(Value::Number(0.0)),
+                        regexp_last_index_prop(Value::Number(0.0)),
                     );
                 }
             });
@@ -168,7 +169,7 @@ pub(crate) fn regexp_exec(
                         if let HeapObj::Object(obj) = o {
                             obj.props.lock().insert(
                                 PropertyKey::from("lastIndex"),
-                                data_prop(Value::Number(match_end as f64)),
+                                regexp_last_index_prop(Value::Number(match_end as f64)),
                             );
                         }
                     });
@@ -184,7 +185,7 @@ pub(crate) fn regexp_exec(
                         if let HeapObj::Object(obj) = o {
                             obj.props.lock().insert(
                                 PropertyKey::from("lastIndex"),
-                                data_prop(Value::Number(0.0)),
+                                regexp_last_index_prop(Value::Number(0.0)),
                             );
                         }
                     });

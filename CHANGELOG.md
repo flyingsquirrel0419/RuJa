@@ -4,9 +4,19 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.5%** (up from 88.6%).
-Current supported subset count: **4158 pass / 22 fail / 0 timeout**.
+Supported-subset pass rate: **99.6%** (up from 88.6%).
+Current supported subset count: **4164 pass / 16 fail / 0 timeout**.
 
+- **Array, RegExp, and String subclass exotic construction**: native
+  constructors now share `new.target.prototype` fallback handling for
+  OrdinaryCreateFromConstructor-style allocation. Array subclass construction
+  now returns Array exotic objects with the subclass prototype, RegExp
+  subclass construction now uses the subclass prototype and preserves
+  non-configurable `lastIndex` descriptors across `test`/`exec`, and boxed
+  String objects now materialize their own non-writable, non-enumerable,
+  non-configurable `length` descriptor. This closes Array/RegExp subclass
+  checks plus String `length`, raising the supported subset to **4164 pass /
+  16 fail / 0 timeout**.
 - **Dynamic Function subclass construction**: native constructors now preserve
   the active `new.target` for native constructor bodies, and the dynamic
   `Function` constructor now creates function objects with the

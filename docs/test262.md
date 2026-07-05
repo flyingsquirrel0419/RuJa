@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2-24.3% of all matrix files; 49.9-50.0% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.5% (4158 pass / 22 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.6% (4164 pass / 16 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.5%).** It reflects the portion of the spec
+supported-subset rate (99.6%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -128,7 +128,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 99.5%:
+~56% to 99.6%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -152,6 +152,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `new.target.prototype` as their internal prototype plus own `length` and
   `name` descriptors, so Function subclass `instanceof` and descriptor checks
   pass.
+- **Array, RegExp, and String subclass exotic construction** — Array and
+  RegExp constructors now use `new.target.prototype` when allocating their
+  exotic objects, RegExp `lastIndex` stays non-configurable across
+  `test`/`exec`, and boxed String instances expose their own
+  non-configurable `length` descriptor.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending

@@ -834,8 +834,23 @@ pub(crate) fn string_constructor(
             None => Value::String(Arc::from("")),
             Some(v) => Value::String(vm.to_string(v)?),
         };
-        vm.set_primitive(this.as_ref().unwrap(), prim);
-        return Ok(this.unwrap());
+        let length = match &prim {
+            Value::String(s) => crate::value::utf16_len(s) as f64,
+            _ => 0.0,
+        };
+        let this_obj = this.unwrap();
+        vm.set_primitive(&this_obj, prim);
+        if let Value::Object(idx) = &this_obj {
+            vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(obj) = o {
+                    obj.props.lock().insert(
+                        PropertyKey::from("length"),
+                        const_prop(Value::Number(length)),
+                    );
+                }
+            });
+        }
+        return Ok(this_obj);
     }
     // `String()` with no argument yields "" (per spec), distinct from
     // `String(undefined)` which yields "undefined".

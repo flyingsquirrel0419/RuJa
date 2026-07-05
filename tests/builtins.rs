@@ -86,6 +86,70 @@ fn string_methods() {
 }
 
 #[test]
+fn array_subclass_instances_use_new_target_prototype() {
+    assert_eq!(
+        run(r#"
+            class Subclass extends Array {}
+            var arr = new Subclass(1, 2);
+            [
+              arr instanceof Subclass,
+              arr instanceof Array,
+              Object.getPrototypeOf(arr) === Subclass.prototype,
+              arr.length,
+              arr.join(",")
+            ].join(":");
+            "#),
+        Value::String(Arc::from("true:true:true:2:1,2"))
+    );
+}
+
+#[test]
+fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
+    assert_eq!(
+        run(r#"
+            class Subclass extends RegExp {}
+            var re = new Subclass("39?", "g");
+            var before = Object.getOwnPropertyDescriptor(re, "lastIndex");
+            re.test("39");
+            var after = Object.getOwnPropertyDescriptor(re, "lastIndex");
+            [
+              re instanceof Subclass,
+              re instanceof RegExp,
+              Object.getPrototypeOf(re) === Subclass.prototype,
+              before.value,
+              before.writable,
+              before.enumerable,
+              before.configurable,
+              after.value,
+              after.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,true,true,0,true,false,false,2,false"))
+    );
+}
+
+#[test]
+fn string_subclass_instances_have_own_length_descriptor() {
+    assert_eq!(
+        run(r#"
+            class Subclass extends String {}
+            var str = new Subclass("test262");
+            var desc = Object.getOwnPropertyDescriptor(str, "length");
+            [
+              str instanceof Subclass,
+              str instanceof String,
+              str.length,
+              desc.value,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,true,7,7,false,false,false"))
+    );
+}
+
+#[test]
 fn string_split_join() {
     assert_eq!(
         run("'a,b,c'.split(',').join('-');"),

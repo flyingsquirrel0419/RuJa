@@ -1255,7 +1255,9 @@ pub(crate) fn array_constructor(
     } else {
         args.to_vec()
     };
-    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
+    let default_proto = vm.array_proto.clone();
+    let proto = native_constructor_prototype(vm, default_proto)?;
+    let arr = HeapObj::Array(ArrayData::new(items, Some(proto)));
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
