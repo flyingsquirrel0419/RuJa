@@ -768,6 +768,51 @@ fn builtin_array_still_iterable() {
 }
 
 #[test]
+fn for_of_closes_iterator_on_abrupt_completion() {
+    assert_eq!(
+        run(r#"
+            var closed = 0;
+            var iter = {
+                [Symbol.iterator]() { return this; },
+                next() { return { value: 1, done: false }; },
+                return() { closed++; return { done: true }; }
+            };
+            (function(){ for (var v of iter) return "done"; })();
+            closed;
+        "#),
+        Value::Number(1.0)
+    );
+
+    let err = common::run_err(
+        r#"
+        var error = new Error("close");
+        var iter = {
+            [Symbol.iterator]() { return this; },
+            next() { return { value: 1, done: false }; },
+            return() { throw error; }
+        };
+        (function(){ for (var v of iter) return 0; })();
+    "#,
+    );
+    assert!(err.contains("close") || err.contains("Error"), "got {err}");
+
+    assert_eq!(
+        run(r#"
+            var closed = 0;
+            var i = 0;
+            var iter = {
+                [Symbol.iterator]() { return this; },
+                next() { return ++i > 2 ? { done: true } : { value: i, done: false }; },
+                return() { closed++; return { done: true }; }
+            };
+            for (var v of iter) continue;
+            closed;
+        "#),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn array_for_of_observes_live_length_changes() {
     assert_eq!(
         run("var a=[0,1]; var out=''; for (var v of a) { out += v; a.pop(); } out;"),

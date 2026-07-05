@@ -883,6 +883,13 @@ impl Compiler {
                 let it_name_idx = self.intern("#iter");
                 self.chunk
                     .emit(Op::DeclareEnv(it_name_idx), self.current_line);
+                let done_name_idx = self.intern("#iterDone");
+                self.chunk.emit(Op::False, self.current_line);
+                self.chunk
+                    .emit(Op::DeclareEnv(done_name_idx), self.current_line);
+                let finally_guard_ip = self.chunk.code.len();
+                self.chunk.emit(Op::PushFinally(0), self.current_line);
+                self.finally_stack.push(Vec::new());
                 let loop_start = self.chunk.code.len();
                 self.begin_loop(loop_start);
                 self.chunk.emit(Op::LoadEnv(it_name_idx), self.current_line);
@@ -916,6 +923,23 @@ impl Compiler {
                 self.end_loop(end);
                 // When done, the stale value is still on the stack; drop it.
                 self.chunk.emit(Op::Pop, self.current_line);
+                let finally_start = self.chunk.code.len();
+                if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
+                    *target = finally_start;
+                }
+                self.patch_diverts(finally_start);
+                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.finally_stack.pop();
+                self.chunk.emit(
+                    Op::IteratorCloseIfAbrupt {
+                        iter: it_name_idx,
+                        done: done_name_idx,
+                        inner_continue: Some(loop_start),
+                        ignore_close_errors: false,
+                    },
+                    self.current_line,
+                );
+                self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
                 self.pop_scope();
             }
             StmtNode::ForIn { left, right, body } => self.compile_for_in(left, right, body)?,
@@ -2110,6 +2134,8 @@ impl Compiler {
             Op::IteratorCloseIfAbrupt {
                 iter: iter_idx,
                 done: done_idx,
+                inner_continue: None,
+                ignore_close_errors: true,
             },
             self.current_line,
         );

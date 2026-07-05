@@ -5,8 +5,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.7%** (up from 88.6%).
-Current supported subset count: **4166 pass / 14 fail / 0 timeout**.
+Current supported subset count: **4168 pass / 12 fail / 0 timeout**.
 
+- **For-of IteratorClose on abrupt completion**: `for...of` now closes
+  unfinished iterators when loop bodies complete abruptly via `return`,
+  `break`, or throw, while preserving same-loop `continue` without closing the
+  iterator. Iterator `return()` errors now override the pending for-of
+  completion where required, while destructuring assignment keeps preserving
+  the original throw. This closes the derived-constructor return-override
+  for-of checks, raising the supported subset to **4168 pass / 12 fail / 0
+  timeout**.
 - **GeneratorFunction constructor and prototype chain**: generator functions now
   inherit from `%GeneratorFunction.prototype%`, whose `constructor` exposes the
   non-global `GeneratorFunction` constructor. Dynamic generator functions parse

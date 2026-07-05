@@ -2690,11 +2690,24 @@ impl Vm {
                     let val = Value::Object(self.alloc(arr)?);
                     self.stack.push(val);
                 }
-                Op::IteratorCloseIfAbrupt { iter, done } => {
-                    let should_close = {
+                Op::IteratorCloseIfAbrupt {
+                    iter,
+                    done,
+                    inner_continue,
+                    ignore_close_errors,
+                } => {
+                    let (completion_tag, completion_val) = {
                         let frame = self.current_frame()?;
-                        frame.finally_completion_tag.load(Ordering::Relaxed) == 4
+                        (
+                            frame.finally_completion_tag.load(Ordering::Relaxed),
+                            frame.finally_completion_val.lock().clone(),
+                        )
                     };
+                    let stays_in_loop = match (completion_tag, inner_continue, completion_val) {
+                        (3, Some(target), Value::Number(n)) => n as usize == target,
+                        _ => false,
+                    };
+                    let should_close = completion_tag != 0 && !stays_in_loop;
                     if should_close {
                         let (iter_name, done_name) = {
                             let frame = self.current_frame()?;
@@ -2718,7 +2731,10 @@ impl Vm {
                             if let Ok(Some(iterator)) =
                                 crate::environment::get_checked(&self.heap, env, &iter_name)
                             {
-                                let _ = self.iterator_close(&iterator);
+                                let result = self.iterator_close(&iterator);
+                                if !ignore_close_errors {
+                                    result?;
+                                }
                             }
                         }
                     }

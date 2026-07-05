@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2-24.3% of all matrix files; 49.9-50.0% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.7% (4166 pass / 14 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.7% (4168 pass / 12 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -163,6 +163,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   function `prototype` objects inherit from the generator prototype without an
   own `constructor`, and generator calls allocate iterators from the callee's
   `prototype`.
+- **For-of IteratorClose on abrupt completion** — `for...of` closes unfinished
+  iterators when a loop body exits abruptly via `return`, `break`, or throw,
+  while same-loop `continue` keeps the iterator open. Iterator `return()`
+  errors override the pending for-of completion where required, closing the
+  derived-constructor return-override for-of checks.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending
@@ -584,6 +589,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 
 ## Why the rate is not higher
 
-The remaining 38 failures in the supported subset cluster around class
-behavior, super semantics, and a few expression edge cases. These are
-tracked in `HANDOFF.md` and will be addressed in subsequent rounds.
+The remaining 12 failures in the supported subset cluster around class
+private-field/non-extensible behavior, built-in subclassing gaps, and
+cross-realm expression edge cases. These are tracked in `HANDOFF.md` and will
+be addressed in subsequent rounds.

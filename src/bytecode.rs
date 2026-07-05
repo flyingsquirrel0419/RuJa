@@ -246,14 +246,15 @@ pub enum Op {
     /// into a fresh array. Used by rest elements in array destructuring
     /// patterns: `[a, ...rest] = iterable`. Pops the iterator, pushes the array.
     IteratorCollectRest,
-    /// In a finally body for array assignment destructuring, close the iterator
-    /// only when the guarded element assignment/default evaluation threw and
-    /// that element's IteratorStep had not completed the iterator. The close
-    /// operation's own errors are intentionally ignored so the original throw
-    /// completion is preserved.
+    /// In a synthetic finally cleanup, close the iterator when the guarded
+    /// region completed abruptly and that iterator is not done. `inner_continue`
+    /// identifies a continue target that stays inside the same loop and
+    /// therefore must not close the iterator.
     IteratorCloseIfAbrupt {
         iter: usize,
         done: usize,
+        inner_continue: Option<usize>,
+        ignore_close_errors: bool,
     },
     /// Build a tagged-template object: pop or look up the cached template
     /// object for this source site. Operands are indices into the chunk's
