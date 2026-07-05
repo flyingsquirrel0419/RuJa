@@ -458,6 +458,14 @@ impl Vm {
         let var_env = crate::environment::function_scope_root(&self.heap, caller_env);
         if !is_strict {
             for name in &var_names {
+                if crate::environment::has_lexical_declaration_between(
+                    &self.heap, caller_env, var_env, name,
+                ) {
+                    return Err(Error::syntax(format!(
+                        "Identifier '{}' has already been declared",
+                        name
+                    )));
+                }
                 crate::environment::declare_var(&self.heap, var_env, name, Value::Undefined);
             }
         }
@@ -488,7 +496,9 @@ impl Vm {
         for (name, value) in leaked {
             // Do not clobber an existing lexical (let/const) binding in the
             // caller: a same-named eval `var` is a no-op there per spec.
-            if crate::environment::has_lexical_binding(&self.heap, caller_env, &name) {
+            if crate::environment::has_lexical_declaration_between(
+                &self.heap, caller_env, var_env, &name,
+            ) {
                 continue;
             }
             crate::environment::declare_var(&self.heap, var_env, &name, value.clone());

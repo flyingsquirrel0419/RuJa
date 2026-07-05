@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **94.6%** (up from 88.6%).
-Current supported subset count: **3954 pass / 224 fail / 2 timeout**.
+Supported-subset pass rate: **94.8%** (up from 88.6%).
+Current supported subset count: **3960 pass / 218 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -193,6 +193,12 @@ Current supported subset count: **3954 pass / 224 fail / 2 timeout**.
   no cooked characters. This fixes computed object accessor names and reduces
   `language/expressions/object` to **276 pass / 9 fail**, raising the
   supported subset to **3954 pass / 224 fail / 2 timeout**.
+- **Direct eval lexical declaration conflicts**: sloppy direct eval now rejects
+  `var`/function declarations that would hoist over an existing caller
+  `let`/`const` binding. This fixes method/accessor body lexical environment
+  conflict cases, reduces `language/expressions/object` to
+  **279 pass / 6 fail**, and raises the supported subset to
+  **3960 pass / 218 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

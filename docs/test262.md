@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 94.6% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 94.8% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (94.6%).** It reflects the portion of the spec
+supported-subset rate (94.8%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 94.6%:
+~56% to 94.8%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -167,6 +167,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 - **String literal line continuations** — a backslash followed by a
   LineTerminatorSequence contributes no cooked characters, including when the
   string is used as a computed object accessor name.
+- **Direct eval lexical declaration conflicts** — sloppy direct eval rejects
+  `var`/function declarations that would hoist over a caller `let`/`const`
+  binding, including object method/accessor bodies.
 - **Object literal method semantics** — concise methods/accessors are
   non-constructors where required, ordinary concise methods lack an own
   `prototype`, and `super` property assignment uses the original receiver.
@@ -292,10 +295,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   LineTerminatorSequence contributes no cooked characters inside string
   literals, including computed object accessor names. This reduces
   `language/expressions/object` to **276 pass / 9 fail**.
+- **Direct eval lexical declaration conflicts** — sloppy direct eval rejects
+  `var`/function declarations that conflict with caller `let`/`const`
+  bindings before leaking hoisted declarations to the caller variable
+  environment. This reduces `language/expressions/object` to
+  **279 pass / 6 fail** and raises the supported subset to
+  **3960 pass / 218 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 224 failures plus 2 timeouts in the supported subset cluster
+The remaining 218 failures plus 2 timeouts in the supported subset cluster
 around object literal/method-definition semantics, function/class behavior,
 super semantics, and expression/operator edge cases. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.

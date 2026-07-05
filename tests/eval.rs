@@ -1,7 +1,7 @@
 //! `eval` (indirect + direct).
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -136,6 +136,49 @@ fn eval_var_leaks_to_caller() {
         })();
     "#;
     assert_eq!(run(src), ruja::Value::Number(7.0));
+}
+
+#[test]
+fn direct_eval_var_conflicts_with_caller_lexical_declarations() {
+    let cases = [
+        r#"
+            (function() {
+                let x;
+                eval("var x;");
+            })();
+        "#,
+        r#"
+            ({
+                m() {
+                    let x;
+                    eval("var x;");
+                }
+            }).m();
+        "#,
+        r#"
+            ({
+                get a() {
+                    let x;
+                    eval("var x;");
+                }
+            }).a;
+        "#,
+        r#"
+            ({
+                set a(_) {
+                    let x;
+                    eval("var x;");
+                }
+            }).a = null;
+        "#,
+    ];
+    for src in cases {
+        let err = run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError, got {err}"
+        );
+    }
 }
 
 #[test]
