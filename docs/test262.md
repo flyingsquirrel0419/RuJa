@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.3% of all matrix files; 47.9% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 97.2% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.3% of all matrix files; 48.0% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 97.3% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (97.2%).** It reflects the portion of the spec
+supported-subset rate (97.3%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -127,7 +127,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 97.2%:
+~56% to 97.3%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -397,10 +397,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/expressions/class` at **48 pass / 0 fail**, improves
   `language/statements/class/syntax` to **9 pass / 4 fail**, and raises the
   supported subset to **4061 pass / 117 fail / 2 timeout**.
+- **Class declaration early errors** — script and block statement lists now
+  reject duplicate lexical class declarations and lexical/`var` name clashes
+  during parsing, and escaped `static` is no longer accepted as the class
+  `static` modifier. This improves `language/statements/class/syntax` to
+  **12 pass / 1 fail** and raises the supported subset to
+  **4064 pass / 114 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 117 failures plus 2 timeouts in the supported subset cluster
+The remaining 114 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

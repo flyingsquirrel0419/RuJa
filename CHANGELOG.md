@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **97.2%** (up from 88.6%).
-Current supported subset count: **4061 pass / 117 fail / 2 timeout**.
+Supported-subset pass rate: **97.3%** (up from 88.6%).
+Current supported subset count: **4064 pass / 114 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -295,6 +295,12 @@ Current supported subset count: **4061 pass / 117 fail / 2 timeout**.
   `language/expressions/class` at **48 pass / 0 fail**, improves
   `language/statements/class/syntax` to **9 pass / 4 fail**, and raises the
   supported subset to **4061 pass / 117 fail / 2 timeout**.
+- **Class declaration early errors**: script and block statement lists now
+  reject duplicate lexical class declarations and lexical/`var` name clashes
+  during parsing, and escaped `static` is no longer accepted as the class
+  `static` modifier. This improves `language/statements/class/syntax` to
+  **12 pass / 1 fail** and raises the supported subset to
+  **4064 pass / 114 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

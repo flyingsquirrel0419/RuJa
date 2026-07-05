@@ -418,6 +418,7 @@ impl Parser {
         while !self.check(&TokenKind::Eof) {
             body.push(self.parse_stmt()?);
         }
+        check_statement_list_declaration_early_errors(&body, self.is_strict_context)?;
         Ok(Program {
             body,
             is_strict: self.is_strict_context,
@@ -684,6 +685,7 @@ impl Parser {
             Ok(())
         })?;
         self.expect(&TokenKind::RBrace, "}")?;
+        check_statement_list_declaration_early_errors(&body, self.is_strict_context)?;
         Ok(self.stmt(StmtNode::Block(body)))
     }
 
@@ -3581,6 +3583,7 @@ impl Parser {
             }
             // static { ... } initialization block
             if self.check(&TokenKind::Static)
+                && !self.peek_at_tok(0).had_escape
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
                 self.advance(); // static
@@ -3588,7 +3591,10 @@ impl Parser {
                 static_blocks.push(block);
                 continue;
             }
-            let is_static = self.eat(&TokenKind::Static);
+            let is_static = self.check(&TokenKind::Static) && !self.peek_at_tok(0).had_escape && {
+                self.advance();
+                true
+            };
             // Private field declaration: #name = init  or  #name;
             // Private method: #name(params) { body }  (also static #name() {})
             if let TokenKind::PrivateName(name) = self.peek().clone() {
@@ -3979,6 +3985,26 @@ fn collect_decl_names(
     }
 }
 
+fn check_statement_list_declaration_early_errors(
+    body: &[Stmt],
+    is_strict: bool,
+) -> error::Result<()> {
+    let mut lexical_names = Vec::new();
+    let mut var_names = Vec::new();
+    for stmt in body {
+        collect_decl_names(&stmt.node, &mut lexical_names, &mut var_names, is_strict);
+    }
+    for name in &lexical_names {
+        if lexical_names.iter().filter(|n| *n == name).count() > 1 || var_names.contains(name) {
+            return Err(error::Error::syntax(format!(
+                "Identifier '{}' has already been declared",
+                name
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4024,6 +4050,23 @@ mod tests {
 
         assert!(Parser::parse("function f() { let await; }").is_ok());
         assert!(Parser::parse("l\\u0065t\na;\nvar a;").is_ok());
+    }
+
+    #[test]
+    fn parse_statement_list_declaration_early_errors() {
+        for src in [
+            "class A {} class A {}",
+            "{ class A {} class A {} }",
+            "{ let A; class A {} }",
+            "{ class A {} var A; }",
+            "class A {} var A;",
+            "class C { st\\u0061tic m() {} }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        assert!(Parser::parse("{ class A {} { class A {} } }").is_ok());
+        assert!(Parser::parse("class C { st\\u0061tic() {} }").is_ok());
     }
 
     #[test]
