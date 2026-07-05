@@ -117,6 +117,19 @@ fn arrow_uses_lexical_arguments_binding() {
 }
 
 #[test]
+fn arrow_body_uses_lexical_super_property_binding() {
+    assert_eq!(
+        run("var A={x:1}; var B={}; Object.setPrototypeOf(B,A); var obj={m(){return (()=>{return super.x;})();}}; Object.setPrototypeOf(obj,B); obj.m();"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var A={x:1}; var B={}; Object.setPrototypeOf(B,A); var obj={m(){return (()=>{return super['x'];})();}}; Object.setPrototypeOf(obj,B); obj.m();"),
+        Value::Number(1.0)
+    );
+    assert!(run_err("(()=>{ return super.x; })();").contains("SyntaxError"));
+}
+
+#[test]
 fn array_destructure() {
     assert_eq!(run("let [a,b]=[1,2]; a+b;"), Value::Number(3.0));
 }

@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.8% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (95.8%).** It reflects the portion of the spec
+supported-subset rate (95.9%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 95.8%:
+~56% to 95.9%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -345,10 +345,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   spread operands as `ReferenceError`. This raises
   `language/expressions/super` to **30 pass / 6 fail** and the supported
   subset to **4003 pass / 175 fail / 2 timeout**.
+- **Lexical arrow `super` property parsing** — block-bodied arrow functions
+  now preserve the enclosing method's `super` parse context instead of
+  resetting it like ordinary function bodies. This allows `super.x` and
+  `super["x"]` inside arrows nested in object methods while still rejecting
+  `super` in arrows without an enclosing super binding. This raises
+  `language/expressions/super` to **32 pass / 4 fail** and the supported
+  subset to **4005 pass / 173 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 175 failures plus 2 timeouts in the supported subset cluster
+The remaining 173 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.

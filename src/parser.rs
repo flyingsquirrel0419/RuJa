@@ -869,6 +869,33 @@ impl Parser {
         })
     }
 
+    fn parse_arrow_block_body(&mut self, async_body: bool) -> error::Result<Vec<Stmt>> {
+        self.with_function_context(false, async_body, |p| {
+            p.parse_fn_body_inner_inherited_super()
+        })
+    }
+
+    fn parse_fn_body_inner_inherited_super(&mut self) -> error::Result<Vec<Stmt>> {
+        self.expect(&TokenKind::LBrace, "{")?;
+        let body_is_strict = self.peek_use_strict_directive();
+        let saved_strict = self.is_strict_context;
+        if body_is_strict {
+            self.is_strict_context = true;
+        }
+        self.function_depth += 1;
+        let mut body = Vec::new();
+        self.with_lexical_declaration_context(true, |p| {
+            while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                body.push(p.parse_stmt()?);
+            }
+            Ok(())
+        })?;
+        self.expect(&TokenKind::RBrace, "}")?;
+        self.function_depth -= 1;
+        self.is_strict_context = saved_strict;
+        Ok(body)
+    }
+
     fn parse_fn_body_inner(
         &mut self,
         super_allowed: bool,
@@ -3179,7 +3206,7 @@ impl Parser {
         let has_destructuring_params = !dstr_decls.is_empty();
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
-            let mut body = self.parse_fn_body(false, false, false, is_async)?;
+            let mut body = self.parse_arrow_block_body(is_async)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
             self.validate_arrow_params(
                 &params,

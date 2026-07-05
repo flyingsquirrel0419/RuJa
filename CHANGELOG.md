@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **95.8%** (up from 88.6%).
-Current supported subset count: **4003 pass / 175 fail / 2 timeout**.
+Supported-subset pass rate: **95.9%** (up from 88.6%).
+Current supported subset count: **4005 pass / 173 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -244,6 +244,13 @@ Current supported subset count: **4003 pass / 175 fail / 2 timeout**.
   spread operands as `ReferenceError`. This raises
   `language/expressions/super` to **30 pass / 6 fail** and the supported
   subset to **4003 pass / 175 fail / 2 timeout**.
+- **Lexical arrow `super` property parsing**: block-bodied arrow functions
+  now preserve the enclosing method's `super` parse context instead of
+  resetting it like ordinary function bodies. This allows `super.x` and
+  `super["x"]` inside arrows nested in object methods while still rejecting
+  `super` in arrows without an enclosing super binding. This raises
+  `language/expressions/super` to **32 pass / 4 fail** and the supported
+  subset to **4005 pass / 173 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for
