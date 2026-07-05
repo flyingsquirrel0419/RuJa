@@ -1025,6 +1025,7 @@ impl Compiler {
                     is_arrow: f.is_arrow,
                     is_async: f.is_async,
                     is_generator: f.is_generator,
+                    has_parameter_expressions: Self::has_parameter_expressions(f),
                     length: Self::fn_length(f),
                     is_method: f.is_method,
                     is_derived: false,
@@ -1465,6 +1466,38 @@ impl Compiler {
         f.params.len()
     }
 
+    pub fn has_parameter_expressions(f: &FunctionExpr) -> bool {
+        f.param_defaults.iter().any(Option::is_some)
+            || f.rest_param.is_some()
+            || !f.param_decls.is_empty()
+            || Self::parameter_prelude_len(f) > 0
+    }
+
+    fn parameter_prelude_len(f: &FunctionExpr) -> usize {
+        f.body
+            .iter()
+            .take_while(|stmt| {
+                if stmt.line != 0 {
+                    return false;
+                }
+                match &stmt.node {
+                    StmtNode::Destructure {
+                        kind: VarKind::Let,
+                        init: Some(init),
+                        ..
+                    } => match init {
+                        Expr::Ident(name) => {
+                            f.params.iter().any(|param| param.as_ref() == name.as_ref())
+                                || f.rest_param.as_deref() == Some(name.as_ref())
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            })
+            .count()
+    }
+
     pub fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
         let saved_chunk = std::mem::take(&mut self.chunk);
         let saved_names = std::mem::take(&mut self.name_map);
@@ -1545,8 +1578,27 @@ impl Compiler {
                 self.chunk.emit(Op::InitLet(name_idx), self.current_line);
             }
         }
+        let parameter_prelude_len = Self::parameter_prelude_len(f);
+        let (parameter_prelude, body_stmts) = f.body.split_at(parameter_prelude_len);
+        for stmt in parameter_prelude {
+            self.compile_stmt(stmt)?;
+        }
+        if Self::has_parameter_expressions(f) {
+            let param_names: std::collections::HashSet<&str> =
+                f.params.iter().map(|p| p.as_ref()).collect();
+            let lex = Self::collect_lexical_names(body_stmts);
+            for (name, _) in &lex {
+                if param_names.contains(name.as_ref()) {
+                    return Err(error::Error::syntax(format!(
+                        "Identifier '{}' has already been declared",
+                        name
+                    )));
+                }
+            }
+            self.chunk.emit(Op::PushFunctionScope, self.current_line);
+        }
         // Hoist `var` declarations within the function body as undefined.
-        for stmt in &f.body {
+        for stmt in body_stmts {
             let mut var_names = Vec::new();
             collect_var_names_recursive(&stmt.node, &mut var_names);
             for name in &var_names {
@@ -1554,7 +1606,7 @@ impl Compiler {
                 // hoisting below (declaring them as Var here would make
                 // resolve() find them and use StoreLocal instead of DeclareVar,
                 // causing a storage mismatch).
-                let is_fn_decl = f.body.iter().any(|s| {
+                let is_fn_decl = body_stmts.iter().any(|s| {
                     matches!(&s.node, StmtNode::FunctionDecl(fd) if fd.name.as_deref() == Some(&**name))
                 });
                 if is_fn_decl {
@@ -1567,7 +1619,7 @@ impl Compiler {
         }
         // Hoist function declarations: compile them first so they're available
         // before any statement in the body runs (matches top-level behavior).
-        for stmt in &f.body {
+        for stmt in body_stmts {
             if let StmtNode::FunctionDecl(_) = &stmt.node {
                 self.compile_stmt(stmt)?;
             }
@@ -1575,10 +1627,10 @@ impl Compiler {
         // Hoist lexical (`let`/`const`) declarations into the TDZ at function
         // entry, so accessing them before the declaration throws ReferenceError.
         {
-            let lex = Self::collect_lexical_names(&f.body);
+            let lex = Self::collect_lexical_names(body_stmts);
             self.emit_lexical_hoist(&lex)?;
         }
-        for stmt in &f.body {
+        for stmt in body_stmts {
             if matches!(&stmt.node, StmtNode::FunctionDecl(_)) {
                 continue;
             }
@@ -3039,6 +3091,7 @@ impl Compiler {
                     is_arrow: f.is_arrow,
                     is_async: f.is_async,
                     is_generator: f.is_generator,
+                    has_parameter_expressions: Self::has_parameter_expressions(f),
                     length: Self::fn_length(f),
                     is_method: f.is_method,
                     is_derived: false,
@@ -3183,6 +3236,7 @@ impl Compiler {
                     is_arrow: false,
                     is_async: false,
                     is_generator: false,
+                    has_parameter_expressions: Self::has_parameter_expressions(&ctor_fn),
                     length: Self::fn_length(&ctor_fn),
                     is_method: false,
                     is_derived: cls.superclass.is_some(),
@@ -3282,6 +3336,7 @@ impl Compiler {
                         is_arrow: false,
                         is_async: false,
                         is_generator: false,
+                        has_parameter_expressions: Self::has_parameter_expressions(&m_fn),
                         length: Self::fn_length(&m_fn),
                         is_method: true,
                         is_derived: false,
@@ -3401,6 +3456,7 @@ impl Compiler {
                         is_arrow: false,
                         is_async: false,
                         is_generator: false,
+                        has_parameter_expressions: false,
                         length: 0,
                         is_method: false,
                         is_derived: false,

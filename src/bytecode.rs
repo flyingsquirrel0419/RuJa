@@ -278,6 +278,12 @@ pub enum Op {
 
     // Environment
     PushScope,
+    /// Push a child environment record that is itself a function-scope root.
+    /// Used for sloppy functions with parameter expressions: parameter
+    /// initializers run in the outer function environment, then body `var`
+    /// hoists go into this body environment so they do not rewrite closures
+    /// already created by parameter initializers.
+    PushFunctionScope,
     PopScope,
     /// `with` statement: pop an object from the stack and push a new
     /// environment record whose `with_object` is it, as a child of the current

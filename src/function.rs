@@ -17,6 +17,9 @@ pub struct FunctionDef {
     pub is_arrow: bool,
     pub is_async: bool,
     pub is_generator: bool,
+    /// Whether the formal parameter list has defaults/rest/destructuring
+    /// semantics that require a distinct body variable environment.
+    pub has_parameter_expressions: bool,
     /// ES function `length`: number of params before the first default or
     /// the rest parameter.
     pub length: usize,

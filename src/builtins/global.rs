@@ -291,6 +291,7 @@ pub(crate) fn function_constructor(
         is_arrow: false,
         is_async: false,
         is_generator: false,
+        has_parameter_expressions: crate::compiler::Compiler::has_parameter_expressions(&f),
         length: crate::compiler::Compiler::fn_length(&f),
         is_method: false,
         is_derived: false,

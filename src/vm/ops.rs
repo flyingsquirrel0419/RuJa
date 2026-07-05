@@ -939,6 +939,11 @@ impl Vm {
                     let new_env = env::new_env(&self.heap, Some(cur_env), false)?;
                     self.current_frame_mut()?.env = new_env;
                 }
+                Op::PushFunctionScope => {
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let new_env = env::new_env(&self.heap, Some(cur_env), true)?;
+                    self.current_frame_mut()?.env = new_env;
+                }
                 Op::PopScope => {
                     let parent = self.frames.last().and_then(|f| {
                         self.heap.with_obj(f.env.0, |o| {

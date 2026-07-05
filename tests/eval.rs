@@ -182,6 +182,40 @@ fn direct_eval_var_conflicts_with_caller_lexical_declarations() {
 }
 
 #[test]
+fn method_parameter_defaults_use_separate_body_var_environment() {
+    let src = r#"
+        var x = 'outside';
+        var probeParams, probeBody;
+        ({
+            m(_ = probeParams = function() { return x; }) {
+                var x = 'inside';
+                probeBody = function() { return x; };
+            }
+        }.m());
+        probeParams() + ':' + probeBody();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("outside:inside")));
+}
+
+#[test]
+fn eval_var_in_method_parameters_is_visible_to_parameter_and_body_closures() {
+    let src = r#"
+        var x = 'outside';
+        var probe1, probe2, probeBody;
+        ({
+            m(
+                _ = (eval('var x = "inside";'), probe1 = function() { return x; }),
+                __ = probe2 = function() { return x; }
+            ) {
+                probeBody = function() { return x; };
+            }
+        }.m());
+        probe1() + ':' + probe2() + ':' + probeBody();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("inside:inside:inside")));
+}
+
+#[test]
 fn eval_let_visible_inside_eval() {
     let src = r#"
         eval("let z = 9; z + 1;");

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **94.8%** (up from 88.6%).
-Current supported subset count: **3960 pass / 218 fail / 2 timeout**.
+Supported-subset pass rate: **95.2%** (up from 88.6%).
+Current supported subset count: **3979 pass / 199 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -199,6 +199,15 @@ Current supported subset count: **3960 pass / 218 fail / 2 timeout**.
   conflict cases, reduces `language/expressions/object` to
   **279 pass / 6 fail**, and raises the supported subset to
   **3960 pass / 218 fail / 2 timeout**.
+- **Object method parameter/body environments**: functions with parameter
+  expressions now evaluate defaults and synthetic destructuring preludes before
+  pushing a separate body variable environment. Parameter closures no longer
+  see later body `var` declarations, while direct eval `var`s created during
+  parameter evaluation remain visible to both parameter and body closures.
+  Parser parameter scratch state is also scoped per nested function/method, so
+  nested function expressions in defaults no longer steal outer defaults. This
+  brings `language/expressions/object` to **285 pass / 0 fail** and raises the
+  supported subset to **3979 pass / 199 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

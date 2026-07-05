@@ -76,6 +76,13 @@ pub struct Parser {
     super_call_depth: usize,
 }
 
+type ParsedParams = (
+    Vec<Arc<str>>,
+    Vec<Option<Expr>>,
+    Option<Arc<str>>,
+    Vec<(Pattern, String, Option<Expr>)>,
+);
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
@@ -253,6 +260,34 @@ impl Parser {
         self.with_generator_context(generator_enabled, |p| {
             p.with_async_context(async_enabled, f)
         })
+    }
+
+    fn parse_params_scoped(
+        &mut self,
+        generator_enabled: bool,
+        async_enabled: bool,
+    ) -> error::Result<ParsedParams> {
+        let saved_defaults = std::mem::take(&mut self.cur_param_defaults);
+        let saved_rest = self.cur_rest_param.take();
+        let saved_dstr = std::mem::take(&mut self.cur_param_destructure_decls);
+        let params = match self
+            .with_function_context(generator_enabled, async_enabled, |p| p.parse_params())
+        {
+            Ok(params) => params,
+            Err(err) => {
+                self.cur_param_defaults = saved_defaults;
+                self.cur_rest_param = saved_rest;
+                self.cur_param_destructure_decls = saved_dstr;
+                return Err(err);
+            }
+        };
+        let param_defaults = std::mem::take(&mut self.cur_param_defaults);
+        let rest_param = self.cur_rest_param.take();
+        let dstr_decls = std::mem::take(&mut self.cur_param_destructure_decls);
+        self.cur_param_defaults = saved_defaults;
+        self.cur_rest_param = saved_rest;
+        self.cur_param_destructure_decls = saved_dstr;
+        Ok((params, param_defaults, rest_param, dstr_decls))
     }
 
     fn with_lexical_declaration_context<T>(
@@ -655,12 +690,11 @@ impl Parser {
                 )))
             }
         };
-        let params = self.with_function_context(is_generator, is_async, |p| p.parse_params())?;
-        let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-        let rest_param = self.cur_rest_param.take();
+        let (params, param_defaults, rest_param, dstr_decls) =
+            self.parse_params_scoped(is_generator, is_async)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = Self::scan_directive_prologue(&body);
-        let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+        let has_destructuring_params = !dstr_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
             body_contains_use_strict,
             &param_defaults,
@@ -668,7 +702,7 @@ impl Parser {
             has_destructuring_params,
         )?;
         {
-            let mut pre = self.take_dstr_prelude();
+            let mut pre = Self::dstr_prelude_from(dstr_decls);
             pre.append(&mut body);
             body = pre;
         }
@@ -882,6 +916,10 @@ impl Parser {
     /// __argN;` statements to prepend to a function body.
     fn take_dstr_prelude(&mut self) -> Vec<Stmt> {
         let dstr_decls = std::mem::take(&mut self.cur_param_destructure_decls);
+        Self::dstr_prelude_from(dstr_decls)
+    }
+
+    fn dstr_prelude_from(dstr_decls: Vec<(Pattern, String, Option<Expr>)>) -> Vec<Stmt> {
         dstr_decls
             .into_iter()
             .map(|(pattern, tmp, default)| {
@@ -2562,17 +2600,12 @@ impl Parser {
                 }
             };
             if is_getter || is_setter {
-                let params = self.with_function_context(false, false, |p| p.parse_params())?;
-                let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-                let rest_param = self.cur_rest_param.take();
-                Self::reject_duplicate_formal_params(
-                    &params,
-                    &self.cur_param_destructure_decls,
-                    rest_param.as_ref(),
-                )?;
+                let (params, param_defaults, rest_param, dstr_decls) =
+                    self.parse_params_scoped(false, false)?;
+                Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
-                let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+                let has_destructuring_params = !dstr_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
                     body_contains_use_strict,
                     &param_defaults,
@@ -2583,12 +2616,12 @@ impl Parser {
                 if is_strict {
                     Self::reject_strict_formal_param_names(
                         &params,
-                        &self.cur_param_destructure_decls,
+                        &dstr_decls,
                         rest_param.as_ref(),
                     )?;
                 }
                 {
-                    let mut pre = self.take_dstr_prelude();
+                    let mut pre = Self::dstr_prelude_from(dstr_decls);
                     pre.append(&mut body);
                     body = pre;
                 }
@@ -2622,21 +2655,13 @@ impl Parser {
                 });
             } else if self.check(&TokenKind::LParen) {
                 // method shorthand or value
-                let params =
-                    self.with_function_context(is_generator_method, is_async_method, |p| {
-                        p.parse_params()
-                    })?;
-                let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-                let rest_param = self.cur_rest_param.take();
-                Self::reject_duplicate_formal_params(
-                    &params,
-                    &self.cur_param_destructure_decls,
-                    rest_param.as_ref(),
-                )?;
+                let (params, param_defaults, rest_param, dstr_decls) =
+                    self.parse_params_scoped(is_generator_method, is_async_method)?;
+                Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body =
                     self.parse_fn_body(true, false, is_generator_method, is_async_method)?;
                 let body_contains_use_strict = Self::scan_directive_prologue(&body);
-                let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+                let has_destructuring_params = !dstr_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
                     body_contains_use_strict,
                     &param_defaults,
@@ -2647,12 +2672,12 @@ impl Parser {
                 if is_strict {
                     Self::reject_strict_formal_param_names(
                         &params,
-                        &self.cur_param_destructure_decls,
+                        &dstr_decls,
                         rest_param.as_ref(),
                     )?;
                 }
                 {
-                    let mut pre = self.take_dstr_prelude();
+                    let mut pre = Self::dstr_prelude_from(dstr_decls);
                     pre.append(&mut body);
                     body = pre;
                 }
@@ -2776,12 +2801,11 @@ impl Parser {
             }
             _ => None,
         };
-        let params = self.with_function_context(is_generator, is_async, |p| p.parse_params())?;
-        let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-        let rest_param = self.cur_rest_param.take();
+        let (params, param_defaults, rest_param, dstr_decls) =
+            self.parse_params_scoped(is_generator, is_async)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = Self::scan_directive_prologue(&body);
-        let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+        let has_destructuring_params = !dstr_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
             body_contains_use_strict,
             &param_defaults,
@@ -2789,7 +2813,7 @@ impl Parser {
             has_destructuring_params,
         )?;
         {
-            let mut pre = self.take_dstr_prelude();
+            let mut pre = Self::dstr_prelude_from(dstr_decls);
             pre.append(&mut body);
             body = pre;
         }
@@ -3135,11 +3159,6 @@ impl Parser {
                 rest_param.as_ref(),
                 has_destructuring_params,
             )?;
-            {
-                let mut pre = self.take_dstr_prelude();
-                pre.append(&mut body);
-                body = pre;
-            }
             if !prelude.is_empty() {
                 let mut combined = prelude;
                 combined.append(&mut body);
@@ -3439,17 +3458,16 @@ impl Parser {
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
                     self.advance(); // consume #name
-                    let params = self.with_function_context(false, false, |p| p.parse_params())?;
-                    let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-                    let rest_param = self.cur_rest_param.take();
+                    let (params, param_defaults, rest_param, dstr_decls) =
+                        self.parse_params_scoped(false, false)?;
                     Self::reject_duplicate_formal_params(
                         &params,
-                        &self.cur_param_destructure_decls,
+                        &dstr_decls,
                         rest_param.as_ref(),
                     )?;
                     let mut body = self.parse_fn_body(true, false, false, false)?;
                     let body_contains_use_strict = Self::scan_directive_prologue(&body);
-                    let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+                    let has_destructuring_params = !dstr_decls.is_empty();
                     Self::reject_use_strict_with_non_simple_params(
                         body_contains_use_strict,
                         &param_defaults,
@@ -3457,7 +3475,7 @@ impl Parser {
                         has_destructuring_params,
                     )?;
                     {
-                        let mut pre = self.take_dstr_prelude();
+                        let mut pre = Self::dstr_prelude_from(dstr_decls);
                         pre.append(&mut body);
                         body = pre;
                     }
@@ -3538,18 +3556,13 @@ impl Parser {
                     _ => Arc::from(self.read_property_name()?.as_str()),
                 }
             };
-            let params = self.with_function_context(false, false, |p| p.parse_params())?;
-            let param_defaults = std::mem::take(&mut self.cur_param_defaults);
-            let rest_param = self.cur_rest_param.take();
-            Self::reject_duplicate_formal_params(
-                &params,
-                &self.cur_param_destructure_decls,
-                rest_param.as_ref(),
-            )?;
+            let (params, param_defaults, rest_param, dstr_decls) =
+                self.parse_params_scoped(false, false)?;
+            Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
             let super_call_allowed = superclass.is_some() && is_constructor;
             let mut body = self.parse_fn_body(true, super_call_allowed, false, false)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
-            let has_destructuring_params = !self.cur_param_destructure_decls.is_empty();
+            let has_destructuring_params = !dstr_decls.is_empty();
             Self::reject_use_strict_with_non_simple_params(
                 body_contains_use_strict,
                 &param_defaults,
@@ -3557,7 +3570,7 @@ impl Parser {
                 has_destructuring_params,
             )?;
             {
-                let mut pre = self.take_dstr_prelude();
+                let mut pre = Self::dstr_prelude_from(dstr_decls);
                 pre.append(&mut body);
                 body = pre;
             }
