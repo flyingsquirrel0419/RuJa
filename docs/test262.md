@@ -155,6 +155,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   reads, and the required `ToIndex`/value/detached/range validation order.
   This closes the focused DataView 16-bit method cluster at 56 pass / 0 fail /
   28 skip.
+- **DataView 32-bit element accessors** — `DataView.prototype.getUint32`,
+  `getInt32`, `setUint32`, and `setInt32` now handle big-endian defaults,
+  `ToBoolean` little-endian arguments, Uint32 wrapping writes, signed Int32
+  reads, and the required `ToIndex`/value/detached/range validation order.
+  This closes the focused DataView 32-bit method cluster at 56 pass / 0 fail /
+  38 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

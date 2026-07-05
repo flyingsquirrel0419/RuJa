@@ -1811,12 +1811,16 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         data_view_constructor,
         &[
             ("getInt16", data_view_get_int16, 1),
+            ("getInt32", data_view_get_int32, 1),
             ("getInt8", data_view_get_int8, 1),
             ("getUint16", data_view_get_uint16, 1),
+            ("getUint32", data_view_get_uint32, 1),
             ("getUint8", data_view_get_uint8, 1),
             ("setInt16", data_view_set_int16, 2),
+            ("setInt32", data_view_set_int32, 2),
             ("setInt8", data_view_set_int8, 2),
             ("setUint16", data_view_set_uint16, 2),
+            ("setUint32", data_view_set_uint32, 2),
             ("setUint8", data_view_set_uint8, 2),
         ],
     )?;
