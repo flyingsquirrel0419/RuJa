@@ -99,6 +99,49 @@ fn switch_break() {
     );
 }
 
+#[test]
+fn switch_var_uses_enclosing_variable_environment() {
+    assert_eq!(
+        run("var probeBefore = function(){ return x; };
+             switch ((eval('var x = 1;'), null)) {
+               case (eval('var x = 2;'), null):
+                 var probeStmt = function(){ return x; };
+                 var x = 3;
+             }
+             probeBefore() + probeStmt() + x;"),
+        Value::Number(9.0)
+    );
+}
+
+#[test]
+fn switch_function_and_var_redeclaration_is_syntax_error() {
+    for src in [
+        "switch (0) { case 1: function f() {} default: var f }",
+        "switch (0) { case 1: var f; default: function f() {} }",
+    ] {
+        let msg = run_err(src);
+        assert!(
+            msg.contains("already been declared"),
+            "expected redeclaration error for {src}, got: {msg}"
+        );
+    }
+}
+
+#[test]
+fn switch_function_declarations_do_not_leak() {
+    for src in [
+        "switch (0) { default: function * x() {} } x;",
+        "switch (0) { default: async function x() {} } x;",
+        "switch (0) { default: async function * x() {} } x;",
+    ] {
+        let msg = run_err(src);
+        assert!(
+            msg.contains("x is not defined"),
+            "expected ReferenceError for {src}, got: {msg}"
+        );
+    }
+}
+
 // --- try / catch / finally ---
 
 #[test]

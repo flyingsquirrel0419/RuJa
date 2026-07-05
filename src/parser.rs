@@ -1672,12 +1672,7 @@ impl Parser {
         let mut var_names: Vec<Arc<str>> = Vec::new();
         for case in &cases {
             for stmt in &case.body {
-                collect_decl_names(
-                    &stmt.node,
-                    &mut lexical_names,
-                    &mut var_names,
-                    self.is_strict_context,
-                );
+                collect_switch_decl_names(&stmt.node, &mut lexical_names, &mut var_names);
             }
         }
         for n in &lexical_names {
@@ -4074,6 +4069,44 @@ fn collect_decl_names(
                 } else {
                     var.push(name.clone());
                 }
+            }
+        }
+        StmtNode::ExprStmt(Expr::Class(c)) => {
+            if c.is_declaration {
+                if let Some(name) = &c.name {
+                    lexical.push(name.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_switch_decl_names(
+    node: &StmtNode,
+    lexical: &mut Vec<Arc<str>>,
+    var: &mut Vec<Arc<str>>,
+) {
+    match node {
+        StmtNode::VarDecl { kind, decls } => match kind {
+            VarKind::Var => {
+                for (name, _) in decls {
+                    var.push(name.clone());
+                }
+            }
+            VarKind::Let | VarKind::Const => {
+                for (name, _) in decls {
+                    lexical.push(name.clone());
+                }
+            }
+        },
+        StmtNode::Destructure { kind, pattern, .. } => match kind {
+            VarKind::Var => collect_pattern_names(pattern, var),
+            VarKind::Let | VarKind::Const => collect_pattern_names(pattern, lexical),
+        },
+        StmtNode::FunctionDecl(f) => {
+            if let Some(name) = &f.name {
+                lexical.push(name.clone());
             }
         }
         StmtNode::ExprStmt(Expr::Class(c)) => {

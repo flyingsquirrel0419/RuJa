@@ -4,9 +4,16 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.7%** (up from 88.6%).
-Current supported subset count: **4127 pass / 53 fail / 0 timeout**.
+Supported-subset pass rate: **98.9%** (up from 88.6%).
+Current supported subset count: **4133 pass / 47 fail / 0 timeout**.
 
+- **Switch CaseBlock scoping and redeclarations**: switch `var`
+  declarations now bind in the enclosing variable environment instead of the
+  switch lexical environment, while function declarations in case bodies stay
+  scoped to the CaseBlock. Switch redeclaration early errors now treat
+  function declarations as lexical names. This closes
+  `language/statements/switch` at **69 pass / 0 fail** and raises the
+  supported subset to **4133 pass / 47 fail / 0 timeout**.
 - **Boxed String methods and Date method surface**: String prototype methods
   now read the wrapped primitive from `new String(...)` objects, so indexed
   operations like `charAt` agree with boxed string index properties. The

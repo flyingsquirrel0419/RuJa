@@ -377,6 +377,27 @@ impl Compiler {
         Ok(())
     }
 
+    fn declare_var(&mut self, name: &str) -> error::Result<()> {
+        let Some(scope_idx) = self.scopes.iter().rposition(|scope| scope.is_function) else {
+            return self.declare(name, VarKind::Var);
+        };
+        let scope = &mut self.scopes[scope_idx];
+        if let Some((_, existing_kind)) = scope.bindings.get(name) {
+            if *existing_kind != VarKind::Var {
+                return Err(error::Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    name
+                )));
+            }
+            return Ok(());
+        }
+        let slot = scope.base + scope.bindings.len();
+        scope
+            .bindings
+            .insert(name.to_string(), (slot, VarKind::Var));
+        Ok(())
+    }
+
     /// Declare a function parameter. In non-strict mode duplicate parameter
     /// names are permitted (the last binding wins); in strict mode they are a
     /// SyntaxError (checked separately in `compile_function`).
@@ -505,6 +526,52 @@ impl Compiler {
         out
     }
 
+    fn collect_switch_lexical_names(cases: &[SwitchCase]) -> Vec<(Arc<str>, VarKind)> {
+        let mut out = Vec::new();
+        for case in cases {
+            for stmt in &case.body {
+                match &stmt.node {
+                    StmtNode::VarDecl { kind, decls } => {
+                        if *kind != VarKind::Var {
+                            for (name, _) in decls {
+                                out.push((name.clone(), *kind));
+                            }
+                        }
+                    }
+                    StmtNode::Destructure { kind, pattern, .. } if *kind != VarKind::Var => {
+                        let mut names = Vec::new();
+                        Self::pattern_names(pattern, &mut names);
+                        for name in names {
+                            out.push((name, *kind));
+                        }
+                    }
+                    StmtNode::FunctionDecl(f) => {
+                        if let Some(name) = &f.name {
+                            out.push((name.clone(), VarKind::Let));
+                        }
+                    }
+                    StmtNode::ExprStmt(Expr::Class(c)) if c.is_declaration => {
+                        if let Some(name) = &c.name {
+                            out.push((name.clone(), VarKind::Const));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
+    }
+
+    fn collect_switch_var_names(cases: &[SwitchCase]) -> Vec<Arc<str>> {
+        let mut out = Vec::new();
+        for case in cases {
+            for stmt in &case.body {
+                collect_var_names_recursive_skip_functions(&stmt.node, &mut out);
+            }
+        }
+        out
+    }
+
     /// Collect top-level `var` and function-declaration names from a statement
     /// list (for direct-eval leak into the caller's function scope).
     /// Recursively descends into nested blocks, loops, if/else, switch, and
@@ -578,7 +645,7 @@ impl Compiler {
                     if *kind == VarKind::Var {
                         // `var` is function-scoped: declare at the function-scope root
                         // (or global at top level), regardless of block nesting.
-                        self.declare(name, *kind)?;
+                        self.declare_var(name)?;
                         let Some(e) = init else {
                             continue;
                         };
@@ -638,7 +705,7 @@ impl Compiler {
                     } = &s.node
                     {
                         for (name, _) in decls {
-                            self.declare(name, VarKind::Var)?;
+                            self.declare_var(name)?;
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                             if self.scopes.len() == 1 {
                                 self.chunk.emit(Op::Const(name_idx), self.current_line);
@@ -1187,36 +1254,29 @@ impl Compiler {
                 // Switch introduces a new lexical environment (like a block).
                 self.push_scope_with_runtime(false, true);
                 self.chunk.emit(Op::PushScope, self.current_line);
-                // Hoist function declarations from all case bodies.
+                // Hoist `var` declarations from all case bodies.
+                {
+                    let var_names = Self::collect_switch_var_names(cases);
+                    for name in &var_names {
+                        self.declare_var(name)?;
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
+                    }
+                }
+                // Hoist lexical declarations into TDZ at switch entry.
+                {
+                    let lex = Self::collect_switch_lexical_names(cases);
+                    self.emit_lexical_hoist(&lex)?;
+                }
+                // Hoist function declarations from all case bodies after the
+                // switch lexical names exist, so they stay scoped to the
+                // CaseBlock instead of leaking into the outer variable env.
                 for case in cases.iter() {
                     for s in &case.body {
                         if matches!(&s.node, StmtNode::FunctionDecl(_)) {
                             self.compile_stmt(s)?;
                         }
                     }
-                }
-                // Hoist `var` declarations from all case bodies.
-                {
-                    let all_body: Vec<Stmt> =
-                        cases.iter().flat_map(|c| c.body.iter().cloned()).collect();
-                    let var_names = Self::collect_var_names(&all_body);
-                    for name in &var_names {
-                        self.declare(name, VarKind::Var)?;
-                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                        if self.scopes.len() == 2 {
-                            self.chunk.emit(Op::Const(name_idx), self.current_line);
-                            self.chunk.emit(Op::StoreGlobal, self.current_line);
-                        } else {
-                            self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
-                        }
-                    }
-                }
-                // Hoist lexical declarations (let/const) into TDZ at switch entry.
-                {
-                    let all_body: Vec<Stmt> =
-                        cases.iter().flat_map(|c| c.body.iter().cloned()).collect();
-                    let lex = Self::collect_lexical_names(&all_body);
-                    self.emit_lexical_hoist(&lex)?;
                 }
                 let sw_idx = self.intern("#switch");
                 self.chunk.emit(Op::DeclareEnv(sw_idx), self.current_line);
@@ -1608,7 +1668,7 @@ impl Compiler {
                 if is_fn_decl {
                     continue;
                 }
-                self.declare(name, VarKind::Var)?;
+                self.declare_var(name)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::HoistVar(name_idx), self.current_line);
             }
@@ -4127,7 +4187,7 @@ fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
         StmtNode::Switch { cases, .. } => {
             for case in cases {
                 for s in &case.body {
-                    collect_var_names_recursive(&s.node, out);
+                    collect_var_names_recursive_skip_functions(&s.node, out);
                 }
             }
         }
@@ -4146,6 +4206,70 @@ fn collect_var_names_recursive(node: &StmtNode, out: &mut Vec<Arc<str>>) {
             }
         }
         StmtNode::Labeled(_, body) => collect_var_names_recursive(&body.node, out),
+        _ => {}
+    }
+}
+
+fn collect_var_names_recursive_skip_functions(node: &StmtNode, out: &mut Vec<Arc<str>>) {
+    match node {
+        StmtNode::VarDecl { kind, decls } if *kind == VarKind::Var => {
+            for (name, _) in decls {
+                out.push(name.clone());
+            }
+        }
+        StmtNode::Destructure { kind, pattern, .. } if *kind == VarKind::Var => {
+            Compiler::pattern_names(pattern, out);
+        }
+        StmtNode::Block(body) => {
+            for s in body {
+                collect_var_names_recursive_skip_functions(&s.node, out);
+            }
+        }
+        StmtNode::If { then, else_, .. } => {
+            collect_var_names_recursive_skip_functions(&then.node, out);
+            if let Some(e) = else_ {
+                collect_var_names_recursive_skip_functions(&e.node, out);
+            }
+        }
+        StmtNode::While { body, .. } => collect_var_names_recursive_skip_functions(&body.node, out),
+        StmtNode::DoWhile { body, .. } => {
+            collect_var_names_recursive_skip_functions(&body.node, out);
+        }
+        StmtNode::For { init, body, .. } => {
+            if let Some(init) = init {
+                collect_var_names_recursive_skip_functions(&init.node, out);
+            }
+            collect_var_names_recursive_skip_functions(&body.node, out);
+        }
+        StmtNode::ForIn { left, body, .. } | StmtNode::ForOf { left, body, .. } => {
+            collect_var_names_recursive_skip_functions(&left.node, out);
+            collect_var_names_recursive_skip_functions(&body.node, out);
+        }
+        StmtNode::With { body, .. } => {
+            collect_var_names_recursive_skip_functions(&body.node, out);
+        }
+        StmtNode::Switch { cases, .. } => {
+            for case in cases {
+                for s in &case.body {
+                    collect_var_names_recursive_skip_functions(&s.node, out);
+                }
+            }
+        }
+        StmtNode::TryCatch {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            collect_var_names_recursive_skip_functions(&try_body.node, out);
+            if let Some(cb) = catch_body {
+                collect_var_names_recursive_skip_functions(&cb.node, out);
+            }
+            if let Some(fb) = finally_body {
+                collect_var_names_recursive_skip_functions(&fb.node, out);
+            }
+        }
+        StmtNode::Labeled(_, body) => collect_var_names_recursive_skip_functions(&body.node, out),
         _ => {}
     }
 }

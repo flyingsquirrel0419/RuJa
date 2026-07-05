@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 23.4% of all matrix files; 48.3% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.7% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
-| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2% of all matrix files; 49.8% of executed files | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 98.9% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (98.7%).** It reflects the portion of the spec
+supported-subset rate (98.9%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -85,20 +85,18 @@ python3 tools/analyze_failures.py
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
-`intl402`/`staging`) in parallel. Recent successful full runs for the same
-engine code have shown small timeout-count variation in the large `built-ins`
-matrix, so this baseline is recorded as the observed range:
+`intl402`/`staging`) in parallel. Latest confirmed full run:
 
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 47,717 |
-| Actually run | 23,162-23,164 |
-| Pass | 11,458-11,461 |
-| Fail | 11,703-11,704 |
-| Timeout | 11-13 |
+| Actually run | 23,164 |
+| Pass | 11,538 |
+| Fail | 11,626 |
+| Timeout | 11 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **49.5%** |
-| **Pass rate (of total)** | **24.0%** |
+| **Pass rate (of run)** | **49.8%** |
+| **Pass rate (of total)** | **24.2%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -110,18 +108,18 @@ current commit.
 The `ci.yml` workflow runs a narrow 9-directory subset on every push.
 This is a regression gate, not a conformance metric:
 
-| Suite | Ran | Pass | Fail | Pass rate |
-|-------|-----|------|------|-----------|
-| identifiers | 266 | 159 | 107 | 59.8% |
-| punctuators | 11 | 11 | 0 | 100.0% |
-| white-space | 67 | 49 | 18 | 73.1% |
-| keywords | 25 | 24 | 1 | 96.0% |
-| types | 113 | 80 | 33 | 70.8% |
-| comments | 23 | 17 | 6 | 73.9% |
-| expressions/arrow-function | 343 | 245 | 98 | 71.4% |
-| expressions/function | 264 | 159 | 105 | 60.2% |
-| expressions/object | 946 | 506 | 440 | 53.5% |
-| **Total** | 2,058 | 1,250 | 808 | 60.8% |
+| Suite | Ran | Pass | Fail | Timeout | Pass rate |
+|-------|-----|------|------|---------|-----------|
+| identifiers | 206 | 165 | 41 | 2 | 80.1% |
+| punctuators | 11 | 11 | 0 | 0 | 100.0% |
+| white-space | 65 | 49 | 16 | 0 | 75.4% |
+| keywords | 25 | 24 | 1 | 0 | 96.0% |
+| types | 109 | 104 | 5 | 0 | 95.4% |
+| comments | 20 | 14 | 6 | 0 | 70.0% |
+| expressions/arrow-function | 90 | 90 | 0 | 0 | 100.0% |
+| expressions/function | 53 | 53 | 0 | 0 | 100.0% |
+| expressions/object | 285 | 285 | 0 | 0 | 100.0% |
+| **Total** | 864 | 795 | 69 | 2 | 92.0% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
@@ -518,10 +516,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   This closes `language/expressions/property-accessors` at **15 pass / 0
   fail** and raises the supported subset to **4127 pass / 53 fail / 0
   timeout**.
+- **Switch CaseBlock scoping and redeclarations** — switch `var`
+  declarations bind in the enclosing variable environment, function
+  declarations in case bodies stay scoped to the CaseBlock, and switch
+  redeclaration early errors treat function declarations as lexical names.
+  This closes `language/statements/switch` at **69 pass / 0 fail** and raises
+  the supported subset to **4133 pass / 47 fail / 0 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 53 failures in the supported subset cluster
-around class behavior, super semantics, switch scoping/redeclaration, and
-expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
-addressed in subsequent rounds.
+The remaining 47 failures in the supported subset cluster around class
+behavior, super semantics, and expression/operator edge cases. These are
+tracked in `HANDOFF.md` and will be addressed in subsequent rounds.
