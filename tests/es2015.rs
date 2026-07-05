@@ -52,6 +52,53 @@ fn static_method() {
 }
 
 #[test]
+fn class_empty_elements_and_computed_generator_method() {
+    assert_eq!(
+        run("class A{method(){return 1;} static method(){return 2;} ;} A.method() + new A().method();"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("class A{*[1](){yield 42;}} new A()[1]().next().value;"),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
+fn class_computed_accessor_names() {
+    assert_eq!(
+        run("var k='x'; class A{get [k](){return 3;} set [k](v){this.y=v+1;}} var a=new A(); var before=a.x; a.x=4; before + a.y;"),
+        Value::Number(8.0)
+    );
+    assert_eq!(
+        run("var k='x'; class A{static get [k](){return 5;} static set [k](v){this.y=v+1;}} var before=A.x; A.x=6; before + A.y;"),
+        Value::Number(12.0)
+    );
+}
+
+#[test]
+fn named_class_expression_uses_inner_immutable_binding() {
+    assert_eq!(
+        run("var C='outside'; var cls=class C{method(){return C;}}; [C, cls.prototype.method() === cls].join(',');"),
+        Value::String(Arc::from("outside,true"))
+    );
+    assert!(run_err(
+        "var C='outside'; var cls=class C{method(){C=null;}}; cls.prototype.method();"
+    )
+    .contains("Assignment to constant variable"));
+    assert_eq!(
+        run("var probe; var C='outside'; var cls=class C extends (probe=function(){return C;}, Object){}; [C, probe() === cls].join(',');"),
+        Value::String(Arc::from("outside,true"))
+    );
+}
+
+#[test]
+fn class_name_yield_is_rejected() {
+    assert!(run_err("var C = class yield {};").contains("SyntaxError"));
+    assert!(run_err(r#"var C = class yi\u0065ld {};"#).contains("SyntaxError"));
+    assert!(run_err("class yield {}").contains("SyntaxError"));
+}
+
+#[test]
 fn template_literal() {
     assert_eq!(
         run(r#"let n=5; `n=${n}`;"#),

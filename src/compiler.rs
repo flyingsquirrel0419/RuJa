@@ -3184,6 +3184,19 @@ impl Compiler {
                     .emit(Op::MakeClosure(func_idx), self.current_line);
             }
             Expr::Class(cls) => {
+                let class_expr_name = if cls.is_declaration {
+                    None
+                } else {
+                    cls.name.as_ref()
+                };
+                if let Some(name) = class_expr_name {
+                    self.chunk.emit(Op::PushScope, self.current_line);
+                    self.push_scope_with_runtime(false, true);
+                    self.declare(name, VarKind::Const)?;
+                    let name_idx = self.intern(name);
+                    self.chunk
+                        .emit(Op::DeclareConstUninit(name_idx), self.current_line);
+                }
                 // Build a constructor function from the class.
                 // Methods become prototype properties (or static on the constructor).
                 let has_ctor = cls.methods.iter().any(|m| m.is_constructor);
@@ -3272,7 +3285,7 @@ impl Compiler {
                                     body: m.body.clone(),
                                     is_arrow: false,
                                     is_async: false,
-                                    is_generator: false,
+                                    is_generator: m.is_generator,
                                     param_decls: Vec::new(),
                                     is_strict: true,
                                     is_method: false,
@@ -3402,7 +3415,7 @@ impl Compiler {
                         body: method.body.clone(),
                         is_arrow: false,
                         is_async: false,
-                        is_generator: false,
+                        is_generator: method.is_generator,
                         param_decls: Vec::new(),
                         is_strict: true, // class methods are always strict
                         is_method: true,
@@ -3418,7 +3431,7 @@ impl Compiler {
                         num_locals: method.params.len() + 16,
                         is_arrow: false,
                         is_async: false,
-                        is_generator: false,
+                        is_generator: method.is_generator,
                         has_parameter_expressions: Self::has_parameter_expressions(&m_fn),
                         length: Self::fn_length(&m_fn),
                         is_method: true,
@@ -3440,9 +3453,14 @@ impl Compiler {
                             // [ctor] -> define accessor on ctor
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
-                            let key_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            if let Some(ce) = &method.computed_name {
+                                self.compile_expr(ce)?;
+                                self.chunk.emit(Op::ToString, self.current_line);
+                            } else {
+                                let key_idx =
+                                    self.chunk.add_constant(Value::String(method.name.clone()));
+                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            }
                             self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
                             self.chunk
                                 .emit(Op::DefineClassAccessor(akind), self.current_line);
@@ -3457,9 +3475,14 @@ impl Compiler {
                             self.chunk.emit(Op::Const(proto_key), self.current_line);
                             self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
-                            let key_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            if let Some(ce) = &method.computed_name {
+                                self.compile_expr(ce)?;
+                                self.chunk.emit(Op::ToString, self.current_line);
+                            } else {
+                                let key_idx =
+                                    self.chunk.add_constant(Value::String(method.name.clone()));
+                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            }
                             self.chunk.emit(Op::MakeClosure(m_idx), self.current_line);
                             self.chunk
                                 .emit(Op::DefineClassAccessor(akind), self.current_line);
@@ -3505,8 +3528,14 @@ impl Compiler {
                 if let Some(name) = &cls.name {
                     let name_idx = self.intern(name);
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    self.chunk.emit(Op::StoreEnv(name_idx), self.current_line); // [ctor, undefined]
-                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                    if cls.is_declaration {
+                        self.chunk.emit(Op::StoreEnv(name_idx), self.current_line); // [ctor, undefined]
+                        self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                    } else {
+                        self.chunk
+                            .emit(Op::InitEnvConst(name_idx), self.current_line);
+                        // [ctor]
+                    }
                 }
                 // Static initialization blocks: each runs with `this` = the
                 // class (constructor), in source order. We bind `this` in a
@@ -3551,6 +3580,10 @@ impl Compiler {
                                                                                  // CallThis expects [..., this, fn, args...]; here this=ctor (dup), fn on top.
                     self.chunk.emit(Op::CallThis(0), self.current_line); // [ctor, result]
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                }
+                if class_expr_name.is_some() {
+                    self.chunk.emit(Op::PopScope, self.current_line);
+                    self.pop_scope();
                 }
             }
             Expr::PrivateGet { object, name } => {

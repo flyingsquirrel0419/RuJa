@@ -2388,7 +2388,7 @@ impl Parser {
             }
             TokenKind::Class => {
                 // Class expression: `var C = class C { ... }`
-                self.parse_class_body().map(Expr::Class)
+                self.parse_class_body(false).map(Expr::Class)
             }
             TokenKind::Ident(s) => {
                 // Strict mode: FutureReservedWords cannot be used as identifiers.
@@ -3539,14 +3539,19 @@ impl Parser {
 
     fn parse_class_decl(&mut self) -> error::Result<Stmt> {
         // Parse a class declaration as a statement that evaluates the class expr.
-        let cls = self.parse_class_body()?;
+        let cls = self.parse_class_body(true)?;
         Ok(self.stmt(StmtNode::ExprStmt(Expr::Class(cls))))
     }
 
-    fn parse_class_body(&mut self) -> error::Result<ClassExpr> {
+    fn parse_class_body(&mut self, is_declaration: bool) -> error::Result<ClassExpr> {
         self.advance(); // 'class'
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
+                if s == "yield" {
+                    return Err(error::Error::syntax(
+                        "'yield' is not allowed as a class name".to_string(),
+                    ));
+                }
                 self.advance();
                 Some(Arc::from(s.as_str()))
             }
@@ -3555,8 +3560,9 @@ impl Parser {
                 Some(Arc::from("await"))
             }
             TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                self.advance();
-                Some(Arc::from("yield"))
+                return Err(error::Error::syntax(
+                    "'yield' is not allowed as a class name".to_string(),
+                ));
             }
             _ => None,
         };
@@ -3570,6 +3576,9 @@ impl Parser {
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            if self.eat(&TokenKind::Semicolon) {
+                continue;
+            }
             // static { ... } initialization block
             if self.check(&TokenKind::Static)
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
@@ -3617,6 +3626,7 @@ impl Parser {
                         body,
                         is_static,
                         is_constructor: false,
+                        is_generator: false,
                         kind: crate::ast::PropKind::Method,
                         is_private: true,
                     });
@@ -3652,11 +3662,13 @@ impl Parser {
             if is_getter || is_setter {
                 self.advance();
             }
+            let is_generator_method = !is_getter && !is_setter && self.eat(&TokenKind::Star);
             let is_constructor = !is_getter
                 && !is_setter
+                && !is_generator_method
                 && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
             // Computed method name: [expr]
-            let computed_name = if !is_getter && !is_setter && self.check(&TokenKind::LBracket) {
+            let computed_name = if self.check(&TokenKind::LBracket) {
                 self.advance();
                 let e = self.with_in_allowed(|p| p.parse_assign())?;
                 self.expect(&TokenKind::RBracket, "]")?;
@@ -3686,10 +3698,11 @@ impl Parser {
                 }
             };
             let (params, param_defaults, rest_param, dstr_decls) =
-                self.parse_params_scoped(false, false)?;
+                self.parse_params_scoped(is_generator_method, false)?;
             Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
             let super_call_allowed = superclass.is_some() && is_constructor;
-            let mut body = self.parse_fn_body(true, super_call_allowed, false, false)?;
+            let mut body =
+                self.parse_fn_body(true, super_call_allowed, is_generator_method, false)?;
             let body_contains_use_strict = Self::scan_directive_prologue(&body);
             let has_destructuring_params = !dstr_decls.is_empty();
             Self::reject_use_strict_with_non_simple_params(
@@ -3712,6 +3725,7 @@ impl Parser {
                 body,
                 is_static,
                 is_constructor,
+                is_generator: is_generator_method,
                 kind: if is_getter {
                     crate::ast::PropKind::Get
                 } else if is_setter {
@@ -3725,6 +3739,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "}")?;
         Ok(ClassExpr {
             name,
+            is_declaration,
             superclass,
             methods,
             static_blocks,
@@ -3954,8 +3969,10 @@ fn collect_decl_names(
             }
         }
         StmtNode::ExprStmt(Expr::Class(c)) => {
-            if let Some(name) = &c.name {
-                lexical.push(name.clone());
+            if c.is_declaration {
+                if let Some(name) = &c.name {
+                    lexical.push(name.clone());
+                }
             }
         }
         _ => {}

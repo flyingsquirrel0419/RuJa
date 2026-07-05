@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **96.9%** (up from 88.6%).
-Current supported subset count: **4047 pass / 131 fail / 2 timeout**.
+Supported-subset pass rate: **97.2%** (up from 88.6%).
+Current supported subset count: **4061 pass / 117 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -287,6 +287,14 @@ Current supported subset count: **4047 pass / 131 fail / 2 timeout**.
   `language/statements/class/subclass/builtin-objects/NativeError` at
   **18 pass / 0 fail** and raises the supported subset to
   **4047 pass / 131 fail / 2 timeout**.
+- **Class element grammar and named class expression scope**: class bodies now
+  accept empty `;` elements, computed accessor names, and generator methods,
+  and named class expressions create an inner immutable class-name binding
+  instead of leaking the name to the outer scope. Class names now reject
+  `yield` even in sloppy surrounding scripts. This closes
+  `language/expressions/class` at **48 pass / 0 fail**, improves
+  `language/statements/class/syntax` to **9 pass / 4 fail**, and raises the
+  supported subset to **4061 pass / 117 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

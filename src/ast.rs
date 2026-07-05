@@ -4,6 +4,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassExpr {
     pub name: Option<Arc<str>>,
+    pub is_declaration: bool,
     pub superclass: Option<Box<Expr>>,
     pub methods: Vec<ClassMethod>,
     /// Static initialization blocks: `static { ... }`. Each runs with `this`
@@ -26,6 +27,7 @@ pub struct ClassMethod {
     pub body: Vec<Stmt>,
     pub is_static: bool,
     pub is_constructor: bool,
+    pub is_generator: bool,
     pub kind: PropKind,
     pub is_private: bool,
 }
