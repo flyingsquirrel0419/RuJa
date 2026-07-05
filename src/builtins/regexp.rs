@@ -94,6 +94,72 @@ pub(crate) fn regexp_test(
     )))
 }
 
+pub(crate) fn regexp_to_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let source = read_regexp_source(vm, &this)?;
+    let flags = read_regexp_flags(vm, &this).unwrap_or_default();
+    Ok(Value::String(Arc::from(
+        format!("/{source}/{flags}").as_str(),
+    )))
+}
+
+pub(crate) fn regexp_source_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::String(Arc::from(
+        read_regexp_source(vm, &this)?.as_str(),
+    )))
+}
+
+fn regexp_bool_field_get(vm: &mut Vm, this: Option<Value>, field: &str) -> error::Result<Value> {
+    match this {
+        Some(Value::Object(idx)) => {
+            let value = vm.heap.with_obj(idx.0, |o| {
+                o.props()
+                    .lock()
+                    .get(&PropertyKey::from(field))
+                    .map(|d| d.value.clone())
+            });
+            Ok(match value {
+                Some(Value::Bool(v)) => Value::Bool(v),
+                _ => Value::Bool(false),
+            })
+        }
+        _ => Err(Error::type_err(
+            "RegExp getter called on incompatible receiver",
+        )),
+    }
+}
+
+pub(crate) fn regexp_global_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "global")
+}
+
+pub(crate) fn regexp_ignore_case_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "ignoreCase")
+}
+
+pub(crate) fn regexp_multiline_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "multiline")
+}
+
 pub(crate) fn regexp_exec(
     vm: &mut Vm,
     args: &[Value],
@@ -421,6 +487,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let (map_ctor, map_proto) = make_builtin_constructor_with(
         vm,
         "Map",
+        0,
         map_constructor,
         &[
             ("set", map_set, 2),
@@ -451,6 +518,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let (set_ctor, set_proto) = make_builtin_constructor_with(
         vm,
         "Set",
+        0,
         set_constructor,
         &[
             ("add", set_add, 1),
@@ -480,6 +548,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let (weakmap_ctor, weakmap_proto) = make_builtin_constructor_with(
         vm,
         "WeakMap",
+        0,
         weakmap_constructor,
         &[
             ("get", weakmap_get, 1),
@@ -493,6 +562,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let (weakset_ctor, weakset_proto) = make_builtin_constructor_with(
         vm,
         "WeakSet",
+        0,
         weakset_constructor,
         &[
             ("add", weakset_add, 1),
@@ -564,6 +634,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
 pub(crate) fn make_builtin_constructor_with(
     vm: &mut Vm,
     name: &str,
+    length: usize,
     ctor: NativeFn,
     methods: &[(&str, NativeFn, usize)],
 ) -> error::Result<(GcIdx, GcIdx)> {
@@ -583,10 +654,7 @@ pub(crate) fn make_builtin_constructor_with(
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj)?);
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
-        kind: FunctionKind::Native {
-            func: ctor,
-            length: 0,
-        },
+        kind: FunctionKind::Native { func: ctor, length },
         closure: vm.global,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
@@ -594,7 +662,7 @@ pub(crate) fn make_builtin_constructor_with(
             Value::Object(_) => Some(vm.function_proto.clone()),
             _ => None,
         }),
-        props: Mutex::new(IndexMap::new()),
+        props: Mutex::new(builtin_function_own_props(name, length)),
         extensible: AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
@@ -602,7 +670,7 @@ pub(crate) fn make_builtin_constructor_with(
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
-            data_prop(Value::Object(proto_idx)),
+            const_prop(Value::Object(proto_idx)),
         );
     });
     vm.heap.with_obj(proto_idx.0, |obj| {

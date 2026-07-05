@@ -241,6 +241,24 @@ pub(crate) fn str_to_lower(
         str_val(vm, &this)?.to_lowercase().as_str(),
     )))
 }
+
+pub(crate) fn str_locale_compare(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let left = str_val(vm, &this)?;
+    let right = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
+    let result = match left.as_str().cmp(right.as_str()) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
+}
+
 pub(crate) fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     Ok(Value::String(Arc::from(str_val(vm, &this)?.trim())))
 }

@@ -824,6 +824,15 @@ pub(crate) fn date_to_string(
     }
     Ok(Value::String(Arc::from("Date")))
 }
+
+pub(crate) fn date_get_timezone_offset(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::Number(0.0))
+}
+
 pub(crate) fn date_now(
     _vm: &mut Vm,
     _args: &[Value],

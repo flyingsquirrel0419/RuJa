@@ -1197,6 +1197,74 @@ fn object_statics() {
         Value::Number(0.0)
     );
     assert_eq!(
+        run(r#"
+            var index = Object.getOwnPropertyDescriptor("foo", "0");
+            var length = Object.getOwnPropertyDescriptor("foo", "length");
+            [
+              index.value,
+              index.writable,
+              index.enumerable,
+              index.configurable,
+              length.value,
+              length.writable,
+              length.enumerable,
+              length.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("f,false,true,false,3,false,false,false"))
+    );
+    assert_eq!(
+        run(r#"
+            var sym = Symbol();
+            var obj = {};
+            obj[sym] = 42;
+            var desc = Object.getOwnPropertyDescriptor(obj, sym);
+            [
+              desc.value,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable,
+              desc.propertyIsEnumerable("value"),
+              Object.keys(desc).join("|")
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "42,true,true,true,true,value|writable|enumerable|configurable"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var proto = Object.getOwnPropertyDescriptor(String, "prototype");
+            var length = Object.getOwnPropertyDescriptor(String, "length");
+            [
+              proto.writable,
+              proto.enumerable,
+              proto.configurable,
+              length.value,
+              length.writable,
+              length.enumerable,
+              length.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("false,false,false,1,false,false,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var obj = { undefined: 7 };
+            Object.getOwnPropertyDescriptor(obj).value;
+            "#),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var key = { get toString() { calls++; throw new Error("key"); } };
+            try { Object.getOwnPropertyDescriptor(null, key); } catch (e) {}
+            calls;
+            "#),
+        Value::Number(0.0)
+    );
+    assert_eq!(
         run("var o = Object.fromEntries([['a',1],['b',2]]); o.a + o.b;"),
         Value::Number(3.0)
     );

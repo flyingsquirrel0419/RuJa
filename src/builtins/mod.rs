@@ -27,8 +27,8 @@ pub(crate) use global::{
     global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
-    build_json, build_reflect, date_constructor, date_get_component, date_get_time, date_now,
-    date_parse, date_set_component, date_to_string, date_utc,
+    build_json, build_reflect, date_constructor, date_get_component, date_get_time,
+    date_get_timezone_offset, date_now, date_parse, date_set_component, date_to_string, date_utc,
 };
 pub(crate) use math::{build_console, build_math};
 pub(crate) use proxy::*;
@@ -78,6 +78,25 @@ pub(crate) fn data_prop(value: Value) -> PropertyDescriptor {
         set: None,
         is_accessor: false,
     }
+}
+
+pub(crate) fn builtin_function_own_props(
+    name: &str,
+    length: usize,
+) -> IndexMap<PropertyKey, PropertyDescriptor> {
+    let mut props = IndexMap::new();
+    let mut length_desc = PropertyDescriptor::data(Value::Number(length as f64));
+    length_desc.writable = false;
+    length_desc.enumerable = false;
+    length_desc.configurable = true;
+    props.insert(PropertyKey::from("length"), length_desc);
+
+    let mut name_desc = PropertyDescriptor::data(Value::String(Arc::from(name)));
+    name_desc.writable = false;
+    name_desc.enumerable = false;
+    name_desc.configurable = true;
+    props.insert(PropertyKey::from("name"), name_desc);
+    props
 }
 
 /// Create a non-writable, non-enumerable, non-configurable data property
@@ -222,7 +241,7 @@ pub(crate) fn make_builtin_constructor(
             Value::Object(_) => Some(vm.function_proto.clone()),
             _ => None,
         }),
-        props: Mutex::new(IndexMap::new()),
+        props: Mutex::new(builtin_function_own_props(name, 1)),
         extensible: AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
@@ -231,7 +250,7 @@ pub(crate) fn make_builtin_constructor(
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
-            data_prop(Value::Object(proto_idx)),
+            const_prop(Value::Object(proto_idx)),
         );
     });
     // prototype.constructor
@@ -265,7 +284,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
         vm.object_proto.clone()
     };
     let proto_obj = HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
+        props: Mutex::new(builtin_function_own_props(name, 1)),
         proto: Mutex::new(Some(proto_parent)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from(name)),
@@ -295,7 +314,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
     vm.heap.with_obj(ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
-            data_prop(Value::Object(proto_idx)),
+            const_prop(Value::Object(proto_idx)),
         );
     });
     let ts_fn = vm.new_native_function("toString", error_to_string, 0)?;
@@ -682,6 +701,12 @@ fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
         return Ok(v);
     }
     Ok(Value::Undefined)
+}
+
+fn global_uri_identity(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::String(
+        vm.to_string(args.first().unwrap_or(&Value::Undefined))?,
+    ))
 }
 
 /// `Number.prototype.valueOf` / `Boolean.prototype.valueOf` /
@@ -1282,93 +1307,141 @@ fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
     }
     Ok(obj)
 }
+
+fn canonical_string_index(key: &PropertyKey) -> Option<usize> {
+    let name = key.as_str()?;
+    let index = name.parse::<usize>().ok()?;
+    if index.to_string() == name {
+        Some(index)
+    } else {
+        None
+    }
+}
+
+fn string_exotic_own_property_descriptor(s: &str, key: &PropertyKey) -> Option<PropertyDescriptor> {
+    if key.as_str() == Some("length") {
+        let mut desc = PropertyDescriptor::data(Value::Number(crate::value::utf16_len(s) as f64));
+        desc.writable = false;
+        desc.enumerable = false;
+        desc.configurable = false;
+        return Some(desc);
+    }
+
+    let index = canonical_string_index(key)?;
+    let unit = crate::value::utf16_get(s, index)?;
+    let mut desc = PropertyDescriptor::data(Value::String(Arc::from(
+        crate::value::utf16_to_string(&[unit]).as_str(),
+    )));
+    desc.writable = false;
+    desc.enumerable = true;
+    desc.configurable = false;
+    Some(desc)
+}
+
+fn own_property_descriptor_for_key(
+    vm: &mut Vm,
+    obj: &Value,
+    key: &PropertyKey,
+) -> Option<PropertyDescriptor> {
+    match obj {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            let ordinary = o.props().lock().get(key).cloned();
+            if ordinary.is_some() {
+                return ordinary;
+            }
+
+            if let HeapObj::Array(a) = o {
+                if key.as_str() == Some("length") {
+                    let mut desc =
+                        PropertyDescriptor::data(Value::Number(a.items.lock().len() as f64));
+                    desc.writable = true;
+                    desc.enumerable = false;
+                    desc.configurable = false;
+                    return Some(desc);
+                }
+                if let Some(i) = canonical_string_index(key) {
+                    let items = a.items.lock();
+                    if i < items.len() {
+                        return Some(PropertyDescriptor::data(items[i].clone()));
+                    }
+                }
+            }
+
+            if let HeapObj::Object(od) = o {
+                if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                    return string_exotic_own_property_descriptor(&s, key);
+                }
+            }
+
+            None
+        }),
+        Value::String(s) => string_exotic_own_property_descriptor(s, key),
+        _ => None,
+    }
+}
+
+fn from_property_descriptor(vm: &mut Vm, desc: PropertyDescriptor) -> error::Result<Value> {
+    let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let mut props = IndexMap::new();
+    if desc.is_accessor {
+        props.insert(
+            PropertyKey::from("get"),
+            PropertyDescriptor::data(desc.get.unwrap_or(Value::Undefined)),
+        );
+        props.insert(
+            PropertyKey::from("set"),
+            PropertyDescriptor::data(desc.set.unwrap_or(Value::Undefined)),
+        );
+    } else {
+        props.insert(
+            PropertyKey::from("value"),
+            PropertyDescriptor::data(desc.value),
+        );
+        props.insert(
+            PropertyKey::from("writable"),
+            PropertyDescriptor::data(Value::Bool(desc.writable)),
+        );
+    }
+    props.insert(
+        PropertyKey::from("enumerable"),
+        PropertyDescriptor::data(Value::Bool(desc.enumerable)),
+    );
+    props.insert(
+        PropertyKey::from("configurable"),
+        PropertyDescriptor::data(Value::Bool(desc.configurable)),
+    );
+    vm.heap.with_obj(desc_obj, |o| {
+        if let HeapObj::Object(od) = o {
+            *od.props.lock() = props;
+        }
+    });
+    Ok(Value::Object(GcIdx(desc_obj)))
+}
+
 fn object_get_own_property_descriptor(
     vm: &mut Vm,
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let key = match args.get(1) {
-        Some(v) => vm.to_property_key(v)?,
-        None => return Ok(Value::Undefined),
-    };
-    if let Value::Object(idx) = &obj {
-        let pkey = crate::value::PropertyKey::from(key.as_str());
-        let desc = vm.heap.with_obj(idx.0, |o| {
-            if let crate::value::HeapObj::Array(a) = o {
-                // Array exotic object: synthesize descriptors for 'length' and
-                // index properties so Object.getOwnPropertyDescriptor works.
-                if key == "length" {
-                    return Some(crate::value::PropertyDescriptor {
-                        value: Value::Number(a.items.lock().len() as f64),
-                        writable: true,
-                        enumerable: false,
-                        configurable: false,
-                        get: None,
-                        set: None,
-                        is_accessor: false,
-                    });
-                }
-                if let Ok(i) = key.parse::<usize>() {
-                    let items = a.items.lock();
-                    if i < items.len() {
-                        return Some(crate::value::PropertyDescriptor {
-                            value: items[i].clone(),
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
-                            get: None,
-                            set: None,
-                            is_accessor: false,
-                        });
-                    }
-                }
-            }
-            o.props().lock().get(&pkey).cloned()
-        });
-        if let Some(d) = desc {
-            let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.object_proto.clone())),
-                extensible: AtomicBool::new(true),
-                class_name: None,
-                private_fields: Mutex::new(std::collections::HashMap::new()),
-                primitive: Mutex::new(None),
-            }))?;
-            let mut p = IndexMap::new();
-            if d.is_accessor {
-                p.insert(
-                    PropertyKey::from("get"),
-                    data_prop(d.get.clone().unwrap_or(Value::Undefined)),
-                );
-                p.insert(
-                    PropertyKey::from("set"),
-                    data_prop(d.set.clone().unwrap_or(Value::Undefined)),
-                );
-            } else {
-                p.insert(PropertyKey::from("value"), data_prop(d.value.clone()));
-                p.insert(
-                    PropertyKey::from("writable"),
-                    data_prop(Value::Bool(d.writable)),
-                );
-            }
-            p.insert(
-                PropertyKey::from("enumerable"),
-                data_prop(Value::Bool(d.enumerable)),
-            );
-            p.insert(
-                PropertyKey::from("configurable"),
-                data_prop(Value::Bool(d.configurable)),
-            );
-            vm.heap.with_obj(desc_obj, |o| {
-                if let HeapObj::Object(od) = o {
-                    *od.props.lock() = p;
-                }
-            });
-            return Ok(Value::Object(GcIdx(desc_obj)));
-        }
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
     }
-    Ok(Value::Undefined)
+    let obj = vm.to_object(object)?;
+    let key = to_property_key_descriptor(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    match own_property_descriptor_for_key(vm, &obj, &key) {
+        Some(desc) => from_property_descriptor(vm, desc),
+        None => Ok(Value::Undefined),
+    }
 }
 
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -1708,6 +1781,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         "Object",
         &[
             ("toString", object_to_string_native, 0),
+            ("toLocaleString", object_to_string_native, 0),
             ("hasOwnProperty", object_has_own_property, 1),
             ("isPrototypeOf", object_is_prototype_of, 1),
             ("propertyIsEnumerable", object_property_is_enumerable, 1),
@@ -1832,6 +1906,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (array_buffer_ctor, array_buffer_proto) = make_builtin_constructor_with(
         vm,
         "ArrayBuffer",
+        1,
         array_buffer_constructor,
         &[("slice", array_buffer_slice, 2)],
     )?;
@@ -1848,6 +1923,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (data_view_ctor, data_view_proto) = make_builtin_constructor_with(
         vm,
         "DataView",
+        3,
         data_view_constructor,
         &[
             ("getFloat32", data_view_get_float32, 1),
@@ -1909,7 +1985,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             *f.prototype.lock() = Some(Value::Object(u8_proto_idx));
             f.props.lock().insert(
                 PropertyKey::from("prototype"),
-                data_prop(Value::Object(u8_proto_idx)),
+                const_prop(Value::Object(u8_proto_idx)),
             );
         }
     });
@@ -1924,6 +2000,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (date_ctor, date_proto) = make_builtin_constructor_with(
         vm,
         "Date",
+        7,
         date_constructor,
         &[
             ("valueOf", date_get_time, 0),
@@ -1962,6 +2039,13 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toString", date_to_string, 0),
             ("toLocaleString", date_to_string, 0),
             ("toUTCString", date_to_string, 0),
+            ("toTimeString", date_to_string, 0),
+            ("toDateString", date_to_string, 0),
+            ("toLocaleDateString", date_to_string, 0),
+            ("toLocaleTimeString", date_to_string, 0),
+            ("toISOString", date_to_string, 0),
+            ("toJSON", date_to_string, 1),
+            ("getTimezoneOffset", date_get_timezone_offset, 0),
         ],
     )?;
     vm.date_proto = Value::Object(date_proto);
@@ -1987,6 +2071,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (array_ctor, array_proto) = make_builtin_constructor_with(
         vm,
         "Array",
+        1,
         array_constructor,
         &[
             ("push", array_push, 1),
@@ -2026,6 +2111,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("values", array_values, 0),
             ("entries", array_entries, 0),
             ("toString", array_to_string, 0),
+            ("toLocaleString", array_to_string, 0),
         ],
     )?;
     // override the constructor function to use array_constructor
@@ -2048,6 +2134,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (str_ctor, str_proto) = make_builtin_constructor_with(
         vm,
         "String",
+        1,
         string_constructor,
         &[
             ("charAt", str_char_at, 1),
@@ -2058,6 +2145,9 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("slice", str_slice, 2),
             ("toUpperCase", str_to_upper, 0),
             ("toLowerCase", str_to_lower, 0),
+            ("toLocaleUpperCase", str_to_upper, 0),
+            ("toLocaleLowerCase", str_to_lower, 0),
+            ("localeCompare", str_locale_compare, 1),
             ("trim", str_trim, 0),
             ("split", str_split, 1),
             ("replace", str_replace, 2),
@@ -2114,12 +2204,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (num_ctor, num_proto) = make_builtin_constructor_with(
         vm,
         "Number",
+        1,
         number_constructor,
         &[
             ("toFixed", num_to_fixed, 1),
             ("toPrecision", num_to_precision, 1),
             ("toExponential", num_to_exponential, 1),
             ("toString", num_proto_to_string, 1),
+            ("toLocaleString", num_proto_to_string, 0),
             ("valueOf", boxed_value_of, 0),
         ],
     )?;
@@ -2169,6 +2261,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (bool_ctor, bool_proto) = make_builtin_constructor_with(
         vm,
         "Boolean",
+        1,
         boolean_constructor,
         &[
             ("valueOf", boxed_value_of, 0),
@@ -2188,6 +2281,15 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     define_global(vm, "isFinite", Value::Object(idx));
     let eval_idx = vm.new_native_function("eval", global_eval, 1)?;
     define_global(vm, "eval", Value::Object(eval_idx));
+    for name in [
+        "decodeURI",
+        "decodeURIComponent",
+        "encodeURI",
+        "encodeURIComponent",
+    ] {
+        let idx = vm.new_native_function(name, global_uri_identity, 1)?;
+        define_global(vm, name, Value::Object(idx));
+    }
     define_global_const(vm, "NaN", Value::Number(f64::NAN));
     define_global_const(vm, "Infinity", Value::Number(f64::INFINITY));
     define_global_const(vm, "undefined", Value::Undefined);
@@ -2255,6 +2357,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (promise_ctor, promise_proto) = make_builtin_constructor_with(
         vm,
         "Promise",
+        1,
         promise_constructor,
         &[("then", promise_then, 2), ("catch", promise_catch, 1)],
     )?;
@@ -2277,14 +2380,40 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (regex_ctor, regex_proto) = make_builtin_constructor_with(
         vm,
         "RegExp",
+        2,
         regexp_constructor,
-        &[("test", regexp_test, 1), ("exec", regexp_exec, 1)],
+        &[
+            ("test", regexp_test, 1),
+            ("exec", regexp_exec, 1),
+            ("toString", regexp_to_string, 0),
+        ],
     )?;
+    let source_getter = vm.new_native_function("get source", regexp_source_get, 0)?;
+    let global_getter = vm.new_native_function("get global", regexp_global_get, 0)?;
+    let ignore_case_getter = vm.new_native_function("get ignoreCase", regexp_ignore_case_get, 0)?;
+    let multiline_getter = vm.new_native_function("get multiline", regexp_multiline_get, 0)?;
     vm.heap.with_obj(regex_proto.0, |o| {
         if let HeapObj::Object(obj) = o {
-            obj.props.lock().insert(
+            let mut props = obj.props.lock();
+            props.insert(
                 PropertyKey::from("__regex_proto__"),
                 data_prop(Value::Bool(true)),
+            );
+            props.insert(
+                PropertyKey::from("source"),
+                accessor_get_prop(Value::Object(source_getter)),
+            );
+            props.insert(
+                PropertyKey::from("global"),
+                accessor_get_prop(Value::Object(global_getter)),
+            );
+            props.insert(
+                PropertyKey::from("ignoreCase"),
+                accessor_get_prop(Value::Object(ignore_case_getter)),
+            );
+            props.insert(
+                PropertyKey::from("multiline"),
+                accessor_get_prop(Value::Object(multiline_getter)),
             );
         }
     });
@@ -2364,7 +2493,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         }
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
-            data_prop(Value::Object(GcIdx(generator_function_proto_idx))),
+            const_prop(Value::Object(GcIdx(generator_function_proto_idx))),
         );
     });
     // Install call/apply/bind on Function.prototype (allocated at the top of
@@ -2389,7 +2518,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     vm.heap.with_obj(function_ctor_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
-            data_prop(Value::Object(function_proto_idx)),
+            const_prop(Value::Object(function_proto_idx)),
         );
     });
     // The function prototype's `constructor` is the Function constructor.

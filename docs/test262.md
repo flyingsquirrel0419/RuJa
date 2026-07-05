@@ -201,6 +201,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   ordering, symbol-key support, primitive string own `length`/index handling,
   and standard built-in function descriptors. This closes the focused
   `Object.hasOwn` cluster at 56 pass / 0 fail / 6 skip.
+- **`Object.getOwnPropertyDescriptor`** —
+  `Object.getOwnPropertyDescriptor` now performs `ToObject` before
+  `ToPropertyKey`, preserves Symbol keys, synthesizes string exotic
+  `length`/index descriptors, and creates `FromPropertyDescriptor` result
+  objects with enumerable descriptor fields. Built-in constructor
+  `length`/`name`/`prototype` descriptors plus descriptor-visible Object,
+  Array, String, Number, Date, RegExp, and URI global members were tightened as
+  part of the same cluster. This closes the focused
+  `Object.getOwnPropertyDescriptor` cluster at 308 pass / 0 fail / 2 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

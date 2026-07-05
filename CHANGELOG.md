@@ -83,6 +83,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   wrapper `length`/index handling, correct `name`/`length` descriptors, and no
   constructable `prototype` property. The focused `Object.hasOwn` test262
   cluster now runs at **56 pass / 0 fail / 6 skip**.
+- **`Object.getOwnPropertyDescriptor` conformance**: aligned
+  `Object.getOwnPropertyDescriptor` with `ToObject` before `ToPropertyKey`,
+  symbol property keys, string exotic `length`/index descriptors, and
+  `FromPropertyDescriptor` result-object attributes. Built-in constructor
+  `length`/`name`/`prototype` descriptors and a small set of missing
+  descriptor-visible built-in prototype members were also tightened. The
+  focused `Object.getOwnPropertyDescriptor` test262 cluster now runs at **308
+  pass / 0 fail / 2 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/
