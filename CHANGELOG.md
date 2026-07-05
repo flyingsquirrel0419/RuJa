@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **94.3%** (up from 88.6%).
-Current supported subset count: **3940 pass / 238 fail / 2 timeout**.
+Supported-subset pass rate: **94.4%** (up from 88.6%).
+Current supported subset count: **3942 pass / 236 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -151,6 +151,11 @@ Current supported subset count: **3940 pass / 238 fail / 2 timeout**.
   async keyword. This brings `language/expressions/await` to
   **7 pass / 0 fail** and reduces `language/expressions/assignmenttargettype`
   to **314 pass / 2 fail**.
+- **`import.meta` assignment target early errors**: direct and parenthesized
+  assignments to `import.meta` are now rejected during parsing instead of
+  reaching runtime. This closes the remaining
+  `language/expressions/assignmenttargettype` failures, bringing that
+  directory to **316 pass / 0 fail**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

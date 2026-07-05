@@ -1613,11 +1613,27 @@ impl Parser {
     }
 
     fn is_assignment_target(target: &Expr) -> bool {
+        if Self::is_import_meta(target) {
+            return false;
+        }
         match target {
             Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
             Expr::Array(_) | Expr::Object(_) => Self::is_assignment_pattern(target),
             _ => false,
         }
+    }
+
+    fn is_import_meta(target: &Expr) -> bool {
+        matches!(
+            target,
+            Expr::Member {
+                object,
+                property,
+                computed: false,
+                ..
+            } if matches!(object.as_ref(), Expr::Ident(name) if name.as_ref() == "import")
+                && matches!(property.as_ref(), Expr::String(name) if name.as_ref() == "meta")
+        )
     }
 
     fn is_for_in_of_assignment_target(target: &Expr) -> bool {
@@ -3613,6 +3629,13 @@ mod tests {
         }
 
         assert!(Parser::parse("({} = {});").is_ok());
+    }
+
+    #[test]
+    fn parse_import_meta_is_not_assignment_target() {
+        for src in ["import.meta = 1;", "(import.meta) = 1;"] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
     }
 
     #[test]
