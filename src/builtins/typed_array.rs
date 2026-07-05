@@ -536,6 +536,125 @@ fn data_view_write_u32(
     Ok(Value::Undefined)
 }
 
+fn data_view_read_f32(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView getter on detached buffer"));
+    }
+    if request_index
+        .checked_add(4)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let bytes = array_buffer_bytes_at(vm, &buffer, byte_index, 4)?;
+    let raw = [bytes[0], bytes[1], bytes[2], bytes[3]];
+    let value = if little_endian {
+        f32::from_le_bytes(raw)
+    } else {
+        f32::from_be_bytes(raw)
+    };
+    Ok(Value::Number(value as f64))
+}
+
+fn data_view_write_f32(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView setter on detached buffer"));
+    }
+    if request_index
+        .checked_add(4)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let value = number_value as f32;
+    let bytes = if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    array_buffer_set_bytes_at(vm, &buffer, byte_index, &bytes)?;
+    Ok(Value::Undefined)
+}
+
+fn data_view_read_f64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView getter on detached buffer"));
+    }
+    if request_index
+        .checked_add(8)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let bytes = array_buffer_bytes_at(vm, &buffer, byte_index, 8)?;
+    let raw = [
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ];
+    let value = if little_endian {
+        f64::from_le_bytes(raw)
+    } else {
+        f64::from_be_bytes(raw)
+    };
+    Ok(Value::Number(value))
+}
+
+fn data_view_write_f64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView setter on detached buffer"));
+    }
+    if request_index
+        .checked_add(8)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let bytes = if little_endian {
+        number_value.to_le_bytes()
+    } else {
+        number_value.to_be_bytes()
+    };
+    array_buffer_set_bytes_at(vm, &buffer, byte_index, &bytes)?;
+    Ok(Value::Undefined)
+}
+
 pub(crate) fn data_view_buffer_get(
     vm: &mut Vm,
     _args: &[Value],
@@ -667,6 +786,38 @@ pub(crate) fn data_view_set_int32(
     this: Option<Value>,
 ) -> error::Result<Value> {
     data_view_write_u32(vm, args, this, "setInt32")
+}
+
+pub(crate) fn data_view_get_float32(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_f32(vm, args, this, "getFloat32")
+}
+
+pub(crate) fn data_view_set_float32(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_f32(vm, args, this, "setFloat32")
+}
+
+pub(crate) fn data_view_get_float64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_f64(vm, args, this, "getFloat64")
+}
+
+pub(crate) fn data_view_set_float64(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_f64(vm, args, this, "setFloat64")
 }
 
 pub(crate) fn to_uint8_element(n: f64) -> u8 {

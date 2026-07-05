@@ -42,6 +42,13 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   writes, signed Int32 reads, and the same `ToIndex`/value/detached/range
   validation ordering as the smaller DataView integer methods. The focused
   DataView 32-bit method cluster now runs at **56 pass / 0 fail / 38 skip**.
+- **DataView floating-point element accessors**: implemented
+  `DataView.prototype.getFloat32`, `setFloat32`, `getFloat64`, and
+  `setFloat64` with IEEE-754 byte encoding/decoding, big-endian defaults,
+  `ToBoolean` little-endian handling, `-0`/NaN/Infinity preservation, and the
+  same `ToIndex`/value/detached/range validation ordering as the integer
+  DataView methods. The focused DataView float method cluster now runs at
+  **62 pass / 0 fail / 28 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

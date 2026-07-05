@@ -522,6 +522,105 @@ fn data_view_int32_uint32_methods_read_write_endian_and_validate_order() {
 }
 
 #[test]
+fn data_view_float_methods_read_write_endian_and_validate_order() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(18);
+            var dv = new DataView(buffer, 1, 16);
+            var values = [];
+            values.push(dv.setFloat32(0, 42, true) === undefined);
+            values.push(dv.getFloat32(0));
+            values.push(dv.getFloat32(0, true));
+            values.push(dv.setFloat64(8, 42, true) === undefined);
+            values.push(dv.getFloat64(8));
+            values.push(dv.getFloat64(8, true));
+            values.push(DataView.prototype.getFloat32.length);
+            values.push(DataView.prototype.setFloat64.length);
+            values.push(DataView.prototype.getFloat64.name);
+            values.push(DataView.prototype.setFloat32.name);
+            values.join(",");
+            "#),
+        Value::String(Arc::from(
+            "true,1.4441781973331565e-41,42,true,8.759e-320,42,1,2,getFloat64,setFloat32"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(12));
+            dv.setFloat32(0, -0);
+            dv.setFloat64(4, -0);
+            [1 / dv.getFloat32(0), 1 / dv.getFloat64(4)].join(",");
+            "#),
+        Value::String(Arc::from("-Infinity,-Infinity"))
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(12));
+            dv.setUint8(0, 127);
+            dv.setUint8(1, 192);
+            dv.setUint8(2, 0);
+            dv.setUint8(3, 0);
+            dv.setUint8(4, 127);
+            dv.setUint8(5, 248);
+            dv.setUint8(6, 0);
+            dv.setUint8(7, 0);
+            dv.setUint8(8, 0);
+            dv.setUint8(9, 0);
+            dv.setUint8(10, 0);
+            dv.setUint8(11, 0);
+            [dv.getFloat32(0) !== dv.getFloat32(0), dv.getFloat64(4) !== dv.getFloat64(4)].join(",");
+            "#),
+        Value::String(Arc::from("true,true"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(4));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setFloat32(-1, poisoned);
+            "#
+        )
+        .contains("RangeError"),
+        "invalid byteOffset should be rejected before value conversion"
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(8));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setFloat64(8, poisoned);
+            "#
+        )
+        .contains("Error"),
+        "value conversion should run before range check for valid ToIndex values"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(8);
+            var dv = new DataView(buffer);
+            $262.detachArrayBuffer(buffer);
+            dv.getFloat64(Infinity);
+            "#
+        )
+        .contains("RangeError"),
+        "ToIndex should run before detached-buffer validation"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(4);
+            var dv = new DataView(buffer);
+            $262.detachArrayBuffer(buffer);
+            dv.getFloat32(0);
+            "#
+        )
+        .contains("TypeError"),
+        "detached buffers should reject DataView float reads"
+    );
+}
+
+#[test]
 fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
     assert_eq!(
         run(r#"
