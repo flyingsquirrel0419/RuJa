@@ -93,6 +93,18 @@ pub(crate) fn const_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
+fn accessor_get_prop(get: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value: Value::Undefined,
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        get: Some(get),
+        set: None,
+        is_accessor: true,
+    }
+}
+
 pub(crate) fn native_constructor_prototype(vm: &mut Vm, fallback: Value) -> error::Result<Value> {
     if let Some(new_target) = vm.current_native_new_target.clone() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
@@ -413,10 +425,45 @@ fn test262_eval_script(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
     vm.eval_indirect(&src)
 }
 
+fn test262_detach_array_buffer(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let buffer = args.first().cloned().unwrap_or(Value::Undefined);
+    match buffer {
+        Value::Object(idx) => {
+            let detached = vm.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::ArrayBuffer(array_buffer) = obj {
+                    array_buffer
+                        .detached
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    array_buffer.bytes.lock().clear();
+                    true
+                } else {
+                    false
+                }
+            });
+            if detached {
+                Ok(Value::Undefined)
+            } else {
+                Err(Error::type_err(
+                    "$262.detachArrayBuffer called on non-ArrayBuffer",
+                ))
+            }
+        }
+        _ => Err(Error::type_err(
+            "$262.detachArrayBuffer called on non-object",
+        )),
+    }
+}
+
 fn install_test262_host(vm: &mut Vm) -> error::Result<()> {
     let host = vm.new_object()?;
     let create_realm = vm.new_native_function("createRealm", test262_create_realm, 0)?;
     let eval_script = vm.new_native_function("evalScript", test262_eval_script, 1)?;
+    let detach_array_buffer =
+        vm.new_native_function("detachArrayBuffer", test262_detach_array_buffer, 1)?;
     vm.heap.with_obj(host.0, |obj| {
         let mut props = obj.props().lock();
         props.insert(
@@ -426,6 +473,10 @@ fn install_test262_host(vm: &mut Vm) -> error::Result<()> {
         props.insert(
             PropertyKey::from("evalScript"),
             data_prop(Value::Object(eval_script)),
+        );
+        props.insert(
+            PropertyKey::from("detachArrayBuffer"),
+            data_prop(Value::Object(detach_array_buffer)),
         );
         props.insert(
             PropertyKey::from("global"),
@@ -1738,16 +1789,44 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
 
-    let (array_buffer_ctor, _) = make_builtin_constructor_with(
+    let (array_buffer_ctor, array_buffer_proto) = make_builtin_constructor_with(
         vm,
         "ArrayBuffer",
         array_buffer_constructor,
         &[("slice", array_buffer_slice, 2)],
     )?;
+    let array_buffer_byte_length_getter =
+        vm.new_native_function("get byteLength", array_buffer_byte_length_get, 0)?;
+    vm.heap.with_obj(array_buffer_proto.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("byteLength"),
+            accessor_get_prop(Value::Object(array_buffer_byte_length_getter)),
+        );
+    });
     define_global(vm, "ArrayBuffer", Value::Object(array_buffer_ctor));
 
-    let (data_view_ctor, _) =
+    let (data_view_ctor, data_view_proto) =
         make_builtin_constructor_with(vm, "DataView", data_view_constructor, &[])?;
+    let data_view_buffer_getter = vm.new_native_function("get buffer", data_view_buffer_get, 0)?;
+    let data_view_byte_length_getter =
+        vm.new_native_function("get byteLength", data_view_byte_length_get, 0)?;
+    let data_view_byte_offset_getter =
+        vm.new_native_function("get byteOffset", data_view_byte_offset_get, 0)?;
+    vm.heap.with_obj(data_view_proto.0, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("buffer"),
+            accessor_get_prop(Value::Object(data_view_buffer_getter)),
+        );
+        props.insert(
+            PropertyKey::from("byteLength"),
+            accessor_get_prop(Value::Object(data_view_byte_length_getter)),
+        );
+        props.insert(
+            PropertyKey::from("byteOffset"),
+            accessor_get_prop(Value::Object(data_view_byte_offset_getter)),
+        );
+    });
     define_global(vm, "DataView", Value::Object(data_view_ctor));
 
     // Uint8Array constructor.

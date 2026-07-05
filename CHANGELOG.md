@@ -16,6 +16,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   This closes the remaining cross-realm eval/template/non-constructor checks
   plus the Proxy subclass edge case, raising the supported subset to **4180
   pass / 0 fail / 0 timeout**.
+- **ArrayBuffer/DataView prototype accessors and detach host hook**:
+  `ArrayBuffer.prototype.byteLength` and DataView `buffer`/`byteLength`/
+  `byteOffset` are now installed as spec-visible accessor properties with
+  named getter functions and receiver validation. The test262 host object now
+  exposes `$262.detachArrayBuffer()`, ArrayBuffers track detached state, and
+  detached ArrayBuffers/DataViews report the required byteLength/byteOffset
+  behavior. The focused built-ins accessor cluster now runs at **29 pass / 0
+  fail / 19 skip**.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

@@ -28,6 +28,7 @@ pub(crate) fn array_buffer_constructor(
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
             bytes: Mutex::new(vec![0; length]),
+            detached: AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -43,7 +44,11 @@ pub(crate) fn array_buffer_slice(
     let bytes = match &this {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::ArrayBuffer(buffer) = o {
-                Some(buffer.bytes.lock().clone())
+                if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                    Some(Vec::new())
+                } else {
+                    Some(buffer.bytes.lock().clone())
+                }
             } else {
                 None
             }
@@ -91,6 +96,33 @@ pub(crate) fn array_buffer_slice(
     Ok(result)
 }
 
+pub(crate) fn array_buffer_byte_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("ArrayBuffer byteLength getter needs this"))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                        Some(Value::Number(0.0))
+                    } else {
+                        Some(Value::Number(buffer.bytes.lock().len() as f64))
+                    }
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::type_err("ArrayBuffer byteLength getter on non-ArrayBuffer")),
+        _ => Err(Error::type_err(
+            "ArrayBuffer byteLength getter on non-object",
+        )),
+    }
+}
+
 pub(crate) fn data_view_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -100,7 +132,14 @@ pub(crate) fn data_view_constructor(
     let buffer_len = match &buffer {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::ArrayBuffer(array_buffer) = o {
-                Some(array_buffer.bytes.lock().len())
+                if array_buffer
+                    .detached
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    None
+                } else {
+                    Some(array_buffer.bytes.lock().len())
+                }
             } else {
                 None
             }
@@ -138,6 +177,79 @@ pub(crate) fn data_view_constructor(
             proto: Mutex::new(Some(proto)),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
+}
+
+fn is_detached_array_buffer(vm: &Vm, value: &Value) -> bool {
+    match value {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                buffer.detached.load(std::sync::atomic::Ordering::Relaxed)
+            } else {
+                false
+            }
+        }),
+        _ => false,
+    }
+}
+
+fn data_view_slots(
+    vm: &Vm,
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<(Value, usize, usize)> {
+    let this = this.ok_or_else(|| Error::type_err(format!("DataView {name} getter needs this")))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::DataView(view) = o {
+                    Some((view.buffer.clone(), view.byte_offset, view.byte_length))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::type_err(format!("DataView {name} getter on non-DataView"))),
+        _ => Err(Error::type_err(format!(
+            "DataView {name} getter on non-object"
+        ))),
+    }
+}
+
+pub(crate) fn data_view_buffer_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (buffer, _, _) = data_view_slots(vm, this, "buffer")?;
+    Ok(buffer)
+}
+
+pub(crate) fn data_view_byte_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (buffer, _, byte_length) = data_view_slots(vm, this, "byteLength")?;
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err(
+            "DataView byteLength getter on detached buffer",
+        ));
+    }
+    Ok(Value::Number(byte_length as f64))
+}
+
+pub(crate) fn data_view_byte_offset_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (buffer, byte_offset, _) = data_view_slots(vm, this, "byteOffset")?;
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err(
+            "DataView byteOffset getter on detached buffer",
+        ));
+    }
+    Ok(Value::Number(byte_offset as f64))
 }
 
 pub(crate) fn to_uint8_element(n: f64) -> u8 {

@@ -137,6 +137,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Realm execution, and distinguishes constructable native constructors from
   callable-only native functions. This closes the remaining cross-realm
   supported-subset failures and the Proxy subclass edge case.
+- **ArrayBuffer/DataView prototype accessors and detach host hook** —
+  `ArrayBuffer.prototype.byteLength` and DataView `buffer`/`byteLength`/
+  `byteOffset` are now real accessor properties with named getter functions,
+  receiver validation, and detached-buffer semantics. `$262.detachArrayBuffer`
+  is implemented for the test262 host surface, closing the focused
+  ArrayBuffer/DataView accessor cluster at 29 pass / 0 fail / 19 skip.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

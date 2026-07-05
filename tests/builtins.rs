@@ -189,6 +189,94 @@ fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
 }
 
 #[test]
+fn array_buffer_and_data_view_prototype_accessors_validate_receivers() {
+    assert_eq!(
+        run(r#"
+            var ab = new ArrayBuffer(4);
+            var dv = new DataView(ab, 1, 2);
+            var abDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength");
+            var bufferDesc = Object.getOwnPropertyDescriptor(DataView.prototype, "buffer");
+            var lengthDesc = Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength");
+            var offsetDesc = Object.getOwnPropertyDescriptor(DataView.prototype, "byteOffset");
+            [
+              abDesc.get.call(ab),
+              abDesc.set === undefined,
+              abDesc.enumerable,
+              abDesc.configurable,
+              abDesc.get.name,
+              abDesc.get.length,
+              bufferDesc.get.call(dv) === ab,
+              lengthDesc.get.call(dv),
+              offsetDesc.get.call(dv),
+              bufferDesc.get.name,
+              lengthDesc.get.name,
+              offsetDesc.get.name
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "4,true,false,true,get byteLength,0,true,2,1,get buffer,get byteLength,get byteOffset"
+        ))
+    );
+    assert!(
+        run_err(
+            r#"
+            var getter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get;
+            getter.call({});
+            "#
+        )
+        .contains("TypeError"),
+        "ArrayBuffer byteLength getter should reject non-ArrayBuffer receivers"
+    );
+    assert!(
+        run_err(
+            r#"
+            var getter = Object.getOwnPropertyDescriptor(DataView.prototype, "buffer").get;
+            getter.call({});
+            "#
+        )
+        .contains("TypeError"),
+        "DataView buffer getter should reject non-DataView receivers"
+    );
+    assert_eq!(
+        run(r#"
+            var ab = new ArrayBuffer(4);
+            var dv = new DataView(ab, 1, 2);
+            $262.detachArrayBuffer(ab);
+            [
+              ab.byteLength,
+              Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get.call(ab),
+              dv.buffer === ab
+            ].join(",");
+            "#),
+        Value::String(Arc::from("0,0,true"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var ab = new ArrayBuffer(4);
+            var dv = new DataView(ab, 1, 2);
+            $262.detachArrayBuffer(ab);
+            dv.byteLength;
+            "#
+        )
+        .contains("TypeError"),
+        "DataView byteLength should reject detached buffers"
+    );
+    assert!(
+        run_err(
+            r#"
+            var ab = new ArrayBuffer(4);
+            var dv = new DataView(ab, 1, 2);
+            $262.detachArrayBuffer(ab);
+            dv.byteOffset;
+            "#
+        )
+        .contains("TypeError"),
+        "DataView byteOffset should reject detached buffers"
+    );
+}
+
+#[test]
 fn regexp_subclass_instances_use_new_target_prototype_and_last_index_descriptor() {
     assert_eq!(
         run(r#"

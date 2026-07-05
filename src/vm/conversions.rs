@@ -679,7 +679,11 @@ impl Vm {
                 }
                 let array_buffer_len = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::ArrayBuffer(buffer) = o {
-                        Some(buffer.bytes.lock().len())
+                        if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                            Some(0)
+                        } else {
+                            Some(buffer.bytes.lock().len())
+                        }
                     } else {
                         None
                     }
@@ -699,8 +703,32 @@ impl Vm {
                 if let Some((buffer, byte_offset, byte_length)) = data_view_info {
                     match key {
                         "buffer" => return Ok(buffer),
-                        "byteOffset" => return Ok(Value::Number(byte_offset as f64)),
-                        "byteLength" => return Ok(Value::Number(byte_length as f64)),
+                        "byteOffset" | "byteLength" => {
+                            let detached = match &buffer {
+                                Value::Object(buffer_idx) => {
+                                    self.heap.with_obj(buffer_idx.0, |o| {
+                                        if let crate::value::HeapObj::ArrayBuffer(array_buffer) = o
+                                        {
+                                            array_buffer
+                                                .detached
+                                                .load(std::sync::atomic::Ordering::Relaxed)
+                                        } else {
+                                            false
+                                        }
+                                    })
+                                }
+                                _ => false,
+                            };
+                            if detached {
+                                return Err(Error::type_err(
+                                    "DataView getter on detached buffer".to_string(),
+                                ));
+                            }
+                            if key == "byteOffset" {
+                                return Ok(Value::Number(byte_offset as f64));
+                            }
+                            return Ok(Value::Number(byte_length as f64));
+                        }
                         _ => {}
                     }
                 }
