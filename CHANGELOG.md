@@ -5,8 +5,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **99.8%** (up from 88.6%).
-Current supported subset count: **4170 pass / 10 fail / 0 timeout**.
+Current supported subset count: **4171 pass / 9 fail / 0 timeout**.
 
+- **Date subclass component semantics**: `Date` construction with multiple
+  date/time components now stores a clipped time value instead of treating the
+  year as a raw timestamp, and Date component getters now derive calendar
+  fields from the stored time value. This closes the remaining Date subclass
+  regular-construction check, raising the supported subset to **4171 pass / 9
+  fail / 0 timeout**.
 - **Private accessors and non-extensible private slots**: class private
   accessors now parse and install as private accessor slots, static private
   fields/methods/accessors initialize on the constructor object, function

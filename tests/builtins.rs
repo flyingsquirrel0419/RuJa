@@ -857,6 +857,18 @@ fn date_static_parse_exists() {
 }
 
 #[test]
+fn date_subclass_instances_keep_date_components() {
+    assert_eq!(
+        run("class D extends Date{};let d=new D(1859,'10',24,11);d.getFullYear()+','+d.getMonth()+','+d.getDate();"),
+        Value::String(Arc::from("1859,10,24"))
+    );
+    assert_eq!(
+        run("class D extends Date{};let d=new D(-3474558000000);d.getUTCFullYear()+','+d.getUTCMonth()+','+d.getUTCDate();"),
+        Value::String(Arc::from("1859,10,24"))
+    );
+}
+
+#[test]
 fn boxed_number_addition_uses_valueof() {
     assert_eq!(run("new Number(5) + 1;"), Value::Number(6.0));
     assert_eq!(run("new Boolean(true) + 1;"), Value::Number(2.0));

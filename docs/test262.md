@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.0% of all matrix files; 50.1% of executed files in the last confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.8% (4170 pass / 10 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.8% (4171 pass / 9 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -91,10 +91,10 @@ vary slightly because a small number of tests can cross the timeout boundary:
 | Metric | Count |
 |--------|-------|
 | Total matrix files | 48,465 |
-| Actually run | 23,164 |
-| Pass | 11,614 |
-| Fail | 11,550 |
-| Timeout | 11 |
+| Actually run | 23,162 |
+| Pass | 11,615 |
+| Fail | 11,547 |
+| Timeout | 13 |
 | Skip | 25,290 |
 | **Pass rate (of run)** | **50.1%** |
 | **Pass rate (of total)** | **24.0%** |
@@ -173,6 +173,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   initialize on constructor objects, functions track extensibility for
   `Object.preventExtensions`, and defining a new private slot on a
   non-extensible object throws `TypeError`.
+- **Date subclass component semantics** — Date construction from
+  year/month/day/time components now stores a clipped time value, and Date
+  component getters derive calendar fields from the stored value, so Date
+  subclasses initialize and read their inherited Date state correctly.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending
@@ -594,7 +598,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 
 ## Why the rate is not higher
 
-The remaining 10 failures in the supported subset cluster around built-in
-subclassing gaps (`ArrayBuffer`, `DataView`, `Date`, `Promise`, and generic
+The remaining 9 failures in the supported subset cluster around built-in
+subclassing gaps (`ArrayBuffer`, `DataView`, `Promise`, and generic
 builtins) plus cross-realm expression edge cases. These are tracked in
 `HANDOFF.md` and will be addressed in subsequent rounds.
