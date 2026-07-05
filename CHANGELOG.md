@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **98.2%** (up from 88.6%).
-Current supported subset count: **4103 pass / 77 fail / 0 timeout**.
+Supported-subset pass rate: **98.3%** (up from 88.6%).
+Current supported subset count: **4108 pass / 72 fail / 0 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -348,6 +348,12 @@ Current supported subset count: **4103 pass / 77 fail / 0 timeout**.
   loops and accepts `async of => {}` as a normal async-arrow initializer. This
   closes `language/statements/for` at **93 pass / 0 fail** and raises the
   supported subset to **4103 pass / 77 fail / 0 timeout**.
+- **Label identifiers and strict labelled functions**: labelled statements now
+  accept contextual `await` labels in non-module code and contextual `yield`
+  labels in sloppy non-generator code, including escaped spellings, while
+  strict labelled function declarations are rejected during parsing. This
+  closes `language/statements/labeled` at **17 pass / 0 fail** and raises the
+  supported subset to **4108 pass / 72 fail / 0 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

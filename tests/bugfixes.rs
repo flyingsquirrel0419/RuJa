@@ -633,6 +633,26 @@ fn labeled_statement_runs_body() {
     assert_eq!(v, Value::String(std::sync::Arc::from("yes")));
 }
 
+#[test]
+fn labeled_contextual_keywords_and_strict_function_body() {
+    assert_eq!(run("var x = 0; await: x = 1; x;"), Value::Number(1.0));
+    assert_eq!(
+        run(r#"var x = 0; aw\u0061it: x = 2; x;"#),
+        Value::Number(2.0)
+    );
+    assert_eq!(run("var x = 0; yield: x = 3; x;"), Value::Number(3.0));
+    assert_eq!(
+        run(r#"var x = 0; yi\u0065ld: x = 4; x;"#),
+        Value::Number(4.0)
+    );
+
+    let err = run_err(r#""use strict"; label: function g() {}"#);
+    assert!(
+        err.contains("SyntaxError"),
+        "strict labelled function declaration should be a SyntaxError, got: {err}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // #5 try/finally control flow (return/throw override)
 // ---------------------------------------------------------------------------

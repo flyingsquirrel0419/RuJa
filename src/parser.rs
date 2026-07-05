@@ -541,11 +541,9 @@ impl Parser {
         // Labeled statement: `ident:` followed by any statement. Detect by
         // peeking two tokens so a leading identifier isn't misread as an
         // expression statement.
-        if let TokenKind::Ident(s) = self.peek().clone() {
+        if let Some(label) = self.peek_label_identifier() {
             if matches!(self.peek_at_tok(1).kind, TokenKind::Colon) {
-                let label = Arc::from(s.as_str());
-                let label: Arc<str> = label;
-                self.advance(); // ident
+                self.advance(); // label identifier
                 self.advance(); // ':'
                                 // Peek the body's first token to determine if it's a loop.
                 let is_loop = matches!(
@@ -559,6 +557,12 @@ impl Parser {
                 if matches!(self.peek(), TokenKind::Const | TokenKind::Class) {
                     return Err(error::Error::syntax(
                         "Lexical declaration cannot be the body of a labelled statement"
+                            .to_string(),
+                    ));
+                }
+                if self.is_strict_context && self.label_body_starts_with_function_decl() {
+                    return Err(error::Error::syntax(
+                        "Function declaration cannot be the body of a labelled statement in strict mode"
                             .to_string(),
                     ));
                 }
@@ -660,6 +664,21 @@ impl Parser {
         }
     }
 
+    fn peek_label_identifier(&self) -> Option<Arc<str>> {
+        match self.peek().clone() {
+            TokenKind::Ident(s) => Some(Arc::from(s.as_str())),
+            TokenKind::Await if self.await_as_identifier_allowed() => Some(Arc::from("await")),
+            TokenKind::Yield if self.yield_as_identifier_allowed() => Some(Arc::from("yield")),
+            _ => None,
+        }
+    }
+
+    fn label_body_starts_with_function_decl(&self) -> bool {
+        matches!(self.peek(), TokenKind::Function)
+            || (matches!(self.peek(), TokenKind::Async)
+                && matches!(self.peek_at_tok(1).kind, TokenKind::Function))
+    }
+
     fn parse_opt_label(&mut self) -> Option<Arc<str>> {
         // Per spec, `break` and `continue` must not have a line terminator
         // between the keyword and the label. If a newline precedes the next
@@ -667,12 +686,11 @@ impl Parser {
         if self.peek_at_tok(0).preceded_by_newline {
             return None;
         }
-        if let TokenKind::Ident(s) = self.peek().clone() {
+        let label = self.peek_label_identifier();
+        if label.is_some() {
             self.advance();
-            Some(Arc::from(s.as_str()))
-        } else {
-            None
         }
+        label
     }
 
     fn parse_block(&mut self) -> error::Result<Stmt> {
