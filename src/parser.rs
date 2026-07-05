@@ -2224,8 +2224,10 @@ impl Parser {
                     return self.parse_function_expr_with_async(true);
                 }
                 // async arrow: `async (params) => body` or `async ident => body`
-                let is_async_arrow_paren = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
+                let is_async_arrow_paren = !self.peek_at_tok(1).preceded_by_newline
+                    && matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 let is_async_arrow_ident = matches!(self.peek_at_tok(1).kind, TokenKind::Ident(_))
+                    && !self.peek_at_tok(1).preceded_by_newline
                     && matches!(self.peek_at_tok(2).kind, TokenKind::Arrow);
                 if is_async_arrow_paren {
                     self.advance(); // async
@@ -2242,6 +2244,10 @@ impl Parser {
                     return Ok(Expr::Ident(Arc::from("async")));
                 }
                 if is_async_arrow_ident {
+                    if self.peek_at_tok(2).preceded_by_newline {
+                        self.advance();
+                        return Ok(Expr::Ident(Arc::from("async")));
+                    }
                     self.advance(); // async
                     let name = match self.peek().clone() {
                         TokenKind::Ident(s) => {
@@ -2318,6 +2324,11 @@ impl Parser {
                 }
                 // Could be arrow: x => ...
                 if let TokenKind::Arrow = self.peek_at_tok(1).kind {
+                    if self.peek_at_tok(1).preceded_by_newline {
+                        return Err(error::Error::syntax(
+                            "Line terminator not allowed before =>".to_string(),
+                        ));
+                    }
                     self.arrow_defaults = Vec::new();
                     self.arrow_rest = None;
                     self.advance(); // ident
@@ -2916,6 +2927,11 @@ impl Parser {
         if self.check(&TokenKind::RParen) {
             self.advance();
             if self.check(&TokenKind::Arrow) {
+                if self.tokens[self.pos].preceded_by_newline {
+                    return Err(error::Error::syntax(
+                        "Line terminator not allowed before =>".to_string(),
+                    ));
+                }
                 self.last_arrow_params = Some(params);
                 self.arrow_defaults = defaults;
                 self.arrow_rest = rest;
@@ -3027,6 +3043,11 @@ impl Parser {
         if self.check(&TokenKind::RParen) {
             self.advance();
             if self.check(&TokenKind::Arrow) {
+                if self.tokens[self.pos].preceded_by_newline {
+                    return Err(error::Error::syntax(
+                        "Line terminator not allowed before =>".to_string(),
+                    ));
+                }
                 while defaults.len() < params.len() {
                     defaults.push(None);
                 }
@@ -3067,7 +3088,7 @@ impl Parser {
             }
         }
         for (pattern, _tmp, _default) in dstr_decls {
-            Self::pattern_binding_names(pattern, &mut seen);
+            Self::check_pattern_binding_names(pattern, &mut seen)?;
         }
         if let Some(r) = rest_param {
             if matches!(&**r, "eval" | "arguments") {
@@ -3086,29 +3107,38 @@ impl Parser {
         Ok(())
     }
 
-    /// Collect all binding identifiers introduced by a destructuring pattern.
-    fn pattern_binding_names(pattern: &Pattern, out: &mut std::collections::HashSet<Arc<str>>) {
+    /// Validate and record binding identifiers introduced by a pattern.
+    fn check_pattern_binding_names(
+        pattern: &Pattern,
+        seen: &mut std::collections::HashSet<Arc<str>>,
+    ) -> error::Result<()> {
         match pattern {
             Pattern::Ident(name) => {
-                out.insert(name.clone());
+                if !seen.insert(name.clone()) {
+                    return Err(error::Error::syntax(format!(
+                        "Duplicate parameter '{}' is not allowed in arrow function",
+                        name
+                    )));
+                }
             }
             Pattern::Hole => {}
             Pattern::Array(elems) => {
                 for el in elems {
-                    Self::pattern_binding_names(el, out);
+                    Self::check_pattern_binding_names(el, seen)?;
                 }
             }
             Pattern::Object(props, rest) => {
                 for (_, target) in props {
-                    Self::pattern_binding_names(target, out);
+                    Self::check_pattern_binding_names(target, seen)?;
                 }
                 if let Some(r) = rest {
-                    Self::pattern_binding_names(r, out);
+                    Self::check_pattern_binding_names(r, seen)?;
                 }
             }
-            Pattern::Assign(inner, _) => Self::pattern_binding_names(inner, out),
-            Pattern::Rest(inner) => Self::pattern_binding_names(inner, out),
+            Pattern::Assign(inner, _) => Self::check_pattern_binding_names(inner, seen)?,
+            Pattern::Rest(inner) => Self::check_pattern_binding_names(inner, seen)?,
         }
+        Ok(())
     }
 
     fn parse_arrow_body(&mut self, params: Vec<Arc<str>>) -> error::Result<Expr> {
@@ -3966,6 +3996,23 @@ mod tests {
                 other => panic!("{:?}", other),
             },
             other => panic!("{:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_arrow_formal_parameter_early_errors() {
+        for src in [
+            "var af = (x, [x]) => 1;",
+            "var af = ([x, x]) => 1;",
+            "var af = (x, {x}) => 1;",
+            "var af = (x, {y: x}) => 1;",
+            "var af = ({x}, {y: x}) => 1;",
+            "var af = ({y: x, x}) => 1;",
+            "var af = x\n=> x;",
+            "var af = x\n=> {};",
+            "var af = ()\n=> {};",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
         }
     }
 

@@ -4,8 +4,8 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **95.2%** (up from 88.6%).
-Current supported subset count: **3979 pass / 199 fail / 2 timeout**.
+Supported-subset pass rate: **95.5%** (up from 88.6%).
+Current supported subset count: **3990 pass / 188 fail / 2 timeout**.
 
 - **Object.prototype.propertyIsEnumerable**: implemented the missing
   prototype method, including Symbol keys, array index/length behavior, string
@@ -208,6 +208,14 @@ Current supported subset count: **3979 pass / 199 fail / 2 timeout**.
   nested function expressions in defaults no longer steal outer defaults. This
   brings `language/expressions/object` to **285 pass / 0 fail** and raises the
   supported subset to **3979 pass / 199 fail / 2 timeout**.
+- **Arrow formal-parameter early errors**: arrow functions now reject
+  duplicate bound names introduced by destructuring parameters and reject a
+  line terminator before `=>` for both parenthesized and parenless parameter
+  forms. Async-arrow lookahead also preserves the required no-LineTerminator
+  restrictions around `async` and `=>`. This brings
+  `language/expressions/arrow-function/syntax/early-errors` to
+  **25 pass / 0 fail** and raises the supported subset to
+  **3990 pass / 188 fail / 2 timeout**.
 - **Call frame operand-stack isolation**: each `CallFrame` now records its
   stack base, and `Pop`/`Return`/`Halt` cannot consume operands below the
   current frame. This prevents nested calls with loop-body cleanup (for

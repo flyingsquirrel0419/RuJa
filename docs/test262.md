@@ -23,11 +23,11 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.2% | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.2% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 95.5% | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 83.1% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (95.2%).** It reflects the portion of the spec
+supported-subset rate (95.5%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -125,7 +125,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 95.2%:
+~56% to 95.5%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -309,10 +309,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   is isolated in the parser. This brings `language/expressions/object` to
   **285 pass / 0 fail** and raises the supported subset to
   **3979 pass / 199 fail / 2 timeout**.
+- **Arrow formal-parameter early errors** — arrow functions reject duplicate
+  bound names introduced by destructuring parameters and reject a line
+  terminator before `=>` for parenthesized and parenless forms. Async-arrow
+  lookahead also preserves the no-LineTerminator restrictions around `async`
+  and `=>`. This brings
+  `language/expressions/arrow-function/syntax/early-errors` to
+  **25 pass / 0 fail** and raises the supported subset to
+  **3990 pass / 188 fail / 2 timeout**.
 
 ## Why the rate is not higher
 
-The remaining 199 failures plus 2 timeouts in the supported subset cluster
+The remaining 188 failures plus 2 timeouts in the supported subset cluster
 around class behavior, super semantics, function/arrow early errors, and
 expression/operator edge cases. These are tracked in `HANDOFF.md` and will be
 addressed in subsequent rounds.
