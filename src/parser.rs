@@ -3544,6 +3544,17 @@ impl Parser {
                 Self::reject_duplicate_proto_object_literal(object)?;
                 Self::reject_duplicate_proto_object_literal(value)?;
             }
+            Expr::PrivateDefineAccessor {
+                object, get, set, ..
+            } => {
+                Self::reject_duplicate_proto_object_literal(object)?;
+                if let Some(get) = get {
+                    Self::reject_duplicate_proto_object_literal(get)?;
+                }
+                if let Some(set) = set {
+                    Self::reject_duplicate_proto_object_literal(set)?;
+                }
+            }
             Expr::PrivateFieldDecl {
                 init: Some(init), ..
             } => {
@@ -3696,7 +3707,58 @@ impl Parser {
                 true
             };
             // Private field declaration: #name = init  or  #name;
-            // Private method: #name(params) { body }  (also static #name() {})
+            // Private method/accessor: #name(params) / get #name() / set #name(v)
+            if matches!(
+                self.peek().clone(),
+                TokenKind::Ident(ref s)
+                    if (s == "get" || s == "set")
+                        && !self.tokens[self.pos].had_escape
+                        && matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_))
+            ) {
+                let kind = if matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "get") {
+                    crate::ast::PropKind::Get
+                } else {
+                    crate::ast::PropKind::Set
+                };
+                self.advance(); // get/set
+                let name = if let TokenKind::PrivateName(name) = self.peek().clone() {
+                    self.advance();
+                    name
+                } else {
+                    unreachable!()
+                };
+                let (params, param_defaults, rest_param, dstr_decls) =
+                    self.parse_params_scoped(false, false)?;
+                Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
+                let mut body = self.parse_fn_body(true, false, false, false)?;
+                let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                let has_destructuring_params = !dstr_decls.is_empty();
+                Self::reject_use_strict_with_non_simple_params(
+                    body_contains_use_strict,
+                    &param_defaults,
+                    rest_param.as_ref(),
+                    has_destructuring_params,
+                )?;
+                {
+                    let mut pre = Self::dstr_prelude_from(dstr_decls);
+                    pre.append(&mut body);
+                    body = pre;
+                }
+                methods.push(ClassMethod {
+                    name: Arc::from(name.as_str()),
+                    computed_name: None,
+                    params,
+                    param_defaults,
+                    rest_param,
+                    body,
+                    is_static,
+                    is_constructor: false,
+                    is_generator: false,
+                    kind,
+                    is_private: true,
+                });
+                continue;
+            }
             if let TokenKind::PrivateName(name) = self.peek().clone() {
                 // Peek ahead: if next is `(`, this is a private method.
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
@@ -3748,6 +3810,8 @@ impl Parser {
                 private_fields.push(crate::ast::PrivateFieldDecl {
                     name: Arc::from(name.as_str()),
                     init,
+                    is_static,
+                    kind: crate::ast::PropKind::Normal,
                 });
                 continue;
             }

@@ -210,6 +210,8 @@ pub(crate) fn make_builtin_constructor(
             _ => None,
         }),
         props: Mutex::new(IndexMap::new()),
+        extensible: AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func))?);
     // constructor.prototype
@@ -273,6 +275,8 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             _ => None,
         }),
         props: Mutex::new(IndexMap::new()),
+        extensible: AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func))?);
     vm.heap.with_obj(ctor_idx.0, |obj| {
@@ -916,10 +920,10 @@ fn object_prevent_extensions(
 ) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
-                od.extensible.store(false, Ordering::Relaxed);
-            }
+        vm.heap.with_obj(idx.0, |o| match o {
+            HeapObj::Object(od) => od.extensible.store(false, Ordering::Relaxed),
+            HeapObj::Function(f) => f.extensible.store(false, Ordering::Relaxed),
+            _ => {}
         });
     }
     Ok(obj)
@@ -928,13 +932,7 @@ fn object_prevent_extensions(
 fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
-        let ext = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
-                od.extensible.load(Ordering::Relaxed)
-            } else {
-                true
-            }
-        });
+        let ext = vm.heap.with_obj(idx.0, |o| o.is_extensible());
         return Ok(Value::Bool(ext));
     }
     Ok(Value::Bool(true))
@@ -943,13 +941,20 @@ fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
 fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
+        vm.heap.with_obj(idx.0, |o| match o {
+            HeapObj::Object(od) => {
                 od.extensible.store(false, Ordering::Relaxed);
                 for d in od.props.lock().values_mut() {
                     d.configurable = false;
                 }
             }
+            HeapObj::Function(f) => {
+                f.extensible.store(false, Ordering::Relaxed);
+                for d in f.props.lock().values_mut() {
+                    d.configurable = false;
+                }
+            }
+            _ => {}
         });
     }
     Ok(obj)

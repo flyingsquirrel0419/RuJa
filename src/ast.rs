@@ -75,6 +75,13 @@ pub enum Expr {
         name: Arc<str>,
         value: Box<Expr>,
     },
+    /// Private accessor declaration lowered into constructor/static init code.
+    PrivateDefineAccessor {
+        object: Box<Expr>,
+        name: Arc<str>,
+        get: Option<Box<Expr>>,
+        set: Option<Box<Expr>>,
+    },
     /// Private field declaration: `#name = init` in a class body.
     PrivateFieldDecl {
         name: Arc<str>,
@@ -116,6 +123,8 @@ pub enum Expr {
 pub struct PrivateFieldDecl {
     pub name: Arc<str>,
     pub init: Option<Box<Expr>>,
+    pub is_static: bool,
+    pub kind: PropKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]

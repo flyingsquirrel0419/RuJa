@@ -377,6 +377,8 @@ fn dynamic_function_constructor(
             _ => None,
         }),
         props: Mutex::new(props),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
     };
     let f_idx = vm.heap.allocate(HeapObj::Function(fd))?;
     // link prototype.constructor back to the function

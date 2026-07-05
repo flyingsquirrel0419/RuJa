@@ -595,6 +595,8 @@ pub(crate) fn make_builtin_constructor_with(
             _ => None,
         }),
         props: Mutex::new(IndexMap::new()),
+        extensible: AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
     };
     let ctor_idx = GcIdx(vm.heap.allocate(HeapObj::Function(ctor_func))?);
     vm.heap.with_obj(ctor_idx.0, |obj| {

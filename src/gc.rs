@@ -104,6 +104,21 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         push_value(proto, worklist);
     }
     match obj {
+        HeapObj::Object(o) => {
+            for slot in o.private_fields.lock().values() {
+                match slot {
+                    crate::value::PrivateSlot::Value(value) => push_value(value, worklist),
+                    crate::value::PrivateSlot::Accessor { get, set } => {
+                        if let Some(get) = get {
+                            push_value(get, worklist);
+                        }
+                        if let Some(set) = set {
+                            push_value(set, worklist);
+                        }
+                    }
+                }
+            }
+        }
         HeapObj::Array(a) => {
             for v in a.items.lock().iter() {
                 push_value(v, worklist);
@@ -116,6 +131,19 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             worklist.push(f.closure.0);
             if let Some(p) = f.prototype.lock().as_ref() {
                 push_value(p, worklist);
+            }
+            for slot in f.private_fields.lock().values() {
+                match slot {
+                    crate::value::PrivateSlot::Value(value) => push_value(value, worklist),
+                    crate::value::PrivateSlot::Accessor { get, set } => {
+                        if let Some(get) = get {
+                            push_value(get, worklist);
+                        }
+                        if let Some(set) = set {
+                            push_value(set, worklist);
+                        }
+                    }
+                }
             }
             if let crate::value::FunctionKind::Bound {
                 target,

@@ -440,13 +440,22 @@ pub struct ObjectData {
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
     pub class_name: Option<Arc<str>>,
-    /// Private field storage: `#name` -> value. Isolated from normal props
-    /// (not enumerable, not accessible via [] or for...in).
-    pub private_fields: Mutex<std::collections::HashMap<Arc<str>, Value>>,
+    /// Private slot storage: `#name` -> field/method/accessor data. Isolated
+    /// from normal props (not enumerable, not accessible via [] or for...in).
+    pub private_fields: Mutex<std::collections::HashMap<Arc<str>, PrivateSlot>>,
     /// Wrapped primitive for boxed primitives created via `new Boolean(x)`,
     /// `new Number(x)`, `new String(x)`, or `Object(x)`. `None` for ordinary
     /// objects. `valueOf()` returns this so `new Number(5) + 1 === 6`.
     pub primitive: Mutex<Option<Value>>,
+}
+
+#[derive(Clone)]
+pub enum PrivateSlot {
+    Value(Value),
+    Accessor {
+        get: Option<Value>,
+        set: Option<Value>,
+    },
 }
 
 pub struct ArrayData {
@@ -497,6 +506,8 @@ pub struct FunctionData {
     /// object used as [[Prototype]] of instances created via `new`).
     pub proto: Mutex<Option<Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub extensible: AtomicBool,
+    pub private_fields: Mutex<std::collections::HashMap<Arc<str>, PrivateSlot>>,
 }
 
 pub enum FunctionKind {
@@ -792,6 +803,7 @@ impl HeapObj {
     pub fn is_extensible(&self) -> bool {
         match self {
             HeapObj::Object(o) => o.extensible.load(Ordering::Relaxed),
+            HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
             _ => true,
         }
     }

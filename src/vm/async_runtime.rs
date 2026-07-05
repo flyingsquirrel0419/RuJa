@@ -209,6 +209,8 @@ impl Vm {
                 _ => None,
             }),
             props: Mutex::new(props),
+            extensible: std::sync::atomic::AtomicBool::new(true),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
         };
         Ok(GcIdx(self.heap.allocate(HeapObj::Function(fdef))?))
     }

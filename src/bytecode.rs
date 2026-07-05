@@ -218,6 +218,8 @@ pub enum Op {
     GetPrivate(usize),
     /// Set a private field on `this`. arg = name constant idx. Pops value.
     SetPrivate(usize),
+    /// Define/merge a private accessor slot: stack [obj, get, set].
+    DefinePrivateAccessor(usize),
     /// Call a private method: stack [..., obj, args...], args = (name idx, arg count).
     /// Resolves `obj.#name` as a function and calls it with this=obj.
     CallPrivateMethod(usize, usize),

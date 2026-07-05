@@ -22,12 +22,12 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.2-24.3% of all matrix files; 49.9-50.0% of executed files | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.7% (4168 pass / 12 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 24.0% of all matrix files; 50.1% of executed files in the last confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 99.8% (4170 pass / 10 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
-supported-subset rate (99.7%).** It reflects the portion of the spec
+supported-subset rate (99.8%).** It reflects the portion of the spec
 RuJa actively targets. The full-suite number is published for
 transparency but is dominated by unsupported features. The CI-subset
 number is a narrow regression gate, not a conformance claim.
@@ -90,14 +90,14 @@ vary slightly because a small number of tests can cross the timeout boundary:
 
 | Metric | Count |
 |--------|-------|
-| Total matrix files | 47,717 |
-| Actually run | 23,162-23,175 |
-| Pass | 11,568-11,593 |
-| Fail | 11,571-11,594 |
-| Timeout | 8-13 |
-| Skip | 24,542 |
-| **Pass rate (of run)** | **49.9-50.0%** |
-| **Pass rate (of total)** | **24.2-24.3%** |
+| Total matrix files | 48,465 |
+| Actually run | 23,164 |
+| Pass | 11,614 |
+| Fail | 11,550 |
+| Timeout | 11 |
+| Skip | 25,290 |
+| **Pass rate (of run)** | **50.1%** |
+| **Pass rate (of total)** | **24.0%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -128,7 +128,7 @@ for the current commit.)
 ## What was fixed to get here
 
 Key test262-driven bug fixes that raised the supported-subset rate from
-~56% to 99.7%:
+~56% to 99.8%:
 
 - **Lexer: Unicode identifiers** — `\uXXXX`/`\u{XXXX}` escape forms,
   Unicode letters, NEL/LS/PS line terminators.
@@ -168,6 +168,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   while same-loop `continue` keeps the iterator open. Iterator `return()`
   errors override the pending for-of completion where required, closing the
   derived-constructor return-override for-of checks.
+- **Private accessors and non-extensible private slots** — private
+  getters/setters now install as accessor slots, static private elements
+  initialize on constructor objects, functions track extensibility for
+  `Object.preventExtensions`, and defining a new private slot on a
+  non-extensible object throws `TypeError`.
 - **Null-extending classes and bound subclass construction** —
   `class C extends null {}` uses `null` as `C.prototype`'s prototype and
   `%Function.prototype%` as `C`'s prototype, `super()` in null-extending
@@ -589,7 +594,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 
 ## Why the rate is not higher
 
-The remaining 12 failures in the supported subset cluster around class
-private-field/non-extensible behavior, built-in subclassing gaps, and
-cross-realm expression edge cases. These are tracked in `HANDOFF.md` and will
-be addressed in subsequent rounds.
+The remaining 10 failures in the supported subset cluster around built-in
+subclassing gaps (`ArrayBuffer`, `DataView`, `Date`, `Promise`, and generic
+builtins) plus cross-realm expression edge cases. These are tracked in
+`HANDOFF.md` and will be addressed in subsequent rounds.

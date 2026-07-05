@@ -149,6 +149,8 @@ pub(crate) fn function_bind(
             _ => None,
         }),
         props: Mutex::new(IndexMap::new()),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
     };
     let fidx = vm.heap.allocate(HeapObj::Function(bound))?;
     Ok(Value::Object(GcIdx(fidx)))

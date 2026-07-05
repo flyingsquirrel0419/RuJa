@@ -3407,6 +3407,7 @@ impl Compiler {
                             .methods
                             .iter()
                             .filter(|m| m.is_private && !m.is_static)
+                            .filter(|m| matches!(m.kind, crate::ast::PropKind::Method))
                             .map(|m| crate::ast::PrivateFieldDecl {
                                 name: m.name.clone(),
                                 init: Some(Box::new(Expr::Function(FunctionExpr {
@@ -3423,11 +3424,58 @@ impl Compiler {
                                     is_method: false,
                                     has_name_binding: false,
                                 }))),
+                                is_static: false,
+                                kind: crate::ast::PropKind::Method,
+                            })
+                            .collect();
+                        let private_accessors: Vec<Stmt> = cls
+                            .methods
+                            .iter()
+                            .filter(|m| m.is_private && !m.is_static)
+                            .filter(|m| {
+                                matches!(
+                                    m.kind,
+                                    crate::ast::PropKind::Get | crate::ast::PropKind::Set
+                                )
+                            })
+                            .map(|m| {
+                                let fn_expr = Expr::Function(FunctionExpr {
+                                    name: Some(m.name.clone()),
+                                    params: m.params.clone(),
+                                    param_defaults: m.param_defaults.clone(),
+                                    rest_param: m.rest_param.clone(),
+                                    body: m.body.clone(),
+                                    is_arrow: false,
+                                    is_async: false,
+                                    is_generator: false,
+                                    param_decls: Vec::new(),
+                                    is_strict: true,
+                                    is_method: false,
+                                    has_name_binding: false,
+                                });
+                                Stmt {
+                                    line: 0,
+                                    node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
+                                        object: Box::new(Expr::This),
+                                        name: m.name.clone(),
+                                        get: if matches!(m.kind, crate::ast::PropKind::Get) {
+                                            Some(Box::new(fn_expr.clone()))
+                                        } else {
+                                            None
+                                        },
+                                        set: if matches!(m.kind, crate::ast::PropKind::Set) {
+                                            Some(Box::new(fn_expr))
+                                        } else {
+                                            None
+                                        },
+                                    }),
+                                }
                             })
                             .collect();
                         let pf_stmts: Vec<Stmt> = cls
                             .private_fields
                             .iter()
+                            .filter(|pf| !pf.is_static)
                             .chain(pm_fields.iter())
                             .map(|pf| {
                                 let init =
@@ -3442,9 +3490,32 @@ impl Compiler {
                                 }
                             })
                             .collect();
-                        let mut combined = pf_stmts;
-                        combined.extend(body);
-                        combined
+                        let mut init_stmts = pf_stmts;
+                        init_stmts.extend(private_accessors);
+                        if cls.superclass.is_some() {
+                            let mut combined = Vec::new();
+                            let mut inserted = false;
+                            for stmt in body {
+                                let is_super_stmt = matches!(
+                                    &stmt.node,
+                                    StmtNode::ExprStmt(Expr::Call { callee, .. })
+                                        if matches!(callee.as_ref(), Expr::Super)
+                                );
+                                combined.push(stmt);
+                                if is_super_stmt && !inserted {
+                                    combined.extend(init_stmts.clone());
+                                    inserted = true;
+                                }
+                            }
+                            if !inserted {
+                                combined.extend(init_stmts);
+                            }
+                            combined
+                        } else {
+                            let mut combined = init_stmts;
+                            combined.extend(body);
+                            combined
+                        }
                     },
                     is_arrow: false,
                     is_async: false,
@@ -3546,9 +3617,9 @@ impl Compiler {
                     if method.is_constructor {
                         continue;
                     }
-                    // Instance private methods are installed as private fields
-                    // in the constructor body; skip them here.
-                    if method.is_private && !method.is_static {
+                    // Private methods/accessors are installed into private
+                    // slots, not as public properties.
+                    if method.is_private {
                         continue;
                     }
                     let m_fn = FunctionExpr {
@@ -3702,6 +3773,56 @@ impl Compiler {
                     self.chunk
                         .emit(Op::InitEnvConst(name_idx), self.current_line); // [ctor]
                 }
+                for pf in cls.private_fields.iter().filter(|pf| pf.is_static) {
+                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                    let init = pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
+                    self.compile_expr(&init)?;
+                    let name_idx = self.chunk.add_constant(Value::String(pf.name.clone()));
+                    self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                }
+                for method in cls.methods.iter().filter(|m| m.is_private && m.is_static) {
+                    let m_fn = Expr::Function(FunctionExpr {
+                        name: Some(method.name.clone()),
+                        params: method.params.clone(),
+                        param_defaults: method.param_defaults.clone(),
+                        rest_param: method.rest_param.clone(),
+                        body: method.body.clone(),
+                        is_arrow: false,
+                        is_async: false,
+                        is_generator: method.is_generator,
+                        param_decls: Vec::new(),
+                        is_strict: true,
+                        is_method: false,
+                        has_name_binding: false,
+                    });
+                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                    match method.kind {
+                        crate::ast::PropKind::Get => {
+                            self.compile_expr(&m_fn)?;
+                            self.chunk.emit(Op::Undefined, self.current_line);
+                            let name_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
+                            self.chunk
+                                .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+                        }
+                        crate::ast::PropKind::Set => {
+                            self.chunk.emit(Op::Undefined, self.current_line);
+                            self.compile_expr(&m_fn)?;
+                            let name_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
+                            self.chunk
+                                .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+                        }
+                        _ => {
+                            self.compile_expr(&m_fn)?;
+                            let name_idx =
+                                self.chunk.add_constant(Value::String(method.name.clone()));
+                            self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                        }
+                    }
+                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                }
                 // Static initialization blocks: each runs with `this` = the
                 // class (constructor), in source order. We bind `this` in a
                 // temp env so the block body sees it, then compile inline.
@@ -3775,6 +3896,27 @@ impl Compiler {
                 self.compile_expr(value)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+            }
+            Expr::PrivateDefineAccessor {
+                object,
+                name,
+                get,
+                set,
+            } => {
+                self.compile_expr(object)?;
+                if let Some(get) = get {
+                    self.compile_expr(get)?;
+                } else {
+                    self.chunk.emit(Op::Undefined, self.current_line);
+                }
+                if let Some(set) = set {
+                    self.compile_expr(set)?;
+                } else {
+                    self.chunk.emit(Op::Undefined, self.current_line);
+                }
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
             }
             Expr::Sequence(exprs) => {
                 for (i, e) in exprs.iter().enumerate() {

@@ -4,9 +4,16 @@
 
 ### test262 conformance improvements
 
-Supported-subset pass rate: **99.7%** (up from 88.6%).
-Current supported subset count: **4168 pass / 12 fail / 0 timeout**.
+Supported-subset pass rate: **99.8%** (up from 88.6%).
+Current supported subset count: **4170 pass / 10 fail / 0 timeout**.
 
+- **Private accessors and non-extensible private slots**: class private
+  accessors now parse and install as private accessor slots, static private
+  fields/methods/accessors initialize on the constructor object, function
+  objects now track extensibility for `Object.preventExtensions`, and adding a
+  new private slot to a non-extensible object now throws `TypeError`. This
+  closes the private-field non-extensible class checks, raising the supported
+  subset to **4170 pass / 10 fail / 0 timeout**.
 - **For-of IteratorClose on abrupt completion**: `for...of` now closes
   unfinished iterators when loop bodies complete abruptly via `return`,
   `break`, or throw, while preserving same-loop `continue` without closing the

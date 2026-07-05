@@ -144,3 +144,29 @@ fn private_field_set_in_method() {
         Value::Number(99.0)
     );
 }
+
+#[test]
+fn private_accessors_and_non_extensible_private_slots() {
+    assert_eq!(
+        run("class C{get #x(){return 42;}get y(){return this.#x;}}new C().y;"),
+        Value::Number(42.0)
+    );
+    assert_eq!(
+        run("class C{get #x(){return 1;}setX(){this.#x=2;}}try{new C().setX();false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{set #x(v){}getX(){return this.#x;}}try{new C().getX();false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run("class B{constructor(){Object.preventExtensions(this);}}class C extends B{#x;constructor(){super();}}try{new C();false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run("try{class C{static #x=(Object.preventExtensions(C),1);}false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+}

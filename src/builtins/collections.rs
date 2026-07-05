@@ -660,6 +660,8 @@ pub(crate) fn promise_constructor(
                 _ => None,
             }),
             props: Mutex::new(IndexMap::new()),
+            extensible: std::sync::atomic::AtomicBool::new(true),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
         }))?;
     let reject_fn = vm
         .heap
@@ -678,6 +680,8 @@ pub(crate) fn promise_constructor(
                 _ => None,
             }),
             props: Mutex::new(IndexMap::new()),
+            extensible: std::sync::atomic::AtomicBool::new(true),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
         }))?;
     match vm.call_function(
         &executor,

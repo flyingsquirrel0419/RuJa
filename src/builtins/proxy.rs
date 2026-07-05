@@ -65,6 +65,8 @@ pub(crate) fn proxy_revocable(
             _ => None,
         }),
         props: Mutex::new(IndexMap::new()),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
     }))?;
 
     // Store proxy idx in revoke fn props so the native fn can find it.

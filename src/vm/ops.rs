@@ -2179,20 +2179,28 @@ impl Vm {
                         }
                     };
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let v = if let Value::Object(idx) = &obj {
+                    let slot = if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Object(od) = o {
-                                od.private_fields
-                                    .lock()
-                                    .get(name.as_str())
-                                    .cloned()
-                                    .unwrap_or(Value::Undefined)
+                                od.private_fields.lock().get(name.as_str()).cloned()
+                            } else if let HeapObj::Function(f) = o {
+                                f.private_fields.lock().get(name.as_str()).cloned()
                             } else {
-                                Value::Undefined
+                                None
                             }
                         })
                     } else {
-                        Value::Undefined
+                        None
+                    };
+                    let v = match slot {
+                        Some(crate::value::PrivateSlot::Value(value)) => value,
+                        Some(crate::value::PrivateSlot::Accessor { get: Some(get), .. }) => {
+                            self.call_function(&get, &[], Some(obj.clone()))?
+                        }
+                        Some(crate::value::PrivateSlot::Accessor { get: None, .. }) => {
+                            return Err(Error::type_err("Private accessor has no getter"));
+                        }
+                        None => Value::Undefined,
                     };
                     self.stack.push(v);
                 }
@@ -2207,15 +2215,130 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
+                        let setter = self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Object(od) = o {
-                                od.private_fields
-                                    .lock()
-                                    .insert(Arc::from(name.as_str()), value.clone());
+                                let mut fields = od.private_fields.lock();
+                                match fields.get(name.as_str()) {
+                                    Some(crate::value::PrivateSlot::Accessor {
+                                        set: Some(setter),
+                                        ..
+                                    }) => Ok(Some(setter.clone())),
+                                    Some(crate::value::PrivateSlot::Accessor {
+                                        set: None, ..
+                                    }) => Err(Error::type_err("Private accessor has no setter")),
+                                    _ => {
+                                        if !fields.contains_key(name.as_str())
+                                            && !od.extensible.load(Ordering::Relaxed)
+                                        {
+                                            return Err(Error::type_err(
+                                                "Cannot add private field to non-extensible object",
+                                            ));
+                                        }
+                                        fields.insert(
+                                            Arc::from(name.as_str()),
+                                            crate::value::PrivateSlot::Value(value.clone()),
+                                        );
+                                        Ok(None)
+                                    }
+                                }
+                            } else {
+                                if let HeapObj::Function(f) = o {
+                                    let mut fields = f.private_fields.lock();
+                                    match fields.get(name.as_str()) {
+                                        Some(crate::value::PrivateSlot::Accessor {
+                                            set: Some(setter),
+                                            ..
+                                        }) => Ok(Some(setter.clone())),
+                                        Some(crate::value::PrivateSlot::Accessor {
+                                            set: None,
+                                            ..
+                                        }) => Err(Error::type_err("Private accessor has no setter")),
+                                        _ => {
+                                            if !fields.contains_key(name.as_str())
+                                                && !f.extensible.load(Ordering::Relaxed)
+                                            {
+                                                return Err(Error::type_err(
+                                                    "Cannot add private field to non-extensible object",
+                                                ));
+                                            }
+                                            fields.insert(
+                                                Arc::from(name.as_str()),
+                                                crate::value::PrivateSlot::Value(value.clone()),
+                                            );
+                                            Ok(None)
+                                        }
+                                    }
+                                } else {
+                                    Ok(None)
+                                }
                             }
-                        });
+                        })?;
+                        if let Some(setter) = setter {
+                            self.call_function(&setter, std::slice::from_ref(&value), Some(obj))?;
+                        }
                     }
                     self.stack.push(value);
+                }
+                Op::DefinePrivateAccessor(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let setter = self.stack.pop().unwrap_or(Value::Undefined);
+                    let getter = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            let (fields, extensible) = match o {
+                                HeapObj::Object(od) => (&od.private_fields, &od.extensible),
+                                HeapObj::Function(f) => (&f.private_fields, &f.extensible),
+                                _ => return Ok(()),
+                            };
+                            let mut fields = fields.lock();
+                            if !fields.contains_key(name.as_str())
+                                && !extensible.load(Ordering::Relaxed)
+                            {
+                                return Err(Error::type_err(
+                                    "Cannot add private field to non-extensible object",
+                                ));
+                            }
+                            let entry = fields.entry(Arc::from(name.as_str())).or_insert(
+                                crate::value::PrivateSlot::Accessor {
+                                    get: None,
+                                    set: None,
+                                },
+                            );
+                            match entry {
+                                crate::value::PrivateSlot::Accessor { get, set } => {
+                                    if !getter.is_undefined() {
+                                        *get = Some(getter.clone());
+                                    }
+                                    if !setter.is_undefined() {
+                                        *set = Some(setter.clone());
+                                    }
+                                }
+                                crate::value::PrivateSlot::Value(_) => {
+                                    *entry = crate::value::PrivateSlot::Accessor {
+                                        get: if getter.is_undefined() {
+                                            None
+                                        } else {
+                                            Some(getter.clone())
+                                        },
+                                        set: if setter.is_undefined() {
+                                            None
+                                        } else {
+                                            Some(setter.clone())
+                                        },
+                                    };
+                                }
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    self.stack.push(Value::Undefined);
                 }
                 Op::CallPrivateMethod(name_idx, arg_count) => {
                     // stack: [..., obj, args...]
@@ -2238,7 +2361,23 @@ impl Vm {
                                 od.private_fields
                                     .lock()
                                     .get(name.as_str())
-                                    .cloned()
+                                    .and_then(|slot| match slot {
+                                        crate::value::PrivateSlot::Value(value) => {
+                                            Some(value.clone())
+                                        }
+                                        crate::value::PrivateSlot::Accessor { .. } => None,
+                                    })
+                                    .unwrap_or(Value::Undefined)
+                            } else if let HeapObj::Function(f) = o {
+                                f.private_fields
+                                    .lock()
+                                    .get(name.as_str())
+                                    .and_then(|slot| match slot {
+                                        crate::value::PrivateSlot::Value(value) => {
+                                            Some(value.clone())
+                                        }
+                                        crate::value::PrivateSlot::Accessor { .. } => None,
+                                    })
                                     .unwrap_or(Value::Undefined)
                             } else {
                                 Value::Undefined
@@ -2966,6 +3105,8 @@ impl Vm {
                     },
                 ),
                 props: Mutex::new(IndexMap::new()),
+                extensible: std::sync::atomic::AtomicBool::new(true),
+                private_fields: Mutex::new(std::collections::HashMap::new()),
             };
             let idx_result = self.alloc(HeapObj::Function(fd));
             if has_name_binding {
