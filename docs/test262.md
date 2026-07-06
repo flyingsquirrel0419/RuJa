@@ -89,13 +89,13 @@ The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Recent successful full runs for this code
 vary slightly because a small number of tests can cross the timeout boundary:
 
-| Metric | Count |
-|--------|-------|
+| Metric | Recent count |
+|--------|--------------|
 | Total matrix files | 47,717 |
-| Actually run | 23,160 |
-| Pass | 12,586 |
+| Actually run | 23,160-23,162 |
+| Pass | 12,586-12,588 |
 | Fail | 10,574 |
-| Timeout | 15 |
+| Timeout | 13-15 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **54.3%** |
 | **Pass rate (of total)** | **26.4%** |
