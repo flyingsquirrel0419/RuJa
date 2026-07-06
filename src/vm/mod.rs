@@ -131,6 +131,10 @@ pub struct CallFrame {
     /// the global environment. Global var/function bindings created from this
     /// frame use EvalDeclarationInstantiation's configurable=true argument.
     pub eval_global_bindings: bool,
+    /// True while executing non-strict direct eval code whose variable
+    /// environment is a local declarative environment. Newly-created
+    /// var/function bindings are deletable per EvalDeclarationInstantiation.
+    pub eval_deletable_bindings: bool,
     /// True when this frame is a derived class constructor (extends ...).
     /// In derived constructors, returning a non-object value after super()
     /// is a TypeError.
@@ -166,6 +170,7 @@ impl CallFrame {
             finally_completion_val: Mutex::new(Value::Undefined),
             finally_stack: Vec::new(),
             eval_global_bindings: false,
+            eval_deletable_bindings: false,
             is_derived_ctor: false,
         }
     }
@@ -386,6 +391,7 @@ impl Vm {
         env: GcIdx,
         this_val: Value,
         eval_global_bindings: bool,
+        eval_deletable_bindings: bool,
     ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         // eval runs on the shared stack. Push a sentinel Undefined so that
@@ -403,6 +409,7 @@ impl Vm {
         ));
         if let Some(frame) = self.frames.last_mut() {
             frame.eval_global_bindings = eval_global_bindings;
+            frame.eval_deletable_bindings = eval_deletable_bindings;
         }
         let depth_before = self.frames.len();
         let result = self.interpret();
@@ -447,7 +454,8 @@ impl Vm {
             self.global_this.clone(),
             crate::value::BindingKind::Const,
         );
-        let result = self.execute_chunk_scoped(chunk, self.global, self.global_this.clone(), false);
+        let result =
+            self.execute_chunk_scoped(chunk, self.global, self.global_this.clone(), false, false);
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }
@@ -465,6 +473,10 @@ impl Vm {
     ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
         let is_strict = program.is_strict;
+        let (_, var_names, _) = crate::compiler::Compiler::collect_global_declaration_names(
+            &program.body,
+            program.is_strict,
+        );
         if !is_strict && global_env == self.global {
             self.check_eval_global_declaration_instantiation(&program, global_env, &global_this)?;
         }
@@ -486,9 +498,17 @@ impl Vm {
         let result = self.execute_chunk_scoped(
             chunk,
             eval_env,
-            global_this,
+            global_this.clone(),
             !is_strict && global_env == self.global,
+            false,
         );
+        if !is_strict && global_env != self.global {
+            for name in &var_names {
+                if let Some(value) = crate::environment::get(&self.heap, global_env, name) {
+                    self.set_property(&global_this, name, value)?;
+                }
+            }
+        }
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }
@@ -655,6 +675,13 @@ impl Vm {
         }
         if !is_strict {
             for name in &var_names {
+                if var_env != self.global
+                    && function_names
+                        .iter()
+                        .any(|function_name| function_name == name)
+                {
+                    continue;
+                }
                 if crate::environment::has_lexical_declaration_between(
                     &self.heap, caller_env, var_env, name,
                 ) {
@@ -663,11 +690,16 @@ impl Vm {
                         name
                     )));
                 }
-                crate::environment::declare_var(&self.heap, var_env, name, Value::Undefined);
             }
         }
-        let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true)?;
-        let result = self.execute_chunk_scoped(chunk, eval_env, this_val, false);
+        let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), is_strict)?;
+        let result = self.execute_chunk_scoped(
+            chunk,
+            eval_env,
+            this_val,
+            !is_strict && var_env == self.global,
+            !is_strict && var_env != self.global,
+        );
         // After running, copy the var/function bindings that the eval body
         // established back into the caller's variable environment (they leak per
         // spec). `let`/`const`/`class` stay in eval_env and are discarded with

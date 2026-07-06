@@ -78,8 +78,13 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   eval bindings, while `$262.evalScript()` keeps script-global
   non-configurable binding semantics. Same-Realm indirect eval also gets a
   fresh lexical environment so eval-local lexical and strict `var`/function
-  bindings do not leak to the global object. The focused `language/eval-code`
-  cluster now runs at **131 pass / 94 fail / 122 skip**.
+  bindings do not leak to the global object. Direct eval now uses the caller's
+  variable environment for non-strict `var`/function declarations, preserves
+  existing local var bindings during eval declaration instantiation, makes
+  newly-created local eval bindings deletable, respects `with` object lookup
+  inside eval source, and reflects cross-Realm indirect eval declarations on
+  that Realm's global object. The focused `language/eval-code` cluster now
+  runs at **137 pass / 88 fail / 122 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

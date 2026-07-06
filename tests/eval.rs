@@ -102,6 +102,56 @@ fn direct_eval_global_instantiation_checks_and_configurable_functions() {
 }
 
 #[test]
+fn direct_eval_local_var_bindings_preserve_existing_and_new_are_deletable() {
+    assert_eq!(
+        run(r#"
+            var initial;
+            (function() {
+              var x = 44443;
+              eval("initial = x; var x;");
+            }());
+            initial;
+            "#),
+        Value::Number(44443.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var initial = null;
+            var postDeletion;
+            (function() {
+              eval("initial = x; delete x; postDeletion = function() { x; }; var x;");
+            }());
+            var ok = [];
+            ok.push(initial === undefined);
+            try { postDeletion(); ok.push(false); }
+            catch (e) { ok.push(e.constructor === ReferenceError); }
+            ok.join(",");
+            "#),
+        Value::String(Arc::from("true,true"))
+    );
+}
+
+#[test]
+fn direct_eval_local_function_bindings_are_deletable_when_new() {
+    assert_eq!(
+        run(r#"
+            var initial, postDeletion;
+            (function() {
+              eval("initial = f; delete f; postDeletion = function() { f; }; function f() { return 33; }");
+            }());
+            var ok = [];
+            ok.push(typeof initial === "function");
+            ok.push(initial());
+            try { postDeletion(); ok.push(false); }
+            catch (e) { ok.push(e.constructor === ReferenceError); }
+            ok.join(",");
+            "#),
+        Value::String(Arc::from("true,33,true"))
+    );
+}
+
+#[test]
 fn indirect_eval_runs_in_global_scope() {
     let src = r#"
         function f() {
@@ -118,13 +168,16 @@ fn indirect_eval_runs_in_global_scope() {
 fn test262_create_realm_eval_runs_in_its_own_global_scope() {
     let src = r#"
         var x = "outside";
+        var otherX;
         (function() {
-            var eval = $262.createRealm().global.eval;
+            var other = $262.createRealm().global;
+            var eval = other.eval;
             eval('var x = "inside";');
+            otherX = other.x;
         }());
-        x;
+        x + "," + otherX;
     "#;
-    assert_eq!(run(src), Value::String(Arc::from("outside")));
+    assert_eq!(run(src), Value::String(Arc::from("outside,inside")));
 }
 
 #[test]

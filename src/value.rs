@@ -572,6 +572,7 @@ pub struct Binding {
     pub value: Mutex<Value>,
     pub kind: BindingKind,
     pub initialized: AtomicBool,
+    pub deletable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

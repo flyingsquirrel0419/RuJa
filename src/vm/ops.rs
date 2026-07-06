@@ -301,7 +301,13 @@ impl Vm {
                             .is_some_and(|frame| frame.eval_global_bindings);
                         self.create_global_var_binding_with_configurable(&name, configurable)?;
                     } else {
-                        crate::environment::ensure_var(&self.heap, env, &name);
+                        let deletable = self
+                            .frames
+                            .last()
+                            .is_some_and(|frame| frame.eval_deletable_bindings);
+                        crate::environment::ensure_var_with_deletable(
+                            &self.heap, env, &name, deletable,
+                        );
                     }
                 }
                 Op::DeclareVar(name_idx) => {
@@ -342,7 +348,13 @@ impl Vm {
                             eval_global_bindings,
                         )?;
                     } else {
-                        crate::environment::ensure_var(&self.heap, cur_env, &name);
+                        let deletable = self
+                            .frames
+                            .last()
+                            .is_some_and(|frame| frame.eval_deletable_bindings);
+                        crate::environment::ensure_var_with_deletable(
+                            &self.heap, cur_env, &name, deletable,
+                        );
                     }
                     // Now set the value via identifier resolution (set_checked),
                     // which respects the env chain: a var binding in the
@@ -422,7 +434,13 @@ impl Vm {
                             configurable,
                         )?;
                     } else {
-                        crate::environment::declare_var(&self.heap, cur_env, &name, value);
+                        let deletable = self
+                            .frames
+                            .last()
+                            .is_some_and(|frame| frame.eval_deletable_bindings);
+                        crate::environment::declare_var_with_deletable(
+                            &self.heap, cur_env, &name, value, deletable,
+                        );
                     }
                 }
                 Op::DeclareLet(name_idx) => {

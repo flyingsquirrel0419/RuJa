@@ -2473,15 +2473,9 @@ impl Compiler {
                 self.chunk.emit(Op::LoadEnv(name_idx), self.current_line);
             }
             Expr::Ident(name) => {
-                if self.scopes.len() > 1 {
-                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk
-                        .emit(Op::LoadEnvName(name_idx), self.current_line);
-                } else {
-                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk.emit(Op::Const(name_idx), self.current_line);
-                    self.chunk.emit(Op::LoadGlobal, self.current_line);
-                }
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::LoadEnvName(name_idx), self.current_line);
             }
             Expr::Update(op, prefix, target) => {
                 // `x++`/`++x`/`x--`/`--x`: evaluate the reference once, read

@@ -197,8 +197,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   through script-global declaration semantics, so its global declarations stay
   non-configurable. Same-Realm indirect eval now runs in a fresh lexical
   environment, preventing eval-local lexical declarations and strict
-  `var`/function declarations from leaking to the global object. The focused
-  `language/eval-code` cluster now runs at **131 pass / 94 fail / 122 skip**.
+  `var`/function declarations from leaking to the global object. Direct eval
+  now creates non-strict `var`/function declarations in the caller's variable
+  environment, keeps existing local var bindings intact, makes newly-created
+  local eval bindings deletable, preserves `with` object lookup inside eval
+  source, and reflects cross-Realm indirect eval declarations on the target
+  Realm's global object. The focused `language/eval-code` cluster now runs at
+  **137 pass / 88 fail / 122 skip**, with the remaining failures isolated to
+  direct-eval early-error generation.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

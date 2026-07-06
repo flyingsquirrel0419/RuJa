@@ -50,6 +50,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> Result<GcIdx, crate::gc::He
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
                             ),
+                            deletable: b.deletable,
                         },
                     )
                 })
@@ -93,6 +94,7 @@ pub fn clone_loop_vars(
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
                             ),
+                            deletable: b.deletable,
                         },
                     )
                 })
@@ -141,6 +143,7 @@ pub fn clone_loop_vars_to_sibling(
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
                             ),
+                            deletable: b.deletable,
                         },
                     )
                 })
@@ -213,6 +216,7 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
                     value: Mutex::new(value.clone()),
                     kind,
                     initialized: AtomicBool::new(true),
+                    deletable: false,
                 },
             );
         }
@@ -244,6 +248,7 @@ pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
                     value: Mutex::new(Value::Undefined),
                     kind,
                     initialized: AtomicBool::new(false),
+                    deletable: false,
                 },
             );
         }
@@ -401,6 +406,7 @@ pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: Bi
                     value: Mutex::new(value),
                     kind,
                     initialized: AtomicBool::new(true),
+                    deletable: false,
                 },
             );
         }
@@ -614,8 +620,12 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
                         return (deleted, None);
                     }
                 }
-                let vars = e.vars.lock();
-                if vars.contains_key(name) {
+                let mut vars = e.vars.lock();
+                if let Some(binding) = vars.get(name) {
+                    if binding.deletable {
+                        vars.shift_remove(name);
+                        return (true, None);
+                    }
                     return (false, None);
                 }
                 return (true, *e.parent.lock());
@@ -639,6 +649,10 @@ pub fn delete_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
 /// binding so that identifier resolution finds it before reaching a
 /// `with`-object. Used by `Op::DeclareVar` before `set_checked`.
 pub fn ensure_var(heap: &Heap, env: GcIdx, name: &str) {
+    ensure_var_with_deletable(heap, env, name, false);
+}
+
+pub fn ensure_var_with_deletable(heap: &Heap, env: GcIdx, name: &str, deletable: bool) {
     let root = function_scope_root(heap, env);
     let exists = heap.with_obj(root.0, |obj| {
         if let HeapObj::Environment(e) = obj {
@@ -656,6 +670,7 @@ pub fn ensure_var(heap: &Heap, env: GcIdx, name: &str) {
                         value: Mutex::new(Value::Undefined),
                         kind: BindingKind::Var,
                         initialized: AtomicBool::new(true),
+                        deletable,
                     },
                 );
             }
@@ -664,6 +679,16 @@ pub fn ensure_var(heap: &Heap, env: GcIdx, name: &str) {
 }
 
 pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
+    declare_var_with_deletable(heap, env, name, value, false);
+}
+
+pub fn declare_var_with_deletable(
+    heap: &Heap,
+    env: GcIdx,
+    name: &str,
+    value: Value,
+    deletable: bool,
+) {
     // Always declare/hoist at the function-scope root first.
     let root = function_scope_root(heap, env);
     let already_exists = heap.with_obj(root.0, |obj| {
@@ -682,6 +707,7 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
                         value: Mutex::new(Value::Undefined),
                         kind: BindingKind::Var,
                         initialized: AtomicBool::new(true),
+                        deletable,
                     },
                 );
             }
@@ -713,6 +739,7 @@ pub fn declare_var(heap: &Heap, env: GcIdx, name: &str, value: Value) {
                         value: Mutex::new(value),
                         kind: BindingKind::Var,
                         initialized: AtomicBool::new(true),
+                        deletable,
                     },
                 );
             }
