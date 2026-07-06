@@ -2469,6 +2469,15 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Number(n))
             }
+            TokenKind::LegacyNumber(n) => {
+                if self.is_strict_context {
+                    return Err(error::Error::syntax(
+                        "Legacy numeric literals are not allowed in strict mode",
+                    ));
+                }
+                self.advance();
+                Ok(Expr::Number(n))
+            }
             TokenKind::BigInt(s) => {
                 self.advance();
                 let n = num_bigint::BigInt::parse_bytes(s.as_bytes(), 10).unwrap_or_default();
@@ -2719,6 +2728,7 @@ impl Parser {
                     TokenKind::Ident(_)
                         | TokenKind::String(_)
                         | TokenKind::Number(_)
+                        | TokenKind::LegacyNumber(_)
                         | TokenKind::LBracket
                         | TokenKind::Star
                         | TokenKind::LParen
@@ -2736,6 +2746,7 @@ impl Parser {
                         TokenKind::Ident(_)
                             | TokenKind::String(_)
                             | TokenKind::Number(_)
+                            | TokenKind::LegacyNumber(_)
                             | TokenKind::LBracket
                             | TokenKind::Star
                             | TokenKind::LParen
@@ -2786,7 +2797,7 @@ impl Parser {
                     self.advance();
                     (PropertyKey::String(Arc::from(s.as_str())), false)
                 }
-                TokenKind::Number(n) => {
+                TokenKind::Number(n) | TokenKind::LegacyNumber(n) => {
                     self.advance();
                     (PropertyKey::Number(n), false)
                 }
@@ -3921,7 +3932,7 @@ impl Parser {
                 // Class method names can be identifiers, keywords, numbers,
                 // strings, or computed expressions.
                 match self.peek().clone() {
-                    TokenKind::Number(n) => {
+                    TokenKind::Number(n) | TokenKind::LegacyNumber(n) => {
                         self.advance();
                         Arc::from(format!("{}", n))
                     }
@@ -4091,7 +4102,7 @@ impl Parser {
                             self.advance();
                             PropertyKey::String(Arc::from(s.as_str()))
                         }
-                        TokenKind::Number(n) => {
+                        TokenKind::Number(n) | TokenKind::LegacyNumber(n) => {
                             self.advance();
                             PropertyKey::Number(n)
                         }

@@ -258,3 +258,21 @@ fn bigint_hex_oct_bin_literals() {
     assert_eq!(run("0o17n;"), Value::BigInt(num_bigint::BigInt::from(15)));
     assert_eq!(run("0b101n;"), Value::BigInt(num_bigint::BigInt::from(5)));
 }
+
+#[test]
+fn numeric_literals_reject_invalid_bigint_and_separator_forms() {
+    for src in [
+        "0e0n;", "1.0n;", "00n;", "08n;", "0b_1n;", "0b0_n;", "0x0__0n;", "1_n;", "1__0;",
+        "10._1;", "10.0_e1;", "0b;", "0x;", "3in [];",
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+}
+
+#[test]
+fn legacy_octal_numbers_are_strict_mode_errors_only() {
+    assert_eq!(run("070;"), Value::Number(56.0));
+    assert_eq!(run("08;"), Value::Number(8.0));
+    assert!(run_err("'use strict'; 070;").contains("SyntaxError"));
+    assert!(run_err("'use strict'; 08;").contains("SyntaxError"));
+}

@@ -191,6 +191,77 @@ impl<'a> Lexer<'a> {
         c
     }
 
+    fn is_identifier_start_at_pos(&self, pos: usize) -> bool {
+        match self.src.get(pos).copied() {
+            Some(c) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => true,
+            Some(b'\\') if self.src.get(pos + 1) == Some(&b'u') => true,
+            Some(c) if c >= 0x80 => {
+                let (ch, len) = decode_utf8_at(&self.src[pos..]);
+                len > 0 && is_id_start(ch)
+            }
+            _ => false,
+        }
+    }
+
+    fn invalid_numeric_tail(&self) -> bool {
+        self.peek().is_some_and(|c| c.is_ascii_digit()) || self.is_identifier_start_at_pos(self.pos)
+    }
+
+    fn read_radix_number(
+        &mut self,
+        radix: u32,
+        valid_digit: fn(u8) -> bool,
+        parse_start: usize,
+    ) -> TokenKind {
+        let mut digits = Vec::new();
+        let mut last_sep = false;
+        let mut saw_digit = false;
+        if self.peek() == Some(b'_') {
+            return TokenKind::LexError("invalid numeric separator".to_string());
+        }
+        while let Some(c) = self.peek() {
+            if valid_digit(c) {
+                saw_digit = true;
+                last_sep = false;
+                digits.push(c);
+                self.advance();
+            } else if c == b'_' {
+                if !saw_digit || last_sep {
+                    return TokenKind::LexError("invalid numeric separator".to_string());
+                }
+                last_sep = true;
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        if !saw_digit || last_sep {
+            return TokenKind::LexError("invalid numeric literal".to_string());
+        }
+        let is_bigint = if self.peek() == Some(b'n') {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        if self.invalid_numeric_tail() {
+            return TokenKind::LexError("invalid numeric literal".to_string());
+        }
+        let raw = std::str::from_utf8(&digits).unwrap_or("0");
+        let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+        if is_bigint {
+            let v = num_bigint::BigInt::parse_bytes(cleaned.as_bytes(), radix).unwrap_or_default();
+            TokenKind::BigInt(v.to_string())
+        } else {
+            let value = i64::from_str_radix(&cleaned, radix).unwrap_or(0) as f64;
+            // Keep `parse_start` observed so callers pass the source start for
+            // symmetry with decimal scanning; it also documents the intended
+            // source span for future diagnostics.
+            let _ = parse_start;
+            TokenKind::Number(value)
+        }
+    }
+
     fn skip_ws_and_comments(&mut self) -> Option<TokenKind> {
         loop {
             match self.peek() {
@@ -271,95 +342,153 @@ impl<'a> Lexer<'a> {
         {
             self.advance();
             self.advance();
-            while let Some(c) = self.peek() {
-                if c.is_ascii_hexdigit() || c == b'_' {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
-            let s: String = s.chars().filter(|&c| c != '_').collect();
-            if self.peek() == Some(b'n') {
-                self.advance();
-                let v = num_bigint::BigInt::parse_bytes(&s.as_bytes()[2..], 16).unwrap_or_default();
-                return TokenKind::BigInt(v.to_string());
-            }
-            let v = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
-            return TokenKind::Number(v as f64);
+            return self.read_radix_number(16, |c| c.is_ascii_hexdigit(), start);
         }
         if self.peek() == Some(b'0')
             && (self.peek_at(1) == Some(b'o') || self.peek_at(1) == Some(b'O'))
         {
             self.advance();
             self.advance();
-            while let Some(c) = self.peek() {
-                if (b'0'..=b'7').contains(&c) || c == b'_' {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
-            let s: String = s.chars().filter(|&c| c != '_').collect();
-            if self.peek() == Some(b'n') {
-                self.advance();
-                let v = num_bigint::BigInt::parse_bytes(s.as_bytes(), 8).unwrap_or_default();
-                return TokenKind::BigInt(v.to_string());
-            }
-            let v = i64::from_str_radix(&s, 8).unwrap_or(0);
-            return TokenKind::Number(v as f64);
+            return self.read_radix_number(8, |c| (b'0'..=b'7').contains(&c), start);
         }
         if self.peek() == Some(b'0')
             && (self.peek_at(1) == Some(b'b') || self.peek_at(1) == Some(b'B'))
         {
             self.advance();
             self.advance();
-            while let Some(c) = self.peek() {
-                if c == b'0' || c == b'1' || c == b'_' {
-                    self.advance();
-                } else {
-                    break;
-                }
-            }
-            let s = std::str::from_utf8(&self.src[start + 2..self.pos]).unwrap_or("0");
-            let s: String = s.chars().filter(|&c| c != '_').collect();
-            if self.peek() == Some(b'n') {
-                self.advance();
-                let v = num_bigint::BigInt::parse_bytes(s.as_bytes(), 2).unwrap_or_default();
-                return TokenKind::BigInt(v.to_string());
-            }
-            let v = i64::from_str_radix(&s, 2).unwrap_or(0);
-            return TokenKind::Number(v as f64);
+            return self.read_radix_number(2, |c| c == b'0' || c == b'1', start);
         }
+
+        let starts_with_dot = self.peek() == Some(b'.');
         let mut seen_dot = false;
+        let mut seen_exp = false;
+        let mut invalid_separator = false;
+        let mut last_sep = false;
+        let mut integer_digits = String::new();
+        let mut digit_count = 0usize;
+        let mut has_non_octal_digit = false;
+
+        if starts_with_dot {
+            seen_dot = true;
+            self.advance();
+        }
+
         while let Some(c) = self.peek() {
-            if c.is_ascii_digit()
-                || c == b'e'
-                || c == b'E'
-                || c == b'_'
-                || (c == b'+' || c == b'-')
-                    && (self.src.get(self.pos.wrapping_sub(1)) == Some(&b'e')
-                        || self.src.get(self.pos.wrapping_sub(1)) == Some(&b'E'))
-            {
+            if c.is_ascii_digit() {
+                if !seen_dot && !seen_exp {
+                    integer_digits.push(c as char);
+                    if matches!(c, b'8' | b'9') {
+                        has_non_octal_digit = true;
+                    }
+                }
+                digit_count += 1;
+                last_sep = false;
                 self.advance();
-            } else if c == b'.' && !seen_dot {
-                // Only consume the first dot as part of the number.
-                // A second dot is a property access (e.g. 1.1.toFixed).
-                seen_dot = true;
+            } else if c == b'_' {
+                if digit_count == 0 || last_sep {
+                    invalid_separator = true;
+                }
+                last_sep = true;
                 self.advance();
             } else {
                 break;
             }
         }
-        let s = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
-        let s: String = s.chars().filter(|&c| c != '_').collect();
-        // BigInt literal: integer digits followed by `n` (e.g. 123n, 0xffn).
+        if last_sep {
+            invalid_separator = true;
+        }
+
+        if self.peek() == Some(b'.') && !seen_dot && !seen_exp {
+            seen_dot = true;
+            last_sep = false;
+            digit_count = 0;
+            self.advance();
+            if self.peek() == Some(b'_') {
+                invalid_separator = true;
+            }
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() {
+                    digit_count += 1;
+                    last_sep = false;
+                    self.advance();
+                } else if c == b'_' {
+                    if digit_count == 0 || last_sep {
+                        invalid_separator = true;
+                    }
+                    last_sep = true;
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if last_sep {
+                invalid_separator = true;
+            }
+        }
+
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            seen_exp = true;
+            self.advance();
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.advance();
+            }
+            let mut exp_digits = 0usize;
+            last_sep = false;
+            if self.peek() == Some(b'_') {
+                invalid_separator = true;
+            }
+            while let Some(c) = self.peek() {
+                if c.is_ascii_digit() {
+                    exp_digits += 1;
+                    last_sep = false;
+                    self.advance();
+                } else if c == b'_' {
+                    if exp_digits == 0 || last_sep {
+                        invalid_separator = true;
+                    }
+                    last_sep = true;
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            if exp_digits == 0 || last_sep {
+                invalid_separator = true;
+            }
+        }
+
+        let raw = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("0");
+        let cleaned: String = raw.chars().filter(|&c| c != '_').collect();
+        let legacy_integer = !starts_with_dot
+            && !seen_dot
+            && !seen_exp
+            && integer_digits.len() > 1
+            && integer_digits.starts_with('0');
+        if invalid_separator || (legacy_integer && raw.contains('_')) {
+            return TokenKind::LexError("invalid numeric separator".to_string());
+        }
+
         if self.peek() == Some(b'n') {
             self.advance();
-            return TokenKind::BigInt(s);
+            if seen_dot || seen_exp || legacy_integer {
+                return TokenKind::LexError("invalid BigInt literal".to_string());
+            }
+            if self.invalid_numeric_tail() {
+                return TokenKind::LexError("invalid numeric literal".to_string());
+            }
+            return TokenKind::BigInt(cleaned);
         }
-        TokenKind::Number(s.parse::<f64>().unwrap_or(f64::NAN))
+        if self.invalid_numeric_tail() {
+            return TokenKind::LexError("invalid numeric literal".to_string());
+        }
+        if legacy_integer {
+            if has_non_octal_digit {
+                return TokenKind::LegacyNumber(cleaned.parse::<f64>().unwrap_or(f64::NAN));
+            }
+            let value = i64::from_str_radix(&integer_digits, 8).unwrap_or(0) as f64;
+            return TokenKind::LegacyNumber(value);
+        }
+        TokenKind::Number(cleaned.parse::<f64>().unwrap_or(f64::NAN))
     }
 
     fn read_string(&mut self, quote: u8) -> TokenKind {
@@ -1051,6 +1180,7 @@ impl<'a> Lexer<'a> {
             &kind,
             TokenKind::Ident(_)
                 | TokenKind::Number(_)
+                | TokenKind::LegacyNumber(_)
                 | TokenKind::BigInt(_)
                 | TokenKind::String(_)
                 | TokenKind::TemplateString { .. }

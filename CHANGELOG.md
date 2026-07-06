@@ -89,6 +89,15 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   and declaration-instantiation bytecode before returning the suspended
   generator object. The focused `language/eval-code` cluster now runs at
   **225 pass / 0 fail / 122 skip**.
+- **Numeric literal early errors**: numeric and BigInt literal lexing now
+  rejects malformed radix prefixes, invalid numeric separator placement,
+  BigInt suffixes on fractional/exponent/legacy-octal-like forms, and
+  identifier-start characters immediately after numeric literals. Legacy
+  octal and non-octal decimal literals are preserved for sloppy mode but now
+  surface as `SyntaxError` in strict mode. The focused
+  `language/literals/bigint language/literals/numeric` cluster now runs at
+  **216 pass / 0 fail / 0 skip**, and broader `language/literals` improves to
+  **312 pass / 162 fail / 60 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

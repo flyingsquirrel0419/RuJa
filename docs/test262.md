@@ -208,6 +208,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   declaration-instantiation bytecode before returning a suspended generator.
   The focused `language/eval-code` cluster now runs at **225 pass / 0 fail /
   122 skip**.
+- **Numeric literal early errors** —
+  The lexer now rejects malformed radix prefixes, invalid numeric separator
+  placement, BigInt suffixes on fractional/exponent/legacy-octal-like forms,
+  and identifier-start characters immediately following numeric literals.
+  Legacy octal and non-octal decimal literals remain accepted in sloppy mode
+  but are rejected in strict mode. The focused
+  `language/literals/bigint language/literals/numeric` cluster now runs at
+  **216 pass / 0 fail / 0 skip**, and broader `language/literals` improves to
+  **312 pass / 162 fail / 60 skip**; the remaining failures are isolated to
+  regexp literal early errors/engine semantics, string legacy escapes, and
+  keyword-unicode literal edges.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

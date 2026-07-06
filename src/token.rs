@@ -4,6 +4,9 @@ use std::fmt;
 pub enum TokenKind {
     // Literals
     Number(f64),
+    /// A non-strict legacy decimal/octal literal such as `077` or `08`.
+    /// Parsers must reject this token in strict-mode code.
+    LegacyNumber(f64),
     BigInt(String),
     String(String),
     TemplateString {
@@ -162,6 +165,7 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TokenKind::Number(n) => write!(f, "{}", n),
+            TokenKind::LegacyNumber(n) => write!(f, "{}", n),
             TokenKind::String(s) => write!(f, "\"{}\"", s),
             TokenKind::Ident(s) => write!(f, "{}", s),
             _ => write!(f, "{:?}", self),
