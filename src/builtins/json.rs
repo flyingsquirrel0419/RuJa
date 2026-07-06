@@ -13,6 +13,33 @@ fn json_array_index(s: &str) -> Option<u32> {
     s.parse::<u32>().ok().filter(|n| (*n as u64) < (1u64 << 32))
 }
 
+fn json_ordered_string_keys(
+    props: &IndexMap<PropertyKey, PropertyDescriptor>,
+    enumerable_only: bool,
+) -> Vec<String> {
+    let mut keys: Vec<String> = props
+        .iter()
+        .filter_map(|(k, d)| {
+            if enumerable_only && !d.enumerable {
+                return None;
+            }
+            match k {
+                PropertyKey::Str(s) => Some(s.to_string()),
+                PropertyKey::Symbol(_) => None,
+            }
+        })
+        .collect();
+    keys.sort_by(
+        |a, b| match (json_array_index(a.as_str()), json_array_index(b.as_str())) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        },
+    );
+    keys
+}
+
 pub(crate) fn json_stringify(
     vm: &mut Vm,
     args: &[Value],
@@ -253,7 +280,7 @@ fn stringify_value(
                 }
             } else {
                 let mut pairs = Vec::new();
-                let mut keys: Vec<(String, Value)> = if let Some(wl) = &ctx.whitelist {
+                let keys: Vec<String> = if let Some(wl) = &ctx.whitelist {
                     props
                         .iter()
                         .filter_map(|(k, d)| {
@@ -262,39 +289,17 @@ fn stringify_value(
                                 _ => return None,
                             };
                             if wl.contains(&ks) && d.enumerable {
-                                Some((ks, d.value.clone()))
+                                Some(ks)
                             } else {
                                 None
                             }
                         })
                         .collect()
                 } else {
-                    props
-                        .iter()
-                        .filter_map(|(k, d)| {
-                            if !d.enumerable {
-                                return None;
-                            }
-                            match k {
-                                crate::value::PropertyKey::Str(s) => {
-                                    Some((s.to_string(), d.value.clone()))
-                                }
-                                _ => None,
-                            }
-                        })
-                        .collect()
+                    json_ordered_string_keys(&props, true)
                 };
-                // ES enumeration order: array-index keys ascending, then the
-                // rest in insertion order (props preserves insertion order).
-                keys.sort_by(
-                    |(a, _), (b, _)| match (json_array_index(a), json_array_index(b)) {
-                        (Some(x), Some(y)) => x.cmp(&y),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => std::cmp::Ordering::Equal,
-                    },
-                );
-                for (key_str, val) in keys {
+                for key_str in keys {
+                    let val = vm.get_property(v, &key_str).unwrap_or(Value::Undefined);
                     let val =
                         apply_replacer(vm, ctx, &Value::String(Arc::from(key_str.as_str())), &val);
                     if let Some(vs) = stringify_value(vm, &val, seen, &child_indent, ctx, depth + 1)
@@ -384,14 +389,15 @@ fn apply_reviver(
                 ))?))
             } else {
                 let mut new_props = IndexMap::new();
-                for (pk, d) in &props {
-                    if let crate::value::PropertyKey::Str(s) = pk {
-                        let k = Value::String(s.clone());
+                for key in json_ordered_string_keys(&props, false) {
+                    let pk = PropertyKey::from(key.as_str());
+                    if let Some(d) = props.get(&pk) {
+                        let k = Value::String(Arc::from(key.as_str()));
                         let w = apply_reviver(vm, reviver, &k, &d.value, depth + 1)?;
                         if !w.is_undefined() {
                             let mut desc = data_prop(w);
                             desc.enumerable = true;
-                            new_props.insert(pk.clone(), desc);
+                            new_props.insert(pk, desc);
                         }
                     }
                 }

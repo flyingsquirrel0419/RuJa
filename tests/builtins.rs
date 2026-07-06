@@ -1187,6 +1187,28 @@ fn json_stringify_key_order() {
     );
 }
 
+#[test]
+fn for_in_order_builtins_follow_spec_key_order() {
+    assert_eq!(
+        run("var o=Object.create({p2:'proto'},{p1:{value:'p1',enumerable:true},p2:{value:'own',enumerable:false}}); Object.keys(o).join(',') + ':' + o.propertyIsEnumerable('p2');"),
+        Value::String(Arc::from("p1:false"))
+    );
+    assert_eq!(
+        run(
+            r#"var o={p1:'p1',p2:'p2',p3:'p3'}; Object.defineProperty(o,'add',{enumerable:true,get:function(){o.extra='extra'; return 'add';}}); o.p4='p4'; o[2]='2'; o[0]='0'; o[1]='1'; delete o.p1; delete o.p3; o.p1='p1'; JSON.stringify(o);"#
+        ),
+        Value::String(Arc::from(
+            r#"{"0":"0","1":"1","2":"2","p2":"p2","add":"add","p4":"p4","p1":"p1"}"#
+        ))
+    );
+    assert_eq!(
+        run(
+            r#"var calls=[]; function reviver(name,val){calls.push(name); return val;} JSON.parse('{"p1":0,"p2":0,"p1":0,"2":0,"1":0}', reviver); calls.join(',');"#
+        ),
+        Value::String(Arc::from("1,2,p1,p2,"))
+    );
+}
+
 // --- Array/Number/Object/Math coverage expansion ---
 
 #[test]

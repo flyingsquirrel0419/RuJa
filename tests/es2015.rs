@@ -507,6 +507,18 @@ fn for_in_object() {
 }
 
 #[test]
+fn for_in_uses_spec_property_order() {
+    assert_eq!(
+        run("var o={p1:'p1',p2:'p2',p3:'p3'}; o.p4='p4'; o[2]='2'; o[0]='0'; o[1]='1'; delete o.p1; delete o.p3; o.p1='p1'; var keys=[]; for(var key in o){keys.push(key);} keys.join(',');"),
+        Value::String(Arc::from("0,1,2,p2,p4,p1"))
+    );
+    assert_eq!(
+        run("var proto={p2:'p2'}; var o=Object.create(proto,{p1:{value:'p1',enumerable:true},p2:{value:'own',enumerable:false}}); var keys=[]; for(var key in o){keys.push(key);} keys.join(',');"),
+        Value::String(Arc::from("p1"))
+    );
+}
+
+#[test]
 fn for_in_enumeration_descriptor_edges() {
     assert_eq!(
         run("var proto = { prop: 1 }; function C(){} C.prototype = proto; var child = new C(); Object.defineProperty(child, 'prop', { value: 2, enumerable: false }); var seen = false; for (var k in child) { if (k === 'prop') seen = true; } seen;"),

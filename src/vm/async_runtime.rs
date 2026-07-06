@@ -10,6 +10,19 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 impl Vm {
+    fn push_for_in_own_key(
+        index_keys: &mut Vec<(usize, Arc<str>, bool)>,
+        string_keys: &mut Vec<(Arc<str>, bool)>,
+        key: Arc<str>,
+        enumerable: bool,
+    ) {
+        if let Some(index) = crate::value::parse_array_index(&key) {
+            index_keys.push((index, key, enumerable));
+        } else {
+            string_keys.push((key, enumerable));
+        }
+    }
+
     pub(crate) fn run_then(
         &mut self,
         promise: GcIdx,
@@ -993,7 +1006,8 @@ impl Vm {
         let mut cur = obj.clone();
         while let Value::Object(idx) = &cur {
             let (own, proto) = self.heap.with_obj(idx.0, |o| {
-                let mut own = Vec::new();
+                let mut index_keys: Vec<(usize, Arc<str>, bool)> = Vec::new();
+                let mut string_keys: Vec<(Arc<str>, bool)> = Vec::new();
                 if let HeapObj::Array(a) = o {
                     let props = a.props.lock();
                     for (i, present) in a.present.lock().iter().copied().enumerate() {
@@ -1004,32 +1018,58 @@ impl Vm {
                         let enumerable = props
                             .get(&crate::value::PropertyKey::from(key.as_str()))
                             .is_none_or(|desc| desc.enumerable);
-                        own.push((Arc::from(key.as_str()), enumerable));
+                        Self::push_for_in_own_key(
+                            &mut index_keys,
+                            &mut string_keys,
+                            Arc::from(key.as_str()),
+                            enumerable,
+                        );
                     }
                 }
                 if let HeapObj::Map(m) = o {
                     for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
                         if let Value::String(s) = k {
-                            own.push((s.clone(), true));
+                            Self::push_for_in_own_key(
+                                &mut index_keys,
+                                &mut string_keys,
+                                s.clone(),
+                                true,
+                            );
                         }
                     }
                 }
                 if let HeapObj::Object(od) = o {
                     if let Some(Value::String(s)) = od.primitive.lock().clone() {
                         for i in 0..crate::value::utf16_len(&s) {
-                            own.push((Arc::from(i.to_string().as_str()), true));
+                            Self::push_for_in_own_key(
+                                &mut index_keys,
+                                &mut string_keys,
+                                Arc::from(i.to_string().as_str()),
+                                true,
+                            );
                         }
                     }
                 }
                 for (k, desc) in o.props().lock().iter() {
                     if let crate::value::PropertyKey::Str(s) = k {
-                        own.push((s.clone(), desc.enumerable));
+                        Self::push_for_in_own_key(
+                            &mut index_keys,
+                            &mut string_keys,
+                            s.clone(),
+                            desc.enumerable,
+                        );
                     }
                 }
+                index_keys.sort_by_key(|(index, _, _)| *index);
+                let own: Vec<(Arc<str>, bool)> = index_keys
+                    .into_iter()
+                    .map(|(_, key, enumerable)| (key, enumerable))
+                    .chain(string_keys)
+                    .collect();
                 (own, o.proto().lock().clone())
             });
             for (k, enumerable) in own {
-                if visited.iter().any(|seen| seen.as_ref() == k.as_ref()) {
+                if visited.iter().any(|seen| **seen == *k) {
                     continue;
                 }
                 visited.push(k.clone());

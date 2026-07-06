@@ -28,7 +28,7 @@ SKIP_FEATURES = {
     "class-static-methods-private", "computed-property-names", "decorators",
     "default-parameters", "destructuring-assignment", "destructuring-binding",
     "dynamic-import", "error-cause", "explicit-resource-management",
-    "export-star-as-namespace-from-module", "for-in-order", "for-of",
+    "export-star-as-namespace-from-module", "for-of",
     "generators", "globalThis", "hashbang", "import-assertions",
     "import-attributes", "import-defer", "import.meta", "iterator-helpers",
     "json-modules", "logical-assignment-operators", "module",

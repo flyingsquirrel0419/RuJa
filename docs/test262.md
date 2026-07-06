@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 28.4% of all matrix files; 58.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4215 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4219 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -934,6 +934,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused `language/statements/try language/expressions/new.target
   language/expressions/arrow-function` cluster at **204 pass / 0 fail / 354
   skip**, raising the supported subset to **4215 pass / 0 fail / 0 timeout**.
+- **`for-in-order` enumeration** — `for...in`, JSON object serialization, and
+  JSON reviver traversal now use array-index-first property order, and
+  `Object.create(proto, descriptors)` applies descriptor maps so
+  non-enumerable own properties shadow inherited enumerable keys. This lifts
+  `for-in-order` from the skip filters at **9 pass / 0 fail**, raising the
+  supported subset to **4219 pass / 0 fail / 0 timeout**.
 
 ## Why the full-suite rate is not higher
 

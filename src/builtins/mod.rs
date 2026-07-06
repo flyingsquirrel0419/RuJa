@@ -1217,6 +1217,11 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
 }
 fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let proto = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(proto, Value::Object(_) | Value::Null) {
+        return Err(Error::type_err(
+            "Object prototype may only be an Object or null",
+        ));
+    }
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(if proto.is_null() { None } else { Some(proto) }),
@@ -1225,7 +1230,13 @@ fn object_create(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    Ok(Value::Object(GcIdx(obj_idx)))
+    let obj = Value::Object(GcIdx(obj_idx));
+    if let Some(props) = args.get(1) {
+        if !props.is_undefined() {
+            object_define_properties(vm, &[obj.clone(), props.clone()], None)?;
+        }
+    }
+    Ok(obj)
 }
 fn object_get_own_property_names(
     vm: &mut Vm,
