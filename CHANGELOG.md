@@ -16,6 +16,16 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   The focused `language/identifiers` cluster now runs at **208 pass / 0 fail /
   60 skip**, and the CI subset now runs locally at **866 pass / 0 fail / 0
   timeout**.
+- **Object.values/Object.entries enumerable snapshot semantics**:
+  `Object.values` and `Object.entries` now perform the required nullish
+  `ToObject` check, re-check each snapshotted own string key's current
+  enumerable descriptor before reading its value, and omit keys deleted or
+  made non-enumerable by earlier getters. Empty-handler Proxies now forward
+  own-key, own-descriptor, `hasOwnProperty`, and `Object.defineProperty`
+  no-trap operations to their targets for this path. The focused
+  `built-ins/Object/values built-ins/Object/entries built-ins/Object/hasOwn
+  built-ins/Object/getOwnPropertyDescriptors` cluster now runs at **98 pass /
+  0 fail / 23 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

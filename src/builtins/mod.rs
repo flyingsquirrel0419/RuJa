@@ -567,6 +567,22 @@ fn object_to_string_native(
 }
 
 fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
+    if let Value::Object(idx) = obj {
+        if let Some(target) = vm.heap.with_obj(idx.0, |heap_obj| {
+            if let HeapObj::Proxy(proxy) = heap_obj {
+                if *proxy.revoked.lock() {
+                    None
+                } else {
+                    Some(proxy.target.clone())
+                }
+            } else {
+                None
+            }
+        }) {
+            return object_has_own_key(vm, &target, key);
+        }
+    }
+
     match obj {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |heap_obj| {
             if heap_obj.props().lock().contains_key(key) {
@@ -612,6 +628,13 @@ fn to_property_key_descriptor(vm: &mut Vm, value: &Value) -> error::Result<Prope
         Value::String(s) => Ok(PropertyKey::from_rc(s)),
         Value::Symbol(id) => Ok(PropertyKey::Symbol(id)),
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+    }
+}
+
+fn property_key_to_value(key: &PropertyKey) -> Value {
+    match key {
+        PropertyKey::Str(s) => Value::String(s.clone()),
+        PropertyKey::Symbol(id) => Value::Symbol(*id),
     }
 }
 
@@ -893,6 +916,28 @@ fn own_property_keys(
     include_strings: bool,
     include_symbols: bool,
 ) -> Vec<PropertyKey> {
+    if let Value::Object(idx) = obj {
+        if let Some(target) = vm.heap.with_obj(idx.0, |heap_obj| {
+            if let HeapObj::Proxy(proxy) = heap_obj {
+                if *proxy.revoked.lock() {
+                    None
+                } else {
+                    Some(proxy.target.clone())
+                }
+            } else {
+                None
+            }
+        }) {
+            return own_property_keys(
+                vm,
+                &target,
+                enumerable_only,
+                include_strings,
+                include_symbols,
+            );
+        }
+    }
+
     let mut keys = Vec::new();
     let mut seen = IndexSet::new();
     match obj {
@@ -1031,11 +1076,21 @@ fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Resu
 }
 
 fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    // Use the same ordered key list as Object.keys so values line up with keys.
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
     let keys = own_string_keys(vm, &obj);
     let mut vals = Vec::with_capacity(keys.len());
     for k in &keys {
+        if !own_property_descriptor_for_key(vm, &obj, &PropertyKey::from(k.clone()))
+            .is_some_and(|desc| desc.enumerable)
+        {
+            continue;
+        }
         vals.push(vm.get_property(&obj, k)?);
     }
     let arr = HeapObj::Array(ArrayData::new(vals, Some(vm.array_proto.clone())));
@@ -1043,10 +1098,21 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
 }
 
 fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
     let keys = own_string_keys(vm, &obj);
     let mut pairs = Vec::new();
     for k in keys {
+        if !own_property_descriptor_for_key(vm, &obj, &PropertyKey::from(k.clone()))
+            .is_some_and(|desc| desc.enumerable)
+        {
+            continue;
+        }
         let v = vm.get_property(&obj, &k)?;
         let pair = HeapObj::Array(ArrayData::new(
             vec![Value::String(k.clone()), v],
@@ -1413,6 +1479,22 @@ fn own_property_descriptor_for_key(
     obj: &Value,
     key: &PropertyKey,
 ) -> Option<PropertyDescriptor> {
+    if let Value::Object(idx) = obj {
+        if let Some(target) = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    None
+                } else {
+                    Some(proxy.target.clone())
+                }
+            } else {
+                None
+            }
+        }) {
+            return own_property_descriptor_for_key(vm, &target, key);
+        }
+    }
+
     match obj {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             let ordinary = o.props().lock().get(key).cloned();
@@ -1566,6 +1648,37 @@ fn object_define_property(
                 "Property description must be an object: {}",
                 crate::value::value_to_debug_string(&desc)
             )));
+        }
+
+        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Proxy(proxy) = obj {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        }) {
+            let (proxy_target, proxy_handler) = proxy_result?;
+            let trap = vm.get_property(&proxy_handler, "defineProperty")?;
+            let key_value = property_key_to_value(&key);
+            if trap.is_undefined() {
+                object_define_property(vm, &[proxy_target, key_value, desc.clone()], None)?;
+                return Ok(target);
+            }
+
+            let trap_result = vm.call_function(
+                &trap,
+                &[proxy_target, key_value, desc.clone()],
+                Some(proxy_handler),
+            )?;
+            if !trap_result.is_truthy() {
+                return Err(Error::type_err("Proxy defineProperty trap returned false"));
+            }
+            return Ok(target);
         }
 
         if let Value::Object(_) = desc {

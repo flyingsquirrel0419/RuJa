@@ -1356,8 +1356,52 @@ fn object_statics() {
               descs[0].value,
               descs[0].writable
             ].join(",");
-            "#),
+        "#),
         Value::String(Arc::from("0|1|length,2,false,a,false"))
+    );
+    assert!(
+        run_err("Object.values(null);").contains("TypeError"),
+        "Object.values(null) should throw"
+    );
+    assert!(
+        run_err("Object.entries(undefined);").contains("TypeError"),
+        "Object.entries(undefined) should throw"
+    );
+    assert_eq!(
+        run(r#"
+            var obj = {
+              a: "A",
+              get b() {
+                delete this.c;
+                Object.defineProperty(this, "d", { value: "D", enumerable: false });
+                return "B";
+              },
+              c: "C",
+              d: "visible"
+            };
+            Object.values(obj).join("|") + ":" + Object.entries(obj).map(function(e) {
+              return e[0] + "=" + e[1];
+            }).join("|");
+        "#),
+        Value::String(Arc::from("A|B:a=A|b=B"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = {};
+            var proxy = new Proxy(target, {});
+            var returned = Object.defineProperty(proxy, "a", {
+              value: 1,
+              enumerable: true,
+              configurable: true
+            });
+            [
+              returned === proxy,
+              Object.prototype.hasOwnProperty.call(proxy, "a"),
+              Object.prototype.hasOwnProperty.call(target, "a"),
+              Object.values(proxy).join("|")
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,true,true,1"))
     );
     assert!(
         run_err("Object.keys(null);").contains("TypeError"),

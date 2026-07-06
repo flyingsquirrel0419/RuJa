@@ -88,7 +88,7 @@ python3 tools/analyze_failures.py
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Latest confirmed successful
-run: `test262-full` 28766485471 on `42f24fb`.
+run: `test262-full` 28766700850 on `60e787b`.
 
 | Metric | Recent count |
 |--------|--------------|
@@ -141,6 +141,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   parameters. The focused `language/identifiers` cluster now runs at **208
   pass / 0 fail / 60 skip**, bringing the CI subset to **866 pass / 0 fail / 0
   timeout**.
+- **Object.values/Object.entries enumerable snapshot semantics** —
+  `Object.values` and `Object.entries` now reject nullish inputs before key
+  conversion, use the ordinary own-string-key snapshot order, then re-check
+  each key's current enumerable descriptor before reading the value. Keys that
+  are deleted or made non-enumerable by an earlier getter are omitted.
+  Empty-handler Proxies now forward own-key, own-descriptor, `hasOwnProperty`,
+  and `Object.defineProperty` no-trap operations to their targets for this
+  path. The focused
+  `built-ins/Object/values built-ins/Object/entries built-ins/Object/hasOwn
+  built-ins/Object/getOwnPropertyDescriptors` cluster now runs at **98 pass /
+  0 fail / 23 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,
