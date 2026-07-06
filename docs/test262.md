@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 27.1% of all matrix files; 55.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
-| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 95.3% | `CI` workflow job summary |
+| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
 supported-subset rate (100.0%).** It reflects the portion of the spec
@@ -113,7 +113,7 @@ This is a regression gate, not a conformance metric:
 
 | Suite | Ran | Pass | Fail | Timeout | Pass rate |
 |-------|-----|------|------|---------|-----------|
-| identifiers | 206 | 165 | 41 | 2 | 80.1% |
+| identifiers | 208 | 208 | 0 | 0 | 100.0% |
 | punctuators | 11 | 11 | 0 | 0 | 100.0% |
 | white-space | 65 | 65 | 0 | 0 | 100.0% |
 | keywords | 25 | 25 | 0 | 0 | 100.0% |
@@ -122,7 +122,7 @@ This is a regression gate, not a conformance metric:
 | expressions/arrow-function | 90 | 90 | 0 | 0 | 100.0% |
 | expressions/function | 53 | 53 | 0 | 0 | 100.0% |
 | expressions/object | 285 | 285 | 0 | 0 | 100.0% |
-| **Total** | 864 | 823 | 41 | 2 | 95.3% |
+| **Total** | 866 | 866 | 0 | 0 | 100.0% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
@@ -132,6 +132,15 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Identifier Unicode tables and reserved binding names** —
+  Identifier lexing now uses Unicode identifier property tables with the ES
+  `$`, `_`, ZWNJ/ZWJ, and grandfathered `Other_ID_Start`/`Other_ID_Continue`
+  additions. Invalid Pattern_Syntax characters such as U+2E2F now surface as
+  `SyntaxError` rather than accidental binding names, and `import`/`export`
+  are rejected as binding names in variable declarations, function names, and
+  parameters. The focused `language/identifiers` cluster now runs at **208
+  pass / 0 fail / 60 skip**, bringing the CI subset to **866 pass / 0 fail / 0
+  timeout**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

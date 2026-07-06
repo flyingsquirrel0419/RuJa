@@ -272,6 +272,12 @@ impl Parser {
                 name
             )));
         }
+        if matches!(name, "import" | "export") {
+            return Err(error::Error::syntax(format!(
+                "'{}' is a reserved word and cannot be used as a binding name",
+                name
+            )));
+        }
         if self.is_strict_context && matches!(name, "eval" | "arguments") {
             return Err(error::Error::syntax(format!(
                 "'{}' cannot be used as a binding name in strict mode",
@@ -800,6 +806,9 @@ impl Parser {
                 )))
             }
         };
+        if let Some(ref name) = name {
+            self.check_binding_name(name)?;
+        }
         let (params, param_defaults, rest_param, dstr_decls) =
             self.parse_params_scoped(is_generator, is_async)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
@@ -3006,6 +3015,9 @@ impl Parser {
             }
             _ => None,
         };
+        if let Some(ref name) = name {
+            self.check_binding_name(name)?;
+        }
         let (params, param_defaults, rest_param, dstr_decls) =
             self.parse_params_scoped(is_generator, is_async)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
@@ -4408,6 +4420,20 @@ mod tests {
     fn parse_undefined_as_var_binding_name() {
         assert!(Parser::parse("var undefined;").is_ok());
         assert!(Parser::parse("var undefined = 1;").is_ok());
+    }
+
+    #[test]
+    fn parse_import_export_binding_names_are_reserved() {
+        for src in [
+            "var import = 1;",
+            "var export = 1;",
+            "let import;",
+            "const export = 1;",
+            "function f(import) {}",
+            "function export() {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
     }
 
     #[test]

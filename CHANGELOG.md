@@ -7,6 +7,15 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
 
+- **Identifier Unicode tables and reserved binding names**: identifier lexing
+  now uses Unicode identifier property tables with the ES `$`, `_`, ZWNJ/ZWJ,
+  and grandfathered `Other_ID_Start`/`Other_ID_Continue` additions, while
+  invalid Pattern_Syntax characters such as U+2E2F surface as `SyntaxError`
+  instead of accidental binding names. `import` and `export` are now rejected
+  as binding names in variable declarations, function names, and parameters.
+  The focused `language/identifiers` cluster now runs at **208 pass / 0 fail /
+  60 skip**, and the CI subset now runs locally at **866 pass / 0 fail / 0
+  timeout**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

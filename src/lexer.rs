@@ -34,26 +34,33 @@ fn decode_utf8_at(bytes: &[u8]) -> (char, usize) {
     }
 }
 
-/// ES IdentifierStart: letters, `_`, `$`, Unicode letters, plus a few
-/// punctuation categories. We use a permissive `is_alphabetic`/`is_numeric`
-/// check which covers the vast majority of real-world identifiers.
 fn is_id_continue(c: char) -> bool {
-    // ZWNJ (U+200C) and ZWJ (U+200D) are valid inside identifiers per spec,
-    // as are combining marks. Use Rust's char predicates as a pragmatic
-    // approximation of ID_Continue.
+    // ES IdentifierPart: ID_Continue plus `$`, ZWNJ, and ZWJ.
     c == '\u{200C}'
         || c == '\u{200D}'
-        || c.is_alphanumeric()
-        || c == '_'
         || c == '$'
-        || c.is_alphabetic()
+        || unicode_ident::is_xid_continue(c)
+        || is_other_id_start(c)
+        || is_other_id_continue(c)
 }
 
-/// ES IdentifierStart: ID_Start plus `$` and `_`. We approximate with
-/// `is_alphabetic`/`$`/`_`, plus the Other_ID_Start punctuation that real
-/// test262 exercises (`\u{2118}` ℘, `\u{212E}` ℮).
 fn is_id_start(c: char) -> bool {
-    c == '$' || c == '_' || c.is_alphabetic() || c == '\u{2118}' || c == '\u{212E}'
+    // ES IdentifierStart: ID_Start plus `$` and `_`.
+    c == '$' || c == '_' || unicode_ident::is_xid_start(c) || is_other_id_start(c)
+}
+
+fn is_other_id_start(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1885}' | '\u{1886}' | '\u{2118}' | '\u{212E}' | '\u{309B}' | '\u{309C}'
+    )
+}
+
+fn is_other_id_continue(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00B7}' | '\u{0387}' | '\u{1369}'..='\u{1371}' | '\u{19DA}'
+    )
 }
 
 fn is_unicode_space_separator(c: char) -> bool {
@@ -539,19 +546,15 @@ impl<'a> Lexer<'a> {
                     is_id_continue(ch)
                 };
                 if !ok {
-                    // Valid escape but not an id char (e.g. `\u007B` -> `{`):
-                    // consume the escape so the lexer advances, then end the
-                    // identifier here. If this was the first (start) char,
-                    // e.g. `\u200D` (ZWJ) is not a valid IdentifierStart, so
-                    // the whole token is a SyntaxError rather than an empty
-                    // identifier.
+                    // Valid escape but not an identifier character
+                    // (e.g. `\u007B` -> `{`) is a SyntaxError.
                     for _ in 0..len {
                         self.advance();
                     }
                     if first {
                         return TokenKind::LexError("invalid identifier start".to_string());
                     }
-                    break;
+                    return TokenKind::LexError("invalid identifier continue".to_string());
                 }
                 buf.push(ch);
                 for _ in 0..len {
@@ -987,7 +990,7 @@ impl<'a> Lexer<'a> {
                     for _ in 0..step {
                         self.advance();
                     }
-                    TokenKind::Ident(format!("Unexpected char '{}'", ch))
+                    TokenKind::LexError(format!("invalid identifier start '{}'", ch))
                 }
             }
             Some(b'\\') if self.peek_at(1) == Some(b'u') => {
@@ -1600,6 +1603,36 @@ mod tests {
                 Eof,
             ]
         );
+    }
+
+    #[test]
+    fn unicode_identifier_tables_follow_es_identifier_properties() {
+        assert_eq!(
+            kinds("var ℘; var ゛; var ᢅ; var _\u{200C}\u{200D}\u{30FB}\u{FF65};"),
+            vec![
+                Var,
+                Ident("℘".into()),
+                Semicolon,
+                Var,
+                Ident("゛".into()),
+                Semicolon,
+                Var,
+                Ident("ᢅ".into()),
+                Semicolon,
+                Var,
+                Ident("_\u{200C}\u{200D}\u{30FB}\u{FF65}".into()),
+                Semicolon,
+                Eof,
+            ]
+        );
+        assert!(matches!(
+            kinds("var \u{2E2F};")[1],
+            LexError(ref msg) if msg.contains("invalid identifier start")
+        ));
+        assert!(matches!(
+            kinds("var a\\u2E2F;")[1],
+            LexError(ref msg) if msg.contains("invalid identifier continue")
+        ));
     }
 
     #[test]
