@@ -22,7 +22,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 27.3% of all matrix files; 56.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 27.7% of all matrix files; 57.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -91,19 +91,19 @@ reported as false failure buckets.
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
-number of tests can cross the timeout boundary. Baseline confirmation runs:
-`test262-full` 28776229401 on `4022357`.
+number of tests can cross the timeout boundary. Baseline confirmation run:
+`test262-full` 28777417743 on `de06f74`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
-| Actually run | 23,164 |
-| Pass | 13,139 |
-| Fail | 10,025 |
-| Timeout | 11 |
+| Actually run | 23,163 |
+| Pass | 13,220 |
+| Fail | 9,943 |
+| Timeout | 12 |
 | Skip | 24,542 |
-| **Pass rate (of run)** | **56.7%** |
-| **Pass rate (of total)** | **27.5%** |
+| **Pass rate (of run)** | **57.1%** |
+| **Pass rate (of total)** | **27.7%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
