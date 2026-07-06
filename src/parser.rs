@@ -1903,9 +1903,14 @@ impl Parser {
             }
         }
         // SetFunctionName for assignment applies only when the left side is a
-        // bare IdentifierRef. Member and parenthesized targets must not infer
-        // a name here.
-        if matches!(op, AssignOp::Assign) && !left_is_parenthesized_ident {
+        // bare IdentifierRef. Logical assignment has the same NamedEvaluation
+        // path for anonymous function definitions; arithmetic compound
+        // assignments do not.
+        if matches!(
+            op,
+            AssignOp::Assign | AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign
+        ) && !left_is_parenthesized_ident
+        {
             if let Some(key_name) = Self::assign_target_name(&left) {
                 Self::name_function_from_ident(&mut right, &key_name);
             }

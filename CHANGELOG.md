@@ -22,7 +22,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **4219 pass / 0 fail / 0 timeout**.
+Current supported subset count: **4276 pass / 0 fail / 0 timeout**.
 
 - **Thrown custom object display**: uncaught ordinary objects created by custom
   constructors now include their prototype constructor name in the host error
@@ -85,6 +85,15 @@ Current supported subset count: **4219 pass / 0 fail / 0 timeout**.
   The `for-in-order` feature is now removed from the test262 skip filters; its
   9 metadata tests run at **9 pass / 0 fail**, and the supported subset moves
   to **4219 pass / 0 fail / 16219 skip**.
+- **Logical-assignment feature lift**: member logical assignments now perform
+  the nullish-base `ToObject` check after evaluating the computed property
+  expression but before `ToPropertyKey`, and identifier logical assignments
+  now apply NamedEvaluation to anonymous function, arrow, and class RHS values.
+  `logical-assignment-operators` is removed from the test262 skip filters; the
+  focused `language/expressions/logical-assignment` directory runs at **57
+  pass / 0 fail / 21 skip**, the Reference-focused with/assignment/logical
+  assignment/update cluster runs at **338 pass / 0 fail / 406 skip**, and the
+  supported subset moves to **4276 pass / 0 fail / 16162 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped
@@ -104,10 +113,10 @@ Current supported subset count: **4219 pass / 0 fail / 0 timeout**.
   by the RHS is written back through the original reference instead of
   re-resolving to an outer binding. Member logical assignments now also clean
   up their saved target pair on short-circuit paths, preserving the existing
-  value as the expression result. The focused
+  value as the expression result. After the feature lift above, the focused
   `language/statements/with language/expressions/assignment
   language/expressions/logical-assignment language/expressions/update` cluster
-  remains at **268 pass / 0 fail / 476 skip** with additional regression
+  runs at **338 pass / 0 fail / 406 skip** with additional regression
   coverage for these Reference edges.
 - **Strict directive and future-reserved-word early errors**: sloppy bindings
   may now use strict-only future reserved words such as `implements`,

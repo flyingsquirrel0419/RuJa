@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 29.0% of all matrix files; 59.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4219 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4276 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -125,10 +125,10 @@ This is a regression gate, not a conformance metric:
 | keywords | 25 | 25 | 0 | 0 | 100.0% |
 | types | 109 | 109 | 0 | 0 | 100.0% |
 | comments | 20 | 20 | 0 | 0 | 100.0% |
-| expressions/arrow-function | 90 | 90 | 0 | 0 | 100.0% |
+| expressions/arrow-function | 92 | 92 | 0 | 0 | 100.0% |
 | expressions/function | 53 | 53 | 0 | 0 | 100.0% |
 | expressions/object | 285 | 285 | 0 | 0 | 100.0% |
-| **Total** | 866 | 866 | 0 | 0 | 100.0% |
+| **Total** | 868 | 868 | 0 | 0 | 100.0% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
@@ -192,12 +192,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Identifier logical assignments now carry the original spec Reference from
   `GetValue` through `PutValue`, preventing `with`/global object references
   from being re-resolved to an outer binding when the RHS deletes the original
-  property. Member logical assignments also discard their saved target pair on
-  short-circuit paths so the expression yields the existing value. The focused
+  property. Member logical assignments discard their saved target pair on
+  short-circuit paths so the expression yields the existing value, perform the
+  nullish-base `ToObject` check before computed-key `ToPropertyKey`, and
+  identifier logical assignments apply NamedEvaluation to anonymous function,
+  arrow, and class RHS values. `logical-assignment-operators` is now removed
+  from the skip filters; `language/expressions/logical-assignment` runs at
+  **57 pass / 0 fail / 21 skip**. The focused
   `language/statements/with language/expressions/assignment
   language/expressions/logical-assignment language/expressions/update` cluster
-  remains at **268 pass / 0 fail / 476 skip**, with local regression coverage
-  for the previously untested Reference edges.
+  runs at **338 pass / 0 fail / 406 skip**, with local regression coverage for
+  the previously untested Reference edges.
 - **Strict directive and future-reserved-word early errors** —
   Sloppy binding names now accept strict-only future reserved words such as
   `implements`, `interface`, `package`, `private`, `protected`, `public`,
@@ -940,6 +945,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   non-enumerable own properties shadow inherited enumerable keys. This lifts
   `for-in-order` from the skip filters at **9 pass / 0 fail**, raising the
   supported subset to **4219 pass / 0 fail / 0 timeout**.
+- **Logical-assignment feature lift** — member logical assignments now check
+  nullish bases before computed-key coercion, identifier logical assignments
+  apply NamedEvaluation for anonymous RHS functions/classes, and
+  `logical-assignment-operators` is removed from the skip filters at **57
+  pass / 0 fail / 21 skip**, raising the supported subset to **4276 pass / 0
+  fail / 0 timeout**.
 
 ## Why the full-suite rate is not higher
 

@@ -4282,6 +4282,9 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
+                    // ToObject(base) happens after evaluating the property
+                    // expression but before ToPropertyKey.
+                    self.chunk.emit(Op::CheckNullBase, self.current_line);
                     // Convert the key to a property key string ONCE, so that
                     // ToPropertyKey (and thus toString) is called only once
                     // per spec. Both GetElem and SetElem use this string.

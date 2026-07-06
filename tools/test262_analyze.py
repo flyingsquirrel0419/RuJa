@@ -27,7 +27,7 @@ SKIP_FEATURES = {
     "export-star-as-namespace-from-module", "for-of",
     "generators", "globalThis", "hashbang", "import-assertions",
     "import-attributes", "import-defer", "import.meta", "iterator-helpers",
-    "json-modules", "logical-assignment-operators", "module",
+    "json-modules", "module",
     "object-rest", "object-spread", "optional-chaining",
     "proxy-missing-checks", "Proxy", "Reflect",
     "Reflect.construct", "regexp-duplicate-named-groups",

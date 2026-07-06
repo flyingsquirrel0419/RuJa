@@ -625,6 +625,56 @@ fn logical_assign_member_short_circuit_keeps_expression_result() {
 }
 
 #[test]
+fn logical_assign_member_null_base_precedes_property_key_coercion() {
+    for op in ["&&=", "||=", "??="] {
+        let err = run_err(&format!(
+            r#"
+            var base = null;
+            var prop = {{
+              toString: function() {{
+                throw new Error("property key evaluated");
+              }}
+            }};
+            var rhs = function() {{
+              throw new Error("right-hand side evaluated");
+            }};
+            base[prop] {} rhs();
+            "#,
+            op
+        ));
+        assert!(err.contains("TypeError"), "operator {op} got {err}");
+        assert!(
+            !err.contains("property key evaluated"),
+            "operator {op} coerced property key before null-base check: {err}"
+        );
+        assert!(
+            !err.contains("right-hand side evaluated"),
+            "operator {op} evaluated RHS before null-base check: {err}"
+        );
+    }
+}
+
+#[test]
+fn logical_assign_identifier_infers_anonymous_function_names() {
+    assert_eq!(
+        run("var value = 1; value &&= function() {}; value.name;"),
+        Value::String(Arc::from("value"))
+    );
+    assert_eq!(
+        run("var value = 0; value ||= () => {}; value.name;"),
+        Value::String(Arc::from("value"))
+    );
+    assert_eq!(
+        run("var value; value ??= class {}; value.name;"),
+        Value::String(Arc::from("value"))
+    );
+    assert_eq!(
+        run("var value = 0; (value) ||= function() {}; value.name;"),
+        Value::String(Arc::from(""))
+    );
+}
+
+#[test]
 fn nullish_assign_element() {
     assert_eq!(
         run("var a = [null, 1, 0]; a[0] ??= 5; a[2] ??= 9; a[0];"),
