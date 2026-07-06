@@ -1845,99 +1845,15 @@ impl Vm {
                         _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
                     };
                     let result = if let Value::Object(idx) = &obj {
-                        // Array element deletion: delete arr[i] sets the
-                        // element to undefined (creates a hole), and
-                        // delete arr.length returns false (non-configurable).
-                        let is_array = self
-                            .heap
-                            .with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
-                        if is_array {
-                            if let crate::value::PropertyKey::Str(ref s) = &pkey {
-                                if s.as_ref() == "length" {
-                                    Value::Bool(false)
-                                } else if let Some(i) = crate::value::parse_array_index(s) {
-                                    let exists = self.heap.with_obj(idx.0, |o| {
-                                        if let HeapObj::Array(a) = o {
-                                            a.is_dense_present(i)
-                                                || a.props.lock().contains_key(&pkey)
-                                        } else {
-                                            false
-                                        }
-                                    });
-                                    if exists {
-                                        self.heap.with_obj(idx.0, |o| {
-                                            if let HeapObj::Array(a) = o {
-                                                if let Some(map) = a.arguments_map.lock().as_mut() {
-                                                    if let Some(slot) = map.names.get_mut(i) {
-                                                        *slot = None;
-                                                    }
-                                                }
-                                                a.props.lock().shift_remove(&pkey);
-                                                let mut items = a.items.lock();
-                                                if i < items.len() {
-                                                    items[i] = Value::Undefined;
-                                                    if let Some(slot) = a.present.lock().get_mut(i)
-                                                    {
-                                                        *slot = false;
-                                                    }
-                                                }
-                                            }
-                                        });
-                                    }
-                                    Value::Bool(true)
-                                } else {
-                                    // Non-index string key on array: use props
-                                    let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
-                                        o.props()
-                                            .lock()
-                                            .get(&pkey)
-                                            .map_or((false, true), |d| (true, d.configurable))
-                                    });
-                                    if exists && !configurable {
-                                        if self.current_strict() {
-                                            return Err(Error::type_err(
-                                                "Cannot delete non-configurable property",
-                                            ));
-                                        }
-                                        Value::Bool(false)
-                                    } else if exists {
-                                        self.heap.with_obj(idx.0, |o| {
-                                            o.props().lock().shift_remove(&pkey);
-                                        });
-                                        Value::Bool(true)
-                                    } else {
-                                        Value::Bool(true)
-                                    }
-                                }
-                            } else {
-                                // Symbol key on array: use props
-                                let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
-                                    o.props()
-                                        .lock()
-                                        .get(&pkey)
-                                        .map_or((false, true), |d| (true, d.configurable))
-                                });
-                                if exists && !configurable {
-                                    if self.current_strict() {
-                                        return Err(Error::type_err(
-                                            "Cannot delete non-configurable property",
-                                        ));
-                                    }
-                                    Value::Bool(false)
-                                } else if exists {
-                                    self.heap.with_obj(idx.0, |o| {
-                                        o.props().lock().shift_remove(&pkey);
-                                    });
-                                    Value::Bool(true)
-                                } else {
-                                    Value::Bool(true)
-                                }
+                        if let crate::value::PropertyKey::Str(ref s) = &pkey {
+                            let deleted = self.delete_property(&obj, s.as_ref())?;
+                            if !deleted && self.current_strict() {
+                                return Err(Error::type_err(
+                                    "Cannot delete non-configurable property",
+                                ));
                             }
+                            Value::Bool(deleted)
                         } else {
-                            // Check configurability first: deleting a
-                            // non-configurable own property must fail (`false`,
-                            // or a TypeError in strict mode), not actually remove
-                            // the property.
                             let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
                                 o.props()
                                     .lock()
@@ -1957,7 +1873,6 @@ impl Vm {
                                 });
                                 Value::Bool(true)
                             } else {
-                                // Non-existent own property: delete returns true.
                                 Value::Bool(true)
                             }
                         }

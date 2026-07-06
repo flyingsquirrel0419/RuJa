@@ -137,6 +137,17 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Mapped arguments exotic descriptors** —
+  Non-strict arguments objects now use `Object.prototype`, expose `length` as
+  a configurable ordinary data property rather than Array exotic length,
+  report `Array.isArray(arguments) === false`, and keep mapped parameter
+  bindings synchronized with index data descriptors until an accessor
+  descriptor or `writable: false` unmaps that index. Computed delete now uses
+  the same configurability path as direct delete, and accessor indices no
+  longer fall through to dense element storage when no getter exists. The
+  focused `language/arguments-object` cluster now runs at **119 pass / 7 fail
+  / 137 skip**, leaving class-method spread and restricted function-property
+  failures for later fixes.
 - **Logical-assignment Reference preservation** —
   Identifier logical assignments now carry the original spec Reference from
   `GetValue` through `PutValue`, preventing `with`/global object references

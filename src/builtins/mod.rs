@@ -151,7 +151,7 @@ pub(crate) fn install_methods(vm: &mut Vm, proto: &Value, methods: &[(Arc<str>, 
 pub(crate) fn is_array(value: &Value, heap: &Heap) -> bool {
     match value {
         Value::Object(idx) => heap.with_obj(idx.0, |obj| match obj {
-            HeapObj::Array(_) => true,
+            HeapObj::Array(a) => !a.is_arguments.load(Ordering::Relaxed),
             // Tagged-template objects are ordinary objects with class_name "Array"
             // and Array.prototype, so they are recognized as arrays.
             HeapObj::Object(o) => o.class_name.as_deref() == Some("Array"),
@@ -590,7 +590,7 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
             }
             if let HeapObj::Array(a) = heap_obj {
                 if key.as_str() == Some("length") {
-                    return true;
+                    return !a.is_arguments.load(Ordering::Relaxed);
                 }
                 if let Some(name) = key.as_str() {
                     if let Some(i) = crate::value::parse_array_index(name) {
@@ -1493,17 +1493,16 @@ fn own_property_descriptor_for_key(
         }) {
             return own_property_descriptor_for_key(vm, &target, key);
         }
-    }
 
-    match obj {
-        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
-            let ordinary = o.props().lock().get(key).cloned();
-            if ordinary.is_some() {
-                return ordinary;
-            }
-
+        let array_descriptor = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
                 if key.as_str() == Some("length") {
+                    if let Some(desc) = a.props.lock().get(key).cloned() {
+                        return Some(desc);
+                    }
+                    if a.is_arguments.load(Ordering::Relaxed) {
+                        return None;
+                    }
                     let mut desc =
                         PropertyDescriptor::data(Value::Number(a.items.lock().len() as f64));
                     desc.writable = true;
@@ -1511,12 +1510,25 @@ fn own_property_descriptor_for_key(
                     desc.configurable = false;
                     return Some(desc);
                 }
-                if let Some(i) = canonical_string_index(key) {
-                    let items = a.items.lock();
-                    if i < items.len() && a.is_dense_present(i) {
-                        return Some(PropertyDescriptor::data(items[i].clone()));
-                    }
-                }
+            }
+            None
+        });
+        if let Some(desc) = array_descriptor {
+            return Some(desc);
+        }
+        let is_array = vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
+        if is_array {
+            if let Some(i) = canonical_string_index(key) {
+                return vm.array_index_own_property_descriptor(idx.0, i, key);
+            }
+        }
+    }
+
+    match obj {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            let ordinary = o.props().lock().get(key).cloned();
+            if ordinary.is_some() {
+                return ordinary;
             }
 
             if let HeapObj::Object(od) = o {
@@ -1741,9 +1753,14 @@ fn object_define_property(
                 "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
             ));
         }
-        let current = vm
-            .heap
-            .with_obj(idx.0, |obj| obj.props().lock().get(&key).cloned());
+        let current = own_property_descriptor_for_key(vm, &target, &key);
+        let mapped_arguments_index = key
+            .as_str()
+            .and_then(crate::value::parse_array_index)
+            .and_then(|i| {
+                vm.arguments_mapped_binding_for_index(idx.0, i)
+                    .map(|mapped| (i, mapped))
+            });
         if current.is_none() {
             let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
             if !extensible {
@@ -1753,6 +1770,7 @@ fn object_define_property(
                 )));
             }
         }
+        let map_value = value.clone();
         let descriptor = if let Some(mut current) = current {
             if !current.configurable {
                 if has_configurable && configurable {
@@ -1861,6 +1879,18 @@ fn object_define_property(
             }
             obj.props().lock().insert(key.clone(), descriptor);
         });
+        if let Some((i, (env, name))) = mapped_arguments_index {
+            if is_accessor {
+                vm.remove_arguments_mapping_for_index(idx.0, i);
+            } else {
+                if has_value {
+                    crate::environment::set(&vm.heap, env, &name, map_value);
+                }
+                if has_writable && !writable {
+                    vm.remove_arguments_mapping_for_index(idx.0, i);
+                }
+            }
+        }
         if let Some(key) = key.as_str() {
             vm.ic_invalidate(idx.0, key);
         }

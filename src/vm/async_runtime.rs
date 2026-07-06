@@ -449,8 +449,10 @@ impl Vm {
                     );
                 }
                 if !is_arrow {
-                    let mut arg_array =
-                        crate::value::ArrayData::new(args.to_vec(), Some(self.array_proto.clone()));
+                    let mut arg_array = crate::value::ArrayData::new(
+                        args.to_vec(),
+                        Some(self.object_proto.clone()),
+                    );
                     arg_array
                         .is_arguments
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -469,6 +471,18 @@ impl Vm {
                     }
                     let arr = HeapObj::Array(arg_array);
                     let arg_idx = GcIdx(self.heap.allocate(arr)?);
+                    self.heap.with_obj(arg_idx.0, |obj| {
+                        if let HeapObj::Array(a) = obj {
+                            let mut props = a.props.lock();
+                            let mut length_desc = crate::value::PropertyDescriptor::data(
+                                Value::Number(args.len() as f64),
+                            );
+                            length_desc.writable = true;
+                            length_desc.enumerable = false;
+                            length_desc.configurable = true;
+                            props.insert(crate::value::PropertyKey::from("length"), length_desc);
+                        }
+                    });
                     if func.chunk.is_strict {
                         let thrower = match &self.function_proto {
                             Value::Object(proto_idx) => self.heap.with_obj(proto_idx.0, |obj| {

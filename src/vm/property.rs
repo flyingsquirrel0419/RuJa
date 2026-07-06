@@ -8,6 +8,73 @@ use crate::value::{GcIdx, PromiseStatus, Value};
 use std::sync::Arc;
 
 impl Vm {
+    pub(crate) fn arguments_mapped_binding_for_index(
+        &self,
+        obj_idx: usize,
+        index: usize,
+    ) -> Option<(GcIdx, Arc<str>)> {
+        self.heap.with_obj(obj_idx, |o| {
+            if let HeapObj::Array(a) = o {
+                a.arguments_map.lock().as_ref().and_then(|m| {
+                    m.names
+                        .get(index)
+                        .and_then(|n| n.as_ref())
+                        .map(|n| (m.env, n.clone()))
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn remove_arguments_mapping_for_index(&self, obj_idx: usize, index: usize) {
+        self.heap.with_obj(obj_idx, |o| {
+            if let HeapObj::Array(a) = o {
+                if let Some(map) = a.arguments_map.lock().as_mut() {
+                    if let Some(slot) = map.names.get_mut(index) {
+                        *slot = None;
+                    }
+                }
+            }
+        });
+    }
+
+    pub(crate) fn array_index_own_property_descriptor(
+        &self,
+        obj_idx: usize,
+        index: usize,
+        key: &crate::value::PropertyKey,
+    ) -> Option<crate::value::PropertyDescriptor> {
+        let (ordinary, dense) = self.heap.with_obj(obj_idx, |o| {
+            if let HeapObj::Array(a) = o {
+                let ordinary = a.props.lock().get(key).cloned();
+                let dense = if index < a.items.lock().len() && a.is_dense_present(index) {
+                    Some(
+                        a.items
+                            .lock()
+                            .get(index)
+                            .cloned()
+                            .unwrap_or(Value::Undefined),
+                    )
+                } else {
+                    None
+                };
+                (ordinary, dense)
+            } else {
+                (None, None)
+            }
+        });
+        let mut desc = ordinary.or_else(|| dense.map(crate::value::PropertyDescriptor::data))?;
+        if !desc.is_accessor {
+            if let Some((env, name)) = self.arguments_mapped_binding_for_index(obj_idx, index) {
+                if let Some(mapped_value) = crate::environment::get(&self.heap, env, &name) {
+                    desc.value = mapped_value;
+                }
+            }
+        }
+        Some(desc)
+    }
+
     fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
         match value {
             Value::Object(idx) => roots.push(idx.0),
@@ -54,7 +121,9 @@ impl Vm {
                 // Own data property?
                 let val = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
-                        if key == "length" {
+                        if key == "length"
+                            && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                        {
                             let len = a.items.lock().len();
                             let sparse = a.sparse_max.lock().unwrap_or(0);
                             return Some(Value::Number(len.max(sparse) as f64));
@@ -133,20 +202,47 @@ impl Vm {
             let array_delete = self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
                     if key == "length" {
+                        if a.is_arguments.load(std::sync::atomic::Ordering::Relaxed) {
+                            let (exists, configurable) = a
+                                .props
+                                .lock()
+                                .get(&pkey)
+                                .map_or((false, true), |d| (true, d.configurable));
+                            if exists && !configurable {
+                                return Some(false);
+                            }
+                            if exists {
+                                a.props.lock().shift_remove(&pkey);
+                            }
+                            return Some(true);
+                        }
                         return Some(false);
                     }
                     if let Some(i) = crate::value::parse_array_index(key) {
-                        if let Some(map) = a.arguments_map.lock().as_mut() {
-                            if let Some(slot) = map.names.get_mut(i) {
-                                *slot = None;
+                        let (exists, configurable) = {
+                            let props = a.props.lock();
+                            if let Some(desc) = props.get(&pkey) {
+                                (true, desc.configurable)
+                            } else {
+                                (a.is_dense_present(i), true)
                             }
+                        };
+                        if exists && !configurable {
+                            return Some(false);
                         }
-                        a.props.lock().shift_remove(&pkey);
-                        let mut items = a.items.lock();
-                        if i < items.len() {
-                            items[i] = Value::Undefined;
-                            if let Some(slot) = a.present.lock().get_mut(i) {
-                                *slot = false;
+                        if exists {
+                            if let Some(map) = a.arguments_map.lock().as_mut() {
+                                if let Some(slot) = map.names.get_mut(i) {
+                                    *slot = None;
+                                }
+                            }
+                            a.props.lock().shift_remove(&pkey);
+                            let mut items = a.items.lock();
+                            if i < items.len() {
+                                items[i] = Value::Undefined;
+                                if let Some(slot) = a.present.lock().get_mut(i) {
+                                    *slot = false;
+                                }
                             }
                         }
                         return Some(true);
@@ -371,10 +467,19 @@ impl Vm {
                     return Ok(());
                 }
                 // --- Array fast paths ---
-                let is_array_length = self
-                    .heap
-                    .with_obj(idx.0, |o| matches!(o, HeapObj::Array(_) if key == "length"));
-                if is_array_length {
+                let array_length_kind = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Array(a) = o {
+                        if key == "length" {
+                            return Some(a.is_arguments.load(std::sync::atomic::Ordering::Relaxed));
+                        }
+                    }
+                    None
+                });
+                if let Some(is_arguments) = array_length_kind {
+                    if is_arguments {
+                        let pkey = crate::value::PropertyKey::from(key);
+                        return self.ordinary_set_with_receiver(*idx, &pkey, key, value, &obj);
+                    }
                     return self.set_array_length(idx.0, value);
                 }
                 let array_index = self.heap.with_obj(idx.0, |o| {
@@ -418,6 +523,10 @@ impl Vm {
                                 )));
                             }
                             return Ok(());
+                        }
+                        if let Some((env, name)) = self.arguments_mapped_binding_for_index(idx.0, i)
+                        {
+                            crate::environment::set(&self.heap, env, &name, value.clone());
                         }
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {

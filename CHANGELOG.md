@@ -24,6 +24,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
 
+- **Mapped arguments exotic descriptors**: non-strict arguments objects now
+  use `Object.prototype`, expose `length` as a configurable ordinary data
+  property, report `Array.isArray(arguments) === false`, and keep mapped
+  parameter bindings synchronized through descriptor redefinitions until an
+  accessor descriptor or non-writable data descriptor unmaps the index.
+  Computed deletion of arguments properties now shares the same
+  configurability checks as direct deletion, and accessor indices no longer
+  fall through to dense element storage when no getter is present. The focused
+  `language/arguments-object` cluster improves to **119 pass / 7 fail / 137
+  skip**, with the remaining failures isolated to class-method spread and
+  restricted function-property cases.
 - **Logical-assignment Reference preservation**: identifier logical
   assignments (`&&=`, `||=`, `??=`) now keep the original spec Reference from
   `GetValue` through `PutValue`, so a `with` or global-object property deleted

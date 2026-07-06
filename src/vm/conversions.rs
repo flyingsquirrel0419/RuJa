@@ -576,6 +576,11 @@ impl Vm {
             Value::Object(idx) => {
                 let (is_arr, has_dense_index) = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
+                        if name == "length"
+                            && a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            return (false, false);
+                        }
                         let has = crate::value::parse_array_index(name)
                             .is_some_and(|i| a.is_dense_present(i));
                         (true, has)
@@ -606,6 +611,9 @@ impl Vm {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
                     if name == "length" {
+                        if a.is_arguments.load(std::sync::atomic::Ordering::Relaxed) {
+                            return o.props().lock().contains_key(&pkey);
+                        }
                         return true;
                     }
                     if let Some(i) = crate::value::parse_array_index(name) {
@@ -859,14 +867,16 @@ impl Vm {
                 if let Some(getter) = self.heap.with_obj(idx.0, |o| {
                     o.props().lock().get(&pkey).and_then(|d| {
                         if d.is_accessor {
-                            d.get.clone()
+                            Some(d.get.clone())
                         } else {
                             None
                         }
                     })
                 }) {
-                    if !getter.is_undefined() {
-                        return self.call_function(&getter, &[], Some(obj.clone()));
+                    if let Some(getter) = getter {
+                        if !getter.is_undefined() {
+                            return self.call_function(&getter, &[], Some(obj.clone()));
+                        }
                     }
                     return Ok(Value::Undefined);
                 }
@@ -888,6 +898,13 @@ impl Vm {
                     return Ok(self
                         .heap
                         .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
+                }
+                if let Some(i) = crate::value::parse_array_index(key) {
+                    if let Some((env, name)) = self.arguments_mapped_binding_for_index(idx.0, i) {
+                        if let Some(v) = crate::environment::get(&self.heap, env, &name) {
+                            return Ok(v);
+                        }
+                    }
                 }
                 if let Some(value) = self.heap.with_obj(idx.0, |o| {
                     o.props().lock().get(&pkey).and_then(|d| {
@@ -912,7 +929,9 @@ impl Vm {
                 // array
                 let proto = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
-                        if key == "length" {
+                        if key == "length"
+                            && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                        {
                             let len = a.items.lock().len();
                             let sparse = a.sparse_max.lock().unwrap_or(0);
                             return Ok::<Value, Error>(Value::Number(len.max(sparse) as f64));
