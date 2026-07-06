@@ -85,6 +85,14 @@ Current supported subset count: **4470 pass / 0 fail / 0 timeout**.
   focused `language/statements/with language/expressions/delete` run stays at
   **235 pass / 0 fail / 15 skip**, and the broader Reference-focused delete
   cluster runs at **404 pass / 0 fail / 409 skip**.
+- **`typeof` through `with` object environments**: `typeof identifier` now
+  creates the same spec Reference record as ordinary identifier evaluation
+  before applying `GetValue`, so `with` object properties, inherited
+  properties, `Symbol.unscopables`, abrupt unscopables getters, and TDZ
+  bindings are all observed correctly. The focused
+  `language/statements/with` run stays at **169 pass / 0 fail / 12 skip**,
+  while the broader Reference-focused cluster now runs at **900 pass / 0 fail
+  / 367 skip**.
 - **Direct eval through `with` object environments**: unqualified `eval(...)`
   calls now resolve the callee at runtime before deciding whether the call is
   direct eval. A `with` object can shadow `eval` with an ordinary function,

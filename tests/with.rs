@@ -385,6 +385,71 @@ fn with_sees_undefined_valued_property() {
     assert_eq!(run(src), Value::String(Arc::from("true|5")));
 }
 
+#[test]
+fn with_typeof_uses_object_environment_binding() {
+    let src = r#"
+        var x = 1;
+        var o = { x: function(){} };
+        var r;
+        with (o) {
+            r = typeof x;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("function")));
+}
+
+#[test]
+fn with_typeof_uses_inherited_object_environment_binding() {
+    let src = r#"
+        var proto = { x: 1 };
+        var o = Object.create(proto);
+        var r;
+        with (o) {
+            r = typeof x;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("number")));
+}
+
+#[test]
+fn with_typeof_honors_unscopables_and_observable_getter() {
+    let src = r#"
+        var calls = 0;
+        var x = "outer";
+        var o = { x: "inner" };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() {
+                calls += 1;
+                return { x: true };
+            }
+        });
+        var r;
+        with (o) {
+            r = typeof x;
+        }
+        r + ":" + calls;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("string:1")));
+}
+
+#[test]
+fn with_typeof_propagates_unscopables_getter_error() {
+    let err = run_err(
+        r#"
+        var o = { x: 1 };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() { throw new Error("boom"); }
+        });
+        with (o) {
+            typeof x;
+        }
+        "#,
+    );
+    assert!(err.contains("boom"), "got: {err}");
+}
+
 // ---- `with` rebinding of `this` for unqualified calls (#6) ----
 
 #[test]

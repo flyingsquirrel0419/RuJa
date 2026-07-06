@@ -1012,50 +1012,8 @@ impl Vm {
                             _ => crate::value::PropertyKey::from(""),
                         }
                     };
-                    let name_str = name.as_str().unwrap_or_default().to_string();
-                    let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let strict = self.current_strict();
-                    let mut base = crate::value::ReferenceBase::Unresolvable;
-                    let mut cur_env = Some(env);
-                    while let Some(e_idx) = cur_env {
-                        let (has_binding, has_with, with_obj_val, parent) =
-                            self.heap.with_obj(e_idx.0, |obj| {
-                                if let HeapObj::Environment(e) = obj {
-                                    if e.vars.lock().contains_key(name_str.as_str()) {
-                                        return (true, false, None, None);
-                                    }
-                                    if let Some(with_obj) = e.with_object.lock().clone() {
-                                        return (false, true, Some(with_obj), *e.parent.lock());
-                                    }
-                                    return (false, false, None, *e.parent.lock());
-                                }
-                                (false, false, None, None)
-                            });
-                        if has_binding {
-                            base = crate::value::ReferenceBase::Environment(e_idx);
-                            break;
-                        }
-                        if has_with {
-                            if let Some(with_obj) = with_obj_val {
-                                if self.with_object_has_binding(&with_obj, &name_str)? {
-                                    base = crate::value::ReferenceBase::ObjectEnvironment(
-                                        Box::new(with_obj),
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                        cur_env = parent;
-                    }
-                    if cur_env.is_none() {
-                        let global_this = self.global_this.clone();
-                        if self.has_property(&global_this, &name_str)? {
-                            base = crate::value::ReferenceBase::ObjectEnvironment(Box::new(
-                                global_this,
-                            ));
-                        }
-                    }
-                    let r#ref = crate::value::ReferenceRecord { base, name, strict };
+                    let r#ref = self.resolve_identifier_reference(name, strict)?;
                     self.stack.push(Value::Reference(Box::new(r#ref)));
                 }
                 Op::GetValue => {
@@ -2740,7 +2698,7 @@ impl Vm {
                 Op::TypeofVar(name_idx) => {
                     // `typeof name`: "undefined" if the name is unbound, but
                     // TDZ bindings still throw ReferenceError.
-                    let name = {
+                    let name_key = {
                         let frame = self.current_frame()?;
                         let v = frame
                             .chunk
@@ -2749,55 +2707,29 @@ impl Vm {
                             .cloned()
                             .unwrap_or(Value::Undefined);
                         match v {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
+                            Value::String(s) => crate::value::PropertyKey::from_rc(s),
+                            _ => crate::value::PropertyKey::from(""),
                         }
                     };
-                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let val = match crate::environment::get_checked(&self.heap, cur_env, &name) {
-                        Ok(Some(v)) => Some(v),
-                        Ok(None) | Err(false) => {
-                            match crate::environment::get_checked(&self.heap, self.global, &name) {
-                                Ok(Some(v)) => Some(v),
-                                Ok(None) | Err(false) => None,
-                                Err(true) => {
-                                    return Err(Error::reference(format!(
-                                        "Cannot access '{}' before initialization",
-                                        name
-                                    )));
-                                }
+                    let r#ref =
+                        self.resolve_identifier_reference(name_key, self.current_strict())?;
+                    let val = if matches!(r#ref.base, crate::value::ReferenceBase::Unresolvable) {
+                        None
+                    } else {
+                        Some(self.get_value(&Value::Reference(Box::new(r#ref)))?)
+                    };
+                    let t = if let Some(v) = val {
+                        if let Value::Object(idx) = &v {
+                            if self.heap.with_obj(idx.0, |o| o.is_function()) {
+                                "function"
+                            } else {
+                                "object"
                             }
-                        }
-                        Err(true) => {
-                            return Err(Error::reference(format!(
-                                "Cannot access '{}' before initialization",
-                                name
-                            )));
-                        }
-                    };
-                    let val = if val.is_none() {
-                        let global_this = self.global_this.clone();
-                        if self.has_property(&global_this, &name)? {
-                            Some(self.get_property(&global_this, &name)?)
                         } else {
-                            None
+                            v.type_of()
                         }
                     } else {
-                        val
-                    };
-                    let t = match val {
-                        Some(v) => {
-                            if let Value::Object(idx) = &v {
-                                if self.heap.with_obj(idx.0, |o| o.is_function()) {
-                                    "function"
-                                } else {
-                                    "object"
-                                }
-                            } else {
-                                v.type_of()
-                            }
-                        }
-                        None => "undefined",
+                        "undefined"
                     };
                     self.stack.push(Value::String(Arc::from(t)));
                 }

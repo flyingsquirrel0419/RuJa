@@ -1006,6 +1006,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   property names in renamed patterns such as `{ bre\u0061k: x }`. This removes
   `destructuring-assignment` from the skip filters at **135 pass / 0 fail / 6
   skip**, raising the supported subset to **4470 pass / 0 fail / 0 timeout**.
+- **`typeof` through `with` object environments** — `typeof identifier` now
+  reuses the VM's spec Reference-record resolution path before applying
+  `GetValue`, except for the required unresolvable-reference `"undefined"`
+  case. This means `with` object properties, inherited properties,
+  `Symbol.unscopables`, abrupt unscopables getters, and TDZ bindings are
+  observed consistently with ordinary identifier reads. The focused
+  `language/statements/with` run stays at **169 pass / 0 fail / 12 skip**,
+  and the broader Reference-focused cluster runs at **900 pass / 0 fail / 367
+  skip** while the supported subset remains at **4470 pass / 0 fail / 0
+  timeout**.
 
 ## Why the full-suite rate is not higher
 
