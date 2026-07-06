@@ -206,8 +206,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   functions. `Promise.all` now constructs through the receiver capability,
   reads `C.resolve` once, invokes each resolved entry's observable `then`, and
   resolves through the outer capability with an ordered result array.
+  `Promise.allSettled` now follows the same constructor capability and
+  `C.resolve` path, creates paired per-element resolve/reject functions sharing
+  an `alreadyCalled` guard, records ordered fulfilled/rejected result objects,
+  and rejects the outer capability if the final capability resolve abruptly
+  completes. `Promise.all` also rejects its outer capability if the final
+  capability resolve abruptly completes.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **182 pass / 72 fail / 1 timeout / 448 skip**. The Promise skip remains in
+  **213 pass / 42 fail / 0 timeout / 448 skip**. The Promise skip remains in
   the supported runner until thenable assimilation and the remaining combinator
   semantics are implemented more fully.
 - **Mapped arguments exotic descriptors** —

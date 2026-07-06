@@ -1771,6 +1771,62 @@ fn promise_all_uses_receiver_resolve_and_then() {
 }
 
 #[test]
+fn promise_all_settled_uses_receiver_resolve_and_then() {
+    assert_eq!(
+        run("var callCount = 0, executorLength = 0;
+             class SubPromise extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 executorLength = executor.length;
+               }
+             }
+             var result = Promise.allSettled.call(SubPromise, []);
+             result instanceof SubPromise && callCount === 1 && executorLength === 2;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var resolveGetCount = 0, resolveCallCount = 0, thenCallCount = 0;
+             var seenThis, settledValues;
+             var C = function(executor) {
+               executor(function(values) { settledValues = values; }, function() {});
+             };
+             Object.defineProperty(C, 'resolve', {
+               configurable: true,
+               get: function() {
+                 resolveGetCount += 1;
+                 return function(value) {
+                   resolveCallCount += 1;
+                   seenThis = this;
+                   return {
+                     then: function(resolve, reject) {
+                       thenCallCount += 1;
+                       if (value === 2) {
+                         reject('bad');
+                         resolve('ignored');
+                       } else {
+                         resolve(value);
+                         reject('ignored');
+                       }
+                     }
+                   };
+                 };
+               }
+             });
+             Promise.allSettled.call(C, [1, 2]);
+             resolveGetCount === 1 && resolveCallCount === 2 &&
+               thenCallCount === 2 && seenThis === C &&
+               settledValues[0].status === 'fulfilled' &&
+               settledValues[0].value === 1 &&
+               settledValues[1].status === 'rejected' &&
+               settledValues[1].reason === 'bad';"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_race_uses_receiver_resolve_and_then() {
     assert_eq!(
         run("var callCount = 0, executorLength = 0;

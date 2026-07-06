@@ -57,9 +57,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   the capability resolve/reject functions. `Promise.all` now follows the same
   constructor capability and `C.resolve` path, creates per-element resolving
   functions, invokes each resolved entry's observable `then`, and resolves the
-  outer capability with the ordered result array.
+  outer capability with the ordered result array. `Promise.allSettled` now
+  follows the same constructor capability and `C.resolve` path, creates paired
+  per-element resolve/reject functions sharing an `alreadyCalled` guard,
+  records ordered fulfilled/rejected result objects, and rejects the outer
+  capability if the final capability resolve abruptly completes. `Promise.all`
+  also now rejects its outer capability if the final capability resolve
+  abruptly completes.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **182 pass / 72 fail / 1 timeout / 448 skip**; full Promise
+  lifted is now **213 pass / 42 fail / 0 timeout / 448 skip**; full Promise
   thenable assimilation and the remaining combinator semantics remain future
   work before lifting the `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now
