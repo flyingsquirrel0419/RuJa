@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 30.2% of all matrix files; 60.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4741 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5000 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -1015,6 +1015,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   runs after argument evaluation for direct and spread super constructor calls.
   This removes `class` from the skip filters at **522 pass / 0 fail / 7904
   skip**, raising the supported subset to **4741 pass / 0 fail / 0 timeout**.
+- **ES2015 syntax/global feature lift** — `computed-property-names`,
+  `rest-parameters`, `object-spread`, and `globalThis` are removed from the
+  skip filters after verifying 0 failures in the supported subset. Focused
+  verification covered computed/object tests at **370 pass / 0 fail / 848
+  skip**, call/new/array/super spread tests at **217 pass / 0 fail / 80
+  skip**, and class/function/arrow tests at **1117 pass / 0 fail / 8367
+  skip**, raising the supported subset to **5000 pass / 0 fail / 0 timeout**.
 - **`typeof` through `with` object environments** — `typeof identifier` now
   reuses the VM's spec Reference-record resolution path before applying
   `GetValue`, except for the required unresolvable-reference `"undefined"`

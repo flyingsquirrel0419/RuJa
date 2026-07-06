@@ -22,8 +22,15 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **4741 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5000 pass / 0 fail / 0 timeout**.
 
+- **ES2015 syntax/global feature lift**: `computed-property-names`,
+  `rest-parameters`, `object-spread`, and `globalThis` are removed from the
+  test262 skip filters after the supported subset verified at 0 failures. The
+  focused computed/object cluster runs at **370 pass / 0 fail / 848 skip**,
+  the call/new/array/super spread cluster at **217 pass / 0 fail / 80 skip**,
+  and the class/function/arrow cluster at **1117 pass / 0 fail / 8367 skip**.
+  This raises the supported subset to **5000 pass / 0 fail / 0 timeout**.
 - **Class feature lift**: `class` is removed from the test262 skip filters
   after tightening class numeric method/accessor names, `static constructor`
   parsing, class-element early errors, and dynamic `super()` constructor
