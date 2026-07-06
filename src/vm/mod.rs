@@ -66,6 +66,7 @@ pub struct Vm {
     pub(crate) current_yields: Vec<Value>,
     pub(crate) next_symbol_id: u32,
     pub(crate) symbol_registry: HashMap<Arc<str>, u32>,
+    pub(crate) symbol_descriptions: HashMap<u32, Option<Arc<str>>>,
     pub(crate) well_known_symbols: WellKnownSymbols,
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
@@ -319,6 +320,7 @@ impl Vm {
             current_yields: Vec::new(),
             next_symbol_id: 9,
             symbol_registry: HashMap::new(),
+            symbol_descriptions: HashMap::new(),
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
                 to_primitive: 2,
@@ -337,6 +339,38 @@ impl Vm {
             max_heap_objects: 0,
             template_cache: std::collections::HashMap::new(),
         };
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.iterator,
+            Some(Arc::from("Symbol.iterator")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.to_primitive,
+            Some(Arc::from("Symbol.toPrimitive")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.has_instance,
+            Some(Arc::from("Symbol.hasInstance")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.to_string_tag,
+            Some(Arc::from("Symbol.toStringTag")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.async_iterator,
+            Some(Arc::from("Symbol.asyncIterator")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.r#match,
+            Some(Arc::from("Symbol.match")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.unscopables,
+            Some(Arc::from("Symbol.unscopables")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.species,
+            Some(Arc::from("Symbol.species")),
+        );
         crate::builtins::setup_full(&mut vm)?;
         Ok(vm)
     }

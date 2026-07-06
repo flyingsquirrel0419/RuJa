@@ -577,11 +577,16 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1)?;
     define_global(vm, "Symbol", Value::Object(sym_idx));
     let sym_for_idx = vm.new_native_function("for", symbol_for, 1)?;
+    let sym_key_for_idx = vm.new_native_function("keyFor", symbol_key_for, 1)?;
     if let Value::Object(idx) = Value::Object(sym_idx) {
         vm.heap.with_obj(idx.0, |obj| {
             obj.props().lock().insert(
                 PropertyKey::from("for"),
                 data_prop(Value::Object(sym_for_idx)),
+            );
+            obj.props().lock().insert(
+                PropertyKey::from("keyFor"),
+                data_prop(Value::Object(sym_key_for_idx)),
             );
             obj.props().lock().insert(
                 PropertyKey::from("iterator"),
@@ -621,10 +626,16 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     // value type (not a constructor), so build the proto manually rather than
     // going through make_builtin_constructor.
     let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0)?;
+    let sym_description_getter =
+        vm.new_native_function("get description", symbol_description_get, 0)?;
     let mut sym_proto_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     sym_proto_props.insert(
         PropertyKey::from("toString"),
         data_prop(Value::Object(sym_tostring_idx)),
+    );
+    sym_proto_props.insert(
+        PropertyKey::from("description"),
+        accessor_get_prop(Value::Object(sym_description_getter)),
     );
     sym_proto_props.insert(
         PropertyKey::from("constructor"),
@@ -640,6 +651,12 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     });
     let sym_proto_idx = GcIdx(vm.heap.allocate(sym_proto_obj)?);
     vm.symbol_proto = Value::Object(sym_proto_idx);
+    vm.heap.with_obj(sym_idx.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("prototype"),
+            const_prop(Value::Object(sym_proto_idx)),
+        );
+    });
     Ok(())
 }
 

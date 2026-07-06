@@ -644,7 +644,7 @@ fn symbol_type() {
 fn symbol_to_string() {
     assert_eq!(
         run("Symbol('x').toString();"),
-        Value::String(Arc::from("Symbol()"))
+        Value::String(Arc::from("Symbol(x)"))
     );
 }
 

@@ -24,6 +24,22 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Symbol description/keyFor registry semantics**: Symbols now retain
+  optional descriptions, well-known Symbols expose spec-style descriptions,
+  `Symbol.prototype.description` and `Symbol.keyFor` are implemented with
+  the right primitive/wrapper receiver validation, and `String(Symbol(...))`
+  / `Symbol.prototype.toString` include descriptions. Test262-created realms
+  now receive distinct `Symbol`, `Symbol.for`, and `Symbol.keyFor` function
+  objects while sharing the VM-level global Symbol registry, closing the
+  cross-realm registry cases. Sloppy writes to coercible Symbol primitives are
+  ignored while strict writes still throw, and nullish member assignments keep
+  throwing in sloppy mode. Focused
+  `built-ins/Symbol/for built-ins/Symbol/keyFor
+  built-ins/Symbol/prototype/description built-ins/Symbol/prototype/toString`
+  with the `Symbol` feature skip temporarily lifted runs at **28 pass / 0
+  fail / 4 skip**. The broader `built-ins/Symbol` diagnostic now runs at
+  **50 pass / 17 fail / 31 skip**, so the remaining Symbol surface is still
+  intentionally outside this narrow fix.
 - **`Reflect.ownKeys` Symbol key coverage**: `Reflect.ownKeys` now rejects
   primitive targets with `TypeError` and returns the full
   `[[OwnPropertyKeys]]` list by preserving non-enumerable string keys and

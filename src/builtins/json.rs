@@ -883,6 +883,9 @@ pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
 }
 pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err("Reflect.set target must be an object"));
+    }
     let key = match args.get(1) {
         Some(v) => vm.to_property_key(v)?,
         None => return Ok(Value::Bool(false)),

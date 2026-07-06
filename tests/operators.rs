@@ -29,6 +29,18 @@ fn logical_and_chain() {
     assert_eq!(run("1 && 0 && 3;"), Value::Number(0.0));
 }
 
+#[test]
+fn nullish_member_assignment_throws_in_sloppy_mode() {
+    assert!(
+        run_err("null.x = 1;").contains("TypeError"),
+        "null member assignment must throw"
+    );
+    assert!(
+        run_err("undefined.x = 1;").contains("TypeError"),
+        "undefined member assignment must throw"
+    );
+}
+
 // --- || short-circuit ---
 
 #[test]

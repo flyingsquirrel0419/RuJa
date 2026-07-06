@@ -146,6 +146,11 @@ fn generated_symbols_do_not_collide_with_well_known_symbols() {
         Value::Bool(false)
     );
     assert_eq!(
+        run("Symbol.keyFor(Symbol.for('x'));"),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(run("Symbol.keyFor(Symbol('x'));"), Value::Undefined);
+    assert_eq!(
         run("typeof Symbol.species + ':' + typeof Symbol.unscopables;"),
         Value::String(Arc::from("symbol:symbol"))
     );
@@ -160,7 +165,40 @@ fn symbol_species_is_exposed() {
     );
     assert_eq!(
         run("String(Symbol.species);"),
-        Value::String(Arc::from("Symbol()"))
+        Value::String(Arc::from("Symbol(Symbol.species)"))
+    );
+}
+
+#[test]
+fn symbol_description_and_key_for_follow_registry_semantics() {
+    assert_eq!(
+        run("typeof Symbol.prototype.toString + ':' + Object.getOwnPropertyDescriptor(Symbol, 'prototype').writable;"),
+        Value::String(Arc::from("function:false"))
+    );
+    assert_eq!(
+        run("[Symbol('x').description, Symbol().description, Symbol(undefined).description, Symbol('').description].join('|');"),
+        Value::String(Arc::from("x|||"))
+    );
+    assert_eq!(
+        run("var s = Symbol.for({ toString: function(){ return 'test262'; } }); [s.description, Symbol.keyFor(s), s.toString()].join('|');"),
+        Value::String(Arc::from("test262|test262|Symbol(test262)"))
+    );
+    assert_eq!(
+        run("var sym = Symbol('66'); sym.toString = 0; sym.valueOf = 0; [sym.toString(), sym === sym.valueOf()].join('|');"),
+        Value::String(Arc::from("Symbol(66)|true"))
+    );
+    assert!(
+        run_err("'use strict'; var sym = Symbol('s'); sym.x = 1;").contains("TypeError"),
+        "strict Symbol primitive assignment must throw"
+    );
+    assert!(
+        run_err("Symbol.keyFor(Object(Symbol.for('x')));").contains("TypeError"),
+        "Symbol.keyFor must reject Symbol wrapper objects"
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Symbol.prototype, 'description').get.call({});")
+            .contains("TypeError"),
+        "Symbol.prototype.description getter must reject non-symbol receivers"
     );
 }
 

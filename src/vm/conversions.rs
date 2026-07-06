@@ -457,9 +457,13 @@ impl Vm {
                     });
                     Ok(())
                 } else {
-                    Err(Error::type_err(
-                        "Cannot set property of primitive".to_string(),
-                    ))
+                    if obj.is_nullish() || self.current_strict() {
+                        Err(Error::type_err(
+                            "Cannot set property of primitive".to_string(),
+                        ))
+                    } else {
+                        Ok(())
+                    }
                 }
             }
             other => {

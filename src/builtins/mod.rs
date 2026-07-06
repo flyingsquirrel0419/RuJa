@@ -426,6 +426,58 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
         define_realm_global(vm, realm_env, &global, "BigInt", bigint);
     }
+    let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 1, realm_env)?;
+    let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
+    let symbol_key_for_idx =
+        vm.new_native_function_in_env("keyFor", symbol_key_for, 1, realm_env)?;
+    vm.heap.with_obj(symbol_idx.0, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("for"),
+            data_prop(Value::Object(symbol_for_idx)),
+        );
+        props.insert(
+            PropertyKey::from("keyFor"),
+            data_prop(Value::Object(symbol_key_for_idx)),
+        );
+        props.insert(
+            PropertyKey::from("iterator"),
+            data_prop(Value::Symbol(vm.well_known_symbols.iterator)),
+        );
+        props.insert(
+            PropertyKey::from("asyncIterator"),
+            data_prop(Value::Symbol(vm.well_known_symbols.async_iterator)),
+        );
+        props.insert(
+            PropertyKey::from("toPrimitive"),
+            data_prop(Value::Symbol(vm.well_known_symbols.to_primitive)),
+        );
+        props.insert(
+            PropertyKey::from("hasInstance"),
+            data_prop(Value::Symbol(vm.well_known_symbols.has_instance)),
+        );
+        props.insert(
+            PropertyKey::from("toStringTag"),
+            data_prop(Value::Symbol(vm.well_known_symbols.to_string_tag)),
+        );
+        props.insert(
+            PropertyKey::from("match"),
+            data_prop(Value::Symbol(vm.well_known_symbols.r#match)),
+        );
+        props.insert(
+            PropertyKey::from("unscopables"),
+            data_prop(Value::Symbol(vm.well_known_symbols.unscopables)),
+        );
+        props.insert(
+            PropertyKey::from("species"),
+            data_prop(Value::Symbol(vm.well_known_symbols.species)),
+        );
+        props.insert(
+            PropertyKey::from("prototype"),
+            const_prop(vm.symbol_proto.clone()),
+        );
+    });
+    define_realm_global(vm, realm_env, &global, "Symbol", Value::Object(symbol_idx));
 
     Ok(global)
 }

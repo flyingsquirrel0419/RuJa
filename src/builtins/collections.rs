@@ -594,9 +594,13 @@ pub(crate) fn symbol_constructor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    let _desc = args.first().cloned().unwrap_or(Value::Undefined);
+    let desc = match args.first().unwrap_or(&Value::Undefined) {
+        Value::Undefined => None,
+        value => Some(vm.to_string(value)?),
+    };
     let id = vm.next_symbol_id;
     vm.next_symbol_id += 1;
+    vm.symbol_descriptions.insert(id, desc);
     Ok(Value::Symbol(id))
 }
 pub(crate) fn symbol_for(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -606,17 +610,72 @@ pub(crate) fn symbol_for(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
     }
     let id = vm.next_symbol_id;
     vm.next_symbol_id += 1;
+    vm.symbol_descriptions.insert(id, Some(key.clone()));
     vm.symbol_registry.insert(key, id);
     Ok(Value::Symbol(id))
 }
-pub(crate) fn symbol_to_string(
-    _vm: &mut Vm,
-    _args: &[Value],
-    _this: Option<Value>,
+
+pub(crate) fn symbol_key_for(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
 ) -> error::Result<Value> {
-    // RuJa's Symbol is `Value::Symbol(u32)` with no stored description, so
-    // we return the no-description form "Symbol()".
-    Ok(Value::String(Arc::from("Symbol()")))
+    let symbol = match args.first().unwrap_or(&Value::Undefined) {
+        Value::Symbol(id) => *id,
+        _ => return Err(Error::type_err("Symbol.keyFor requires a symbol")),
+    };
+    for (key, id) in &vm.symbol_registry {
+        if *id == symbol {
+            return Ok(Value::String(key.clone()));
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn this_symbol_value(vm: &Vm, this: Option<Value>) -> error::Result<u32> {
+    match this.unwrap_or(Value::Undefined) {
+        Value::Symbol(id) => Ok(id),
+        Value::Object(idx) => {
+            let primitive = vm.heap.with_obj(idx.0, |obj| match obj {
+                HeapObj::Object(data) => data.primitive.lock().clone(),
+                _ => None,
+            });
+            if let Some(Value::Symbol(id)) = primitive {
+                Ok(id)
+            } else {
+                Err(Error::type_err("Symbol method called on non-symbol"))
+            }
+        }
+        _ => Err(Error::type_err("Symbol method called on non-symbol")),
+    }
+}
+
+pub(crate) fn symbol_description_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let id = this_symbol_value(vm, this)?;
+    Ok(vm
+        .symbol_descriptions
+        .get(&id)
+        .cloned()
+        .flatten()
+        .map(Value::String)
+        .unwrap_or(Value::Undefined))
+}
+
+pub(crate) fn symbol_to_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let id = this_symbol_value(vm, this)?;
+    let desc = vm.symbol_descriptions.get(&id).and_then(|d| d.as_ref());
+    Ok(Value::String(Arc::from(match desc {
+        Some(desc) => format!("Symbol({desc})"),
+        None => "Symbol()".to_string(),
+    })))
 }
 
 // =========================================================================

@@ -896,10 +896,18 @@ pub(crate) fn string_constructor(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    fn symbol_string(vm: &Vm, id: u32) -> Value {
+        let desc = vm.symbol_descriptions.get(&id).and_then(|d| d.as_ref());
+        Value::String(Arc::from(match desc {
+            Some(desc) => format!("Symbol({desc})"),
+            None => "Symbol()".to_string(),
+        }))
+    }
+
     if let Some(Value::Object(_)) = &this {
         let prim = match args.first() {
             None => Value::String(Arc::from("")),
-            Some(Value::Symbol(_)) => Value::String(Arc::from("Symbol()")),
+            Some(Value::Symbol(id)) => symbol_string(vm, *id),
             Some(v) => Value::String(vm.to_string(v)?),
         };
         let length = match &prim {
@@ -924,7 +932,7 @@ pub(crate) fn string_constructor(
     // `String(undefined)` which yields "undefined".
     match args.first() {
         None => Ok(Value::String(Arc::from(""))),
-        Some(Value::Symbol(_)) => Ok(Value::String(Arc::from("Symbol()"))),
+        Some(Value::Symbol(id)) => Ok(symbol_string(vm, *id)),
         Some(v) => Ok(Value::String(vm.to_string(v)?)),
     }
 }

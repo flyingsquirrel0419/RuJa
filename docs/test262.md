@@ -139,6 +139,21 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Symbol description/keyFor registry semantics** —
+  Symbols now retain optional descriptions, `Symbol.prototype.description`
+  and `Symbol.keyFor` are exposed with spec receiver checks, and
+  `String(Symbol(...))` / `Symbol.prototype.toString` include descriptions.
+  Test262-created realms install distinct `Symbol`, `Symbol.for`, and
+  `Symbol.keyFor` function objects while sharing the VM-level global Symbol
+  registry, closing the cross-realm registry tests. Sloppy writes to
+  coercible Symbol primitives are ignored, strict writes throw, and nullish
+  member assignment still throws in sloppy mode. With the `Symbol` skip
+  temporarily lifted, the focused
+  `built-ins/Symbol/for built-ins/Symbol/keyFor
+  built-ins/Symbol/prototype/description built-ins/Symbol/prototype/toString`
+  cluster runs at **28 pass / 0 fail / 4 skip**. The broader
+  `built-ins/Symbol` diagnostic remains **50 pass / 17 fail / 31 skip**, so
+  the rest of Symbol remains a future narrow-fix target.
 - **`Reflect.ownKeys` Symbol key coverage** —
   `Reflect.ownKeys` now uses RuJa's full own-property-key helper instead of
   the string-only enumerable-key path, so it returns array-index strings,

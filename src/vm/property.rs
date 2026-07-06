@@ -750,9 +750,15 @@ impl Vm {
                 );
                 Ok(())
             }
-            _ => Err(Error::type_err(
-                "Cannot set property of primitive".to_string(),
-            )),
+            _ => {
+                if obj.is_nullish() || self.current_strict() {
+                    Err(Error::type_err(
+                        "Cannot set property of primitive".to_string(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -855,7 +861,7 @@ impl Vm {
         value: Value,
     ) -> error::Result<()> {
         let Value::Object(receiver_idx) = receiver else {
-            if self.current_strict() {
+            if receiver.is_nullish() || self.current_strict() {
                 return Err(Error::type_err(
                     "Cannot set property of primitive".to_string(),
                 ));
