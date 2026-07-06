@@ -1897,6 +1897,18 @@ fn promise_any_uses_receiver_resolve_and_then() {
                Object.prototype.propertyIsEnumerable.call(rejectedErrors, 'errors') === false;"),
         Value::Bool(true)
     );
+    assert_eq!(
+        run("var rejectedError;
+             var C = function(executor) {
+               executor(function() {}, function(error) { rejectedError = error; });
+             };
+             C.resolve = function(value) { return value; };
+             Promise.any.call(C, []);
+             rejectedError instanceof AggregateError &&
+               rejectedError.errors.length === 0 &&
+               Object.prototype.propertyIsEnumerable.call(rejectedError, 'errors') === false;"),
+        Value::Bool(true)
+    );
 }
 
 #[test]
