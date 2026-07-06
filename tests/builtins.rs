@@ -86,6 +86,25 @@ fn string_methods() {
 }
 
 #[test]
+fn string_static_methods_follow_code_point_and_raw_semantics() {
+    assert!(run_err("String.fromCodePoint(3.14);").contains("RangeError"));
+    assert!(run_err("String.fromCodePoint(-1);").contains("RangeError"));
+    assert!(run_err("String.fromCodePoint(Infinity);").contains("RangeError"));
+    assert_eq!(
+        run("String.fromCodePoint(0x61, 0x1F600).length;"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run(r#"String.raw({ raw: ["a", "b", "d", "f"] }, 1);"#),
+        Value::String(Arc::from("a1bdf"))
+    );
+    assert_eq!(
+        run(r#"String.raw({ raw: { length: 5, 0: "e", 1: "", 2: null, 3: undefined, 4: 123 } });"#),
+        Value::String(Arc::from("enullundefined123"))
+    );
+}
+
+#[test]
 fn string_search_methods_follow_regexp_and_position_semantics() {
     assert_eq!(
         run("'The future is cool!'.startsWith('future', 4);"),

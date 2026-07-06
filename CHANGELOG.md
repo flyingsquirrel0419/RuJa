@@ -26,6 +26,15 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   `built-ins/Object/values built-ins/Object/entries built-ins/Object/hasOwn
   built-ins/Object/getOwnPropertyDescriptors` cluster now runs at **98 pass /
   0 fail / 23 skip**.
+- **String static constructors**: `String.fromCodePoint` now throws
+  `RangeError` for non-integral, non-finite, negative, and out-of-range code
+  point inputs instead of silently truncating through integer casts.
+  `String.raw` now appends the empty string when a substitution is missing,
+  rather than the string `"undefined"`, while still converting explicit
+  `undefined` raw segments through `ToString`. The focused
+  `built-ins/String/fromCodePoint built-ins/String/raw
+  built-ins/String/fromCharCode` cluster now runs at **51 pass / 0 fail / 7
+  skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

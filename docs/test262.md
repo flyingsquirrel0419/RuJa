@@ -152,6 +152,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Object/values built-ins/Object/entries built-ins/Object/hasOwn
   built-ins/Object/getOwnPropertyDescriptors` cluster now runs at **98 pass /
   0 fail / 23 skip**.
+- **String static constructors** —
+  `String.fromCodePoint` now throws `RangeError` for non-integral,
+  non-finite, negative, and out-of-range code point inputs instead of silently
+  truncating through integer casts. `String.raw` now appends the empty string
+  when a substitution is missing, while explicit `undefined` raw segments
+  still convert through `ToString`. The focused
+  `built-ins/String/fromCodePoint built-ins/String/raw
+  built-ins/String/fromCharCode` cluster now runs at **51 pass / 0 fail / 7
+  skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

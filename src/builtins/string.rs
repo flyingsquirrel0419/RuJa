@@ -192,8 +192,9 @@ pub(crate) fn string_raw(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
         let seg = vm.get_property_key(&raw, &Value::Number(i as f64))?;
         result.push_str(&vm.to_string(&seg)?);
         if i + 1 < len {
-            let sub = args.get(i + 1).cloned().unwrap_or(Value::Undefined);
-            result.push_str(&vm.to_string(&sub)?);
+            if let Some(sub) = args.get(i + 1) {
+                result.push_str(&vm.to_string(sub)?);
+            }
         }
         i += 1;
     }
@@ -207,10 +208,11 @@ pub(crate) fn string_from_code_point(
 ) -> error::Result<Value> {
     let mut units: Vec<u16> = Vec::new();
     for a in args {
-        let cp = vm.to_number(a)? as u32;
-        if cp > 0x10FFFF {
+        let cp = vm.to_number(a)?;
+        if !cp.is_finite() || cp.fract() != 0.0 || !(0.0..=0x10FFFF as f64).contains(&cp) {
             return Err(Error::range("Invalid code point"));
         }
+        let cp = cp as u32;
         if cp <= 0xFFFF {
             units.push(cp as u16);
         } else {
