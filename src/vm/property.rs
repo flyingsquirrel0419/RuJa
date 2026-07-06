@@ -321,6 +321,18 @@ impl Vm {
                             } else {
                                 Some(value.clone())
                             };
+                            let (extensible, current_proto) = self
+                                .heap
+                                .with_obj(idx.0, |o| (o.is_extensible(), o.proto().lock().clone()));
+                            if !extensible && current_proto != proto {
+                                if self.current_strict() {
+                                    return Err(Error::type_err(
+                                        "Cannot mutate prototype of non-extensible object"
+                                            .to_string(),
+                                    ));
+                                }
+                                return Ok(());
+                            }
                             if let Value::Object(target) = &value {
                                 if self.proto_chain_contains(target.0, idx.0) {
                                     if self.current_strict() {
@@ -872,7 +884,7 @@ impl Vm {
         None
     }
 
-    fn has_non_writable_data_property_in_proto(
+    pub(crate) fn has_non_writable_data_property_in_proto(
         &self,
         idx: GcIdx,
         key: &crate::value::PropertyKey,

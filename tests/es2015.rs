@@ -350,6 +350,22 @@ fn rest_param_after_fixed() {
 }
 
 #[test]
+fn rest_parameter_functions_use_unmapped_arguments_object() {
+    assert_eq!(
+        run("function f(a, ...rest){ arguments[0] = 1; arguments[1] = 2; return a + ':' + rest.join(','); } f(3,4,5);"),
+        Value::String(Arc::from("3:4,5"))
+    );
+}
+
+#[test]
+fn computed_symbol_accessor_setter_is_called() {
+    assert_eq!(
+        run("var calls=0; var s=Symbol(); var o={ set [s](v){ calls += v; } }; o[s]=3; calls;"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
 fn arrow_default_param() {
     assert_eq!(run("((a,b=5)=>a+b)(3);"), Value::Number(8.0));
 }

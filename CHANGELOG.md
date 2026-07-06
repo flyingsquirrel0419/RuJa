@@ -16,6 +16,17 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   This closes the remaining cross-realm eval/template/non-constructor checks
   plus the Proxy subclass edge case, raising the supported subset to **4180
   pass / 0 fail / 0 timeout**.
+- **Small language conformance edges**: rest-parameter functions now create
+  unmapped arguments objects in sloppy mode, non-extensible objects reject
+  `__proto__` prototype mutation, and Symbol-keyed assignment respects
+  accessors, inherited setters, non-writable descriptors, and extensibility.
+  Parser/lexer handling now rejects a line terminator after `throw`, reports
+  unterminated string literals, rejects reserved-word object-literal shorthand
+  such as `({ this })`, and accepts `undefined` as a `var` binding name. The
+  focused language cluster
+  `language/asi language/computed-property-names language/keywords
+  language/rest-parameters language/types` now runs at **290 pass / 0 fail / 9
+  skip**.
 - **String search methods and `Symbol.match`**: aligned
   `String.prototype.includes`, `startsWith`, and `endsWith` with
   `RequireObjectCoercible`, `IsRegExp`, `ToString`, and position/end-position

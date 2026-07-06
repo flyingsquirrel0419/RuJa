@@ -138,6 +138,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Realm execution, and distinguishes constructable native constructors from
   callable-only native functions. This closes the remaining cross-realm
   supported-subset failures and the Proxy subclass edge case.
+- **Small language conformance edges** — Sloppy functions with rest/default/
+  destructuring parameters now use unmapped arguments objects, `__proto__`
+  assignment cannot mutate a non-extensible object's prototype, and
+  Symbol-keyed assignment follows ordinary property-set semantics for
+  accessors, inherited setters, read-only descriptors, and non-extensible
+  receivers. The parser/lexer now rejects `throw` followed by a line
+  terminator, unterminated string literals, and reserved-word shorthand object
+  properties such as `({ this })`, while accepting `undefined` as a `var`
+  binding name. The focused
+  `language/asi language/computed-property-names language/keywords
+  language/rest-parameters language/types` cluster now runs at **290 pass / 0
+  fail / 9 skip**.
 - **String search methods and `Symbol.match`** —
   `String.prototype.includes`, `String.prototype.startsWith`, and
   `String.prototype.endsWith` now reject nullish receivers, consult

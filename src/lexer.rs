@@ -343,10 +343,15 @@ impl<'a> Lexer<'a> {
     fn read_string(&mut self, quote: u8) -> TokenKind {
         self.advance(); // opening quote
         let mut s = String::new();
+        let mut closed = false;
         while let Some(c) = self.peek() {
             if c == quote {
                 self.advance();
+                closed = true;
                 break;
+            }
+            if self.is_line_terminator_start() {
+                return TokenKind::LexError("unterminated string literal".to_string());
             }
             if c == b'\\' {
                 self.advance();
@@ -444,6 +449,9 @@ impl<'a> Lexer<'a> {
                     }
                 }
             }
+        }
+        if !closed {
+            return TokenKind::LexError("unterminated string literal".to_string());
         }
         TokenKind::String(s)
     }
@@ -1130,6 +1138,7 @@ impl<'a> Lexer<'a> {
     fn is_line_terminator_start(&self) -> bool {
         match self.peek() {
             Some(b'\n') | Some(b'\r') => true,
+            Some(0xC2) => self.peek_at(1) == Some(0x85),
             Some(0xE2) => {
                 self.peek_at(1) == Some(0x80) && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9))
             }

@@ -379,6 +379,77 @@ impl Vm {
             Value::Symbol(id) => {
                 if let Value::Object(idx) = obj {
                     let pkey = crate::value::PropertyKey::Symbol(*id);
+                    let own_desc = self
+                        .heap
+                        .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned());
+                    if let Some(desc) = own_desc {
+                        if desc.is_accessor {
+                            if let Some(setter) = desc.set {
+                                self.call_function(
+                                    &setter,
+                                    std::slice::from_ref(&value),
+                                    Some(obj.clone()),
+                                )?;
+                                return Ok(());
+                            }
+                            if self.current_strict() {
+                                return Err(Error::type_err(
+                                    "Cannot set Symbol property which has only a getter",
+                                ));
+                            }
+                            return Ok(());
+                        }
+                        if !desc.writable {
+                            if self.current_strict() {
+                                return Err(Error::type_err(
+                                    "Cannot assign to read only Symbol property",
+                                ));
+                            }
+                            return Ok(());
+                        }
+                        self.heap.with_obj(idx.0, |o| {
+                            if let Some(existing) = o.props().lock().get_mut(&pkey) {
+                                existing.value = value.clone();
+                            }
+                        });
+                        return Ok(());
+                    }
+                    match self.find_setter(*idx, &pkey) {
+                        Some(Some(setter)) => {
+                            self.call_function(
+                                &setter,
+                                std::slice::from_ref(&value),
+                                Some(obj.clone()),
+                            )?;
+                            return Ok(());
+                        }
+                        Some(None) => {
+                            if self.current_strict() {
+                                return Err(Error::type_err(
+                                    "Cannot set Symbol property which has only a getter",
+                                ));
+                            }
+                            return Ok(());
+                        }
+                        None => {}
+                    }
+                    if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
+                        if self.current_strict() {
+                            return Err(Error::type_err(
+                                "Cannot assign to read only Symbol property",
+                            ));
+                        }
+                        return Ok(());
+                    }
+                    let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
+                    if !is_extensible {
+                        if self.current_strict() {
+                            return Err(Error::type_err(
+                                "Cannot add Symbol property, object is not extensible",
+                            ));
+                        }
+                        return Ok(());
+                    }
                     self.heap.with_obj(idx.0, |o| {
                         o.props()
                             .lock()

@@ -64,6 +64,12 @@ fn nullish_undefined() {
 }
 
 #[test]
+fn undefined_can_be_declared_as_var_name() {
+    assert_eq!(run("var undefined;"), Value::Undefined);
+    assert_eq!(run("var undefined = 1;"), Value::Undefined);
+}
+
+#[test]
 fn nullish_keeps_falsy_non_nullish() {
     // 0, '', false are NOT nullish -> kept as-is.
     assert_eq!(run("0 ?? 2;"), Value::Number(0.0));
@@ -755,6 +761,18 @@ fn proto_cycle_sloppy_is_noop_and_safe() {
 fn normal_proto_set_still_works() {
     let v = run("var a={}; a.__proto__={x:1}; a.x");
     assert_eq!(v, Value::Number(1.0));
+}
+
+#[test]
+fn non_extensible_object_proto_set_is_rejected() {
+    assert_eq!(
+        run("var a = Object.preventExtensions({}); var p = {}; a.__proto__ = p; Object.getPrototypeOf(a) === Object.prototype;"),
+        Value::Bool(true)
+    );
+    assert!(common::run_err(
+        "\"use strict\"; var a = Object.preventExtensions({}); a.__proto__ = {};"
+    )
+    .contains("non-extensible"));
 }
 
 // --- Object.defineProperty descriptor validation ---

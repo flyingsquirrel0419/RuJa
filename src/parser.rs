@@ -222,6 +222,47 @@ impl Parser {
         Self::is_future_reserved(name) || matches!(name, "let" | "static" | "yield")
     }
 
+    fn is_reserved_identifier_reference_word(name: &str) -> bool {
+        matches!(
+            name,
+            "break"
+                | "case"
+                | "catch"
+                | "class"
+                | "const"
+                | "continue"
+                | "debugger"
+                | "default"
+                | "delete"
+                | "do"
+                | "else"
+                | "export"
+                | "extends"
+                | "false"
+                | "finally"
+                | "for"
+                | "function"
+                | "if"
+                | "import"
+                | "in"
+                | "instanceof"
+                | "new"
+                | "null"
+                | "return"
+                | "super"
+                | "switch"
+                | "this"
+                | "throw"
+                | "true"
+                | "try"
+                | "typeof"
+                | "var"
+                | "void"
+                | "while"
+                | "with"
+        )
+    }
+
     /// Check that an identifier name is a valid binding name (not a
     /// FutureReservedWord). Returns the name on success, SyntaxError on failure.
     fn check_binding_name(&self, name: &str) -> error::Result<()> {
@@ -668,6 +709,11 @@ impl Parser {
             }
             TokenKind::Throw => {
                 self.advance();
+                if self.at_newline_before() {
+                    return Err(error::Error::syntax(
+                        "Line terminator not allowed after throw".to_string(),
+                    ));
+                }
                 let e = self.parse_expr()?;
                 self.expect_semi()?;
                 Ok(self.stmt(StmtNode::Throw(e)))
@@ -1529,6 +1575,7 @@ impl Parser {
             }
             let name = match self.advance() {
                 TokenKind::Ident(s) => Arc::from(s.as_str()),
+                TokenKind::Undefined => Arc::from("undefined"),
                 TokenKind::Of => Arc::from("of"),
                 TokenKind::Async => Arc::from("async"),
                 TokenKind::Static if !self.is_strict_context => Arc::from("static"),
@@ -2864,6 +2911,12 @@ impl Parser {
                 }
                 // Shorthand property: `{x}` is equivalent to `{x: x}`.
                 let value = if let PropertyKey::Ident(s) = &key {
+                    if Self::is_reserved_identifier_reference_word(s) {
+                        return Err(error::Error::syntax(format!(
+                            "'{}' cannot be used as a shorthand property name",
+                            s
+                        )));
+                    }
                     if self.is_strict_context && Self::is_strict_identifier_reference_reserved(s) {
                         return Err(error::Error::syntax(format!(
                             "'{}' is a reserved word in strict mode",
@@ -4321,6 +4374,7 @@ mod tests {
         for src in [
             r#"function f() { "use strict"; ({ let }); }"#,
             r#"function f() { "use strict"; ({ yield }); }"#,
+            r#"({ this });"#,
             r#"void { set x(eval) { "use strict"; } };"#,
             r#"void { set x(arguments) { "use strict"; } };"#,
             r#"void { m(eval) { "use strict"; } };"#,
@@ -4336,6 +4390,24 @@ mod tests {
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }
+    }
+
+    #[test]
+    fn parse_throw_requires_same_line_operand() {
+        assert!(Parser::parse("throw 1;").is_ok());
+        assert!(Parser::parse("throw\n1;").is_err());
+    }
+
+    #[test]
+    fn parse_unterminated_string_literals_error() {
+        assert!(Parser::parse("var str = ';").is_err());
+        assert!(Parser::parse("var str = \";").is_err());
+    }
+
+    #[test]
+    fn parse_undefined_as_var_binding_name() {
+        assert!(Parser::parse("var undefined;").is_ok());
+        assert!(Parser::parse("var undefined = 1;").is_ok());
     }
 
     #[test]

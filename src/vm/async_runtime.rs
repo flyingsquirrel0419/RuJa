@@ -454,7 +454,7 @@ impl Vm {
                     arg_array
                         .is_arguments
                         .store(true, std::sync::atomic::Ordering::Relaxed);
-                    if !func.chunk.is_strict {
+                    if !func.chunk.is_strict && !func.has_parameter_expressions {
                         let mut seen = std::collections::HashSet::new();
                         let mut names = vec![None; func.params.len()];
                         for (i, name) in func.params.iter().enumerate().rev() {
