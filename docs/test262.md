@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 31.2% of all matrix files; 61.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 31.3% of all matrix files; 61.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -95,18 +95,18 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28827100404 on `288bf38`.
+`test262-full` 28828496319 on `b784f72`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131 |
-| Pass | 14,905 |
-| Fail | 9,226 |
+| Pass | 14,928 |
+| Fail | 9,203 |
 | Timeout | 0 |
 | Skip | 23,573 |
-| **Pass rate (of run)** | **61.8%** |
-| **Pass rate (of total)** | **31.2%** |
+| **Pass rate (of run)** | **61.9%** |
+| **Pass rate (of total)** | **31.3%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
