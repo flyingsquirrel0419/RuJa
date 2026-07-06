@@ -84,6 +84,8 @@ def build_source(path):
     src = Path(path).read_text()
     meta = parse_meta(src)
     flags = meta.get('flags', [])
+    if 'raw' in flags:
+        return src, meta
     parts = []
     # onlyStrict: prepend 'use strict' at the very start so the parser
     # recognizes it as a directive prologue (before any harness code).

@@ -25,6 +25,8 @@ pub struct Parser {
     /// Whether the current parse context is strict (inherited from an
     /// enclosing strict function/program). Drives directive inheritance.
     is_strict_context: bool,
+    /// Token-based result from the most recently parsed function body.
+    last_fn_body_use_strict_directive: bool,
     /// When true, `in` is not treated as a binary operator (for-in head parsing).
     no_in: bool,
     /// Source line of the first token of the statement currently being parsed
@@ -96,6 +98,7 @@ impl Parser {
             arrow_rest: None,
             arrow_destructure_decls: Vec::new(),
             is_strict_context: false,
+            last_fn_body_use_strict_directive: false,
             no_in: false,
             stmt_start_line: 0,
             expr_depth: 0,
@@ -209,17 +212,29 @@ impl Parser {
         }
     }
 
-    /// ES spec: these are FutureReservedWords that cannot be used as
-    /// BindingIdentifier (variable name, parameter name, etc.).
+    /// ES spec: `enum` is always reserved, while the words below are reserved
+    /// only in strict BindingIdentifier/IdentifierReference positions.
     fn is_future_reserved(name: &str) -> bool {
+        matches!(name, "enum")
+    }
+
+    fn is_strict_only_reserved(name: &str) -> bool {
         matches!(
             name,
-            "enum" | "implements" | "interface" | "package" | "private" | "protected" | "public"
+            "implements"
+                | "interface"
+                | "let"
+                | "package"
+                | "private"
+                | "protected"
+                | "public"
+                | "static"
+                | "yield"
         )
     }
 
     fn is_strict_identifier_reference_reserved(name: &str) -> bool {
-        Self::is_future_reserved(name) || matches!(name, "let" | "static" | "yield")
+        Self::is_future_reserved(name) || Self::is_strict_only_reserved(name)
     }
 
     fn is_reserved_identifier_reference_word(name: &str) -> bool {
@@ -273,6 +288,12 @@ impl Parser {
             )));
         }
         if matches!(name, "import" | "export") {
+            return Err(error::Error::syntax(format!(
+                "'{}' is a reserved word and cannot be used as a binding name",
+                name
+            )));
+        }
+        if self.is_strict_context && Self::is_strict_only_reserved(name) {
             return Err(error::Error::syntax(format!(
                 "'{}' is a reserved word and cannot be used as a binding name",
                 name
@@ -409,6 +430,7 @@ impl Parser {
             | TokenKind::Await
             | TokenKind::Yield
             | TokenKind::Let
+            | TokenKind::Static
             | TokenKind::Of => true,
             _ => false,
         }
@@ -473,8 +495,9 @@ impl Parser {
         // Detect a leading "use strict" directive from the raw token stream
         // *before* parsing the body, so that nested function declarations
         // parsed within the body inherit strictness. A directive prologue is
-        // a run of string-literal expression statements; only the leading
-        // "use strict" matters here.
+        // a run of string-literal expression statements; escaped string
+        // literals can be part of the prologue, but cannot be Use Strict
+        // Directives.
         let has_strict_directive = self.peek_use_strict_directive();
         self.is_strict_context = has_strict_directive || self.is_strict_context;
         let mut body = Vec::new();
@@ -494,11 +517,14 @@ impl Parser {
     fn peek_use_strict_directive(&self) -> bool {
         let mut i = self.pos;
         loop {
-            match self.tokens.get(i).map(|t| &t.kind) {
-                Some(TokenKind::String(s)) if &**s == "use strict" => {
+            match self.tokens.get(i) {
+                Some(t)
+                    if matches!(&t.kind, TokenKind::String(s) if &**s == "use strict")
+                        && !t.string_had_escape =>
+                {
                     return true;
                 }
-                Some(TokenKind::String(_)) => {
+                Some(t) if matches!(&t.kind, TokenKind::String(_)) => {
                     // Another directive; skip it and its optional semicolon.
                     i += 1;
                     if matches!(
@@ -812,7 +838,7 @@ impl Parser {
         let (params, param_defaults, rest_param, dstr_decls) =
             self.parse_params_scoped(is_generator, is_async)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
-        let body_contains_use_strict = Self::scan_directive_prologue(&body);
+        let body_contains_use_strict = self.last_fn_body_use_strict_directive;
         let has_destructuring_params = !dstr_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
             body_contains_use_strict,
@@ -1016,6 +1042,7 @@ impl Parser {
         });
         self.function_depth -= 1;
         self.is_strict_context = saved_strict;
+        self.last_fn_body_use_strict_directive = body_is_strict;
         result
     }
 
@@ -1061,6 +1088,7 @@ impl Parser {
         self.is_strict_context = saved_strict;
         self.super_depth = saved_super;
         self.super_call_depth = saved_super_call;
+        self.last_fn_body_use_strict_directive = body_is_strict;
         result
     }
 
@@ -2520,7 +2548,7 @@ impl Parser {
             }
             TokenKind::Ident(s) => {
                 // Strict mode: FutureReservedWords cannot be used as identifiers.
-                if self.is_strict_context && Self::is_future_reserved(&s) {
+                if self.is_strict_context && Self::is_strict_identifier_reference_reserved(&s) {
                     return Err(error::Error::syntax(format!(
                         "'{}' is a reserved word in strict mode",
                         s
@@ -2821,7 +2849,7 @@ impl Parser {
                     self.parse_params_scoped(false, false)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
-                let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                let body_contains_use_strict = self.last_fn_body_use_strict_directive;
                 let has_destructuring_params = !dstr_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
                     body_contains_use_strict,
@@ -2878,7 +2906,7 @@ impl Parser {
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body =
                     self.parse_fn_body(true, false, is_generator_method, is_async_method)?;
-                let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                let body_contains_use_strict = self.last_fn_body_use_strict_directive;
                 let has_destructuring_params = !dstr_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
                     body_contains_use_strict,
@@ -3032,7 +3060,7 @@ impl Parser {
         let (params, param_defaults, rest_param, dstr_decls) =
             self.parse_params_scoped(is_generator, is_async)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
-        let body_contains_use_strict = Self::scan_directive_prologue(&body);
+        let body_contains_use_strict = self.last_fn_body_use_strict_directive;
         let has_destructuring_params = !dstr_decls.is_empty();
         Self::reject_use_strict_with_non_simple_params(
             body_contains_use_strict,
@@ -3414,7 +3442,7 @@ impl Parser {
         // arrow body: expression or block
         if self.check(&TokenKind::LBrace) {
             let mut body = self.parse_arrow_block_body(is_async)?;
-            let body_contains_use_strict = Self::scan_directive_prologue(&body);
+            let body_contains_use_strict = self.last_fn_body_use_strict_directive;
             self.validate_arrow_params(
                 &params,
                 &dstr_decls,
@@ -3807,7 +3835,7 @@ impl Parser {
                     self.parse_params_scoped(false, false)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
-                let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                let body_contains_use_strict = self.last_fn_body_use_strict_directive;
                 let has_destructuring_params = !dstr_decls.is_empty();
                 Self::reject_use_strict_with_non_simple_params(
                     body_contains_use_strict,
@@ -3848,7 +3876,7 @@ impl Parser {
                         rest_param.as_ref(),
                     )?;
                     let mut body = self.parse_fn_body(true, false, false, false)?;
-                    let body_contains_use_strict = Self::scan_directive_prologue(&body);
+                    let body_contains_use_strict = self.last_fn_body_use_strict_directive;
                     let has_destructuring_params = !dstr_decls.is_empty();
                     Self::reject_use_strict_with_non_simple_params(
                         body_contains_use_strict,
@@ -3949,7 +3977,7 @@ impl Parser {
             let super_call_allowed = superclass.is_some() && is_constructor;
             let mut body =
                 self.parse_fn_body(true, super_call_allowed, is_generator_method, false)?;
-            let body_contains_use_strict = Self::scan_directive_prologue(&body);
+            let body_contains_use_strict = self.last_fn_body_use_strict_directive;
             let has_destructuring_params = !dstr_decls.is_empty();
             Self::reject_use_strict_with_non_simple_params(
                 body_contains_use_strict,
@@ -4445,6 +4473,62 @@ mod tests {
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
+    }
+
+    #[test]
+    fn parse_strict_only_future_reserved_bindings() {
+        for src in [
+            "var implements = 1;",
+            "var interface = 1;",
+            "var package = 1;",
+            "var private = 1;",
+            "var protected = 1;",
+            "var public = 1;",
+            "var static = 1;",
+            "var st\\u0061tic = 1;",
+            "{ let implements = 1; }",
+            "{ let static = 1; }",
+            "{ let st\\u0061tic = 1; }",
+            "{ const package = 1; }",
+            "{ const static = 1; }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        for src in [
+            "\"use strict\"; var implements = 1;",
+            "\"use strict\"; var interface = 1;",
+            "\"use strict\"; var package = 1;",
+            "\"use strict\"; var private = 1;",
+            "\"use strict\"; var protected = 1;",
+            "\"use strict\"; var public = 1;",
+            "\"use strict\"; var static = 1;",
+            "\"use strict\"; var st\\u0061tic = 1;",
+            "\"use strict\"; var yield = 1;",
+            "var enum = 1;",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_escaped_use_strict_is_not_strict_directive() {
+        for src in [
+            "'use\\u0020strict'; var public = 1;",
+            concat!("'use\\", "\n", " strict'; var public = 1;"),
+            "function f() { 'use\\u0020strict'; var public = 1; }",
+            concat!("function f() { 'use\\", "\n", " strict'; var public = 1; }"),
+            "var f = function() { 'use\\u0020strict'; var public = 1; };",
+            "var f = () => { 'use\\u0020strict'; var public = 1; };",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+
+        assert!(Parser::parse("'use strict'; var public = 1;").is_err());
+        assert!(Parser::parse("'use strict'; public = 1;").is_err());
+        assert!(Parser::parse("function f() { 'use strict'; var public = 1; }").is_err());
+        assert!(Parser::parse("function f() { 'use strict'; public = 1; }").is_err());
+        assert!(Parser::parse("var f = () => { 'use strict'; var public = 1; };").is_err());
     }
 
     #[test]

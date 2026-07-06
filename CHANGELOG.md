@@ -4,6 +4,10 @@
 
 ### Test tooling
 
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now honor the
+  test262 `raw` flag by running those files without harness/include prelude
+  injection, so directive-prologue parse-negative tests are evaluated from
+  their real source start.
 - `tools/test262_analyze.py` now mirrors the runner's handling of
   `onlyStrict` tests and indented `negative:` metadata, so strict-mode and
   parse-negative test262 files are no longer reported as false failure
@@ -31,6 +35,17 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   language/expressions/logical-assignment language/expressions/update` cluster
   remains at **268 pass / 0 fail / 476 skip** with additional regression
   coverage for these Reference edges.
+- **Strict directive and future-reserved-word early errors**: sloppy bindings
+  may now use strict-only future reserved words such as `implements`,
+  `interface`, `package`, `private`, `protected`, `public`, `static`, and
+  `yield`, while `enum` remains always reserved and strict binding/
+  identifier-reference positions reject the full strict-only set. String
+  literal tokens now remember whether they contained an escape sequence or line
+  continuation, so escaped `"use strict"` spellings no longer create strict
+  mode and Function-constructor/direct-eval strict bodies report `SyntaxError`
+  for reserved identifier references. The focused
+  `language/future-reserved-words language/directive-prologue` cluster now
+  runs at **117 pass / 0 fail / 0 skip**.
 - **Identifier Unicode tables and reserved binding names**: identifier lexing
   now uses Unicode identifier property tables with the ES `$`, `_`, ZWNJ/ZWJ,
   and grandfathered `Other_ID_Start`/`Other_ID_Continue` additions, while

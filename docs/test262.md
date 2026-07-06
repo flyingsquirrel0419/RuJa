@@ -7,7 +7,8 @@ and `compareArray.js`) rather than a hand-rolled stub, so tests relying on
 `verifyProperty`, `compareArray`, etc. are exercised correctly. It also
 parses `negative:` metadata so a test that expects a `SyntaxError`/
 `TypeError` (parse or runtime phase) passes when RuJa raises the matching
-error.
+error, and honors `flags: [raw]` by running those files without any harness
+prelude.
 
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
@@ -83,9 +84,9 @@ For failure-bucket analysis with error samples, use the sibling analyzer:
 python3 tools/test262_analyze.py
 ```
 
-The focused analyzer mirrors the runner's `onlyStrict` directive prologue and
-`negative:` metadata handling, so strict-mode and parse-negative tests are not
-reported as false failure buckets.
+The focused analyzer mirrors the runner's `raw`, `onlyStrict` directive
+prologue, and `negative:` metadata handling, so strict-mode and parse-negative
+tests are not reported as false failure buckets.
 
 ## Full-suite baseline
 
@@ -146,6 +147,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/expressions/logical-assignment language/expressions/update` cluster
   remains at **268 pass / 0 fail / 476 skip**, with local regression coverage
   for the previously untested Reference edges.
+- **Strict directive and future-reserved-word early errors** —
+  Sloppy binding names now accept strict-only future reserved words such as
+  `implements`, `interface`, `package`, `private`, `protected`, `public`,
+  `static`, and `yield`, while `enum` remains reserved in all binding
+  contexts. Strict binding and identifier-reference positions reject the full
+  strict-only reserved set. String literal tokens now preserve whether their
+  source contained an escape sequence or line continuation, preventing escaped
+  `"use strict"` spellings from enabling strict mode; Function-constructor
+  strict bodies also report `SyntaxError` when direct eval parses strict-only
+  reserved identifier references. The focused
+  `language/future-reserved-words language/directive-prologue` cluster now
+  runs at **117 pass / 0 fail / 0 skip**.
 - **Identifier Unicode tables and reserved binding names** —
   Identifier lexing now uses Unicode identifier property tables with the ES
   `$`, `_`, ZWNJ/ZWJ, and grandfathered `Other_ID_Start`/`Other_ID_Continue`

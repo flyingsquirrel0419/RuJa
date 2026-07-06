@@ -147,6 +147,9 @@ pub struct Token {
     pub preceded_by_newline: bool,
     /// True when the identifier contained a Unicode escape sequence.
     pub had_escape: bool,
+    /// True when a string literal contained an escape sequence or line
+    /// continuation. Such literals do not form `"use strict"` directives.
+    pub string_had_escape: bool,
 }
 
 impl Token {
@@ -157,6 +160,7 @@ impl Token {
             col,
             preceded_by_newline: false,
             had_escape: false,
+            string_had_escape: false,
         }
     }
 }

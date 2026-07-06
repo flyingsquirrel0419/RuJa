@@ -139,6 +139,9 @@ pub struct Lexer<'a> {
     template_stack: Vec<(u8, usize)>,
     /// Whether the last identifier token had a Unicode escape.
     last_ident_had_escape: bool,
+    /// Whether the last string literal token contained an escape sequence or
+    /// line continuation.
+    last_string_had_escape: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -157,6 +160,7 @@ impl<'a> Lexer<'a> {
             template_expr_depth: 0,
             template_stack: Vec::new(),
             last_ident_had_escape: false,
+            last_string_had_escape: false,
         }
     }
 
@@ -492,6 +496,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_string(&mut self, quote: u8) -> TokenKind {
+        self.last_string_had_escape = false;
         self.advance(); // opening quote
         let mut s = String::new();
         let mut closed = false;
@@ -505,6 +510,7 @@ impl<'a> Lexer<'a> {
                 return TokenKind::LexError("unterminated string literal".to_string());
             }
             if c == b'\\' {
+                self.last_string_had_escape = true;
                 self.advance();
                 if self.is_line_terminator_start() {
                     self.read_line_terminator_sequence();
@@ -1045,6 +1051,8 @@ impl<'a> Lexer<'a> {
         let col = self.col;
         let preceded_by_newline = self.saw_newline;
         self.saw_newline = false;
+        self.last_ident_had_escape = false;
+        self.last_string_had_escape = false;
 
         // Template-literal state machine.
         match self.template_state {
@@ -1227,6 +1235,7 @@ impl<'a> Lexer<'a> {
         let mut tok = Token::new(kind, line, col);
         tok.preceded_by_newline = preceded_by_newline;
         tok.had_escape = self.last_ident_had_escape;
+        tok.string_had_escape = self.last_string_had_escape;
         tok
     }
 
@@ -1660,6 +1669,21 @@ mod tests {
             kinds(concat!("'line\\", "\r\n", "Continuation'")),
             vec![String("lineContinuation".into()), Eof]
         );
+    }
+
+    #[test]
+    fn string_escape_metadata() {
+        let plain = Lexer::new("\"use strict\"").tokens();
+        assert_eq!(plain[0].kind, String("use strict".into()));
+        assert!(!plain[0].string_had_escape);
+
+        let escaped = Lexer::new("'use\\u0020strict'").tokens();
+        assert_eq!(escaped[0].kind, String("use strict".into()));
+        assert!(escaped[0].string_had_escape);
+
+        let continued = Lexer::new(concat!("'use\\", "\n", " strict'")).tokens();
+        assert_eq!(continued[0].kind, String("use strict".into()));
+        assert!(continued[0].string_had_escape);
     }
 
     #[test]

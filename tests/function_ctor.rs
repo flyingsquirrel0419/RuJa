@@ -1,7 +1,7 @@
 //! `Function` constructor: `new Function(p0, ..., body)`.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -98,6 +98,12 @@ fn function_ctor_use_strict_body() {
         r.is_err(),
         "expected duplicate param error in strict Function body"
     );
+}
+
+#[test]
+fn function_ctor_strict_body_rejects_reserved_identifier_reference() {
+    let err = run_err(r#"new Function("a", "'use strict'; eval('public = 1;');")();"#);
+    assert!(err.contains("SyntaxError"), "{err}");
 }
 
 #[test]
