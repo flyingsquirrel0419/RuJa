@@ -93,10 +93,10 @@ run:
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
-| Actually run | 23,165 |
-| Pass | 12,918 |
+| Actually run | 23,160-23,165 |
+| Pass | 12,913-12,918 |
 | Fail | 10,247 |
-| Timeout | 10 |
+| Timeout | 10-15 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **55.8%** |
 | **Pass rate (of total)** | **27.1%** |
