@@ -610,6 +610,25 @@ impl Vm {
         }
     }
 
+    pub(crate) fn with_object_has_binding(
+        &mut self,
+        obj: &Value,
+        name: &str,
+    ) -> error::Result<bool> {
+        if !self.has_property(obj, name)? {
+            return Ok(false);
+        }
+
+        let unscopables_key = Value::Symbol(self.well_known_symbols.unscopables);
+        let unscopables = self.get_property_key(obj, &unscopables_key)?;
+        if !matches!(unscopables, Value::Object(_)) {
+            return Ok(true);
+        }
+
+        let blocked = self.get_property(&unscopables, name)?;
+        Ok(!self.to_boolean(&blocked))
+    }
+
     /// Does `obj` have an OWN property named `name` (not inherited)?
     /// Used by ToPropertyDescriptor (Object.defineProperty) to tell a field
     /// that was explicitly set to `undefined` from a field that is simply

@@ -22,7 +22,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
+Current supported subset count: **4191 pass / 0 fail / 0 timeout**.
 
 - **Thrown custom object display**: uncaught ordinary objects created by custom
   constructors now include their prototype constructor name in the host error
@@ -61,6 +61,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   language/expressions/postfix-increment
   language/expressions/postfix-decrement` cluster runs at **398 pass / 0 fail
   / 410 skip**.
+- **`with` `@@unscopables` HasBinding**: `Symbol.unscopables` is now exposed
+  on the `Symbol` constructor, and `with` object environment records consult
+  it after a successful `[[HasProperty]]` check. Object-valued unscopables can
+  hide bindings, primitive unscopables values are ignored, abrupt getters
+  propagate, and strict reads/writes re-check properties deleted by the
+  unscopables getter. This closes `language/statements/with` at **169 pass / 0
+  fail / 12 skip** and moves the Reference-focused with/assignment/inc/dec
+  cluster to **409 pass / 0 fail / 399 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped

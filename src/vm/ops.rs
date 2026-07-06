@@ -891,8 +891,19 @@ impl Vm {
                         }
                         if has_with {
                             if let Some(with_obj) = with_obj_val {
-                                let has_prop = self.has_property(&with_obj, &name)?;
+                                let has_prop = self.with_object_has_binding(&with_obj, &name)?;
                                 if has_prop {
+                                    if !self.has_property(&with_obj, &name)? {
+                                        if self.current_strict() {
+                                            return Err(Error::reference(format!(
+                                                "{} is not defined",
+                                                name
+                                            )));
+                                        }
+                                        self.stack.push(Value::Undefined);
+                                        found = true;
+                                        break;
+                                    }
                                     let v = self.get_property(&with_obj, &name)?;
                                     if matches!(v, Value::Object(_)) {
                                         *self.current_frame_mut()?.pending_with_this.lock() =
@@ -934,59 +945,49 @@ impl Vm {
                         }
                     };
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    match crate::environment::set_checked(&self.heap, env, &name, value.clone()) {
-                        crate::environment::SetOutcome::Set => {}
-                        crate::environment::SetOutcome::Const => {
-                            return Err(Error::type_err(format!(
-                                "Assignment to constant variable '{}'",
-                                name
-                            )));
-                        }
-                        crate::environment::SetOutcome::FunctionName => {
-                            if self.current_strict() {
+                    if name.starts_with('#') {
+                        match crate::environment::set_checked(&self.heap, env, &name, value.clone())
+                        {
+                            crate::environment::SetOutcome::Set => {}
+                            crate::environment::SetOutcome::Const => {
                                 return Err(Error::type_err(format!(
                                     "Assignment to constant variable '{}'",
                                     name
                                 )));
                             }
-                        }
-                        crate::environment::SetOutcome::Tdz => {
-                            return Err(Error::reference(format!(
-                                "Cannot access '{}' before initialization",
-                                name
-                            )));
-                        }
-                        crate::environment::SetOutcome::NotFound => {
-                            // `with`-statement: assign to the closest object env
-                            // record that has the property, else declare as var.
-                            let with_objs = crate::environment::with_objects(&self.heap, env);
-                            let mut set_on_with = false;
-                            for obj in &with_objs {
-                                let has = self.has_property(obj, &name)?;
-                                if has {
-                                    self.set_property(obj, &name, value.clone())?;
-                                    set_on_with = true;
-                                    break;
+                            crate::environment::SetOutcome::FunctionName => {
+                                if self.current_strict() {
+                                    return Err(Error::type_err(format!(
+                                        "Assignment to constant variable '{}'",
+                                        name
+                                    )));
                                 }
                             }
-                            if !set_on_with {
-                                // Strict mode: assigning to an undeclared variable
-                                // throws ReferenceError (not auto-global).
+                            crate::environment::SetOutcome::Tdz => {
+                                return Err(Error::reference(format!(
+                                    "Cannot access '{}' before initialization",
+                                    name
+                                )));
+                            }
+                            crate::environment::SetOutcome::NotFound => {
                                 if self.current_strict() {
                                     return Err(Error::reference(format!(
                                         "{} is not defined",
                                         name
                                     )));
                                 }
-                                // Non-strict: create a configurable property
-                                // on the global object (spec: implicit global
-                                // assignment creates a writable, enumerable,
-                                // configurable data property on the global
-                                // object, NOT a var binding in the env record).
                                 let global_this = self.global_this.clone();
                                 self.set_property(&global_this, &name, value)?;
                             }
                         }
+                    } else {
+                        let strict = self.current_strict();
+                        let r#ref = Value::Reference(Box::new(crate::value::ReferenceRecord {
+                            base: crate::value::ReferenceBase::Environment(env),
+                            name: crate::value::PropertyKey::from(name.as_str()),
+                            strict,
+                        }));
+                        self.put_value(&r#ref, value)?;
                     }
                     self.stack.push(Value::Undefined);
                 }
@@ -1029,7 +1030,7 @@ impl Vm {
                         }
                         if has_with {
                             if let Some(with_obj) = with_obj_val {
-                                if self.has_property(&with_obj, &name_str)? {
+                                if self.with_object_has_binding(&with_obj, &name_str)? {
                                     base = crate::value::ReferenceBase::ObjectEnvironment(
                                         Box::new(with_obj),
                                     );

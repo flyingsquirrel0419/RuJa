@@ -111,6 +111,153 @@ fn with_boxes_primitive_binding_object() {
 }
 
 #[test]
+fn with_unscopables_hides_object_binding() {
+    let src = r#"
+        let x = "outer";
+        let o = { x: "inner" };
+        o[Symbol.unscopables] = { x: true };
+        let r;
+        with (o) {
+            r = x;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("outer")));
+}
+
+#[test]
+fn with_unscopables_assignment_uses_outer_binding() {
+    let src = r#"
+        let x = 1;
+        let o = { x: 10 };
+        o[Symbol.unscopables] = { x: true };
+        with (o) {
+            x = 2;
+        }
+        o.x + ":" + x;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("10:2")));
+}
+
+#[test]
+fn with_unscopables_getter_not_referenced_when_property_absent() {
+    let src = r#"
+        let calls = 0;
+        let x = 7;
+        let o = {};
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() {
+                calls += 1;
+                return { x: true };
+            }
+        });
+        let r;
+        with (o) {
+            r = x;
+        }
+        r + ":" + calls;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("7:0")));
+}
+
+#[test]
+fn with_unscopables_primitive_value_is_ignored() {
+    let src = r#"
+        let marker = {};
+        let o = { x: marker };
+        o[Symbol.unscopables] = "x";
+        let r;
+        with (o) {
+            r = x === marker;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
+#[test]
+fn with_unscopables_getter_error_propagates_when_property_exists() {
+    let err = run_err(
+        r#"
+        let o = { x: 1 };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() { throw new Error("boom"); }
+        });
+        with (o) {
+            x;
+        }
+        "#,
+    );
+    assert!(err.contains("boom"));
+}
+
+#[test]
+fn with_unscopables_update_expression_checks_once() {
+    let src = r#"
+        let calls = 0;
+        let x = 1;
+        let o = { x: 10 };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() {
+                calls += 1;
+                return { x: false };
+            }
+        });
+        with (o) {
+            x++;
+        }
+        o.x + ":" + x + ":" + calls;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("11:1:1")));
+}
+
+#[test]
+fn with_unscopables_deleted_binding_then_strict_get_throws() {
+    let err = run_err(
+        r#"
+        let calls = 0;
+        let o = { x: 1 };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() {
+                calls += 1;
+                delete o.x;
+                return null;
+            }
+        });
+        with (o) {
+            (function() {
+                "use strict";
+                x;
+            })();
+        }
+        "#,
+    );
+    assert!(err.contains("ReferenceError"));
+}
+
+#[test]
+fn with_unscopables_deleted_binding_then_strict_set_throws() {
+    let err = run_err(
+        r#"
+        let o = { x: 1 };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() {
+                delete o.x;
+                return null;
+            }
+        });
+        with (o) {
+            (function() {
+                "use strict";
+                x = 2;
+            })();
+        }
+        "#,
+    );
+    assert!(err.contains("ReferenceError"));
+}
+
+#[test]
 fn with_var_initializer_resolves_binding_before_rhs() {
     let src = r#"
         var obj = { test262id: 1 };

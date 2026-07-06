@@ -135,6 +135,11 @@ fn string_search_methods_follow_regexp_and_position_semantics() {
 fn generated_symbols_do_not_collide_with_well_known_symbols() {
     assert_eq!(run("Symbol() === Symbol.iterator;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.match;"), Value::Bool(false));
+    assert_eq!(run("Symbol() === Symbol.unscopables;"), Value::Bool(false));
+    assert_eq!(
+        run("typeof Symbol.unscopables;"),
+        Value::String(Arc::from("symbol"))
+    );
 }
 
 #[test]

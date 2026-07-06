@@ -88,6 +88,7 @@ pub struct WellKnownSymbols {
     pub to_string_tag: u32,
     pub async_iterator: u32,
     pub r#match: u32,
+    pub unscopables: u32,
 }
 
 pub struct CallFrame {
@@ -308,7 +309,7 @@ impl Vm {
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
-            next_symbol_id: 7,
+            next_symbol_id: 8,
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
                 to_primitive: 2,
@@ -316,6 +317,7 @@ impl Vm {
                 to_string_tag: 4,
                 async_iterator: 5,
                 r#match: 6,
+                unscopables: 7,
             },
             global_names: HashMap::new(),
             global_constants: Vec::new(),
@@ -1349,7 +1351,16 @@ impl Vm {
                             }
                             if has_with {
                                 if let Some(with_obj) = with_obj_val {
-                                    if self.has_property(&with_obj, &name)? {
+                                    if self.with_object_has_binding(&with_obj, &name)? {
+                                        if !self.has_property(&with_obj, &name)? {
+                                            if r.strict {
+                                                return Err(Error::reference(format!(
+                                                    "{} is not defined",
+                                                    name
+                                                )));
+                                            }
+                                            return Ok(Value::Undefined);
+                                        }
                                         return self.get_property(&with_obj, &name);
                                     }
                                 }
@@ -1372,7 +1383,15 @@ impl Vm {
                         }
                     },
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::PropertyKey::Str(s) => self.get_property(base, s),
+                        crate::value::PropertyKey::Str(s) => {
+                            if !self.has_property(base, s)? {
+                                if r.strict {
+                                    return Err(Error::reference(format!("{} is not defined", s)));
+                                }
+                                return Ok(Value::Undefined);
+                            }
+                            self.get_property(base, s)
+                        }
                         crate::value::PropertyKey::Symbol(id) => {
                             self.get_property(base, &format!("[Symbol {}]", id))
                         }
@@ -1529,7 +1548,33 @@ impl Vm {
                             }
                             if has_with {
                                 if let Some(with_obj) = with_obj_val {
-                                    if self.has_property(&with_obj, &name)? {
+                                    if self.with_object_has_binding(&with_obj, &name)? {
+                                        if !self.has_property(&with_obj, &name)? {
+                                            if r.strict {
+                                                return Err(Error::reference(format!(
+                                                    "{} is not defined",
+                                                    name
+                                                )));
+                                            }
+                                            if let Value::Object(idx) = &with_obj {
+                                                let pkey =
+                                                    crate::value::PropertyKey::from(name.as_str());
+                                                let desc = crate::value::PropertyDescriptor {
+                                                    value,
+                                                    writable: true,
+                                                    enumerable: true,
+                                                    configurable: true,
+                                                    get: None,
+                                                    set: None,
+                                                    is_accessor: false,
+                                                };
+                                                self.heap.with_obj(idx.0, |o| {
+                                                    o.props().lock().insert(pkey, desc);
+                                                });
+                                                self.ic_invalidate(idx.0, &name);
+                                            }
+                                            return Ok(());
+                                        }
                                         self.set_property(&with_obj, &name, value)?;
                                         return Ok(());
                                     }

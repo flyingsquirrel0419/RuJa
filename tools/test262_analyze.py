@@ -14,7 +14,7 @@ SKIP_FEATURES = {
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
     "Int32Array", "Intl", "Map", "Promise", "Set", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.hasInstance", "Symbol.iterator",
-    "Symbol.toPrimitive", "Symbol.toStringTag", "Symbol.unscopables",
+    "Symbol.toPrimitive", "Symbol.toStringTag",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
     "WeakSet", "arraybuffer", "async-functions", "async-iteration", "atomics",

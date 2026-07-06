@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 28.3% of all matrix files; 58.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4191 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -47,7 +47,7 @@ Date, RegExp, Error hierarchy).
 **Selected ES2015+**: arrow functions, classes/extends/super, default &
 rest parameters, destructuring (array/object/nested), template literals,
 tagged templates, computed property keys, object spread/rest, getters/
-setters, Symbol.iterator, Map/Set/WeakMap/WeakSet, BigInt, Proxy,
+setters, Symbol.iterator, Symbol.unscopables, Map/Set/WeakMap/WeakSet, BigInt, Proxy,
 Reflect, Promise, async/await, generators, for-of, optional chaining,
 nullish coalescing, logical assignment.
 
@@ -914,6 +914,19 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/expressions/exponentiation`, `greater-than`, `less-than`, `in`,
   and `instanceof` at **188 pass / 0 fail** and raises the supported subset
   to **4142 pass / 38 fail / 0 timeout**.
+- **`with` `@@unscopables` HasBinding** — `Symbol.unscopables` is now exposed,
+  `with` object environment records consult it only after `[[HasProperty]]`
+  succeeds, ignore non-object unscopables values, propagate abrupt getters,
+  and re-check deleted bindings for strict `GetBindingValue`/
+  `SetMutableBinding`. This closes `language/statements/with` at **169 pass /
+  0 fail / 12 skip**; the Reference-focused cluster
+  `language/statements/with language/expressions/assignment
+  language/expressions/prefix-increment
+  language/expressions/prefix-decrement
+  language/expressions/postfix-increment
+  language/expressions/postfix-decrement` now runs at **409 pass / 0 fail /
+  399 skip**, raising the supported subset to **4191 pass / 0 fail / 0
+  timeout**.
 
 ## Why the full-suite rate is not higher
 
