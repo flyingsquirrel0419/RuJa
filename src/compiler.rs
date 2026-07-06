@@ -4303,8 +4303,8 @@ impl Compiler {
                 let _ = fires_when;
                 let jskip = self.chunk.code.len();
                 self.chunk.emit(cond_jump, 0);
-                // Short-circuit fired: drop the old value (keep obj+key),
-                // evaluate the RHS, store it.
+                // Assignment path: drop the old value (keep obj+key),
+                // evaluate the RHS, and store it.
                 self.chunk.emit(Op::Pop, self.current_line);
                 // stack: [obj, key]
                 self.compile_expr(value)?;
@@ -4314,7 +4314,50 @@ impl Compiler {
                 } else {
                     self.chunk.emit(Op::SetProp, self.current_line);
                 }
+                let jend = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), self.current_line);
                 self.chunk.patch_jump(jskip, self.chunk.code.len());
+                // Short-circuit path leaves [obj, key, currentValue]. Drop the
+                // saved target pair so the assignment expression yields the
+                // existing value.
+                self.chunk.emit(Op::Rot3, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.patch_jump(jend, self.chunk.code.len());
+            }
+            Expr::Ident(name) => {
+                // Identifier logical assignment must preserve the same
+                // Reference from GetValue through PutValue. Re-resolving the
+                // identifier after the RHS is wrong when a with/global object
+                // property is deleted by the RHS.
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                let cond_jump = match op {
+                    AssignOp::AndAssign => Op::JumpIfFalse(0),
+                    AssignOp::OrAssign => Op::JumpIfTrue(0),
+                    AssignOp::NullishAssign => Op::JumpIfNotNullish(0),
+                    _ => unreachable!(),
+                };
+                let jskip = self.chunk.code.len();
+                self.chunk.emit(cond_jump, 0);
+                // Assignment path: drop old value, evaluate RHS, and put it
+                // through the original Reference.
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
+                let jend = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), self.current_line);
+                self.chunk.patch_jump(jskip, self.chunk.code.len());
+                // Short-circuit path leaves [ref, currentValue]. Drop the ref
+                // and keep currentValue as the expression result.
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.patch_jump(jend, self.chunk.code.len());
             }
             _ => {
                 self.compile_expr(target)?;

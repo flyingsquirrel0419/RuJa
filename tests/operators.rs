@@ -545,12 +545,83 @@ fn nullish_assign_ident() {
 }
 
 #[test]
+fn logical_assign_ident_preserves_resolved_reference_across_rhs() {
+    assert_eq!(
+        run(r#"
+            var x = 0;
+            var result;
+            var scope = { x: 0 };
+            with (scope) {
+              result = (x ||= (delete scope.x, 3));
+            }
+            result + ":" + scope.hasOwnProperty("x") + ":" + scope.x + ":" + x;
+            "#),
+        Value::String(Arc::from("3:true:3:0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var x = 1;
+            var result;
+            var scope = { x: 1 };
+            with (scope) {
+              result = (x &&= (delete scope.x, 4));
+            }
+            result + ":" + scope.hasOwnProperty("x") + ":" + scope.x + ":" + x;
+            "#),
+        Value::String(Arc::from("4:true:4:1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var x = 9;
+            var result;
+            var scope = { x: null };
+            with (scope) {
+              result = (x ??= (delete scope.x, 5));
+            }
+            result + ":" + scope.hasOwnProperty("x") + ":" + scope.x + ":" + x;
+            "#),
+        Value::String(Arc::from("5:true:5:9"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var x = 0;
+            var result;
+            var scope = { x: 1 };
+            with (scope) {
+              result = (x ||= (delete scope.x, 3));
+            }
+            result + ":" + scope.hasOwnProperty("x") + ":" + scope.x + ":" + x;
+            "#),
+        Value::String(Arc::from("1:true:1:0"))
+    );
+}
+
+#[test]
 fn nullish_assign_member() {
     assert_eq!(
         run("var p = {n: null}; p.n ??= 10; p.n;"),
         Value::Number(10.0)
     );
     assert_eq!(run("var q = {n: 1}; q.n ??= 99; q.n;"), Value::Number(1.0));
+}
+
+#[test]
+fn logical_assign_member_short_circuit_keeps_expression_result() {
+    assert_eq!(
+        run("var o = { a: 1 }; var y = (o.a ||= 2); y + ':' + o.a;"),
+        Value::String(Arc::from("1:1"))
+    );
+    assert_eq!(
+        run("var o = { a: 0 }; var y = (o.a &&= 2); y + ':' + o.a;"),
+        Value::String(Arc::from("0:0"))
+    );
+    assert_eq!(
+        run("var o = { a: 1 }; var y = (o.a ??= 2); y + ':' + o.a;"),
+        Value::String(Arc::from("1:1"))
+    );
 }
 
 #[test]

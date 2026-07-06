@@ -20,6 +20,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
 
+- **Logical-assignment Reference preservation**: identifier logical
+  assignments (`&&=`, `||=`, `??=`) now keep the original spec Reference from
+  `GetValue` through `PutValue`, so a `with` or global-object property deleted
+  by the RHS is written back through the original reference instead of
+  re-resolving to an outer binding. Member logical assignments now also clean
+  up their saved target pair on short-circuit paths, preserving the existing
+  value as the expression result. The focused
+  `language/statements/with language/expressions/assignment
+  language/expressions/logical-assignment language/expressions/update` cluster
+  remains at **268 pass / 0 fail / 476 skip** with additional regression
+  coverage for these Reference edges.
 - **Identifier Unicode tables and reserved binding names**: identifier lexing
   now uses Unicode identifier property tables with the ES `$`, `_`, ZWNJ/ZWJ,
   and grandfathered `Other_ID_Start`/`Other_ID_Continue` additions, while

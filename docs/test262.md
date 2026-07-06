@@ -136,6 +136,16 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Logical-assignment Reference preservation** —
+  Identifier logical assignments now carry the original spec Reference from
+  `GetValue` through `PutValue`, preventing `with`/global object references
+  from being re-resolved to an outer binding when the RHS deletes the original
+  property. Member logical assignments also discard their saved target pair on
+  short-circuit paths so the expression yields the existing value. The focused
+  `language/statements/with language/expressions/assignment
+  language/expressions/logical-assignment language/expressions/update` cluster
+  remains at **268 pass / 0 fail / 476 skip**, with local regression coverage
+  for the previously untested Reference edges.
 - **Identifier Unicode tables and reserved binding names** —
   Identifier lexing now uses Unicode identifier property tables with the ES
   `$`, `_`, ZWNJ/ZWJ, and grandfathered `Other_ID_Start`/`Other_ID_Continue`
