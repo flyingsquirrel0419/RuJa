@@ -80,15 +80,19 @@ TEST262=/path/to/test262 python3 tools/test262_runner.py language/identifiers la
 For failure-bucket analysis with error samples, use the sibling analyzer:
 
 ```sh
-python3 tools/analyze_failures.py
+python3 tools/test262_analyze.py
 ```
+
+The focused analyzer mirrors the runner's `onlyStrict` directive prologue and
+`negative:` metadata handling, so strict-mode and parse-negative tests are not
+reported as false failure buckets.
 
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Latest confirmed successful
-run: `test262-full` 28768285551 on `422be54`.
+run: `test262-full` 28768575668 on `3519c8f`.
 
 | Metric | Recent count |
 |--------|--------------|

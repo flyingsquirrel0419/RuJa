@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Test tooling
+
+- `tools/test262_analyze.py` now mirrors the runner's handling of
+  `onlyStrict` tests and indented `negative:` metadata, so strict-mode and
+  parse-negative test262 files are no longer reported as false failure
+  buckets during focused analysis.
+
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
