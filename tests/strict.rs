@@ -69,6 +69,38 @@ fn non_strict_allows_duplicate_params_last_wins() {
 }
 
 #[test]
+fn non_strict_duplicate_param_omitted_last_wins_with_undefined() {
+    assert_eq!(
+        run("function f(x, a, b, x){ return x; } f(1, 2);"),
+        Value::Undefined
+    );
+}
+
+#[test]
+fn function_declarations_overwrite_parameter_and_arguments_bindings() {
+    assert_eq!(
+        run("function f(x){ return typeof x === 'function'; function x(){ return 7; } } f();"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("function f(){ return typeof arguments === 'function'; function arguments(){ return 7; } } f();"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn var_declarations_reuse_parameter_bindings() {
+    assert_eq!(
+        run("function f(x){ var x; return x; } f(1);"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("function f(x){ var x; return x; } f();"),
+        Value::Undefined
+    );
+}
+
+#[test]
 fn strict_function_directive_rejects_duplicate_params() {
     let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("function f(a, a){ \"use strict\"; return a; }");
@@ -157,6 +189,21 @@ fn strict_with_inside_block_scope_also_rejected() {
     let mut vm = ruja::Vm::new().expect("failed to initialize VM");
     let r = vm.run("\"use strict\"; { with({}){} }");
     assert!(r.is_err());
+}
+
+#[test]
+fn strict_block_function_declaration_stays_block_scoped() {
+    assert_eq!(
+        run(r#""use strict";
+               var before, after;
+               (function() {
+                 try { f; } catch (e) { before = e.constructor === ReferenceError; }
+                 { function f() {} }
+                 try { f; } catch (e) { after = e.constructor === ReferenceError; }
+               }());
+               before && after;"#),
+        Value::Bool(true)
+    );
 }
 
 #[test]

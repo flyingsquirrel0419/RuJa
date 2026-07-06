@@ -48,8 +48,15 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   primitive receivers with `ToObject`, while strict functions preserve the raw
   receiver. Primitive prototype accessor lookup now keeps the original
   primitive receiver through the prototype chain so strict getters see the
-  primitive and sloppy getters receive the boxed object. The focused
-  `language/function-code` cluster improves to **212 pass / 5 fail / 0 skip**.
+  primitive and sloppy getters receive the boxed object.
+- **Function declaration instantiation edges**: non-strict duplicate
+  parameters now keep distinct raw argument slots so an omitted later duplicate
+  initializes the shared binding to `undefined`; `var` declarations now reuse
+  parameter bindings instead of reporting lexical redeclarations; function
+  declarations overwrite parameter and `arguments` bindings; and strict
+  block-level function declarations stay block-scoped instead of leaking
+  through Annex B hoisting. The focused `language/function-code` cluster now
+  runs at **217 pass / 0 fail / 0 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

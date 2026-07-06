@@ -398,9 +398,11 @@ impl Compiler {
         Ok(())
     }
 
-    /// Declare a function parameter. In non-strict mode duplicate parameter
-    /// names are permitted (the last binding wins); in strict mode they are a
-    /// SyntaxError (checked separately in `compile_function`).
+    /// Declare a function parameter. Parameters participate in the function's
+    /// variable environment, so `var x` and function declarations named `x`
+    /// may reuse/overwrite a parameter binding. Runtime still declares the
+    /// binding as `BindingKind::Param` so default-parameter TDZ semantics stay
+    /// intact.
     fn declare_param(&mut self, name: &str, is_strict: bool) -> error::Result<()> {
         if let Some(scope) = self.scopes.last_mut() {
             if scope.bindings.contains_key(name) {
@@ -417,7 +419,7 @@ impl Compiler {
             let slot = scope.base + scope.bindings.len();
             scope
                 .bindings
-                .insert(name.to_string(), (slot, VarKind::Let));
+                .insert(name.to_string(), (slot, VarKind::Var));
         }
         Ok(())
     }
@@ -521,6 +523,23 @@ impl Compiler {
                     }
                 }
                 _ => {}
+            }
+        }
+        out
+    }
+
+    fn collect_block_lexical_names(
+        body: &[Stmt],
+        include_function_declarations: bool,
+    ) -> Vec<(Arc<str>, VarKind)> {
+        let mut out = Self::collect_lexical_names(body);
+        if include_function_declarations {
+            for stmt in body {
+                if let StmtNode::FunctionDecl(f) = &stmt.node {
+                    if let Some(name) = &f.name {
+                        out.push((name.clone(), VarKind::Let));
+                    }
+                }
             }
         }
         out
@@ -689,10 +708,14 @@ impl Compiler {
             StmtNode::Block(body) => {
                 self.push_scope_with_runtime(false, true);
                 self.chunk.emit(Op::PushScope, self.current_line);
-                // Hoist function declarations within the block.
-                for s in body {
-                    if matches!(&s.node, StmtNode::FunctionDecl(_)) {
-                        self.compile_stmt(s)?;
+                let strict_block = self.is_strict();
+                if !strict_block {
+                    // Sloppy block-level function declarations keep RuJa's
+                    // existing Annex-B-style function-scope behavior.
+                    for s in body {
+                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                            self.compile_stmt(s)?;
+                        }
                     }
                 }
                 // Hoist `var` declarations: declare them as undefined before the body runs.
@@ -717,8 +740,17 @@ impl Compiler {
                 // Hoist lexical (`let`/`const`) declarations into the TDZ at block
                 // entry, so accessing them before the declaration throws ReferenceError.
                 {
-                    let lex = Self::collect_lexical_names(body);
+                    let lex = Self::collect_block_lexical_names(body, strict_block);
                     self.emit_lexical_hoist(&lex)?;
+                }
+                if strict_block {
+                    // In strict mode, block-level function declarations are
+                    // lexical bindings scoped to the block, not Annex B vars.
+                    for s in body {
+                        if matches!(&s.node, StmtNode::FunctionDecl(_)) {
+                            self.compile_stmt(s)?;
+                        }
+                    }
                 }
                 for s in body {
                     if matches!(&s.node, StmtNode::FunctionDecl(_)) {
@@ -1119,8 +1151,14 @@ impl Compiler {
                 self.chunk
                     .emit(Op::MakeClosure(func_idx), self.current_line);
                 if let Some(name) = &f.name {
-                    if let Some((slot, _)) = self.resolve(name) {
-                        self.chunk.emit(Op::StoreLocal(slot), self.current_line);
+                    if let Some((_, kind)) = self.resolve(name) {
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        if kind == VarKind::Var {
+                            self.chunk
+                                .emit(Op::StoreEnvName(name_idx), self.current_line);
+                        } else {
+                            self.chunk.emit(Op::InitLet(name_idx), self.current_line);
+                        }
                     } else {
                         // store as global so recursive calls can find it
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -1590,22 +1628,17 @@ impl Compiler {
             is_strict: f.is_strict,
         });
 
-        // Declare each parameter as a lexical binding and remember its local
-        // slot. The VM stores argument values into `locals[slot]` before the
-        // frame runs, so defaults can read the raw argument via `LoadLocal`
-        // (bypassing the environment TDZ) while the *binding* stays in the TDZ
-        // until `InitLet` -- this is what makes `function f(a = b, b = 2)` a
+        // Declare each parameter in the compiler's function-scope binding
+        // table and remember the raw argument slot for each formal. The VM
+        // stores argument values into `locals[slot]` before the frame runs, so
+        // defaults can read the raw argument via `LoadLocal` (bypassing the
+        // environment TDZ) while the runtime binding stays in the TDZ until
+        // `InitLet` -- this is what makes `function f(a = b, b = 2)` a
         // ReferenceError while `function f(a, b = a)` still works.
         let mut param_slots: Vec<usize> = Vec::with_capacity(f.params.len());
-        for param in f.params.iter() {
+        for (i, param) in f.params.iter().enumerate() {
             self.declare_param(param, f.is_strict)?;
-            let slot = self
-                .scopes
-                .last()
-                .and_then(|sc| sc.bindings.get(&param.to_string()))
-                .map(|(slot, _)| *slot)
-                .unwrap_or(param_slots.len());
-            param_slots.push(slot);
+            param_slots.push(i);
         }
         // Declare the rest parameter in the compiler's scope table so that
         // references to it resolve to a local slot. The VM declares the
@@ -1678,7 +1711,11 @@ impl Compiler {
         // Hoist `var` declarations within the function body as undefined.
         for stmt in body_stmts {
             let mut var_names = Vec::new();
-            collect_var_names_recursive(&stmt.node, &mut var_names);
+            if f.is_strict {
+                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
+            } else {
+                collect_var_names_recursive(&stmt.node, &mut var_names);
+            }
             for name in &var_names {
                 // Skip names that will be hoisted by function declaration
                 // hoisting below (declaring them as Var here would make

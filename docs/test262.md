@@ -171,8 +171,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   boxed, while strict functions keep the raw receiver. Primitive prototype
   accessor lookup also preserves the original primitive as the receiver through
   the prototype chain, so strict getters see the primitive and sloppy getters
-  see the boxed object. The focused `language/function-code` cluster now runs
-  at **212 pass / 5 fail / 0 skip**.
+  see the boxed object.
+- **Function declaration instantiation edges** —
+  Non-strict duplicate parameters now keep separate raw argument slots while
+  sharing the same parameter binding, so an omitted later duplicate overwrites
+  with `undefined`. Function-scope `var` declarations reuse parameter bindings,
+  function declarations overwrite parameter and `arguments` bindings, and
+  strict block-level function declarations are initialized as block-scoped
+  lexical bindings instead of leaking through Annex B function-scope hoisting.
+  The focused `language/function-code` cluster now runs at **217 pass / 0 fail
+  / 0 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

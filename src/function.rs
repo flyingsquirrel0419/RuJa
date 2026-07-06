@@ -7,9 +7,10 @@ use std::sync::Arc;
 pub struct FunctionDef {
     pub name: Option<Arc<str>>,
     pub params: Vec<Arc<str>>,
-    /// Local slot for each parameter (params may share a slot when a
-    /// non-strict function has duplicate parameter names; the last value
-    /// wins). Falls back to `i` when empty (legacy callers).
+    /// Raw argument local slot for each formal parameter. Duplicate
+    /// non-strict parameter names keep distinct raw slots so a later omitted
+    /// formal still initializes the shared parameter binding to `undefined`.
+    /// Falls back to `i` when empty (legacy callers).
     pub param_slots: Vec<usize>,
     pub rest_param: Option<Arc<str>>,
     pub chunk: Arc<Chunk>,
