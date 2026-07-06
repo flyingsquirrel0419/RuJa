@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 29.5% of all matrix files; 60.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4470 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4741 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -1006,6 +1006,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   property names in renamed patterns such as `{ bre\u0061k: x }`. This removes
   `destructuring-assignment` from the skip filters at **135 pass / 0 fail / 6
   skip**, raising the supported subset to **4470 pass / 0 fail / 0 timeout**.
+- **Class feature lift** — class numeric method/accessor names now use
+  JavaScript number-to-string canonicalization, `static constructor()` parses
+  as an ordinary static method, class-element early errors reject duplicate
+  constructors, constructor accessors, static `prototype` definitions, and
+  unparenthesized arrow-function heritage, and `super()` dynamically reads the
+  active constructor's current `[[Prototype]]`. The not-a-constructor check now
+  runs after argument evaluation for direct and spread super constructor calls.
+  This removes `class` from the skip filters at **522 pass / 0 fail / 7904
+  skip**, raising the supported subset to **4741 pass / 0 fail / 0 timeout**.
 - **`typeof` through `with` object environments** — `typeof identifier` now
   reuses the VM's spec Reference-record resolution path before applying
   `GetValue`, except for the required unresolvable-reference `"undefined"`

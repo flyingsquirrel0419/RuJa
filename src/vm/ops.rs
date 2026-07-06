@@ -2547,22 +2547,28 @@ impl Vm {
                     }
                 }
                 Op::CallSuperCtor(arg_count) => {
-                    // stack: [this, superCtor, args...]; call superCtor with this.
+                    // stack: [this, homeCtor, args...]; call homeCtor.[[Prototype]] with this.
                     let mut args = Vec::with_capacity(arg_count);
                     for _ in 0..arg_count {
                         args.push(self.stack.pop().unwrap_or(Value::Undefined));
                     }
                     args.reverse();
-                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    let home_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
-                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
+                    let super_ctor = match &home_ctor {
+                        Value::Object(idx) => self
+                            .heap
+                            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)),
+                        _ => Value::Undefined,
+                    };
                     let is_function_prototype = match (&super_ctor, &self.function_proto) {
                         (Value::Object(a), Value::Object(b)) => a == b,
                         _ => false,
                     };
-                    if is_function_prototype {
+                    if is_function_prototype || !self.is_constructor_value(&super_ctor) {
                         return Err(Error::type_err("not a constructor"));
                     }
+                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
                     // Call the parent constructor. Set pending_new_target so
                     // that class constructors accept this as a [[Construct]]
                     // call. `super()` forwards the active constructor's
@@ -2586,18 +2592,16 @@ impl Vm {
                     self.stack.push(new_this);
                 }
                 Op::CallSuperCtorSpread => {
-                    // stack: [this, superCtor, argsArray]
+                    // stack: [this, homeCtor, argsArray]
                     let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
-                    let super_ctor = self.stack.pop().unwrap_or(Value::Undefined);
+                    let home_ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let _placeholder = self.stack.pop().unwrap_or(Value::Undefined);
-                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
-                    let is_function_prototype = match (&super_ctor, &self.function_proto) {
-                        (Value::Object(a), Value::Object(b)) => a == b,
-                        _ => false,
+                    let super_ctor = match &home_ctor {
+                        Value::Object(idx) => self
+                            .heap
+                            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)),
+                        _ => Value::Undefined,
                     };
-                    if is_function_prototype {
-                        return Err(Error::type_err("not a constructor"));
-                    }
                     // Expand the array into individual args.
                     let args = if let Value::Object(idx) = &args_arr {
                         self.heap.with_obj(idx.0, |o| {
@@ -2610,6 +2614,14 @@ impl Vm {
                     } else {
                         Vec::new()
                     };
+                    let is_function_prototype = match (&super_ctor, &self.function_proto) {
+                        (Value::Object(a), Value::Object(b)) => a == b,
+                        _ => false,
+                    };
+                    if is_function_prototype || !self.is_constructor_value(&super_ctor) {
+                        return Err(Error::type_err("not a constructor"));
+                    }
+                    let (this_env, this_val, new_target) = self.prepare_super_constructor_call()?;
                     self.pending_new_target = Some(if matches!(new_target, Value::Undefined) {
                         super_ctor.clone()
                     } else {

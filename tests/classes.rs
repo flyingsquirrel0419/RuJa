@@ -77,6 +77,75 @@ fn class_static_elements_cannot_redefine_non_configurable_prototype() {
 }
 
 #[test]
+fn class_numeric_method_names_use_js_number_to_string() {
+    let src = r#"
+        var setValue;
+        class Methods {
+            0.0000001() { return "method"; }
+            static 0.0000001() { return "static"; }
+        }
+        class Accessors {
+            get 0.0000001() { return "get"; }
+            set 0.0000001(v) { setValue = v; }
+        }
+        var methods = new Methods();
+        var accessors = new Accessors();
+        var getter = accessors["1e-7"];
+        accessors["1e-7"] = "set";
+        [methods["1e-7"](), Methods["1e-7"](), getter, setValue].join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("method,static,get,set")));
+}
+
+#[test]
+fn static_constructor_is_ordinary_static_method() {
+    let src = r#"
+        class C {
+            static constructor() { return "static"; }
+            constructor() { this.tag = "instance"; }
+        }
+        [
+            C.hasOwnProperty("constructor"),
+            C.prototype.hasOwnProperty("constructor"),
+            C.constructor(),
+            new C().tag,
+            C.prototype.constructor === C.constructor
+        ].join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("true,true,static,instance,false"))
+    );
+}
+
+#[test]
+fn class_element_early_errors_follow_static_semantics() {
+    for src in [
+        "class C extends () => {} {}",
+        "class C extends async () => {} {}",
+        "class C { constructor() {} constructor() {} }",
+        "class C { get constructor() {} }",
+        "class C { set constructor(v) {} }",
+        "class C { static prototype() {} }",
+        "class C { static get prototype() {} }",
+        "class C { static set prototype(v) {} }",
+    ] {
+        let err = run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError for {src}, got {err}"
+        );
+    }
+
+    for src in [
+        "try { class C extends (() => {}) {} } catch (e) { e instanceof TypeError; }",
+        "try { class C extends (async () => {}) {} } catch (e) { e instanceof TypeError; }",
+    ] {
+        assert_eq!(run(src), Value::Bool(true));
+    }
+}
+
+#[test]
 fn static_block_local_bindings() {
     assert_eq!(
         run("class A{static{let x=100,y=200;this.sum=x+y;}}A.sum;"),

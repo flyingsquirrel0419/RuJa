@@ -22,8 +22,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **4470 pass / 0 fail / 0 timeout**.
+Current supported subset count: **4741 pass / 0 fail / 0 timeout**.
 
+- **Class feature lift**: `class` is removed from the test262 skip filters
+  after tightening class numeric method/accessor names, `static constructor`
+  parsing, class-element early errors, and dynamic `super()` constructor
+  lookup through the active class constructor's current `[[Prototype]]`.
+  `super(...)` now evaluates arguments before the not-a-constructor check,
+  including spread calls, so catchable TypeErrors match test262 ordering. The
+  focused class directories run at **522 pass / 0 fail / 7904 skip**, raising
+  the supported subset to **4741 pass / 0 fail / 0 timeout**.
 - **Thrown custom object display**: uncaught ordinary objects created by custom
   constructors now include their prototype constructor name in the host error
   message, preserving test262's `Test262Error` signal without changing the

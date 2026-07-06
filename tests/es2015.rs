@@ -684,6 +684,18 @@ fn arrow_super_call_rebinds_lexical_constructor_this() {
 }
 
 #[test]
+fn super_constructor_checks_constructability_after_arguments() {
+    assert_eq!(
+        run("var evaluated=false,caught; class C extends Object{constructor(){try{super(evaluated=true);}catch(e){caught=e;}}} Object.setPrototypeOf(C, parseInt); try{new C();}catch(e){} typeof caught + ':' + (caught instanceof TypeError) + ':' + evaluated;"),
+        Value::String(Arc::from("object:true:true"))
+    );
+    assert_eq!(
+        run("var evaluated=false,caught; class C extends Object{constructor(){try{super(0, ...[evaluated=true]);}catch(e){caught=e;}}} Object.setPrototypeOf(C, parseInt); try{new C();}catch(e){} typeof caught + ':' + (caught instanceof TypeError) + ':' + evaluated;"),
+        Value::String(Arc::from("object:true:true"))
+    );
+}
+
+#[test]
 fn super_constructor_call_accepts_mixed_spread_arguments() {
     assert_eq!(
         run("class A{constructor(){this.args=[].slice.call(arguments).join(',');}} class B extends A{constructor(){super(1, ...[2,3], 4);}} new B().args;"),

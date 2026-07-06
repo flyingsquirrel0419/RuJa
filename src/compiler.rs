@@ -3625,11 +3625,22 @@ impl Compiler {
                     self.chunk
                         .emit(Op::DeclareEnv(super_proto_idx), self.current_line);
                     // stack: [ctor, parentCtor]
-                    // Bind parentCtor as `#superctor` so `super(...)` calls can find it.
+                    // Keep the evaluated superclass only for class wiring
+                    // below. Runtime super() must not close over it.
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, parentCtor, parentCtor]
+                    let super_parent_ctor_idx = self.intern("#super_parent_ctor");
+                    self.chunk
+                        .emit(Op::DeclareEnv(super_parent_ctor_idx), self.current_line); // [ctor, parentCtor]
+
+                    // Bind child ctor as `#superctor`. SuperCall reads this
+                    // function's [[Prototype]] dynamically, so later
+                    // Object.setPrototypeOf(C, ...) changes are visible.
+                    self.chunk.emit(Op::Swap, self.current_line); // [parentCtor, ctor]
+                    self.chunk.emit(Op::Dup, self.current_line); // [parentCtor, ctor, ctor]
                     let superctor_idx = self.intern("#superctor");
                     self.chunk
-                        .emit(Op::DeclareEnv(superctor_idx), self.current_line); // [ctor, parentCtor]
+                        .emit(Op::DeclareEnv(superctor_idx), self.current_line); // [parentCtor, ctor]
+                    self.chunk.emit(Op::Swap, self.current_line); // [ctor, parentCtor]
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
 
                     // Set childCtor.prototype.__proto__ = parentProto (link prototype chain).
@@ -3646,7 +3657,7 @@ impl Compiler {
                                                                       // Also link the constructors: childCtor.__proto__ = parentCtor (static inheritance).
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     self.chunk
-                        .emit(Op::LoadEnv(superctor_idx), self.current_line); // [ctor, ctor, parentCtor]
+                        .emit(Op::LoadEnv(super_parent_ctor_idx), self.current_line); // [ctor, ctor, parentCtor]
                     self.chunk.emit(Op::SetProto, self.current_line); // set ctor.__proto__ = parentCtor
                                                                       // stack: [ctor]
 

@@ -4284,7 +4284,26 @@ impl Parser {
         let saved_strict_context = self.is_strict_context;
         self.is_strict_context = true;
         let superclass = if self.eat(&TokenKind::Extends) {
-            Some(Box::new(self.parse_postfix()?))
+            if matches!(self.peek().clone(), TokenKind::LParen)
+                && matches!(self.peek_at_tok(1).kind, TokenKind::RParen)
+                && matches!(self.peek_at_tok(2).kind, TokenKind::Arrow)
+            {
+                return Err(error::Error::syntax(
+                    "Invalid class heritage expression".to_string(),
+                ));
+            }
+            if matches!(self.peek().clone(), TokenKind::Async)
+                && !self.peek_at_tok(1).preceded_by_newline
+                && matches!(self.peek_at_tok(1).kind, TokenKind::LParen)
+                && matches!(self.peek_at_tok(2).kind, TokenKind::RParen)
+                && matches!(self.peek_at_tok(3).kind, TokenKind::Arrow)
+            {
+                return Err(error::Error::syntax(
+                    "Invalid class heritage expression".to_string(),
+                ));
+            }
+            let heritage = self.parse_postfix()?;
+            Some(Box::new(heritage))
         } else {
             None
         };
@@ -4292,6 +4311,7 @@ impl Parser {
         let mut methods = Vec::new();
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
+        let mut seen_constructor = false;
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             if self.eat(&TokenKind::Semicolon) {
                 continue;
@@ -4455,6 +4475,7 @@ impl Parser {
                 && !is_setter
                 && !is_async_method
                 && !is_generator_method
+                && !is_static
                 && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
             // Computed method name: [expr]
             let computed_name = if self.check(&TokenKind::LBracket) {
@@ -4465,7 +4486,7 @@ impl Parser {
             } else {
                 None
             };
-            let method_name = if is_constructor {
+            let method_name: Arc<str> = if is_constructor {
                 self.advance();
                 Arc::from("constructor")
             } else if computed_name.is_some() {
@@ -4477,7 +4498,7 @@ impl Parser {
                 match self.peek().clone() {
                     TokenKind::Number(n) | TokenKind::LegacyNumber(n) => {
                         self.advance();
-                        Arc::from(format!("{}", n))
+                        Arc::from(crate::value::num_to_string(n).as_str())
                     }
                     TokenKind::String(s) => {
                         self.advance();
@@ -4486,6 +4507,24 @@ impl Parser {
                     _ => Arc::from(self.read_property_name()?.as_str()),
                 }
             };
+            if is_constructor {
+                if seen_constructor {
+                    return Err(error::Error::syntax(
+                        "Duplicate constructor in class body".to_string(),
+                    ));
+                }
+                seen_constructor = true;
+            }
+            if !is_static && (is_getter || is_setter) && method_name.as_ref() == "constructor" {
+                return Err(error::Error::syntax(
+                    "Class constructor cannot be an accessor".to_string(),
+                ));
+            }
+            if is_static && computed_name.is_none() && method_name.as_ref() == "prototype" {
+                return Err(error::Error::syntax(
+                    "Static class element cannot be named prototype".to_string(),
+                ));
+            }
             let (params, param_defaults, rest_param, dstr_decls) =
                 self.parse_params_scoped(is_generator_method, is_async_method)?;
             Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
