@@ -932,6 +932,29 @@ fn promise_rejection_value(err: &Arc<error::Error>) -> Value {
         .unwrap_or_else(|| Value::String(Arc::from(err.message.as_str())))
 }
 
+fn call_promise_capability_function(
+    vm: &mut Vm,
+    function: &Value,
+    value: Value,
+) -> error::Result<Value> {
+    let pins = vm.pin_many(&[function.clone(), value.clone()]);
+    let result = vm.call_function(
+        function,
+        std::slice::from_ref(&value),
+        Some(Value::Undefined),
+    );
+    vm.unpin_many(pins);
+    result
+}
+
+fn reject_promise_capability(
+    vm: &mut Vm,
+    capability: &PromiseCapability,
+    reason: Value,
+) -> error::Result<()> {
+    call_promise_capability_function(vm, &capability.reject, reason).map(|_| ())
+}
+
 fn settled_result_object(
     vm: &mut Vm,
     status: &str,
@@ -982,23 +1005,98 @@ pub(crate) fn promise_static_all(
 pub(crate) fn promise_static_race(
     vm: &mut Vm,
     args: &[Value],
-    _this: Option<Value>,
+    this: Option<Value>,
 ) -> error::Result<Value> {
+    let ctor = this.unwrap_or(Value::Undefined);
+    let capability = new_promise_capability(vm, ctor.clone())?;
+    let mut pins = vm.pin_many(&[
+        ctor.clone(),
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+    ]);
+    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+        Ok(promise_resolve) => promise_resolve,
+        Err(err) => {
+            vm.unpin_many(pins);
+            return Err(err);
+        }
+    };
+    if !is_callable(&promise_resolve, &vm.heap) {
+        vm.unpin_many(pins);
+        return Err(Error::type_err("Promise.race resolve is not callable"));
+    }
+
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    pins += vm.pin_many(&[promise_resolve.clone(), iterable.clone()]);
     let iter = match vm.make_iterator(&iterable) {
         Ok(iter) => iter,
-        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+        Err(err) => {
+            let reason = promise_rejection_value(&err);
+            let reject_result = reject_promise_capability(vm, &capability, reason);
+            vm.unpin_many(pins);
+            reject_result?;
+            return Ok(capability.promise);
+        }
     };
-    let (value, done) = match vm.iterator_next(&iter) {
-        Ok(step) => step,
-        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
-    };
-    if done {
-        return make_pending_promise(vm);
-    }
-    match vm.await_value(value) {
-        Ok(value) => make_fulfilled_promise(vm, value),
-        Err(err) => make_rejected_promise(vm, promise_rejection_value(&err)),
+
+    loop {
+        let (value, done) = match vm.iterator_next(&iter) {
+            Ok(step) => step,
+            Err(err) => {
+                let reason = promise_rejection_value(&err);
+                let reject_result = reject_promise_capability(vm, &capability, reason);
+                vm.unpin_many(pins);
+                reject_result?;
+                return Ok(capability.promise);
+            }
+        };
+        if done {
+            vm.unpin_many(pins);
+            return Ok(capability.promise);
+        }
+
+        let value_pins = vm.pin_many(std::slice::from_ref(&value));
+        let next_promise_result = vm.call_function(
+            &promise_resolve,
+            std::slice::from_ref(&value),
+            Some(ctor.clone()),
+        );
+        vm.unpin_many(value_pins);
+        let next_promise = match next_promise_result {
+            Ok(next_promise) => next_promise,
+            Err(err) => {
+                let reason = promise_rejection_value(&err);
+                let reject_result = reject_promise_capability(vm, &capability, reason);
+                vm.unpin_many(pins);
+                reject_result?;
+                return Ok(capability.promise);
+            }
+        };
+        let then = match vm.get_property(&next_promise, "then") {
+            Ok(then) => then,
+            Err(err) => {
+                let reason = promise_rejection_value(&err);
+                let reject_result = reject_promise_capability(vm, &capability, reason);
+                vm.unpin_many(pins);
+                reject_result?;
+                return Ok(capability.promise);
+            }
+        };
+        let then_pins = vm.pin_many(&[next_promise.clone(), then.clone()]);
+        let then_result = vm.call_function(
+            &then,
+            &[capability.resolve.clone(), capability.reject.clone()],
+            Some(next_promise),
+        );
+        vm.unpin_many(then_pins);
+        if let Err(err) = then_result {
+            let reason = promise_rejection_value(&err);
+            let reject_result = reject_promise_capability(vm, &capability, reason);
+            vm.unpin_many(pins);
+            reject_result?;
+            return Ok(capability.promise);
+        }
     }
 }
 

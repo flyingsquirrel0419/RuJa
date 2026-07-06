@@ -1726,6 +1726,47 @@ fn promise_static_combinators_return_promises() {
 }
 
 #[test]
+fn promise_race_uses_receiver_resolve_and_then() {
+    assert_eq!(
+        run("var callCount = 0, executorLength = 0;
+             class SubPromise extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 executorLength = executor.length;
+               }
+             }
+             var result = Promise.race.call(SubPromise, []);
+             result instanceof SubPromise && callCount === 1 && executorLength === 2;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var resolveGetCount = 0, resolveCallCount = 0, thenCallCount = 0;
+             var p1 = new Promise(function() {});
+             var p2 = new Promise(function() {});
+             Object.defineProperty(Promise, 'resolve', {
+               configurable: true,
+               get: function() {
+                 resolveGetCount += 1;
+                 return function(value) {
+                   resolveCallCount += 1;
+                   return value;
+                 };
+               }
+             });
+             p1.then = p2.then = function(resolve, reject) {
+               thenCallCount += 1;
+               return {};
+             };
+             Promise.race([p1, p2]);
+             resolveGetCount === 1 && resolveCallCount === 2 && thenCallCount === 2;"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_static_resolve_and_reject_use_receiver_constructor_capability() {
     assert_eq!(
         run("class SubPromise extends Promise {}
