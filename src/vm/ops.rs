@@ -2176,6 +2176,22 @@ impl Vm {
                     let result = self.call_function(&func, &args, Some(this))?;
                     self.stack.push(result);
                 }
+                Op::CallThisSpread => {
+                    // stack: [..., this, fn, argsArray]
+                    let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+                    let func = self.stack.pop().unwrap_or(Value::Undefined);
+                    let this = self.stack.pop().unwrap_or(Value::Undefined);
+                    let mut args = Vec::new();
+                    if let Value::Object(idx) = &args_arr {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Array(a) = o {
+                                args = a.items.lock().clone();
+                            }
+                        });
+                    }
+                    let result = self.call_function(&func, &args, Some(this))?;
+                    self.stack.push(result);
+                }
                 Op::GetPrivate(name_idx) => {
                     let name = {
                         let frame = self.current_frame()?;

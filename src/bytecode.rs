@@ -219,6 +219,8 @@ pub enum Op {
     DivertContinue(usize, usize),
     /// Call a function with an explicit `this`: stack [this, fn, args...].
     CallThis(usize),
+    /// Call a function with an explicit `this`: stack [this, fn, argsArray].
+    CallThisSpread,
     /// Push a private field value from `this`. arg = name constant idx.
     GetPrivate(usize),
     /// Set a private field on `this`. arg = name constant idx. Pops value.

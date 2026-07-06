@@ -31,10 +31,12 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   accessor descriptor or non-writable data descriptor unmaps the index.
   Computed deletion of arguments properties now shares the same
   configurability checks as direct deletion, and accessor indices no longer
-  fall through to dense element storage when no getter is present. The focused
-  `language/arguments-object` cluster improves to **119 pass / 7 fail / 137
-  skip**, with the remaining failures isolated to class-method spread and
-  restricted function-property cases.
+  fall through to dense element storage when no getter is present. Sloppy
+  function `caller` lookup now supports the Annex B call-stack path needed by
+  `arguments.callee.caller`, while strict callers remain restricted. Member
+  calls with spread arguments now preserve their receiver and spread arity.
+  The focused `language/arguments-object` cluster now runs at **126 pass / 0
+  fail / 137 skip**.
 - **Logical-assignment Reference preservation**: identifier logical
   assignments (`&&=`, `||=`, `??=`) now keep the original spec Reference from
   `GetValue` through `PutValue`, so a `with` or global-object property deleted

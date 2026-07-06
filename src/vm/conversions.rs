@@ -917,6 +917,24 @@ impl Vm {
                 }) {
                     return Ok(value);
                 }
+                let restricted_function_special = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Function(f) = o {
+                        if matches!(key, "caller" | "arguments") {
+                            if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
+                                if !func.is_arrow && !func.chunk.is_strict {
+                                    return Some(key == "caller");
+                                }
+                            }
+                        }
+                    }
+                    None
+                });
+                if let Some(is_caller) = restricted_function_special {
+                    if is_caller {
+                        return self.function_caller_value(*idx);
+                    }
+                    return Ok(Value::Undefined);
+                }
                 // globalThis routes property reads to the global environment.
                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                     matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("global"))

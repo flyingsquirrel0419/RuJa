@@ -8,6 +8,31 @@ use crate::value::{GcIdx, PromiseStatus, Value};
 use std::sync::Arc;
 
 impl Vm {
+    pub(crate) fn function_caller_value(&self, callee_idx: GcIdx) -> error::Result<Value> {
+        let Some(frame_index) = self
+            .frames
+            .iter()
+            .rposition(|frame| matches!(frame.callee, Value::Object(idx) if idx == callee_idx))
+        else {
+            return Ok(Value::Undefined);
+        };
+
+        let Some(caller_frame) = self.frames[..frame_index]
+            .iter()
+            .rev()
+            .find(|frame| matches!(frame.callee, Value::Object(_)))
+        else {
+            return Ok(Value::Undefined);
+        };
+
+        if caller_frame.chunk.is_strict {
+            return Err(Error::type_err(
+                "'caller' and 'arguments' are restricted function properties",
+            ));
+        }
+        Ok(caller_frame.callee.clone())
+    }
+
     pub(crate) fn arguments_mapped_binding_for_index(
         &self,
         obj_idx: usize,
@@ -1366,6 +1391,7 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for f in &self.frames {
+            Self::push_value_roots(&mut roots, &f.callee);
             roots.push(f.env.0);
             Self::push_value_roots(&mut roots, &f.this_val);
             for l in &f.locals {

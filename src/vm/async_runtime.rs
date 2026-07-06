@@ -647,8 +647,13 @@ impl Vm {
                     Ok(Value::Object(GcIdx(g_idx)))
                 } else {
                     // execute the compiled function chunk
-                    let mut result =
-                        self.execute_chunk_func(func.clone(), call_env, this_val, args);
+                    let mut result = self.execute_chunk_func(
+                        Value::Object(idx),
+                        func.clone(),
+                        call_env,
+                        this_val,
+                        args,
+                    );
                     // For derived class constructors, check that `super()` was
                     // called (i.e. `this` is no longer in the TDZ). If the
                     // constructor returned without calling super, throw a

@@ -383,6 +383,26 @@ fn arrow_uses_lexical_arguments_binding() {
 }
 
 #[test]
+fn arrow_functions_inherit_restricted_caller_arguments_accessors() {
+    assert_eq!(
+        run("var af = () => {}; af.hasOwnProperty('caller') + ':' + af.hasOwnProperty('arguments');"),
+        Value::String(Arc::from("false:false"))
+    );
+
+    let msg = run_err("var af = () => {}; af.caller;");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("var af = () => {}; af.caller = {};");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("var af = () => {}; af.arguments;");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+
+    let msg = run_err("var af = () => {}; af.arguments = {};");
+    assert!(msg.contains("TypeError"), "got: {msg}");
+}
+
+#[test]
 fn arrow_body_uses_lexical_super_property_binding() {
     assert_eq!(
         run("var A={x:1}; var B={}; Object.setPrototypeOf(B,A); var obj={m(){return (()=>{return super.x;})();}}; Object.setPrototypeOf(obj,B); obj.m();"),

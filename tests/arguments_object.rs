@@ -134,3 +134,102 @@ fn mapped_arguments_accessor_descriptor_removes_parameter_map() {
         Value::String(Arc::from("1,0,true;bar"))
     );
 }
+
+#[test]
+fn sloppy_arguments_callee_caller_is_available_or_undefined() {
+    assert_eq!(
+        run(r#"
+            var called = false;
+            function test1(flag) {
+              if (flag !== true) {
+                test2();
+              } else {
+                called = true;
+              }
+            }
+            function test2() {
+              if (arguments.callee.caller === undefined) {
+                called = true;
+              } else {
+                arguments.callee.caller(true);
+              }
+            }
+            test1();
+            called;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var called = false;
+            function test1(flag) {
+              if (flag !== true) {
+                test2();
+              } else {
+                called = true;
+              }
+            }
+            function test2() {
+              if (arguments.callee.caller === undefined) {
+                called = true;
+              } else {
+                var explicit = arguments.callee.caller;
+                explicit(true);
+              }
+            }
+            test1();
+            called;
+            "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn sloppy_function_caller_rejects_strict_callers() {
+    let err = run_err(
+        r#"
+        function gNonStrict() {
+          return gNonStrict.caller;
+        }
+        (function() { "use strict"; gNonStrict(); })();
+        "#,
+    );
+    assert!(err.contains("TypeError"), "{err}");
+}
+
+#[test]
+fn member_call_spread_preserves_this_and_arguments() {
+    assert_eq!(
+        run(r#"
+            var arr = [2, 3];
+            var obj = {
+              tag: "obj",
+              method: function() {
+                return [this.tag, arguments.length, arguments[0], arguments[1], arguments[2], arguments[3]].join(",");
+              }
+            };
+            obj.method(42, ...[1], ...arr,);
+            "#),
+        Value::String(Arc::from("obj,4,42,1,2,3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var arr = [2, 3];
+            class C {
+              method() {
+                return [this.tag, arguments.length, arguments[0], arguments[1], arguments[2], arguments[3]].join(",");
+              }
+              static method() {
+                return [this.tag, arguments.length, arguments[0], arguments[1], arguments[2], arguments[3]].join(",");
+              }
+            }
+            var c = new C();
+            c.tag = "inst";
+            C.tag = "ctor";
+            c.method(42, ...[1], ...arr,) + ";" + C.method(42, ...[1], ...arr,);
+            "#),
+        Value::String(Arc::from("inst,4,42,1,2,3;ctor,4,42,1,2,3"))
+    );
+}

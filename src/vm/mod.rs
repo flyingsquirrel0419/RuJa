@@ -95,6 +95,7 @@ pub struct CallFrame {
     pub ip: usize,
     pub stack_base: usize,
     pub locals: Vec<Value>,
+    pub callee: Value,
     pub env: GcIdx,
     pub catch_stack: Vec<(usize, u32, GcIdx)>,
     /// Monotonic push counter for ordering catch vs finally guards by depth.
@@ -158,6 +159,7 @@ impl CallFrame {
             ip,
             stack_base,
             locals,
+            callee: Value::Undefined,
             env,
             new_target: Value::Undefined,
             catch_stack: Vec::new(),
@@ -779,6 +781,7 @@ impl Vm {
     /// Execute a compiled function's chunk in a new frame.
     fn execute_chunk_func(
         &mut self,
+        callee: Value,
         fdef: Arc<crate::function::FunctionDef>,
         env: GcIdx,
         this_val: Value,
@@ -802,6 +805,7 @@ impl Vm {
             this_val,
         ));
         if let Some(frame) = self.frames.last_mut() {
+            frame.callee = callee;
             frame.in_parameter_initializers = fdef.has_parameter_expressions;
         }
         // Apply `new.target` if this call was a Construct.
