@@ -603,6 +603,10 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
                 PropertyKey::from("toStringTag"),
                 data_prop(Value::Symbol(vm.well_known_symbols.to_string_tag)),
             );
+            obj.props().lock().insert(
+                PropertyKey::from("match"),
+                data_prop(Value::Symbol(vm.well_known_symbols.r#match)),
+            );
         });
     }
     // Symbol.prototype: a plain Object with a toString method. Symbol is a

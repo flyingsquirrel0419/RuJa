@@ -5,22 +5,75 @@ use super::*;
 // =========================================================================
 pub(crate) fn str_val(vm: &mut Vm, this: &Option<Value>) -> error::Result<String> {
     match this {
+        None | Some(Value::Undefined) | Some(Value::Null) => Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        )),
         Some(Value::String(s)) => Ok(s.to_string()),
-        Some(Value::Object(idx)) => Ok(vm.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(o) => {
-                if let Some(Value::String(s)) = o.primitive.lock().clone() {
-                    s.to_string()
-                } else if let Some(cn) = &o.class_name {
-                    cn.to_string()
-                } else {
-                    "[object Object]".into()
-                }
+        Some(Value::Object(idx)) => {
+            let boxed = vm.heap.with_obj(idx.0, |o| match o {
+                HeapObj::Object(o) => o.primitive.lock().clone(),
+                _ => None,
+            });
+            if let Some(Value::String(s)) = boxed {
+                Ok(s.to_string())
+            } else {
+                vm.to_string(&Value::Object(*idx)).map(|s| s.to_string())
             }
-            _ => "[object Object]".into(),
-        })),
+        }
         Some(v) => Ok(vm.to_string(v)?.to_string()),
-        None => Ok("undefined".into()),
     }
+}
+
+fn to_integer_or_zero(vm: &mut Vm, value: &Value) -> error::Result<f64> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() || n == 0.0 {
+        Ok(0.0)
+    } else if n.is_infinite() {
+        Ok(n)
+    } else {
+        Ok(n.trunc())
+    }
+}
+
+fn string_search_position(
+    vm: &mut Vm,
+    args: &[Value],
+    len: usize,
+    default: f64,
+) -> error::Result<usize> {
+    let pos = match args.get(1) {
+        Some(Value::Undefined) | None => default,
+        Some(value) => to_integer_or_zero(vm, value)?,
+    };
+    if pos.is_nan() || pos <= 0.0 {
+        Ok(0)
+    } else if pos.is_infinite() {
+        Ok(len)
+    } else {
+        Ok((pos as usize).min(len))
+    }
+}
+
+fn string_search_arg(vm: &mut Vm, value: &Value) -> error::Result<String> {
+    if is_regexp(vm, value)? {
+        return Err(Error::type_err("First argument must not be a RegExp"));
+    }
+    Ok(vm.to_string(value)?.to_string())
+}
+
+fn is_regexp(vm: &mut Vm, value: &Value) -> error::Result<bool> {
+    let Value::Object(idx) = value else {
+        return Ok(false);
+    };
+    let match_key = crate::value::PropertyKey::Symbol(vm.well_known_symbols.r#match);
+    let matcher = vm.get_property_by_key(value, &match_key)?;
+    if !matcher.is_undefined() {
+        return Ok(vm.to_boolean(&matcher));
+    }
+    Ok(vm.heap.with_obj(
+        idx.0,
+        |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
+    ))
 }
 pub(crate) fn str_char_at(
     vm: &mut Vm,
@@ -468,12 +521,9 @@ pub(crate) fn str_includes(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let n = args
-        .first()
-        .map(crate::value::value_to_debug_string)
-        .unwrap_or_default();
+    let n = string_search_arg(vm, args.first().unwrap_or(&Value::Undefined))?;
     let len = crate::value::utf16_len(&s);
-    let start = from_index_arg(vm, args, 1, len)?;
+    let start = string_search_position(vm, args, len, 0.0)?;
     let tail = crate::value::utf16_slice(&s, start, len);
     Ok(Value::Bool(tail.contains(n.as_str())))
 }
@@ -482,28 +532,24 @@ pub(crate) fn str_starts_with(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    Ok(Value::Bool(
-        str_val(vm, &this)?.starts_with(
-            args.first()
-                .map(crate::value::value_to_debug_string)
-                .unwrap_or_default()
-                .as_str(),
-        ),
-    ))
+    let s = str_val(vm, &this)?;
+    let search = string_search_arg(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let len = crate::value::utf16_len(&s);
+    let start = string_search_position(vm, args, len, 0.0)?;
+    let tail = crate::value::utf16_slice(&s, start, len);
+    Ok(Value::Bool(tail.starts_with(search.as_str())))
 }
 pub(crate) fn str_ends_with(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    Ok(Value::Bool(
-        str_val(vm, &this)?.ends_with(
-            args.first()
-                .map(crate::value::value_to_debug_string)
-                .unwrap_or_default()
-                .as_str(),
-        ),
-    ))
+    let s = str_val(vm, &this)?;
+    let search = string_search_arg(vm, args.first().unwrap_or(&Value::Undefined))?;
+    let len = crate::value::utf16_len(&s);
+    let end = string_search_position(vm, args, len, len as f64)?;
+    let head = crate::value::utf16_slice(&s, 0, end);
+    Ok(Value::Bool(head.ends_with(search.as_str())))
 }
 pub(crate) fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     // ES String.prototype.repeat: count must be a non-negative integer; a

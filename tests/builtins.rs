@@ -86,6 +86,39 @@ fn string_methods() {
 }
 
 #[test]
+fn string_search_methods_follow_regexp_and_position_semantics() {
+    assert_eq!(
+        run("'The future is cool!'.startsWith('future', 4);"),
+        Value::Bool(true)
+    );
+    assert_eq!(run("'word'.endsWith('r', 3);"), Value::Bool(true));
+    assert_eq!(
+        run("'The future is cool!'.includes('The future', true);"),
+        Value::Bool(false)
+    );
+    assert!(run_err("String.prototype.includes.call(null, 'x');").contains("null or undefined"));
+    assert!(run_err(
+        "String.prototype.startsWith.call({ toString: function(){ throw new Error('boom'); } }, '');"
+    )
+    .contains("boom"));
+    assert!(run_err("''.startsWith(/./);").contains("RegExp"));
+    assert!(run_err(
+        "var o = {}; Object.defineProperty(o, Symbol.match, { get: function(){ throw new Error('boom'); } }); ''.includes(o);"
+    )
+    .contains("boom"));
+    assert_eq!(
+        run("var s = Symbol.match; var o = {}; Object.defineProperty(o, s, { get: function(){ return true; } }); o[s];"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn generated_symbols_do_not_collide_with_well_known_symbols() {
+    assert_eq!(run("Symbol() === Symbol.iterator;"), Value::Bool(false));
+    assert_eq!(run("Symbol() === Symbol.match;"), Value::Bool(false));
+}
+
+#[test]
 fn array_subclass_instances_use_new_target_prototype() {
     assert_eq!(
         run(r#"

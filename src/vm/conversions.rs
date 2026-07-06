@@ -413,14 +413,24 @@ impl Vm {
                 break;
             }
             depth += 1;
-            let (found, proto) = self.heap.with_obj(idx.0, |o| {
+            let (found, getter, proto) = self.heap.with_obj(idx.0, |o| {
                 let props = o.props();
-                let v = props.lock().get(key).map(|d| d.value.clone());
+                let desc = props.lock().get(key).cloned();
                 let proto = o.proto().lock().clone();
-                (v, proto)
+                match desc {
+                    Some(desc) if desc.is_accessor => (None, desc.get, proto),
+                    Some(desc) => (Some(desc.value), None, proto),
+                    None => (None, None, proto),
+                }
             });
             if let Some(v) = found {
                 return Ok(v);
+            }
+            if let Some(getter) = getter {
+                if !getter.is_undefined() {
+                    return self.call_function(&getter, &[], Some(obj.clone()));
+                }
+                return Ok(Value::Undefined);
             }
             cur = proto.unwrap_or(Value::Undefined);
             if cur.is_undefined() {

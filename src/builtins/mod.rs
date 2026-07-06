@@ -1538,9 +1538,9 @@ fn object_define_property(
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let key = args
         .get(1)
-        .map(|v| vm.to_property_key(v))
+        .map(|v| to_property_key_descriptor(vm, v))
         .transpose()?
-        .unwrap_or_default();
+        .unwrap_or_else(|| PropertyKey::from(""));
     let desc = args.get(2).cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = target {
         let mut value = Value::Undefined;
@@ -1628,18 +1628,15 @@ fn object_define_property(
                 "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
             ));
         }
-        let current = vm.heap.with_obj(idx.0, |obj| {
-            obj.props()
-                .lock()
-                .get(&PropertyKey::from(key.as_str()))
-                .cloned()
-        });
+        let current = vm
+            .heap
+            .with_obj(idx.0, |obj| obj.props().lock().get(&key).cloned());
         if current.is_none() {
             let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
             if !extensible {
                 return Err(Error::type_err(format!(
                     "Cannot define property '{}', object is not extensible",
-                    key
+                    key.as_str().unwrap_or("Symbol")
                 )));
             }
         }
@@ -1732,13 +1729,15 @@ fn object_define_property(
         };
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
-                if let Some(i) = crate::value::parse_array_index(&key) {
+                if let Some(i) = key.as_str().and_then(crate::value::parse_array_index) {
                     if i >= a.items.lock().len() {
                         let new_len = i + 1;
                         if new_len <= crate::value::MAX_DENSE_ARRAY_LEN {
                             let mut items = a.items.lock();
+                            let mut present = a.present.lock();
                             while items.len() < new_len {
                                 items.push(Value::Undefined);
+                                present.push(false);
                             }
                             *a.sparse_max.lock() = None;
                         } else {
@@ -1747,11 +1746,11 @@ fn object_define_property(
                     }
                 }
             }
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from(key.as_str()), descriptor);
+            obj.props().lock().insert(key.clone(), descriptor);
         });
-        vm.ic_invalidate(idx.0, &key);
+        if let Some(key) = key.as_str() {
+            vm.ic_invalidate(idx.0, key);
+        }
     }
     Ok(target)
 }

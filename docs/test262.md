@@ -138,6 +138,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Realm execution, and distinguishes constructable native constructors from
   callable-only native functions. This closes the remaining cross-realm
   supported-subset failures and the Proxy subclass edge case.
+- **String search methods and `Symbol.match`** —
+  `String.prototype.includes`, `String.prototype.startsWith`, and
+  `String.prototype.endsWith` now reject nullish receivers, consult
+  `@@match` before converting the search argument to string, reject RegExp
+  search arguments, propagate abrupt completions from receivers and
+  `Symbol.match` accessors, and clamp position/end-position arguments using
+  integer conversion. `Object.defineProperty` now preserves Symbol property
+  keys for this path, and generated Symbols start after the well-known Symbol
+  range. The focused
+  `built-ins/String/prototype/startsWith built-ins/String/prototype/endsWith
+  built-ins/String/prototype/includes` cluster now runs at **63 pass / 0 fail /
+  12 skip**.
 - **Sparse array holes and own-key enumeration** — Dense arrays now keep a
   separate present-bit vector so an explicit `undefined` element is distinct
   from an elision or deleted element. Array literal holes, `Array(length)`,

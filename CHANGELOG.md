@@ -16,6 +16,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   This closes the remaining cross-realm eval/template/non-constructor checks
   plus the Proxy subclass edge case, raising the supported subset to **4180
   pass / 0 fail / 0 timeout**.
+- **String search methods and `Symbol.match`**: aligned
+  `String.prototype.includes`, `startsWith`, and `endsWith` with
+  `RequireObjectCoercible`, `IsRegExp`, `ToString`, and position/end-position
+  ordering. `Symbol.match` is now exposed, `Object.defineProperty` preserves
+  Symbol property keys, property lookup invokes accessor getters for
+  Symbol-keyed `@@match`, and generated Symbols no longer collide with
+  well-known Symbols. The focused String search cluster now runs at **63 pass /
+  0 fail / 12 skip**.
 - **Sparse array holes and own-key enumeration**: dense arrays now track
   whether each backing-store slot is actually present, so array literal
   elisions, `Array(length)` holes, `delete array[index]`, `hasOwnProperty`,

@@ -87,6 +87,7 @@ pub struct WellKnownSymbols {
     pub has_instance: u32,
     pub to_string_tag: u32,
     pub async_iterator: u32,
+    pub r#match: u32,
 }
 
 pub struct CallFrame {
@@ -283,13 +284,14 @@ impl Vm {
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
-            next_symbol_id: 1,
+            next_symbol_id: 7,
             well_known_symbols: WellKnownSymbols {
                 iterator: 1,
                 to_primitive: 2,
                 has_instance: 3,
                 to_string_tag: 4,
                 async_iterator: 5,
+                r#match: 6,
             },
             global_names: HashMap::new(),
             global_constants: Vec::new(),
