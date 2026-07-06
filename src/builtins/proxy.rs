@@ -58,6 +58,7 @@ pub(crate) fn proxy_revocable(
             length: 0,
         },
         closure: vm.global,
+        lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(None),
         proto: Mutex::new(match vm.function_proto {

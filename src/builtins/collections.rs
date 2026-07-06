@@ -656,6 +656,7 @@ pub(crate) fn promise_constructor(
                 bound_args: Vec::new(),
             },
             closure: vm.global,
+            lexical_new_target: Value::Undefined,
             is_class_ctor: std::sync::atomic::AtomicBool::new(false),
             prototype: Mutex::new(None),
             proto: Mutex::new(match vm.function_proto {
@@ -676,6 +677,7 @@ pub(crate) fn promise_constructor(
                 bound_args: Vec::new(),
             },
             closure: vm.global,
+            lexical_new_target: Value::Undefined,
             is_class_ctor: std::sync::atomic::AtomicBool::new(false),
             prototype: Mutex::new(None),
             proto: Mutex::new(match vm.function_proto {

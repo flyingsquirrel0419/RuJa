@@ -210,6 +210,7 @@ impl Vm {
             name: Some(Arc::from(name)),
             kind: crate::value::FunctionKind::Native { func, length },
             closure,
+            lexical_new_target: Value::Undefined,
             is_class_ctor: std::sync::atomic::AtomicBool::new(false),
             // Native functions have no `prototype` property (they are not
             // constructors). Their [[Prototype]] (`__proto__`) is
@@ -366,6 +367,7 @@ impl Vm {
                         Some(FuncCallInfo::Interpreted {
                             func: func.clone(),
                             closure: f.closure,
+                            lexical_new_target: f.lexical_new_target.clone(),
                             is_class_ctor: f
                                 .is_class_ctor
                                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -403,6 +405,7 @@ impl Vm {
                 is_arrow,
                 is_async,
                 is_class_ctor,
+                lexical_new_target,
             }) => {
                 // Class constructors cannot be called without `new`.
                 // `construct()` sets `pending_new_target` before calling us;
@@ -647,12 +650,18 @@ impl Vm {
                     Ok(Value::Object(GcIdx(g_idx)))
                 } else {
                     // execute the compiled function chunk
+                    let frame_new_target = if is_arrow {
+                        lexical_new_target
+                    } else {
+                        self.pending_new_target.take().unwrap_or(Value::Undefined)
+                    };
                     let mut result = self.execute_chunk_func(
                         Value::Object(idx),
                         func.clone(),
                         call_env,
                         this_val,
                         args,
+                        frame_new_target,
                     );
                     // For derived class constructors, check that `super()` was
                     // called (i.e. `this` is no longer in the TDZ). If the

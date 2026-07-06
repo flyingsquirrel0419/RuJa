@@ -383,6 +383,22 @@ fn arrow_uses_lexical_arguments_binding() {
 }
 
 #[test]
+fn arrow_uses_lexical_new_target_binding() {
+    assert_eq!(
+        run("function F(){ this.seen = (_ => new.target)() === F; } new F().seen;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("function F(){ return (_ => new.target)(); } F();"),
+        Value::Undefined
+    );
+    assert_eq!(
+        run("function F(){ this.af = _ => new.target === F; } var af = new F().af; af();"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn arrow_functions_inherit_restricted_caller_arguments_accessors() {
     assert_eq!(
         run("var af = () => {}; af.hasOwnProperty('caller') + ':' + af.hasOwnProperty('arguments');"),

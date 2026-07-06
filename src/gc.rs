@@ -129,6 +129,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         HeapObj::Function(f) => {
             worklist.push(f.closure.0);
+            push_value(&f.lexical_new_target, worklist);
             if let Some(p) = f.prototype.lock().as_ref() {
                 push_value(p, worklist);
             }

@@ -788,6 +788,7 @@ impl Vm {
         env: GcIdx,
         this_val: Value,
         args: &[Value],
+        new_target: Value,
     ) -> error::Result<Value> {
         let mut locals = vec![Value::Undefined; fdef.num_locals.max(256)];
         for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
@@ -809,12 +810,7 @@ impl Vm {
         if let Some(frame) = self.frames.last_mut() {
             frame.callee = callee;
             frame.in_parameter_initializers = fdef.has_parameter_expressions;
-        }
-        // Apply `new.target` if this call was a Construct.
-        if let Some(nt) = self.pending_new_target.take() {
-            if let Some(frame) = self.frames.last_mut() {
-                frame.new_target = nt;
-            }
+            frame.new_target = new_target;
         }
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
@@ -1273,6 +1269,7 @@ enum FuncCallInfo {
     Interpreted {
         func: std::sync::Arc<crate::function::FunctionDef>,
         closure: GcIdx,
+        lexical_new_target: Value,
         is_arrow: bool,
         is_async: bool,
         is_class_ctor: bool,

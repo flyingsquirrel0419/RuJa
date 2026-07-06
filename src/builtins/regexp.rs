@@ -664,6 +664,7 @@ pub(crate) fn make_builtin_constructor_with(
         name: Some(Arc::from(name)),
         kind: FunctionKind::Native { func: ctor, length },
         closure: vm.global,
+        lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
         proto: Mutex::new(match vm.function_proto {

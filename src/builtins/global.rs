@@ -480,6 +480,7 @@ fn dynamic_function_constructor(
         name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
         closure: vm.global,
+        lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(proto_val.clone())),
         proto: Mutex::new(match function_object_proto {

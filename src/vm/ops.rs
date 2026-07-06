@@ -3104,10 +3104,19 @@ impl Vm {
             } else {
                 env_idx
             };
+            let lexical_new_target = if is_arrow {
+                self.frames
+                    .last()
+                    .map(|frame| frame.new_target.clone())
+                    .unwrap_or(Value::Undefined)
+            } else {
+                Value::Undefined
+            };
             let fd = crate::value::FunctionData {
                 name: fdef.name.clone(),
                 kind: crate::value::FunctionKind::Interpreted { func: fdef },
                 closure: closure_env,
+                lexical_new_target,
                 is_class_ctor: std::sync::atomic::AtomicBool::new(false),
                 prototype: Mutex::new(if has_prototype {
                     Some(proto_val.clone())

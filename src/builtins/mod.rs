@@ -241,6 +241,7 @@ pub(crate) fn make_builtin_constructor(
             length: 1,
         },
         closure: vm.global,
+        lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
         proto: Mutex::new(match vm.function_proto {
@@ -293,6 +294,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             length: 1,
         },
         closure: vm.global,
+        lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
         proto: Mutex::new(match vm.function_proto {

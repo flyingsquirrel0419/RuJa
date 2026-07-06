@@ -532,6 +532,10 @@ pub struct FunctionData {
     pub name: Option<Arc<str>>,
     pub kind: FunctionKind,
     pub closure: GcIdx,
+    /// Lexically captured `new.target` for arrow functions. Non-arrow
+    /// functions keep this as `undefined`; construct calls still use the
+    /// per-frame `new_target` set by the VM.
+    pub lexical_new_target: Value,
     /// True for class constructors: calling them without `new` is a TypeError.
     pub is_class_ctor: std::sync::atomic::AtomicBool,
     pub prototype: Mutex<Option<Value>>,
