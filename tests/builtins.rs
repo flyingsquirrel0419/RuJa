@@ -950,6 +950,26 @@ fn error_subclass() {
 }
 
 #[test]
+fn thrown_custom_constructor_object_preserves_constructor_name_in_display() {
+    let msg = run_err(
+        r#"
+        function Test262Error(message) {
+          if (!(this instanceof Test262Error)) return new Test262Error(message);
+          this.message = message || "";
+        }
+        Test262Error.prototype.toString = function() {
+          return "Test262Error: " + this.message;
+        };
+        throw new Test262Error();
+        "#,
+    );
+    assert!(msg.contains("Test262Error"), "got: {msg}");
+
+    let native = run_err("throw new Error('native');");
+    assert!(native.contains("Error: native"), "got: {native}");
+}
+
+#[test]
 fn error_subclass_plain_call_uses_active_constructor_prototype() {
     assert_eq!(
         run(

@@ -24,6 +24,11 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
 
+- **Thrown custom object display**: uncaught ordinary objects created by custom
+  constructors now include their prototype constructor name in the host error
+  message, preserving test262's `Test262Error` signal without changing the
+  caught thrown value. This closes the remaining `language/line-terminators`
+  failures, raising that shard to **41 pass / 0 fail / 0 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::value::{PropertyKey, Value};
+use crate::value::{HeapObj, PropertyKey, Value};
 
 #[derive(Debug, Clone)]
 pub struct Error {
@@ -155,23 +155,55 @@ fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
         Value::Number(n) => crate::value::num_to_string(*n),
         Value::Bool(b) => b.to_string(),
         Value::BigInt(n) => n.to_string(),
-        Value::Object(idx) => heap.with_obj(idx.0, |obj| {
-            let props = obj.props();
-            if let Some(desc) = props
-                .lock()
-                .get(&crate::value::PropertyKey::from("message"))
-            {
-                match &desc.value {
-                    Value::String(s) => s.to_string(),
-                    _ => "[object Error]".to_string(),
+        Value::Object(idx) => {
+            let (message, class_name, proto) = heap.with_obj(idx.0, |obj| {
+                (
+                    own_string_property(obj, "message"),
+                    obj.class_name().to_string(),
+                    obj.proto().lock().clone(),
+                )
+            });
+            if class_name == "Object" {
+                if let Some(name) = constructor_name_from_prototype(proto, heap) {
+                    if name != "Object" {
+                        return format!("{}: {}", name, message.unwrap_or_default());
+                    }
                 }
-            } else {
-                "[object Object]".to_string()
             }
-        }),
+            message.unwrap_or_else(|| "[object Object]".to_string())
+        }
         Value::Symbol(_) => "Symbol".to_string(),
         Value::Reference(_) => "[reference]".to_string(),
     }
+}
+
+fn own_string_property(obj: &HeapObj, key: &str) -> Option<String> {
+    obj.props()
+        .lock()
+        .get(&PropertyKey::from(key))
+        .and_then(|desc| match &desc.value {
+            Value::String(s) => Some(s.to_string()),
+            _ => None,
+        })
+}
+
+fn constructor_name_from_prototype(proto: Option<Value>, heap: &crate::gc::Heap) -> Option<String> {
+    let Value::Object(proto_idx) = proto? else {
+        return None;
+    };
+    let ctor = heap.with_obj(proto_idx.0, |obj| {
+        obj.props()
+            .lock()
+            .get(&PropertyKey::from("constructor"))
+            .map(|desc| desc.value.clone())
+    })?;
+    let Value::Object(ctor_idx) = ctor else {
+        return None;
+    };
+    heap.with_obj(ctor_idx.0, |obj| match obj {
+        HeapObj::Function(f) => f.name.as_ref().map(|s| s.to_string()),
+        _ => own_string_property(obj, "name"),
+    })
 }
 
 impl fmt::Display for Error {

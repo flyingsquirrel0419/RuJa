@@ -137,6 +137,12 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Thrown custom object display** —
+  Uncaught ordinary objects created by custom constructors now include their
+  prototype constructor name in the host error message. This preserves
+  test262's `Test262Error` marker while keeping the actual thrown value
+  unchanged for `catch` blocks. The focused `language/line-terminators` shard
+  now runs at **41 pass / 0 fail / 0 skip**.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,
