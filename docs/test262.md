@@ -203,6 +203,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/expressions/logical-assignment language/expressions/update` cluster
   runs at **338 pass / 0 fail / 406 skip**, with local regression coverage for
   the previously untested Reference edges.
+- **Private-field assignment targets** —
+  Private-field update, compound, and logical assignments now keep the private
+  reference base evaluated once and store back through the same object. This
+  makes `obj.#x++`, `obj.#x += y`, and `obj.#x ||= y` update private fields and
+  accessors correctly while preserving short-circuit expression results. The
+  focused `language/expressions/compound-assignment
+  language/expressions/logical-assignment language/expressions/update` run is
+  **463 pass / 0 fail / 69 skip**. Private class feature tests are still
+  skipped by the runner's unsupported-feature filters, so this edge is guarded
+  by local class regression tests until those filters are lifted.
 - **`delete` through `with` object environments** —
   Identifier deletion now routes `with` object environment records through
   the same `[[HasProperty]]` and `Symbol.unscopables` HasBinding logic as

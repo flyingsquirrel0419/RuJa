@@ -2559,26 +2559,28 @@ impl Compiler {
                         // Identifier target.
                         // Private field target: `obj.#f++` / `++obj.#f`.
                         if let Expr::PrivateGet { object, name } = target.as_ref() {
-                            // Load current value.
+                            // Evaluate the private reference base once and
+                            // keep it for SetPrivate after GetPrivate consumes
+                            // its copy.
                             self.compile_expr(object)?; // [obj]
+                            self.chunk.emit(Op::Dup, self.current_line); // [obj, obj]
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                            self.chunk.emit(Op::GetPrivate(name_idx), self.current_line); // [oldVal]
-                            self.chunk.emit(Op::ToNumeric, self.current_line); // [oldNum]
+                            self.chunk.emit(Op::GetPrivate(name_idx), self.current_line);
+                            // [obj, oldVal]
+                            self.chunk.emit(Op::ToNumeric, self.current_line);
+                            // [obj, oldNum]
                             let tmp_idx = self.intern("#upd");
-                            self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line); // []
-                                                                                         // Build [obj, newNum] and store.
-                            self.compile_expr(object)?; // [obj]
-                            self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line); // [obj, oldNum]
-                            self.chunk.emit(Op::Dup, self.current_line); // [obj, oldNum, oldNum]
-                            self.chunk.emit(inc_op(), self.current_line); // [obj, oldNum, newNum]
-                            self.chunk.emit(Op::Swap, self.current_line); // [obj, newNum, oldNum]
-                            self.chunk.emit(Op::Pop, self.current_line); // [obj, newNum]
-                            self.chunk.emit(Op::SetPrivate(name_idx), self.current_line); // [newVal]
-                            self.chunk.emit(Op::Pop, self.current_line); // []
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line);
+                            // [obj, oldNum]
+                            self.chunk.emit(inc_op(), self.current_line);
+                            // [obj, newNum]
+                            self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                            // [newNum]
                             if *prefix {
-                                self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
-                                self.chunk.emit(inc_op(), self.current_line); // [newNum]
+                                // keep newNum
                             } else {
+                                self.chunk.emit(Op::Pop, self.current_line);
                                 self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
                                 // [oldNum]
                             }
@@ -4142,6 +4144,15 @@ impl Compiler {
     ) -> error::Result<()> {
         let bin = self.assign_bin_op(op);
         match target {
+            Expr::PrivateGet { object, name } => {
+                self.compile_expr(object)?;
+                self.chunk.emit(Op::Dup, self.current_line);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::GetPrivate(name_idx), self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(bin, 0);
+                self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+            }
             Expr::Member {
                 object,
                 property,
@@ -4254,6 +4265,34 @@ impl Compiler {
         value: &Expr,
     ) -> error::Result<()> {
         match target {
+            Expr::PrivateGet { object, name } => {
+                self.compile_expr(object)?;
+                self.chunk.emit(Op::Dup, self.current_line);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::GetPrivate(name_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                let cond_jump = match op {
+                    AssignOp::AndAssign => Op::JumpIfFalse(0),
+                    AssignOp::OrAssign => Op::JumpIfTrue(0),
+                    AssignOp::NullishAssign => Op::JumpIfNotNullish(0),
+                    _ => unreachable!(),
+                };
+                let jskip = self.chunk.code.len();
+                self.chunk.emit(cond_jump, 0);
+                // Assignment path: drop old value, keep object, evaluate RHS,
+                // and store through the same private reference base.
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                let jend = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), self.current_line);
+                self.chunk.patch_jump(jskip, self.chunk.code.len());
+                // Short-circuit path leaves [obj, currentValue]. Drop object
+                // and keep currentValue as the expression result.
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.patch_jump(jend, self.chunk.code.len());
+            }
             Expr::Member {
                 object,
                 property,

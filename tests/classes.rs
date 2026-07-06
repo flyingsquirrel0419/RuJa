@@ -138,6 +138,50 @@ fn private_field_increment() {
 }
 
 #[test]
+fn private_field_update_evaluates_object_once() {
+    assert_eq!(
+        run("var calls=0; class C{#c=1;m(){function f(){calls++;return this;} f.call(this).#c++; return calls + ':' + this.#c;}} new C().m();"),
+        Value::String(Arc::from("1:2"))
+    );
+}
+
+#[test]
+fn private_field_compound_assignment_updates_field() {
+    assert_eq!(
+        run("class C{#c=1;m(){this.#c+=2;return this.#c;}} new C().m();"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("var calls=0; class C{#c=4;m(){function f(){calls++;return this;} f.call(this).#c*=3; return calls + ':' + this.#c;}} new C().m();"),
+        Value::String(Arc::from("1:12"))
+    );
+    assert_eq!(
+        run("class C{#v=1;get #c(){return this.#v;}set #c(v){this.#v=v;}m(){this.#c+=2;return this.#v;}} new C().m();"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn private_field_logical_assignment_updates_and_short_circuits() {
+    assert_eq!(
+        run("class C{#c=0;m(){this.#c ||= 5; return this.#c;}} new C().m();"),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        run("class C{#c=1;m(){this.#c &&= 5; return this.#c;}} new C().m();"),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        run("var calls=0; class C{#c=7;m(){function rhs(){calls++;return 9;} var r = (this.#c ||= rhs()); return r + ':' + this.#c + ':' + calls;}} new C().m();"),
+        Value::String(Arc::from("7:7:0"))
+    );
+    assert_eq!(
+        run("var calls=0; class C{#c=1;m(){function f(){calls++;return this;} f.call(this).#c &&= 9; return calls + ':' + this.#c;}} new C().m();"),
+        Value::String(Arc::from("1:9"))
+    );
+}
+
+#[test]
 fn private_field_set_in_method() {
     assert_eq!(
         run("class C{#c=0;set(v){this.#c=v;}get v(){return this.#c;}}let c=new C();c.set(99);c.v;"),

@@ -87,6 +87,16 @@ Current supported subset count: **4276 pass / 0 fail / 0 timeout**.
   `language/statements/with` run stays closed at **169 pass / 0 fail / 12
   skip**, and the supported subset remains at **4276 pass / 0 fail / 16162
   skip** while closing this untracked Reference/eval edge.
+- **Private-field assignment targets**: private-field update, compound, and
+  logical assignments now preserve the evaluated private reference base instead
+  of re-evaluating the object expression or only returning the computed value.
+  `obj.#x++`, `obj.#x += y`, and `obj.#x ||= y` now update the private slot or
+  accessor through the same object, and logical short-circuit paths keep the
+  existing value as the expression result. The focused
+  `language/expressions/compound-assignment
+  language/expressions/logical-assignment language/expressions/update` run is
+  **463 pass / 0 fail / 69 skip**; private class feature tests remain skipped
+  by the runner, so local class regression tests cover this edge.
 - **Arrow lexical `new.target`**: arrow closures now capture their enclosing
   frame's `new.target` at creation time and reuse it when executing later,
   including arrows returned from constructors. `optional-catch-binding` and
