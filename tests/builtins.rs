@@ -1575,10 +1575,11 @@ fn promise_static_surface_and_species_descriptor() {
                 typeof Promise.allSettled,
                 typeof Promise.any,
                 typeof Promise.try,
+                typeof Promise.withResolvers,
                 typeof Promise.prototype.finally
              ].join(',');"),
         Value::String(Arc::from(
-            "function,function,function,function,function,function"
+            "function,function,function,function,function,function,function"
         ))
     );
     assert_eq!(
@@ -1615,6 +1616,65 @@ fn promise_static_combinators_return_promises() {
                 Promise.resolve(1).finally(function(){}) instanceof Promise
              ].join(',');"),
         Value::String(Arc::from("true,true,true,true,true,true"))
+    );
+}
+
+#[test]
+fn promise_static_resolve_and_reject_use_receiver_constructor_capability() {
+    assert_eq!(
+        run("class SubPromise extends Promise {}
+             [
+               Promise.resolve.call(SubPromise, 1) instanceof SubPromise,
+               Promise.reject.call(SubPromise, 2) instanceof SubPromise
+             ].join(':');"),
+        Value::String(Arc::from("true:true"))
+    );
+    assert_eq!(
+        run("var p = Promise.resolve(1);
+             Promise.resolve(p) === p && (p.constructor = null, Promise.resolve(p) !== p);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var seenThis, seenArg, callCount = 0;
+             var P = function(executor) {
+               return new Promise(function() {
+                 executor(function(v) { callCount += 1; seenThis = this; seenArg = v; },
+                          function() {});
+               });
+             };
+             var obj = {};
+             Promise.resolve.call(P, obj);
+             callCount === 1 && seenThis === globalThis && seenArg === obj;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var seenThis, seenArg;
+             var P = function(executor) {
+               return new Promise(function() {
+                 executor(function() {}, function(v) { seenThis = this; seenArg = v; });
+               });
+             };
+             Promise.reject.call(P, 24601);
+             seenThis === globalThis && seenArg === 24601;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_static_resolve_and_reject_validate_capability_constructor() {
+    assert_eq!(
+        run("var badResolve = false, badReject = false;
+             try { Promise.resolve.call(eval, 1); } catch (e) { badResolve = e instanceof TypeError; }
+             try { Promise.reject.call(eval, 1); } catch (e) { badReject = e instanceof TypeError; }
+             badResolve && badReject;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var rejected = false;
+             try { Promise.resolve.call(function(executor) {}, 1); }
+             catch (e) { rejected = e instanceof TypeError; }
+             rejected;"),
+        Value::Bool(true)
     );
 }
 

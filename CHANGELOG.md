@@ -42,9 +42,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `any`, `try`, `withResolvers`, `prototype.finally`, and the
   `Promise[@@species]` accessor. Promise resolve/reject functions created by
   the constructor are now anonymous unary built-ins with the expected
-  `length`/`name` descriptors and no own `prototype`.
+  `length`/`name` descriptors and no own `prototype`. Static
+  `Promise.resolve` and `Promise.reject` now create and invoke a
+  `NewPromiseCapability` from their receiver constructor, so subclass/custom
+  constructor capabilities and bad receivers follow the spec path.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **101 pass / 153 fail / 1 timeout / 448 skip**; full Promise
+  lifted is now **121 pass / 133 fail / 1 timeout / 448 skip**; full Promise
   capability/species/thenable semantics remain future work before lifting the
   `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now

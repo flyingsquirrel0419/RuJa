@@ -703,6 +703,102 @@ fn create_promise_resolving_function(
     create_bound_native_function(vm, "", "", func, 1, promise)
 }
 
+struct PromiseCapability {
+    promise: Value,
+    resolve: Value,
+    reject: Value,
+}
+
+pub(crate) fn promise_capability_executor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let capability_obj = match this {
+        Some(Value::Object(idx)) => idx,
+        _ => return Err(Error::type_err("Promise capability executor receiver")),
+    };
+    let resolve = args.first().cloned().unwrap_or(Value::Undefined);
+    let reject = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.heap.with_obj(capability_obj.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        let existing_resolve = props
+            .get(&PropertyKey::from("resolve"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        let existing_reject = props
+            .get(&PropertyKey::from("reject"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        if !existing_resolve.is_undefined() || !existing_reject.is_undefined() {
+            return Err(Error::type_err("Promise capability already resolved"));
+        }
+        props.insert(
+            PropertyKey::from("resolve"),
+            PropertyDescriptor::data(resolve),
+        );
+        props.insert(
+            PropertyKey::from("reject"),
+            PropertyDescriptor::data(reject),
+        );
+        Ok(Value::Undefined)
+    })
+}
+
+fn new_promise_capability(vm: &mut Vm, ctor: Value) -> error::Result<PromiseCapability> {
+    if !vm.is_constructor_value(&ctor) {
+        return Err(Error::type_err(
+            "Promise capability receiver is not a constructor",
+        ));
+    }
+
+    let capability_idx = vm.new_object()?;
+    let capability = Value::Object(capability_idx);
+    let executor = create_bound_native_function(
+        vm,
+        "",
+        "",
+        promise_capability_executor,
+        2,
+        capability.clone(),
+    )?;
+    let pins = vm.pin_many(&[ctor.clone(), capability.clone(), executor.clone()]);
+    let promise_result = vm.construct(&ctor, std::slice::from_ref(&executor));
+    let promise = match promise_result {
+        Ok(promise) => promise,
+        Err(err) => {
+            vm.unpin_many(pins);
+            return Err(err);
+        }
+    };
+    let (resolve, reject) = vm.heap.with_obj(capability_idx.0, |obj| {
+        let props = obj.props();
+        let props = props.lock();
+        let resolve = props
+            .get(&PropertyKey::from("resolve"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        let reject = props
+            .get(&PropertyKey::from("reject"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        (resolve, reject)
+    });
+    vm.unpin_many(pins);
+
+    if !is_callable(&resolve, &vm.heap) || !is_callable(&reject, &vm.heap) {
+        return Err(Error::type_err(
+            "Promise capability functions are not callable",
+        ));
+    }
+    Ok(PromiseCapability {
+        promise,
+        resolve,
+        reject,
+    })
+}
+
 pub(crate) fn promise_resolve(
     vm: &mut Vm,
     args: &[Value],
@@ -730,42 +826,65 @@ pub(crate) fn promise_reject(
     Ok(Value::Undefined)
 }
 
-/// `Promise.resolve(v)`: returns a promise resolved with `v`. If `v` is already
-/// a promise, it is returned as-is (simplified adoption).
+/// `Promise.resolve(v)`: create a promise capability from the receiver
+/// constructor and resolve it with `v`.
 pub(crate) fn promise_static_resolve(
     vm: &mut Vm,
     args: &[Value],
-    _this: Option<Value>,
+    this: Option<Value>,
 ) -> error::Result<Value> {
+    let ctor = this.unwrap_or(Value::Undefined);
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &value {
         let is_promise = vm
             .heap
             .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
         if is_promise {
-            return Ok(value);
+            let value_constructor =
+                vm.get_property_by_key(&value, &PropertyKey::from("constructor"))?;
+            if value_constructor == ctor {
+                return Ok(value);
+            }
         }
     }
-    let p_idx = vm
-        .heap
-        .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: Mutex::new(crate::value::PromiseStatus::Fulfilled),
-            result: Mutex::new(value),
-            handlers: Mutex::new(Vec::new()),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
-        }))?;
-    Ok(Value::Object(GcIdx(p_idx)))
+    let capability = new_promise_capability(vm, ctor)?;
+    let pins = vm.pin_many(&[
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        value.clone(),
+    ]);
+    let result = vm.call_function(
+        &capability.resolve,
+        std::slice::from_ref(&value),
+        Some(Value::Undefined),
+    );
+    vm.unpin_many(pins);
+    result?;
+    Ok(capability.promise)
 }
 
 /// `Promise.reject(r)`: returns a promise rejected with `r`.
 pub(crate) fn promise_static_reject(
     vm: &mut Vm,
     args: &[Value],
-    _this: Option<Value>,
+    this: Option<Value>,
 ) -> error::Result<Value> {
+    let ctor = this.unwrap_or(Value::Undefined);
     let reason = args.first().cloned().unwrap_or(Value::Undefined);
-    make_rejected_promise(vm, reason)
+    let capability = new_promise_capability(vm, ctor)?;
+    let pins = vm.pin_many(&[
+        capability.promise.clone(),
+        capability.reject.clone(),
+        reason.clone(),
+    ]);
+    let result = vm.call_function(
+        &capability.reject,
+        std::slice::from_ref(&reason),
+        Some(Value::Undefined),
+    );
+    vm.unpin_many(pins);
+    result?;
+    Ok(capability.promise)
 }
 
 fn make_pending_promise(vm: &mut Vm) -> error::Result<Value> {
