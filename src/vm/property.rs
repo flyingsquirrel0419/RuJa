@@ -121,7 +121,7 @@ impl Vm {
             _ => return Ok(Value::Undefined),
         };
         if !proto.is_undefined() {
-            return self.get_property(&proto, key);
+            return self.get_property_rx(&proto, key, obj.clone(), 0);
         }
         Ok(Value::Undefined)
     }

@@ -165,6 +165,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/fromCodePoint built-ins/String/raw
   built-ins/String/fromCharCode` cluster now runs at **51 pass / 0 fail / 7
   skip**.
+- **Function-code `this` binding and primitive receivers** —
+  Non-strict interpreted functions now convert `this` per function-code entry
+  rules: nullish receivers become the global object and primitive receivers are
+  boxed, while strict functions keep the raw receiver. Primitive prototype
+  accessor lookup also preserves the original primitive as the receiver through
+  the prototype chain, so strict getters see the primitive and sloppy getters
+  see the boxed object. The focused `language/function-code` cluster now runs
+  at **212 pass / 5 fail / 0 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

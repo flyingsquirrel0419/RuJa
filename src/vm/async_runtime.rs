@@ -535,8 +535,12 @@ impl Vm {
                     this.unwrap_or(Value::Undefined)
                 } else {
                     let raw = this.unwrap_or(Value::Undefined);
-                    if raw.is_undefined() && !func.chunk.is_strict {
-                        self.global_this.clone()
+                    if !func.chunk.is_strict {
+                        if raw.is_nullish() {
+                            self.global_this.clone()
+                        } else {
+                            self.to_object(&raw)?
+                        }
                     } else {
                         raw
                     }

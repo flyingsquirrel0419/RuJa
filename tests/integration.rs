@@ -120,6 +120,26 @@ fn this_in_method() {
 }
 
 #[test]
+fn sloppy_function_boxes_primitive_this() {
+    assert_eq!(
+        run("function sloppy(){ return typeof this; } sloppy.call(5);"),
+        Value::String(Arc::from("object"))
+    );
+    assert_eq!(
+        run("function strict(){ 'use strict'; return typeof this; } strict.call(5);"),
+        Value::String(Arc::from("number"))
+    );
+    assert_eq!(
+        run("Object.defineProperty(Object.prototype, 'rujaThisBox', { get: function(){ return this; } }); (5).rujaThisBox == 5;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("'use strict'; Object.defineProperty(Object.prototype, 'rujaStrictThis', { get: function(){ return this; } }); (5).rujaStrictThis === 5 && typeof (5).rujaStrictThis === 'number';"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn prototype_method() {
     let src = r#"
         function Animal(name) { this.name = name; }

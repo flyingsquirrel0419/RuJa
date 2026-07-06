@@ -42,6 +42,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   `built-ins/String/fromCodePoint built-ins/String/raw
   built-ins/String/fromCharCode` cluster now runs at **51 pass / 0 fail / 7
   skip**.
+- **Function-code `this` binding and primitive receiver semantics**:
+  non-strict interpreted functions now apply the required `this` binding
+  conversion, mapping nullish receivers to the global object and boxing
+  primitive receivers with `ToObject`, while strict functions preserve the raw
+  receiver. Primitive prototype accessor lookup now keeps the original
+  primitive receiver through the prototype chain so strict getters see the
+  primitive and sloppy getters receive the boxed object. The focused
+  `language/function-code` cluster improves to **212 pass / 5 fail / 0 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline
