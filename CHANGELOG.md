@@ -63,9 +63,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   records ordered fulfilled/rejected result objects, and rejects the outer
   capability if the final capability resolve abruptly completes. `Promise.all`
   also now rejects its outer capability if the final capability resolve
-  abruptly completes.
+  abruptly completes. `Promise.any` now follows the receiver constructor
+  capability and `C.resolve` path, invokes observable `then`, tracks
+  per-element rejection functions with `alreadyCalled` guards, preserves
+  rejection order, and rejects with a minimal `AggregateError` carrying a
+  non-enumerable `errors` array.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **213 pass / 42 fail / 0 timeout / 448 skip**; full Promise
+  lifted is now **232 pass / 23 fail / 0 timeout / 448 skip**. Focused
+  `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
+  `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
+  **136 pass / 0 fail / 284 skip**; full Promise
   thenable assimilation and the remaining combinator semantics remain future
   work before lifting the `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now

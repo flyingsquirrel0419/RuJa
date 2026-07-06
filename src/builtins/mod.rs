@@ -2081,6 +2081,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         "SyntaxError",
         "EvalError",
         "URIError",
+        "AggregateError",
     ] {
         let (ctor, _) = make_error_constructor(vm, name)?;
         define_global(vm, name, Value::Object(ctor));

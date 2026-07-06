@@ -850,7 +850,8 @@ impl Vm {
                     | Some("ReferenceError")
                     | Some("SyntaxError")
                     | Some("TypeError")
-                    | Some("URIError") => Some(Arc::from("Error")),
+                    | Some("URIError")
+                    | Some("AggregateError") => Some(Arc::from("Error")),
                     Some("Date") => Some(Arc::from("Date")),
                     _ => None,
                 }

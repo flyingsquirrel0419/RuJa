@@ -210,10 +210,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `C.resolve` path, creates paired per-element resolve/reject functions sharing
   an `alreadyCalled` guard, records ordered fulfilled/rejected result objects,
   and rejects the outer capability if the final capability resolve abruptly
-  completes. `Promise.all` also rejects its outer capability if the final
-  capability resolve abruptly completes.
+  completes. `Promise.any` now follows the receiver constructor capability and
+  `C.resolve` path, invokes observable `then`, tracks per-element rejection
+  functions with `alreadyCalled` guards, preserves rejection order, and rejects
+  with a minimal `AggregateError` carrying a non-enumerable `errors` array.
+  `Promise.all` also rejects its outer capability if the final capability
+  resolve abruptly completes.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **213 pass / 42 fail / 0 timeout / 448 skip**. The Promise skip remains in
+  **232 pass / 23 fail / 0 timeout / 448 skip**. Focused
+  `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
+  `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
+  **136 pass / 0 fail / 284 skip**. The Promise skip remains in
   the supported runner until thenable assimilation and the remaining combinator
   semantics are implemented more fully.
 - **Mapped arguments exotic descriptors** —
