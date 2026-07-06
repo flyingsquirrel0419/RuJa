@@ -871,58 +871,138 @@ fn format_radix(n: f64, radix: u32) -> String {
     }
 }
 
-/// Collect an object's own enumerable string keys in array-index-first then property order.
-pub(crate) fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
+fn array_index_key(name: &str) -> Option<u32> {
+    if name.is_empty()
+        || !name.bytes().all(|b| b.is_ascii_digit())
+        || (name.len() > 1 && name.starts_with('0'))
+    {
+        return None;
+    }
+    name.parse::<u32>()
+        .ok()
+        .filter(|n| (*n as u64) < (1u64 << 32) - 1)
+}
+
+fn push_unique_key(
+    keys: &mut Vec<PropertyKey>,
+    seen: &mut IndexSet<PropertyKey>,
+    key: PropertyKey,
+) {
+    if seen.insert(key.clone()) {
+        keys.push(key);
+    }
+}
+
+fn own_property_keys(
+    vm: &mut Vm,
+    obj: &Value,
+    enumerable_only: bool,
+    include_strings: bool,
+    include_symbols: bool,
+) -> Vec<PropertyKey> {
     let mut keys = Vec::new();
-    if let Value::Object(idx) = obj {
-        vm.heap.with_obj(idx.0, |o| {
+    let mut seen = IndexSet::new();
+    match obj {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            let mut index_keys: Vec<u32> = Vec::new();
+            let mut string_keys: Vec<PropertyKey> = Vec::new();
+            let mut symbol_keys: Vec<PropertyKey> = Vec::new();
+
             if let HeapObj::Array(a) = o {
-                for i in 0..a.items.lock().len() {
-                    keys.push(Arc::from(i.to_string().as_str()));
-                }
-            }
-            if let HeapObj::Map(m) = o {
-                for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
-                    if let Value::String(s) = k {
-                        keys.push(s.clone());
+                if include_strings {
+                    for i in 0..a.items.lock().len() {
+                        index_keys.push(i as u32);
+                    }
+                    if !enumerable_only {
+                        string_keys.push(PropertyKey::from("length"));
                     }
                 }
             }
-            // Spec enumeration order: array-index keys (canonical integer
-            // indices) in ascending numeric order, then the remaining string
-            // keys in insertion order.
-            let mut index_keys: Vec<u32> = Vec::new();
-            let mut other_keys: Vec<Arc<str>> = Vec::new();
+
+            if let HeapObj::Object(od) = o {
+                if include_strings {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        for i in 0..crate::value::utf16_len(&s) {
+                            index_keys.push(i as u32);
+                        }
+                        if !enumerable_only {
+                            string_keys.push(PropertyKey::from("length"));
+                        }
+                    }
+                }
+            }
+
+            if let HeapObj::Map(m) = o {
+                if include_strings {
+                    for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
+                        if let Value::String(s) = k {
+                            string_keys.push(PropertyKey::from(s.clone()));
+                        }
+                    }
+                }
+            }
+
             for (k, desc) in o.props().lock().iter() {
-                if !desc.enumerable {
+                if enumerable_only && !desc.enumerable {
                     continue;
                 }
-                if let crate::value::PropertyKey::Str(s) = k {
-                    // A string is an array index iff it is a canonical decimal
-                    // integer in [0, 2^32-1) (no leading zeros, no sign).
-                    let is_index = !s.is_empty()
-                        && s.bytes().all(|b| b.is_ascii_digit())
-                        && !(s.len() > 1 && s.starts_with('0'))
-                        && s.parse::<u32>()
-                            .map(|n| (n as u64) < (1u64 << 32))
-                            .unwrap_or(false);
-                    if is_index {
-                        index_keys.push(s.parse::<u32>().unwrap());
-                    } else {
-                        other_keys.push(s.clone());
+                match k {
+                    PropertyKey::Str(s) if include_strings => {
+                        if let Some(index) = array_index_key(s) {
+                            index_keys.push(index);
+                        } else {
+                            string_keys.push(PropertyKey::from(s.clone()));
+                        }
                     }
+                    PropertyKey::Symbol(id) if include_symbols => {
+                        symbol_keys.push(PropertyKey::Symbol(*id));
+                    }
+                    _ => {}
                 }
             }
+
             index_keys.sort_unstable();
+            index_keys.dedup();
             for n in index_keys {
-                keys.push(Arc::from(n.to_string().as_str()));
+                push_unique_key(
+                    &mut keys,
+                    &mut seen,
+                    PropertyKey::from(n.to_string().as_str()),
+                );
             }
-            for k in other_keys {
-                keys.push(k);
+            for key in string_keys {
+                push_unique_key(&mut keys, &mut seen, key);
             }
-        });
+            for key in symbol_keys {
+                push_unique_key(&mut keys, &mut seen, key);
+            }
+        }),
+        Value::String(s) if include_strings => {
+            for i in 0..crate::value::utf16_len(s) {
+                push_unique_key(
+                    &mut keys,
+                    &mut seen,
+                    PropertyKey::from(i.to_string().as_str()),
+                );
+            }
+            if !enumerable_only {
+                push_unique_key(&mut keys, &mut seen, PropertyKey::from("length"));
+            }
+        }
+        _ => {}
     }
     keys
+}
+
+/// Collect an object's own enumerable string keys in array-index-first then property order.
+pub(crate) fn own_string_keys(vm: &mut Vm, obj: &Value) -> Vec<Arc<str>> {
+    own_property_keys(vm, obj, true, true, false)
+        .into_iter()
+        .filter_map(|key| match key {
+            PropertyKey::Str(s) => Some(s),
+            PropertyKey::Symbol(_) => None,
+        })
+        .collect()
 }
 
 pub(crate) fn make_value_array(vm: &mut Vm, items: Vec<Value>) -> error::Result<Value> {
@@ -944,7 +1024,13 @@ pub(crate) fn make_str_array(vm: &mut Vm, strs: Vec<Arc<str>>) -> error::Result<
 }
 
 fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
     let keys = own_string_keys(vm, &obj);
     make_str_array(vm, keys)
 }
@@ -1083,9 +1169,43 @@ fn object_get_own_property_names(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let keys = own_string_keys(vm, &obj);
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
+    let keys: Vec<Arc<str>> = own_property_keys(vm, &obj, false, true, false)
+        .into_iter()
+        .filter_map(|key| match key {
+            PropertyKey::Str(s) => Some(s),
+            PropertyKey::Symbol(_) => None,
+        })
+        .collect();
     make_str_array(vm, keys)
+}
+
+fn object_get_own_property_symbols(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
+    let symbols: Vec<Value> = own_property_keys(vm, &obj, false, false, true)
+        .into_iter()
+        .filter_map(|key| match key {
+            PropertyKey::Symbol(id) => Some(Value::Symbol(id)),
+            PropertyKey::Str(_) => None,
+        })
+        .collect();
+    make_value_array(vm, symbols)
 }
 
 fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -1168,13 +1288,10 @@ fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<V
 fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
-        let sealed = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
-                let all_noncfg = od.props.lock().values().all(|d| !d.configurable);
-                all_noncfg
-            } else {
-                true
-            }
+        let sealed = vm.heap.with_obj(idx.0, |o| match o {
+            HeapObj::Object(od) => od.props.lock().values().all(|d| !d.configurable),
+            HeapObj::Array(_) => false,
+            _ => true,
         });
         return Ok(Value::Bool(sealed));
     }
@@ -1184,8 +1301,8 @@ fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
 fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
-        let frozen = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
+        let frozen = vm.heap.with_obj(idx.0, |o| match o {
+            HeapObj::Object(od) => {
                 let ext = od.extensible.load(Ordering::Relaxed);
                 let all_frozen = od
                     .props
@@ -1193,9 +1310,9 @@ fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
                     .values()
                     .all(|d| !d.configurable && !d.writable && !d.is_accessor);
                 !ext && all_frozen
-            } else {
-                true
             }
+            HeapObj::Array(_) => false,
+            _ => true,
         });
         return Ok(Value::Bool(frozen));
     }
@@ -1207,7 +1324,13 @@ fn object_get_own_property_descriptors(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    let object = args.first().unwrap_or(&Value::Undefined);
+    if object.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let obj = vm.to_object(object)?;
     let result_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.object_proto.clone())),
@@ -1216,69 +1339,21 @@ fn object_get_own_property_descriptors(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    if let Value::Object(idx) = &obj {
-        let keys = own_string_keys(vm, &obj);
-        let descs: Vec<(String, crate::value::PropertyDescriptor)> = keys
-            .iter()
-            .filter_map(|k| {
-                let pkey = crate::value::PropertyKey::from(k.as_ref());
-                let d = vm
-                    .heap
-                    .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned())?;
-                Some((k.to_string(), d))
-            })
-            .collect();
-        let mut p = IndexMap::new();
-        for (key, d) in descs {
-            let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.object_proto.clone())),
-                extensible: AtomicBool::new(true),
-                class_name: None,
-                private_fields: Mutex::new(std::collections::HashMap::new()),
-                primitive: Mutex::new(None),
-            }))?;
-            let mut dp = IndexMap::new();
-            if d.is_accessor {
-                dp.insert(
-                    PropertyKey::from("get"),
-                    data_prop(d.get.clone().unwrap_or(Value::Undefined)),
-                );
-                dp.insert(
-                    PropertyKey::from("set"),
-                    data_prop(d.set.clone().unwrap_or(Value::Undefined)),
-                );
-            } else {
-                dp.insert(PropertyKey::from("value"), data_prop(d.value.clone()));
-                dp.insert(
-                    PropertyKey::from("writable"),
-                    data_prop(Value::Bool(d.writable)),
-                );
-            }
-            dp.insert(
-                PropertyKey::from("enumerable"),
-                data_prop(Value::Bool(d.enumerable)),
-            );
-            dp.insert(
-                PropertyKey::from("configurable"),
-                data_prop(Value::Bool(d.configurable)),
-            );
-            vm.heap.with_obj(desc_obj, |o| {
-                if let HeapObj::Object(od) = o {
-                    *od.props.lock() = dp;
-                }
-            });
-            p.insert(
-                PropertyKey::from(key.as_str()),
-                data_prop(Value::Object(GcIdx(desc_obj))),
+    let keys = own_property_keys(vm, &obj, false, true, true);
+    let mut props = IndexMap::new();
+    for key in keys {
+        if let Some(desc) = own_property_descriptor_for_key(vm, &obj, &key) {
+            props.insert(
+                key,
+                PropertyDescriptor::data(from_property_descriptor(vm, desc)?),
             );
         }
-        vm.heap.with_obj(result_idx, |o| {
-            if let HeapObj::Object(od) = o {
-                *od.props.lock() = p;
-            }
-        });
     }
+    vm.heap.with_obj(result_idx, |o| {
+        if let HeapObj::Object(od) = o {
+            *od.props.lock() = props;
+        }
+    });
     Ok(Value::Object(GcIdx(result_idx)))
 }
 
@@ -1802,6 +1877,11 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         (
             "getOwnPropertyNames",
             object_get_own_property_names as NativeFn,
+            1,
+        ),
+        (
+            "getOwnPropertySymbols",
+            object_get_own_property_symbols as NativeFn,
             1,
         ),
         (

@@ -210,6 +210,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Array, String, Number, Date, RegExp, and URI global members were tightened as
   part of the same cluster. This closes the focused
   `Object.getOwnPropertyDescriptor` cluster at 308 pass / 0 fail / 2 skip.
+- **Object own-key enumeration** — `Object.keys`,
+  `Object.getOwnPropertyNames`, `Object.getOwnPropertySymbols`, and
+  `Object.getOwnPropertyDescriptors` now use shared array-index-first own-key
+  ordering, reject nullish inputs with `TypeError`, run supported primitives
+  through `ToObject`, include non-enumerable names where required, preserve
+  Symbol keys, and synthesize string primitive index/`length` descriptor keys.
+  This closes the focused `Object.getOwnPropertyDescriptors` and
+  `Object.getOwnPropertySymbols` clusters at 13 pass / 0 fail / 17 skip; the
+  broader own-key smoke run is 97 pass / 6 fail / 31 skip, with remaining
+  failures requiring broader `Function.prototype.call` receiver binding and
+  sparse-array hole representation fixes.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass

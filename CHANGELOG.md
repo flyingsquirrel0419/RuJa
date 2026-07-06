@@ -91,6 +91,18 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   descriptor-visible built-in prototype members were also tightened. The
   focused `Object.getOwnPropertyDescriptor` test262 cluster now runs at **308
   pass / 0 fail / 2 skip**.
+- **Object own-key enumeration**: `Object.keys`,
+  `Object.getOwnPropertyNames`, `Object.getOwnPropertySymbols`, and
+  `Object.getOwnPropertyDescriptors` now share array-index-first own-key
+  ordering, apply `ToObject` with nullish `TypeError` checks, include
+  non-enumerable string keys where required, preserve Symbol keys, and
+  synthesize primitive string index/`length` keys for descriptor collection.
+  `Object.getOwnPropertySymbols` is now exposed on `Object`, and the focused
+  `Object.getOwnPropertyDescriptors` plus `Object.getOwnPropertySymbols`
+  clusters now run at **13 pass / 0 fail / 17 skip**. The broader focused
+  own-key smoke run is **97 pass / 6 fail / 31 skip**, with remaining failures
+  tied to broader `Function.prototype.call` `this` binding and sparse-array
+  hole representation work.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

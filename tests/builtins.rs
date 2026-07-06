@@ -1257,6 +1257,43 @@ fn object_statics() {
     );
     assert_eq!(
         run(r#"
+            var sym = Symbol();
+            var obj = { a: 1 };
+            Object.defineProperty(obj, "b", { value: 2, enumerable: false });
+            obj[sym] = 3;
+            [
+              Object.getOwnPropertyNames(obj).join("|"),
+              Object.getOwnPropertySymbols(obj).length,
+              Object.getOwnPropertySymbols(obj)[0] === sym,
+              Object.getOwnPropertyDescriptors(obj).b.enumerable,
+              Object.getOwnPropertyDescriptors(obj)[sym].value
+            ].join(",");
+            "#),
+        Value::String(Arc::from("a|b,1,true,false,3"))
+    );
+    assert_eq!(
+        run(r#"
+            var descs = Object.getOwnPropertyDescriptors("ab");
+            [
+              Object.keys(descs).join("|"),
+              descs.length.value,
+              descs.length.enumerable,
+              descs[0].value,
+              descs[0].writable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("0|1|length,2,false,a,false"))
+    );
+    assert!(
+        run_err("Object.keys(null);").contains("TypeError"),
+        "Object.keys(null) should throw"
+    );
+    assert!(
+        run_err("Object.getOwnPropertyNames(undefined);").contains("TypeError"),
+        "Object.getOwnPropertyNames(undefined) should throw"
+    );
+    assert_eq!(
+        run(r#"
             var calls = 0;
             var key = { get toString() { calls++; throw new Error("key"); } };
             try { Object.getOwnPropertyDescriptor(null, key); } catch (e) {}
