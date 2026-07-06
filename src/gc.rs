@@ -194,8 +194,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             for h in p.handlers.lock().iter() {
                 push_value(&h.on_fulfilled, worklist);
                 push_value(&h.on_rejected, worklist);
-                if let Some(derived) = h.derived {
-                    worklist.push(derived.0);
+                if let Some(derived) = &h.derived {
+                    push_value(&derived.promise, worklist);
+                    push_value(&derived.resolve, worklist);
+                    push_value(&derived.reject, worklist);
                 }
             }
         }

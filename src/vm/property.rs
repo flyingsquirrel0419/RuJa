@@ -1419,6 +1419,7 @@ impl Vm {
             &self.boolean_proto,
             &self.error_proto,
             &self.symbol_proto,
+            &self.promise_ctor,
             &self.promise_proto,
             &self.iterator_proto,
             &self.map_proto,
@@ -1434,15 +1435,19 @@ impl Vm {
         for mt in &self.microtask_queue {
             match mt {
                 Microtask::Then {
+                    promise,
                     on_fulfilled,
                     on_rejected,
                     derived,
                     ..
                 } => {
+                    roots.push(promise.0);
                     Self::push_value_roots(&mut roots, on_fulfilled);
                     Self::push_value_roots(&mut roots, on_rejected);
-                    if let Some(idx) = derived {
-                        roots.push(idx.0);
+                    if let Some(capability) = derived {
+                        Self::push_value_roots(&mut roots, &capability.promise);
+                        Self::push_value_roots(&mut roots, &capability.resolve);
+                        Self::push_value_roots(&mut roots, &capability.reject);
                     }
                 }
                 Microtask::Resolve { value, .. } => {

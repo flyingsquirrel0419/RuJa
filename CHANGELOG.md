@@ -48,11 +48,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   constructor capabilities and bad receivers follow the spec path.
   `Promise.prototype.catch` and `Promise.prototype.finally` now invoke the
   receiver's observable `then` property instead of bypassing it through RuJa's
-  internal Promise path.
+  internal Promise path. `Promise.prototype.then` now validates its receiver
+  as a real Promise, resolves the derived promise through
+  `SpeciesConstructor`, and stores Promise reaction capabilities so custom
+  species constructors and capability executor validation follow the spec path.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **130 pass / 124 fail / 1 timeout / 448 skip**; full Promise
-  capability/species/thenable semantics remain future work before lifting the
-  `Promise` skip filter.
+  lifted is now **138 pass / 116 fail / 1 timeout / 448 skip**; full Promise
+  thenable assimilation and combinator semantics remain future work before
+  lifting the `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now
   preserve the enclosing method's `super` property parse context while still
   rejecting direct `super()` calls, and non-declaration

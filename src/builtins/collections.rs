@@ -1160,6 +1160,30 @@ pub(crate) fn promise_species_get(
     Ok(this.unwrap_or(Value::Undefined))
 }
 
+fn promise_species_constructor(
+    vm: &mut Vm,
+    promise: &Value,
+    default_constructor: Value,
+) -> error::Result<Value> {
+    let constructor = vm.get_property_by_key(promise, &PropertyKey::from("constructor"))?;
+    if constructor.is_undefined() {
+        return Ok(default_constructor);
+    }
+    if !matches!(constructor, Value::Object(_)) {
+        return Err(Error::type_err("Promise constructor is not an object"));
+    }
+
+    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species = vm.get_property_by_key(&constructor, &species_key)?;
+    if species.is_undefined() || matches!(species, Value::Null) {
+        return Ok(default_constructor);
+    }
+    if !vm.is_constructor_value(&species) {
+        return Err(Error::type_err("Promise species is not a constructor"));
+    }
+    Ok(species)
+}
+
 pub(crate) fn promise_then(
     vm: &mut Vm,
     args: &[Value],
@@ -1167,20 +1191,24 @@ pub(crate) fn promise_then(
 ) -> error::Result<Value> {
     let on_fulfilled = args.first().cloned().unwrap_or(Value::Undefined);
     let on_rejected = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let p_idx = match &this {
-        Some(Value::Object(idx)) => idx.0,
-        _ => return Err(Error::type_err("then called on non-promise".to_string())),
+    let promise = this.unwrap_or(Value::Undefined);
+    let p_idx = match &promise {
+        Value::Object(idx)
+            if vm
+                .heap
+                .with_obj(idx.0, |obj| matches!(obj, HeapObj::Promise(_))) =>
+        {
+            idx.0
+        }
+        _ => return Err(Error::type_err("then called on non-promise")),
     };
-    // Create a derived promise that settles with the handler's result.
-    let derived = vm
-        .heap
-        .allocate(HeapObj::Promise(crate::value::PromiseData {
-            state: Mutex::new(crate::value::PromiseStatus::Pending),
-            result: Mutex::new(Value::Undefined),
-            handlers: Mutex::new(Vec::new()),
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.promise_proto.clone())),
-        }))?;
+    let constructor = promise_species_constructor(vm, &promise, vm.promise_ctor.clone())?;
+    let capability = new_promise_capability(vm, constructor)?;
+    let derived = crate::value::PromiseReactionCapability {
+        promise: capability.promise,
+        resolve: capability.resolve,
+        reject: capability.reject,
+    };
     let (state, _result) = vm.heap.with_obj(p_idx, |o| {
         if let HeapObj::Promise(p) = o {
             (*p.state.lock(), p.result.lock().clone())
@@ -1191,7 +1219,7 @@ pub(crate) fn promise_then(
     let handler = crate::value::PromiseHandler {
         on_fulfilled: on_fulfilled.clone(),
         on_rejected: on_rejected.clone(),
-        derived: Some(GcIdx(derived)),
+        derived: Some(derived.clone()),
     };
     match state {
         crate::value::PromiseStatus::Pending => {
@@ -1207,11 +1235,11 @@ pub(crate) fn promise_then(
                 promise: GcIdx(p_idx),
                 on_fulfilled,
                 on_rejected,
-                derived: Some(GcIdx(derived)),
+                derived: Some(derived.clone()),
             });
         }
     }
-    Ok(Value::Object(GcIdx(derived)))
+    Ok(derived.promise)
 }
 
 pub(crate) fn promise_catch(

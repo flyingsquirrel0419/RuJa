@@ -4,7 +4,7 @@
 use super::*;
 use crate::error::{self, Error};
 use crate::value::HeapObj;
-use crate::value::{GcIdx, PromiseStatus, Value};
+use crate::value::{GcIdx, PromiseReactionCapability, PromiseStatus, Value};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ impl Vm {
         promise: GcIdx,
         on_fulfilled: Value,
         on_rejected: Value,
-        derived: Option<GcIdx>,
+        derived: Option<PromiseReactionCapability>,
     ) -> error::Result<()> {
         let (state, result) = self.heap.with_obj(promise.0, |o| {
             if let HeapObj::Promise(p) = o {
@@ -44,11 +44,11 @@ impl Vm {
         };
         if matches!(handler, Value::Undefined) {
             // pass-through: settle the derived promise with the same outcome
-            if let Some(d) = derived {
+            if let Some(capability) = &derived {
                 if state == PromiseStatus::Rejected {
-                    self.promise_reject(d.0, result);
+                    self.settle_promise_capability(capability, result, true)?;
                 } else {
-                    self.promise_resolve(d.0, result);
+                    self.settle_promise_capability(capability, result, false)?;
                 }
             }
             return Ok(());
@@ -56,22 +56,20 @@ impl Vm {
         // Pin the source promise, handler, result, and derived promise as GC roots while the
         // handler call runs: call_function may allocate enough to trigger a GC,
         // which would otherwise collect these values held only in Rust locals.
-        let pinned = self.pin_many(&[handler.clone(), result.clone()]);
-        self.gc_pins.push(promise.0);
-        if let Some(d) = derived {
-            self.gc_pins.push(d.0);
+        let mut roots = vec![Value::Object(promise), handler.clone(), result.clone()];
+        if let Some(capability) = &derived {
+            roots.push(capability.promise.clone());
+            roots.push(capability.resolve.clone());
+            roots.push(capability.reject.clone());
         }
+        let pinned = self.pin_many(&roots);
         // call the handler with the result
         let call_ret = self.call_function(&handler, std::slice::from_ref(&result), None);
         // Unpin everything (handler + result + derived) regardless of outcome.
-        let mut to_unpin = pinned + 1;
-        if derived.is_some() {
-            to_unpin += 1;
-        }
-        self.unpin_many(to_unpin);
+        self.unpin_many(pinned);
         match call_ret {
             Ok(ret) => {
-                if let Some(d) = derived {
+                if let Some(capability) = derived {
                     // if the return is itself a promise, adopt its state
                     if let Value::Object(ret_idx) = ret {
                         let is_promise = self
@@ -84,7 +82,7 @@ impl Vm {
                                     p.handlers.lock().push(crate::value::PromiseHandler {
                                         on_fulfilled: Value::Undefined,
                                         on_rejected: Value::Undefined,
-                                        derived: Some(d),
+                                        derived: Some(capability.clone()),
                                     });
                                 }
                             });
@@ -104,7 +102,7 @@ impl Vm {
                                     promise: ret_idx,
                                     on_fulfilled: Value::Undefined,
                                     on_rejected: Value::Undefined,
-                                    derived: Some(d),
+                                    derived: Some(capability),
                                 });
                                 let _ = state;
                             }
@@ -114,24 +112,51 @@ impl Vm {
                             // wrap the Promise as `[object Promise]` instead of
                             // adopting its eventual value.
                         } else {
-                            self.promise_resolve(d.0, ret);
+                            self.settle_promise_capability(&capability, ret, false)?;
                         }
                     } else {
-                        self.promise_resolve(d.0, ret);
+                        self.settle_promise_capability(&capability, ret, false)?;
                     }
                 }
             }
             Err(e) => {
-                if let Some(d) = derived {
+                if let Some(capability) = &derived {
                     let reason: Value = e
                         .thrown_value
                         .clone()
                         .unwrap_or_else(|| Value::String(Arc::from(e.message.as_str())));
-                    self.promise_reject(d.0, reason);
+                    self.settle_promise_capability(capability, reason, true)?;
                 }
             }
         }
         Ok(())
+    }
+
+    fn settle_promise_capability(
+        &mut self,
+        capability: &PromiseReactionCapability,
+        value: Value,
+        rejected: bool,
+    ) -> error::Result<()> {
+        let function = if rejected {
+            capability.reject.clone()
+        } else {
+            capability.resolve.clone()
+        };
+        let pins = self.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            function.clone(),
+            value.clone(),
+        ]);
+        let result = self.call_function(
+            &function,
+            std::slice::from_ref(&value),
+            Some(Value::Undefined),
+        );
+        self.unpin_many(pins);
+        result.map(|_| ())
     }
 
     pub fn new_object(&mut self) -> error::Result<GcIdx> {

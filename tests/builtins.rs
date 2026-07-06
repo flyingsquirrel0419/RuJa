@@ -1544,6 +1544,52 @@ fn promise_then_chain_value() {
 }
 
 #[test]
+fn promise_then_uses_species_capability_path() {
+    assert_eq!(
+        run("var getterCalled = false, ok = false;
+             var object = Object.defineProperty({}, 'constructor', {
+               get: function() { getterCalled = true; throw new Error('bad'); }
+             });
+             try { Promise.prototype.then.call(object); }
+             catch (e) { ok = e instanceof TypeError; }
+             ok && getterCalled === false;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var callCount = 0, argLength = 0, executorLength = 0;
+             var p = new Promise(function() {});
+             class SpeciesConstructor extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 argLength = arguments.length;
+                 executorLength = executor.length;
+               }
+             }
+             p.constructor = function() {};
+             p.constructor[Symbol.species] = SpeciesConstructor;
+             var result = p.then();
+             callCount === 1 && argLength === 1 && executorLength === 2 &&
+               result instanceof SpeciesConstructor;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var p = new Promise(function() {});
+             function BadCapability(executor) {
+               executor(1, function() {});
+               return {};
+             }
+             p.constructor = function() {};
+             p.constructor[Symbol.species] = BadCapability;
+             var ok = false;
+             try { p.then(); }
+             catch (e) { ok = e instanceof TypeError; }
+             ok;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_catch_reject() {
     // reject -> catch returns a derived promise (object), not the error value.
     let r = run("new Promise(function(_, rej){ rej('boom'); }) \

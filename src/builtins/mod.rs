@@ -2601,6 +2601,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("finally", promise_finally, 1),
         ],
     )?;
+    vm.promise_ctor = Value::Object(promise_ctor);
     vm.promise_proto = Value::Object(promise_proto);
     // Static methods on the Promise constructor.
     let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1)?;

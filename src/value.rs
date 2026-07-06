@@ -637,10 +637,17 @@ pub enum PromiseStatus {
     Rejected,
 }
 
+#[derive(Clone)]
+pub struct PromiseReactionCapability {
+    pub promise: Value,
+    pub resolve: Value,
+    pub reject: Value,
+}
+
 pub struct PromiseHandler {
     pub on_fulfilled: Value,
     pub on_rejected: Value,
-    pub derived: Option<GcIdx>,
+    pub derived: Option<PromiseReactionCapability>,
 }
 
 pub struct GeneratorData {
