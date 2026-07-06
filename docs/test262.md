@@ -91,8 +91,8 @@ reported as false failure buckets.
 
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
-number of tests can cross the timeout boundary. Latest confirmed successful
-run: `test262-full` 28768575668 on `3519c8f`.
+number of tests can cross the timeout boundary. Baseline confirmation run:
+`test262-full` 28769071205 on `6ff5e75`.
 
 | Metric | Recent count |
 |--------|--------------|
