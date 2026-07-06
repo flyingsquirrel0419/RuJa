@@ -46,8 +46,10 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `Promise.resolve` and `Promise.reject` now create and invoke a
   `NewPromiseCapability` from their receiver constructor, so subclass/custom
   constructor capabilities and bad receivers follow the spec path.
+  `Promise.prototype.catch` now invokes the receiver's observable `then`
+  property instead of bypassing it through RuJa's internal Promise path.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **121 pass / 133 fail / 1 timeout / 448 skip**; full Promise
+  lifted is now **124 pass / 130 fail / 1 timeout / 448 skip**; full Promise
   capability/species/thenable semantics remain future work before lifting the
   `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now

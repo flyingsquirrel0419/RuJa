@@ -1552,6 +1552,36 @@ fn promise_catch_reject() {
 }
 
 #[test]
+fn promise_catch_invokes_observable_then() {
+    assert_eq!(
+        run(
+            "var target = {}, returnValue = {}, callCount = 0, thisValue, firstArg, secondArg;
+             target.then = function(a, b) {
+               callCount += 1;
+               thisValue = this;
+               firstArg = a;
+               secondArg = b;
+               return returnValue;
+             };
+             var result = Promise.prototype.catch.call(target, 1, 2, 3);
+             callCount === 1 && thisValue === target && firstArg === undefined &&
+               secondArg === 1 && result === returnValue;"
+        ),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var poisoned = Object.defineProperty({}, 'then', {
+               get: function() { throw new TypeError('poison'); }
+             });
+             var ok = false;
+             try { Promise.prototype.catch.call(poisoned); }
+             catch (e) { ok = e instanceof TypeError; }
+             ok;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_callback_runs() {
     // Verify the then callback actually executes by having it throw into a
     // catch that we observe via the derived promise being an object.

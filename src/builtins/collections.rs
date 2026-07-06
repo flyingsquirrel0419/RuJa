@@ -1217,9 +1217,10 @@ pub(crate) fn promise_catch(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    // p.catch(r) === p.then(undefined, r)
+    let promise = this.unwrap_or(Value::Undefined);
     let on_rejected = args.first().cloned().unwrap_or(Value::Undefined);
-    promise_then(vm, &[Value::Undefined, on_rejected], this)
+    let then = vm.get_property(&promise, "then")?;
+    vm.call_function(&then, &[Value::Undefined, on_rejected], Some(promise))
 }
 
 // =========================================================================
