@@ -281,6 +281,12 @@ impl Parser {
     /// Check that an identifier name is a valid binding name (not a
     /// FutureReservedWord). Returns the name on success, SyntaxError on failure.
     fn check_binding_name(&self, name: &str) -> error::Result<()> {
+        if Self::is_reserved_identifier_reference_word(name) {
+            return Err(error::Error::syntax(format!(
+                "'{}' is a reserved word and cannot be used as a binding name",
+                name
+            )));
+        }
         if Self::is_future_reserved(name) {
             return Err(error::Error::syntax(format!(
                 "'{}' is a reserved word and cannot be used as a binding name",
@@ -771,7 +777,13 @@ impl Parser {
 
     fn peek_label_identifier(&self) -> Option<Arc<str>> {
         match self.peek().clone() {
-            TokenKind::Ident(s) => Some(Arc::from(s.as_str())),
+            TokenKind::Ident(s)
+                if !(Self::is_reserved_identifier_reference_word(&s)
+                    || self.is_strict_context
+                        && Self::is_strict_identifier_reference_reserved(&s)) =>
+            {
+                Some(Arc::from(s.as_str()))
+            }
             TokenKind::Await if self.await_as_identifier_allowed() => Some(Arc::from("await")),
             TokenKind::Yield if self.yield_as_identifier_allowed() => Some(Arc::from("yield")),
             _ => None,
@@ -2566,6 +2578,12 @@ impl Parser {
                 self.parse_class_body(false).map(Expr::Class)
             }
             TokenKind::Ident(s) => {
+                if Self::is_reserved_identifier_reference_word(&s) {
+                    return Err(error::Error::syntax(format!(
+                        "'{}' is a reserved word and cannot be used as an identifier",
+                        s
+                    )));
+                }
                 // Strict mode: FutureReservedWords cannot be used as identifiers.
                 if self.is_strict_context && Self::is_strict_identifier_reference_reserved(&s) {
                     return Err(error::Error::syntax(format!(
@@ -3857,10 +3875,13 @@ impl Parser {
         self.advance(); // 'class'
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
-                if s == "yield" {
-                    return Err(error::Error::syntax(
-                        "'yield' is not allowed as a class name".to_string(),
-                    ));
+                if Self::is_reserved_identifier_reference_word(&s)
+                    || Self::is_strict_identifier_reference_reserved(&s)
+                {
+                    return Err(error::Error::syntax(format!(
+                        "'{}' is not allowed as a class name",
+                        s
+                    )));
                 }
                 self.advance();
                 Some(Arc::from(s.as_str()))
@@ -4588,6 +4609,35 @@ mod tests {
     fn parse_undefined_as_var_binding_name() {
         assert!(Parser::parse("var undefined;").is_ok());
         assert!(Parser::parse("var undefined = 1;").is_ok());
+        assert!(Parser::parse("var undef\\u0069ned;").is_ok());
+    }
+
+    #[test]
+    fn parse_escaped_reserved_words_are_not_identifiers() {
+        for src in [
+            "f\\u{61}lse;",
+            "tru\\u{65};",
+            "n\\u{75}ll;",
+            "v\\u0061r x;",
+            "function f(f\\u{61}lse) {}",
+            "var f\\u{61}lse = 1;",
+            "({ f\\u{61}lse });",
+            "f\\u{61}lse: ;",
+            r#""use strict"; yi\u0065ld: ;"#,
+            "class l\\u0065t {}",
+            "class st\\u0061tic {}",
+            "class tru\\u0065 {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            "var obj = {}; obj.st\\u0061tic = 1;",
+            "({ st\\u0061tic: 1 });",
+            "({ f\\u{61}lse: 1 });",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
     }
 
     #[test]

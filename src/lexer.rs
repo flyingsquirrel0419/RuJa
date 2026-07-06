@@ -728,12 +728,10 @@ impl<'a> Lexer<'a> {
             first = false;
         }
         self.last_ident_had_escape = had_escape;
-        let s: &str = if had_escape {
-            // Owned by the TokenKind::Ident below.
-            Box::leak(buf.into_boxed_str())
-        } else {
-            std::str::from_utf8(&self.src[self.pos - buf.len()..self.pos]).unwrap_or("")
-        };
+        if had_escape {
+            return TokenKind::Ident(buf);
+        }
+        let s = std::str::from_utf8(&self.src[self.pos - buf.len()..self.pos]).unwrap_or("");
         match s {
             "var" => TokenKind::Var,
             "let" => TokenKind::Let,
@@ -1690,6 +1688,15 @@ mod tests {
     fn keywords() {
         assert_eq!(kinds("var let const"), vec![Var, Let, Const, Eof]);
         assert_eq!(kinds("function return"), vec![Function, Return, Eof]);
+        assert_eq!(
+            kinds("v\\u0061r f\\u{61}lse undef\\u0069ned"),
+            vec![
+                Ident("var".into()),
+                Ident("false".into()),
+                Ident("undefined".into()),
+                Eof,
+            ]
+        );
     }
 
     #[test]

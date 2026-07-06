@@ -40,6 +40,16 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   `for-in`/`for-of` declaration heads now also reject multiple declarators.
   This closes the focused `language/block-scope` failures, raising that shard
   to **94 pass / 0 fail / 51 skip**.
+- **Escaped reserved-word early errors**: identifiers containing Unicode
+  escapes now remain identifier-name tokens instead of being promoted to
+  keyword/literal tokens, and reserved words such as escaped `true`, `false`,
+  `null`, or `var` are rejected in identifier-reference, binding, shorthand,
+  and label positions. Escaped reserved words still work as property names.
+  The focused
+  `language/literals/boolean language/literals/null language/reserved-words
+  language/keywords language/future-reserved-words` cluster now runs at
+  **113 pass / 0 fail / 1 skip**, and `language/literals` improves to
+  **315 pass / 159 fail / 60 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped

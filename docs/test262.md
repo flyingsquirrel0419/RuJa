@@ -156,6 +156,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `VarDeclaredNames`, and `for-in`/`for-of` declaration heads reject multiple
   declarators. The focused `language/block-scope` shard now runs at **94 pass
   / 0 fail / 51 skip**.
+- **Escaped reserved-word early errors** —
+  Identifiers containing Unicode escapes now remain identifier-name tokens
+  instead of being promoted to keyword/literal tokens, and reserved words such
+  as escaped `true`, `false`, `null`, or `var` are rejected in
+  identifier-reference, binding, shorthand, and label positions. Escaped
+  reserved words remain valid property names. The focused
+  `language/literals/boolean language/literals/null language/reserved-words
+  language/keywords language/future-reserved-words` cluster now runs at **113
+  pass / 0 fail / 1 skip**, and `language/literals` improves to **315 pass /
+  159 fail / 60 skip**.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,
