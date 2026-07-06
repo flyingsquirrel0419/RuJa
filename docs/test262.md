@@ -149,6 +149,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   position when the eager lexer emitted `/` tokens. This closes the focused
   `language/statementList` regex-literal failures, raising that shard to
   **60 pass / 0 fail / 20 skip**.
+- **Block-scope declaration early errors** —
+  Block statement-list early-error checks now use block-specific declaration
+  name semantics: block-level function declarations contribute lexical names,
+  nested statement `var` declarations contribute to the enclosing block's
+  `VarDeclaredNames`, and `for-in`/`for-of` declaration heads reject multiple
+  declarators. The focused `language/block-scope` shard now runs at **94 pass
+  / 0 fail / 51 skip**.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,

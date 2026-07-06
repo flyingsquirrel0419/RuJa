@@ -34,6 +34,12 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   only tokenize as `/` after a preceding block-like statement boundary. This
   closes the `language/statementList` regex-literal failures, raising that
   shard to **60 pass / 0 fail / 20 skip**.
+- **Block-scope declaration early errors**: block statement-list early-error
+  checks now treat block-level function declarations as lexical declarations
+  and include nested statement `var` names in a block's `VarDeclaredNames`.
+  `for-in`/`for-of` declaration heads now also reject multiple declarators.
+  This closes the focused `language/block-scope` failures, raising that shard
+  to **94 pass / 0 fail / 51 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped

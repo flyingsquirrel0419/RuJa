@@ -504,7 +504,11 @@ impl Parser {
         while !self.check(&TokenKind::Eof) {
             body.push(self.parse_stmt()?);
         }
-        check_statement_list_declaration_early_errors(&body, self.is_strict_context)?;
+        check_statement_list_declaration_early_errors(
+            &body,
+            self.is_strict_context,
+            StatementListScope::Script,
+        )?;
         Ok(Program {
             body,
             is_strict: self.is_strict_context,
@@ -804,7 +808,11 @@ impl Parser {
             Ok(())
         })?;
         self.expect(&TokenKind::RBrace, "}")?;
-        check_statement_list_declaration_early_errors(&body, self.is_strict_context)?;
+        check_statement_list_declaration_early_errors(
+            &body,
+            self.is_strict_context,
+            StatementListScope::Block,
+        )?;
         Ok(self.stmt(StmtNode::Block(body)))
     }
 
@@ -1408,6 +1416,11 @@ impl Parser {
                 // for-in/for-of head declarations must not have an initializer.
                 match &stmt.node {
                     StmtNode::VarDecl { decls, .. } => {
+                        if decls.len() != 1 {
+                            return Err(error::Error::syntax(
+                                "for-in head declaration must have exactly one binding".to_string(),
+                            ));
+                        }
                         if decls.iter().any(|d| d.1.is_some()) {
                             return Err(error::Error::syntax(
                                 "for-in head declaration must not have an initializer".to_string(),
@@ -1438,6 +1451,11 @@ impl Parser {
                 // for-of head declarations must not have an initializer.
                 match &stmt.node {
                     StmtNode::VarDecl { decls, .. } => {
+                        if decls.len() != 1 {
+                            return Err(error::Error::syntax(
+                                "for-of head declaration must have exactly one binding".to_string(),
+                            ));
+                        }
                         if decls.iter().any(|d| d.1.is_some()) {
                             return Err(error::Error::syntax(
                                 "for-of head declaration must not have an initializer".to_string(),
@@ -4289,11 +4307,18 @@ fn is_labelled_function(node: &StmtNode) -> bool {
     }
 }
 
+#[derive(Clone, Copy)]
+enum StatementListScope {
+    Script,
+    Block,
+}
+
 fn collect_decl_names(
     node: &StmtNode,
     lexical: &mut Vec<Arc<str>>,
     var: &mut Vec<Arc<str>>,
     is_strict: bool,
+    scope: StatementListScope,
 ) {
     match node {
         StmtNode::VarDecl { kind, decls } => match kind {
@@ -4314,7 +4339,7 @@ fn collect_decl_names(
         },
         StmtNode::FunctionDecl(f) => {
             if let Some(name) = &f.name {
-                if is_strict {
+                if matches!(scope, StatementListScope::Block) || is_strict {
                     lexical.push(name.clone());
                 } else {
                     var.push(name.clone());
@@ -4328,7 +4353,7 @@ fn collect_decl_names(
                 }
             }
         }
-        _ => {}
+        _ => Parser::collect_var_names_in_stmt(node, var),
     }
 }
 
@@ -4373,11 +4398,18 @@ fn collect_switch_decl_names(
 fn check_statement_list_declaration_early_errors(
     body: &[Stmt],
     is_strict: bool,
+    scope: StatementListScope,
 ) -> error::Result<()> {
     let mut lexical_names = Vec::new();
     let mut var_names = Vec::new();
     for stmt in body {
-        collect_decl_names(&stmt.node, &mut lexical_names, &mut var_names, is_strict);
+        collect_decl_names(
+            &stmt.node,
+            &mut lexical_names,
+            &mut var_names,
+            is_strict,
+            scope,
+        );
     }
     for name in &lexical_names {
         if lexical_names.iter().filter(|n| *n == name).count() > 1 || var_names.contains(name) {
@@ -4444,6 +4476,10 @@ mod tests {
             "{ class A {} class A {} }",
             "{ let A; class A {} }",
             "{ class A {} var A; }",
+            "{ function f() {} var f; }",
+            "{ var f; function f() {} }",
+            "{ function f() {} { var f; } }",
+            "{ { var f; } let f; }",
             "class A {} var A;",
             "class C { st\\u0061tic m() {} }",
         ] {
@@ -4451,7 +4487,23 @@ mod tests {
         }
 
         assert!(Parser::parse("{ class A {} { class A {} } }").is_ok());
+        assert!(Parser::parse("function f() {} var f;").is_ok());
         assert!(Parser::parse("class C { st\\u0061tic() {} }").is_ok());
+    }
+
+    #[test]
+    fn parse_for_in_of_declaration_head_early_errors() {
+        for src in [
+            "for (let x, y in {}) {}",
+            "for (const x, y in {}) {}",
+            "for (let x, y of []) {}",
+            "for (var x, y in {}) {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        assert!(Parser::parse("for (let x in {}) {}").is_ok());
+        assert!(Parser::parse("for (let x of []) {}").is_ok());
     }
 
     #[test]
