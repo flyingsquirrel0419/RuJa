@@ -1726,6 +1726,51 @@ fn promise_static_combinators_return_promises() {
 }
 
 #[test]
+fn promise_all_uses_receiver_resolve_and_then() {
+    assert_eq!(
+        run("var callCount = 0, executorLength = 0;
+             class SubPromise extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 executorLength = executor.length;
+               }
+             }
+             var result = Promise.all.call(SubPromise, []);
+             result instanceof SubPromise && callCount === 1 && executorLength === 2;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var resolveGetCount = 0, resolveCallCount = 0, thenCallCount = 0;
+             var resolvedValues;
+             var C = function(executor) {
+               executor(function(values) { resolvedValues = values; }, function() {});
+             };
+             Object.defineProperty(C, 'resolve', {
+               configurable: true,
+               get: function() {
+                 resolveGetCount += 1;
+                 return function(value) {
+                   resolveCallCount += 1;
+                   return {
+                     then: function(resolve, reject) {
+                       thenCallCount += 1;
+                       resolve(value);
+                     }
+                   };
+                 };
+               }
+             });
+             Promise.all.call(C, [1, 2]);
+             resolveGetCount === 1 && resolveCallCount === 2 &&
+               thenCallCount === 2 && resolvedValues.join(',') === '1,2';"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_race_uses_receiver_resolve_and_then() {
     assert_eq!(
         run("var callCount = 0, executorLength = 0;

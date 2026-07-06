@@ -54,9 +54,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   species constructors and capability executor validation follow the spec path.
   `Promise.race` now constructs through the receiver capability, reads
   `C.resolve` once, and invokes each resolved entry's observable `then` with
-  the capability resolve/reject functions.
+  the capability resolve/reject functions. `Promise.all` now follows the same
+  constructor capability and `C.resolve` path, creates per-element resolving
+  functions, invokes each resolved entry's observable `then`, and resolves the
+  outer capability with the ordered result array.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **156 pass / 98 fail / 1 timeout / 448 skip**; full Promise
+  lifted is now **182 pass / 72 fail / 1 timeout / 448 skip**; full Promise
   thenable assimilation and the remaining combinator semantics remain future
   work before lifting the `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now

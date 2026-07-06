@@ -955,6 +955,112 @@ fn reject_promise_capability(
     call_promise_capability_function(vm, &capability.reject, reason).map(|_| ())
 }
 
+fn promise_capability_reject_and_return(
+    vm: &mut Vm,
+    capability: &PromiseCapability,
+    err: Arc<error::Error>,
+) -> error::Result<Value> {
+    reject_promise_capability(vm, capability, promise_rejection_value(&err))?;
+    Ok(capability.promise.clone())
+}
+
+pub(crate) fn promise_all_resolve_element(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let record_idx = match this {
+        Some(Value::Object(idx)) => idx,
+        _ => return Err(Error::type_err("Promise.all resolve element receiver")),
+    };
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let (already_called, index, state) = vm.heap.with_obj(record_idx.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        let already_called = matches!(
+            props
+                .get(&PropertyKey::from("alreadyCalled"))
+                .map(|desc| &desc.value),
+            Some(Value::Bool(true))
+        );
+        props.insert(
+            PropertyKey::from("alreadyCalled"),
+            PropertyDescriptor::data(Value::Bool(true)),
+        );
+        let index = match props
+            .get(&PropertyKey::from("index"))
+            .map(|desc| desc.value.clone())
+        {
+            Some(Value::Number(n)) if n >= 0.0 => n as usize,
+            _ => 0,
+        };
+        let state = props
+            .get(&PropertyKey::from("state"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        (already_called, index, state)
+    });
+    if already_called {
+        return Ok(Value::Undefined);
+    }
+
+    let state_idx = match state {
+        Value::Object(idx) => idx,
+        _ => return Err(Error::type_err("Promise.all state record")),
+    };
+    let (values, resolve, remaining) = vm.heap.with_obj(state_idx.0, |obj| {
+        let props = obj.props();
+        let props = props.lock();
+        let values = props
+            .get(&PropertyKey::from("values"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        let resolve = props
+            .get(&PropertyKey::from("resolve"))
+            .map(|desc| desc.value.clone())
+            .unwrap_or(Value::Undefined);
+        let remaining = match props
+            .get(&PropertyKey::from("remaining"))
+            .map(|desc| desc.value.clone())
+        {
+            Some(Value::Number(n)) if n > 0.0 => n as usize,
+            _ => 0,
+        };
+        (values, resolve, remaining)
+    });
+    let values_idx = match &values {
+        Value::Object(idx) => *idx,
+        _ => return Err(Error::type_err("Promise.all values array")),
+    };
+    vm.heap.with_obj(values_idx.0, |obj| {
+        if let HeapObj::Array(array) = obj {
+            let mut items = array.items.lock();
+            let mut present = array.present.lock();
+            if index >= items.len() {
+                items.resize(index + 1, Value::Undefined);
+                present.resize(index + 1, false);
+            }
+            items[index] = value;
+            present[index] = true;
+            Ok(())
+        } else {
+            Err(Error::type_err("Promise.all values array"))
+        }
+    })?;
+
+    let remaining = remaining.saturating_sub(1);
+    vm.heap.with_obj(state_idx.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("remaining"),
+            PropertyDescriptor::data(Value::Number(remaining as f64)),
+        );
+    });
+    if remaining == 0 {
+        call_promise_capability_function(vm, &resolve, values)?;
+    }
+    Ok(Value::Undefined)
+}
+
 fn settled_result_object(
     vm: &mut Vm,
     status: &str,
@@ -977,29 +1083,203 @@ fn settled_result_object(
 pub(crate) fn promise_static_all(
     vm: &mut Vm,
     args: &[Value],
-    _this: Option<Value>,
+    this: Option<Value>,
 ) -> error::Result<Value> {
+    let ctor = this.unwrap_or(Value::Undefined);
+    let capability = new_promise_capability(vm, ctor.clone())?;
+    let mut pins = vm.pin_many(&[
+        ctor.clone(),
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+    ]);
+    let promise_resolve = match vm.get_property(&ctor, "resolve") {
+        Ok(promise_resolve) => promise_resolve,
+        Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(pins);
+            return result;
+        }
+    };
+    if !is_callable(&promise_resolve, &vm.heap) {
+        let result = reject_promise_capability(
+            vm,
+            &capability,
+            Value::String(Arc::from("Promise.all resolve is not callable")),
+        )
+        .map(|_| capability.promise.clone());
+        vm.unpin_many(pins);
+        return result;
+    }
+
     let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    pins += vm.pin_many(&[promise_resolve.clone(), iterable.clone()]);
     let iter = match vm.make_iterator(&iterable) {
         Ok(iter) => iter,
-        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+        Err(err) => {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(pins);
+            return result;
+        }
     };
-    let mut values = Vec::new();
+
+    let values = make_value_array(vm, Vec::new())?;
+    pins += vm.pin_many(std::slice::from_ref(&values));
+    let state_idx = vm.new_object()?;
+    let state = Value::Object(state_idx);
+    vm.heap.with_obj(state_idx.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(
+            PropertyKey::from("values"),
+            PropertyDescriptor::data(values.clone()),
+        );
+        props.insert(
+            PropertyKey::from("resolve"),
+            PropertyDescriptor::data(capability.resolve.clone()),
+        );
+        props.insert(
+            PropertyKey::from("remaining"),
+            PropertyDescriptor::data(Value::Number(1.0)),
+        );
+    });
+    pins += vm.pin_many(std::slice::from_ref(&state));
+    let mut index = 0usize;
+
     loop {
         let (value, done) = match vm.iterator_next(&iter) {
             Ok(step) => step,
-            Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin_many(pins);
+                return result;
+            }
         };
         if done {
-            break;
+            let remaining = vm.heap.with_obj(state_idx.0, |obj| {
+                let props = obj.props();
+                let mut props = props.lock();
+                let remaining = match props
+                    .get(&PropertyKey::from("remaining"))
+                    .map(|desc| desc.value.clone())
+                {
+                    Some(Value::Number(n)) if n > 0.0 => n as usize,
+                    _ => 0,
+                }
+                .saturating_sub(1);
+                props.insert(
+                    PropertyKey::from("remaining"),
+                    PropertyDescriptor::data(Value::Number(remaining as f64)),
+                );
+                remaining
+            });
+            if remaining == 0 {
+                let result =
+                    call_promise_capability_function(vm, &capability.resolve, values.clone())
+                        .map(|_| capability.promise.clone());
+                vm.unpin_many(pins);
+                return result;
+            }
+            vm.unpin_many(pins);
+            return Ok(capability.promise);
         }
-        match vm.await_value(value) {
-            Ok(value) => values.push(value),
-            Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+
+        if let Value::Object(values_idx) = &values {
+            vm.heap.with_obj(values_idx.0, |obj| {
+                if let HeapObj::Array(array) = obj {
+                    array.items.lock().push(Value::Undefined);
+                    array.present.lock().push(false);
+                }
+            });
         }
+        vm.heap.with_obj(state_idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            let remaining = match props
+                .get(&PropertyKey::from("remaining"))
+                .map(|desc| desc.value.clone())
+            {
+                Some(Value::Number(n)) if n > 0.0 => n,
+                _ => 0.0,
+            };
+            props.insert(
+                PropertyKey::from("remaining"),
+                PropertyDescriptor::data(Value::Number(remaining + 1.0)),
+            );
+        });
+
+        let record_idx = vm.new_object()?;
+        let record = Value::Object(record_idx);
+        let record_pins = vm.pin_many(std::slice::from_ref(&record));
+        vm.heap.with_obj(record_idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            props.insert(
+                PropertyKey::from("alreadyCalled"),
+                PropertyDescriptor::data(Value::Bool(false)),
+            );
+            props.insert(
+                PropertyKey::from("index"),
+                PropertyDescriptor::data(Value::Number(index as f64)),
+            );
+            props.insert(
+                PropertyKey::from("state"),
+                PropertyDescriptor::data(state.clone()),
+            );
+        });
+        let resolve_element_result = create_bound_native_function(
+            vm,
+            "",
+            "",
+            promise_all_resolve_element,
+            1,
+            record.clone(),
+        );
+        vm.unpin_many(record_pins);
+        let resolve_element = match resolve_element_result {
+            Ok(resolve_element) => resolve_element,
+            Err(err) => {
+                vm.unpin_many(pins);
+                return Err(err);
+            }
+        };
+        let element_pins = vm.pin_many(&[value.clone(), record, resolve_element.clone()]);
+        let next_promise_result = vm.call_function(
+            &promise_resolve,
+            std::slice::from_ref(&value),
+            Some(ctor.clone()),
+        );
+        vm.unpin_many(element_pins);
+        let next_promise = match next_promise_result {
+            Ok(next_promise) => next_promise,
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin_many(pins);
+                return result;
+            }
+        };
+        let then = match vm.get_property(&next_promise, "then") {
+            Ok(then) => then,
+            Err(err) => {
+                let result = promise_capability_reject_and_return(vm, &capability, err);
+                vm.unpin_many(pins);
+                return result;
+            }
+        };
+        let then_pins = vm.pin_many(&[next_promise.clone(), then.clone()]);
+        let then_result = vm.call_function(
+            &then,
+            &[resolve_element, capability.reject.clone()],
+            Some(next_promise),
+        );
+        vm.unpin_many(then_pins);
+        if let Err(err) = then_result {
+            let result = promise_capability_reject_and_return(vm, &capability, err);
+            vm.unpin_many(pins);
+            return result;
+        }
+        index += 1;
     }
-    let array = make_value_array(vm, values)?;
-    make_fulfilled_promise(vm, array)
 }
 
 pub(crate) fn promise_static_race(
