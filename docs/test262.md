@@ -88,14 +88,14 @@ python3 tools/analyze_failures.py
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Latest confirmed successful
-run: `test262-full` 28767216964 on `1f1174f`.
+run: `test262-full` 28767545867 on `f67d0ea`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
 | Actually run | 23,162 |
-| Pass | 12,965 |
-| Fail | 10,197 |
+| Pass | 12,965-12,966 |
+| Fail | 10,196-10,197 |
 | Timeout | 13 |
 | Skip | 24,542 |
 | **Pass rate (of run)** | **56.0%** |
