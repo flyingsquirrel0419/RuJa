@@ -174,8 +174,11 @@ pub(crate) fn object_to_string(
     class_hint: Option<&str>,
 ) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
-    if this.is_nullish() {
+    if this.is_null() {
         return Ok(Value::String(Arc::from("[object Null]")));
+    }
+    if this.is_undefined() {
+        return Ok(Value::String(Arc::from("[object Undefined]")));
     }
     if let Value::String(_) = &this {
         return Ok(Value::String(Arc::from("[object String]")));
@@ -188,6 +191,9 @@ pub(crate) fn object_to_string(
     }
     if let Value::Symbol(_) = &this {
         return Ok(Value::String(Arc::from("[object Symbol]")));
+    }
+    if let Value::BigInt(_) = &this {
+        return Ok(Value::String(Arc::from("[object BigInt]")));
     }
     if let Value::Object(idx) = &this {
         let class = if let Some(hint) = class_hint {
@@ -254,23 +260,10 @@ pub(crate) fn make_builtin_constructor(
         );
     });
     // prototype.constructor
-    let ts_fn = vm.new_native_function("toString", error_to_string, 0)?;
     vm.heap.with_obj(proto_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("name"),
-            data_prop(Value::String(Arc::from(name))),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("message"),
-            data_prop(Value::String(Arc::from(""))),
-        );
-        obj.props().lock().insert(
-            PropertyKey::from("toString"),
-            data_prop(Value::Object(ts_fn)),
         );
     });
 
@@ -1778,7 +1771,7 @@ fn new_error_object(vm: &mut Vm, proto: Value) -> error::Result<GcIdx> {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto)),
         extensible: AtomicBool::new(true),
-        class_name: None,
+        class_name: Some(Arc::from("Error")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });

@@ -392,48 +392,6 @@ impl Vm {
                 let saved_native_callee = self.current_native_callee.replace(Value::Object(idx));
                 let saved_native_new_target = self.current_native_new_target.take();
                 self.current_native_new_target = self.pending_new_target.take();
-                // Workaround: in release builds, the function pointer for
-                // Object.prototype.toString doesn't dispatch correctly.
-                // When the callee is named "toString" and the receiver's
-                // prototype is Object.prototype (i.e., it inherits the
-                // default toString), call object_to_string directly.
-                let is_default_tostring = self.heap.with_obj(idx.0, |obj| {
-                    if let HeapObj::Function(fd) = obj {
-                        fd.name.as_deref() == Some("toString")
-                    } else {
-                        false
-                    }
-                });
-                if is_default_tostring {
-                    if let Some(ref tv) = &this {
-                        if let Value::Object(tidx) = tv {
-                            // Check if the receiver's direct proto is
-                            // Object.prototype (class_name "Object") and
-                            // the receiver itself has no own toString.
-                            let inherits_default = self.heap.with_obj(tidx.0, |o| {
-                                let has_own = o
-                                    .props()
-                                    .lock()
-                                    .contains_key(&crate::value::PropertyKey::from("toString"));
-                                if has_own {
-                                    return false;
-                                }
-                                if let Some(Value::Object(pidx)) = o.proto().lock().as_ref() {
-                                    self.heap.with_obj(pidx.0, |p| p.class_name() == "Object")
-                                } else {
-                                    false
-                                }
-                            });
-                            if inherits_default {
-                                let result =
-                                    crate::builtins::object_to_string(self, this.clone(), None);
-                                self.current_native_callee = saved_native_callee;
-                                self.current_native_new_target = saved_native_new_target;
-                                return result;
-                            }
-                        }
-                    }
-                }
                 let result = f(self, args, this);
                 self.current_native_callee = saved_native_callee;
                 self.current_native_new_target = saved_native_new_target;
@@ -807,11 +765,28 @@ impl Vm {
                 }
             })
         };
+        let class_name = self.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                match f.name.as_deref() {
+                    Some("Error")
+                    | Some("EvalError")
+                    | Some("RangeError")
+                    | Some("ReferenceError")
+                    | Some("SyntaxError")
+                    | Some("TypeError")
+                    | Some("URIError") => Some(Arc::from("Error")),
+                    Some("Date") => Some(Arc::from("Date")),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        });
         let new_obj = HeapObj::Object(crate::value::ObjectData {
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
             extensible: std::sync::atomic::AtomicBool::new(true),
-            class_name: None,
+            class_name,
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });

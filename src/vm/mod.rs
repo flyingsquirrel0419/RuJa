@@ -840,7 +840,7 @@ impl Vm {
             props: Mutex::new(props),
             proto: Mutex::new(Some(proto)),
             extensible: AtomicBool::new(true),
-            class_name: Some(Arc::from(ctor_name)),
+            class_name: Some(Arc::from("Error")),
             private_fields: Mutex::new(std::collections::HashMap::new()),
             primitive: Mutex::new(None),
         });

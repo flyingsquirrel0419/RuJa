@@ -1048,6 +1048,32 @@ fn object_keys_insertion_order() {
 }
 
 #[test]
+fn object_prototype_to_string_uses_receiver_brand() {
+    assert_eq!(
+        run(r#"
+            [
+              Object.prototype.toString.call([]),
+              Object.prototype.toString.call(null),
+              Object.prototype.toString.call(undefined),
+              Object.prototype.toString.call("x"),
+              Object.prototype.toString.call(Object(9)),
+              Object.prototype.toString.call(Object(true)),
+              Object.prototype.toString.call(function(){}),
+              Object.prototype.toString.call(new Date(0)),
+              Object.prototype.toString.call(Error("boom")),
+              Object.prototype.toString.call(new Error("boom")),
+              Object.prototype.toString.call(function(){ return arguments; }()),
+              Object.getOwnPropertyNames(Object.prototype).join("|"),
+              Error.prototype.toString.call({ name: "X", message: "Y" })
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "[object Array],[object Null],[object Undefined],[object String],[object Number],[object Boolean],[object Function],[object Date],[object Error],[object Error],[object Arguments],toString|toLocaleString|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|valueOf|constructor,X: Y"
+        ))
+    );
+}
+
+#[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
     assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));

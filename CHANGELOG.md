@@ -101,8 +101,18 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   `Object.getOwnPropertyDescriptors` plus `Object.getOwnPropertySymbols`
   clusters now run at **13 pass / 0 fail / 17 skip**. The broader focused
   own-key smoke run is **97 pass / 6 fail / 31 skip**, with remaining failures
-  tied to broader `Function.prototype.call` `this` binding and sparse-array
-  hole representation work.
+  tied to receiver-brand handling and sparse-array hole representation work.
+- **`Object.prototype.toString` receiver brands**: removed an unsafe native
+  `toString` dispatch workaround and stopped installing Error-prototype
+  `name`/`message`/`toString` properties on `Object.prototype`. The builtin
+  now distinguishes `null` from `undefined`, reports BigInt primitives,
+  boxed primitive wrappers, functions, arrays, arguments objects, Date
+  instances, and Error instances with the expected brands, and keeps
+  `Error.prototype.toString` separate. The focused
+  `built-ins/Object/prototype/toString` cluster now has **0 failures**, and
+  the combined Object toString/own-key smoke run is **105 pass / 3 fail / 37
+  skip**, with the remaining failures isolated to sparse array holes and dense
+  array-index deletion.
 - **ArrayBuffer and DataView subclass internals**: added minimal
   `ArrayBuffer` and `DataView` exotic heap objects, constructor/prototype
   bootstrap, `ArrayBuffer.prototype.slice`, and DataView `buffer`/

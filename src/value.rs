@@ -797,12 +797,26 @@ impl HeapObj {
     /// Class name for `Object.prototype.toString`.
     pub fn class_name(&self) -> &str {
         match self {
-            HeapObj::Object(o) => o
-                .class_name
-                .as_ref()
-                .map(|s| s.as_ref())
-                .unwrap_or("Object"),
-            HeapObj::Array(_) => "Array",
+            HeapObj::Object(o) => {
+                if let Some(name) = o.class_name.as_ref() {
+                    return name.as_ref();
+                }
+                match o.primitive.lock().as_ref() {
+                    Some(Value::String(_)) => "String",
+                    Some(Value::Number(_)) => "Number",
+                    Some(Value::Bool(_)) => "Boolean",
+                    Some(Value::BigInt(_)) => "BigInt",
+                    Some(Value::Symbol(_)) => "Symbol",
+                    _ => "Object",
+                }
+            }
+            HeapObj::Array(a) => {
+                if a.is_arguments.load(Ordering::Relaxed) {
+                    "Arguments"
+                } else {
+                    "Array"
+                }
+            }
             HeapObj::Function(_) => "Function",
             HeapObj::Map(_) => "Map",
             HeapObj::Set(_) => "Set",

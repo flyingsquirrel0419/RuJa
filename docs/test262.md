@@ -220,8 +220,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   This closes the focused `Object.getOwnPropertyDescriptors` and
   `Object.getOwnPropertySymbols` clusters at 13 pass / 0 fail / 17 skip; the
   broader own-key smoke run is 97 pass / 6 fail / 31 skip, with remaining
-  failures requiring broader `Function.prototype.call` receiver binding and
-  sparse-array hole representation fixes.
+  failures requiring receiver-brand handling and sparse-array hole
+  representation fixes.
+- **`Object.prototype.toString` receiver brands** —
+  `Object.prototype` no longer receives Error-prototype `name`/`message`/
+  `toString` properties during bootstrap, and native calls no longer route
+  every function named `toString` through Object's brand algorithm. The brand
+  algorithm now distinguishes `undefined`, BigInt primitives, boxed primitive
+  wrappers, functions, arrays, arguments objects, Date instances, and Error
+  instances. This closes the focused `Object.prototype.toString` cluster; the
+  combined Object toString/own-key smoke run is 105 pass / 3 fail / 37 skip,
+  with the remaining failures isolated to sparse array holes and dense
+  array-index deletion.
 - **ArrayBuffer and DataView subclass internals** — minimal ArrayBuffer and
   DataView exotic heap objects now initialize internal slots during subclass
   construction; `ArrayBuffer.prototype.slice` returns the default subclass
