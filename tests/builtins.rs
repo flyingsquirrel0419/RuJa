@@ -136,9 +136,23 @@ fn generated_symbols_do_not_collide_with_well_known_symbols() {
     assert_eq!(run("Symbol() === Symbol.iterator;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.match;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.unscopables;"), Value::Bool(false));
+    assert_eq!(run("Symbol() === Symbol.species;"), Value::Bool(false));
     assert_eq!(
-        run("typeof Symbol.unscopables;"),
+        run("typeof Symbol.species + ':' + typeof Symbol.unscopables;"),
+        Value::String(Arc::from("symbol:symbol"))
+    );
+    assert_eq!(run("Symbol.species === Symbol.species;"), Value::Bool(true));
+}
+
+#[test]
+fn symbol_species_is_exposed() {
+    assert_eq!(
+        run("typeof Symbol.species;"),
         Value::String(Arc::from("symbol"))
+    );
+    assert_eq!(
+        run("String(Symbol.species);"),
+        Value::String(Arc::from("Symbol()"))
     );
 }
 
@@ -1550,6 +1564,58 @@ fn promise_keyword_method_names() {
     // `.catch` and `.then` use reserved words as property names.
     let r = run("typeof Promise.prototype.then;");
     assert_eq!(r, Value::String(Arc::from("function")));
+}
+
+#[test]
+fn promise_static_surface_and_species_descriptor() {
+    assert_eq!(
+        run("[
+                typeof Promise.all,
+                typeof Promise.race,
+                typeof Promise.allSettled,
+                typeof Promise.any,
+                typeof Promise.try,
+                typeof Promise.prototype.finally
+             ].join(',');"),
+        Value::String(Arc::from(
+            "function,function,function,function,function,function"
+        ))
+    );
+    assert_eq!(
+        run("Promise[Symbol.species] === Promise;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var d = Object.getOwnPropertyDescriptor(Promise, Symbol.species);
+             typeof d.get + ':' + d.set + ':' + d.enumerable + ':' + d.configurable;"
+        ),
+        Value::String(Arc::from("function:undefined:false:true"))
+    );
+    assert_eq!(
+        run(
+            "Object.getOwnPropertyDescriptor(Promise, 'all').writable + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'all').enumerable + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'all').configurable + ':' +
+             Promise.all.length + ':' + Promise.all.name;"
+        ),
+        Value::String(Arc::from("true:false:true:1:all"))
+    );
+}
+
+#[test]
+fn promise_static_combinators_return_promises() {
+    assert_eq!(
+        run("[
+                Promise.all([Promise.resolve(1), 2]) instanceof Promise,
+                Promise.race([Promise.resolve(1), 2]) instanceof Promise,
+                Promise.allSettled([Promise.resolve(1), Promise.reject(2)]) instanceof Promise,
+                Promise.any([Promise.reject(1), Promise.resolve(2)]) instanceof Promise,
+                Promise.try(function(){ return 3; }) instanceof Promise,
+                Promise.resolve(1).finally(function(){}) instanceof Promise
+             ].join(',');"),
+        Value::String(Arc::from("true,true,true,true,true,true"))
+    );
 }
 
 #[test]

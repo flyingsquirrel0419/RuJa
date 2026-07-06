@@ -2595,12 +2595,22 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "Promise",
         1,
         promise_constructor,
-        &[("then", promise_then, 2), ("catch", promise_catch, 1)],
+        &[
+            ("then", promise_then, 2),
+            ("catch", promise_catch, 1),
+            ("finally", promise_finally, 1),
+        ],
     )?;
     vm.promise_proto = Value::Object(promise_proto);
     // Static methods on the Promise constructor.
     let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1)?;
     let reject_static = vm.new_native_function("reject", promise_static_reject, 1)?;
+    let all_static = vm.new_native_function("all", promise_static_all, 1)?;
+    let race_static = vm.new_native_function("race", promise_static_race, 1)?;
+    let all_settled_static = vm.new_native_function("allSettled", promise_static_all_settled, 1)?;
+    let any_static = vm.new_native_function("any", promise_static_any, 1)?;
+    let try_static = vm.new_native_function("try", promise_static_try, 1)?;
+    let species_getter = vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
     vm.heap.with_obj(promise_ctor.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("resolve"),
@@ -2609,6 +2619,30 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         obj.props().lock().insert(
             PropertyKey::from("reject"),
             data_prop(Value::Object(reject_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("all"),
+            data_prop(Value::Object(all_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("race"),
+            data_prop(Value::Object(race_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("allSettled"),
+            data_prop(Value::Object(all_settled_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("any"),
+            data_prop(Value::Object(any_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("try"),
+            data_prop(Value::Object(try_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(species_getter)),
         );
     });
     define_global(vm, "Promise", Value::Object(promise_ctor));

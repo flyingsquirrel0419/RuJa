@@ -899,6 +899,7 @@ pub(crate) fn string_constructor(
     if let Some(Value::Object(_)) = &this {
         let prim = match args.first() {
             None => Value::String(Arc::from("")),
+            Some(Value::Symbol(_)) => Value::String(Arc::from("Symbol()")),
             Some(v) => Value::String(vm.to_string(v)?),
         };
         let length = match &prim {
@@ -923,6 +924,7 @@ pub(crate) fn string_constructor(
     // `String(undefined)` which yields "undefined".
     match args.first() {
         None => Ok(Value::String(Arc::from(""))),
+        Some(Value::Symbol(_)) => Ok(Value::String(Arc::from("Symbol()"))),
         Some(v) => Ok(Value::String(vm.to_string(v)?)),
     }
 }

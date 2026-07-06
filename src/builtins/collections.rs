@@ -771,6 +771,36 @@ pub(crate) fn promise_static_reject(
     _this: Option<Value>,
 ) -> error::Result<Value> {
     let reason = args.first().cloned().unwrap_or(Value::Undefined);
+    make_rejected_promise(vm, reason)
+}
+
+fn make_pending_promise(vm: &mut Vm) -> error::Result<Value> {
+    let p_idx = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: Mutex::new(crate::value::PromiseStatus::Pending),
+            result: Mutex::new(Value::Undefined),
+            handlers: Mutex::new(Vec::new()),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.promise_proto.clone())),
+        }))?;
+    Ok(Value::Object(GcIdx(p_idx)))
+}
+
+fn make_fulfilled_promise(vm: &mut Vm, value: Value) -> error::Result<Value> {
+    let p_idx = vm
+        .heap
+        .allocate(HeapObj::Promise(crate::value::PromiseData {
+            state: Mutex::new(crate::value::PromiseStatus::Fulfilled),
+            result: Mutex::new(value),
+            handlers: Mutex::new(Vec::new()),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.promise_proto.clone())),
+        }))?;
+    Ok(Value::Object(GcIdx(p_idx)))
+}
+
+fn make_rejected_promise(vm: &mut Vm, reason: Value) -> error::Result<Value> {
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {
@@ -781,6 +811,176 @@ pub(crate) fn promise_static_reject(
             proto: Mutex::new(Some(vm.promise_proto.clone())),
         }))?;
     Ok(Value::Object(GcIdx(p_idx)))
+}
+
+fn promise_rejection_value(err: &Arc<error::Error>) -> Value {
+    err.thrown_value
+        .clone()
+        .unwrap_or_else(|| Value::String(Arc::from(err.message.as_str())))
+}
+
+fn settled_result_object(
+    vm: &mut Vm,
+    status: &str,
+    key: &str,
+    value: Value,
+) -> error::Result<Value> {
+    let obj = vm.new_object()?;
+    vm.heap.with_obj(obj.0, |o| {
+        let props = o.props();
+        let mut props = props.lock();
+        props.insert(
+            PropertyKey::from("status"),
+            data_prop(Value::String(Arc::from(status))),
+        );
+        props.insert(PropertyKey::from(key), data_prop(value));
+    });
+    Ok(Value::Object(obj))
+}
+
+pub(crate) fn promise_static_all(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iter = match vm.make_iterator(&iterable) {
+        Ok(iter) => iter,
+        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+    };
+    let mut values = Vec::new();
+    loop {
+        let (value, done) = match vm.iterator_next(&iter) {
+            Ok(step) => step,
+            Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+        };
+        if done {
+            break;
+        }
+        match vm.await_value(value) {
+            Ok(value) => values.push(value),
+            Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+        }
+    }
+    let array = make_value_array(vm, values)?;
+    make_fulfilled_promise(vm, array)
+}
+
+pub(crate) fn promise_static_race(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iter = match vm.make_iterator(&iterable) {
+        Ok(iter) => iter,
+        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+    };
+    let (value, done) = match vm.iterator_next(&iter) {
+        Ok(step) => step,
+        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+    };
+    if done {
+        return make_pending_promise(vm);
+    }
+    match vm.await_value(value) {
+        Ok(value) => make_fulfilled_promise(vm, value),
+        Err(err) => make_rejected_promise(vm, promise_rejection_value(&err)),
+    }
+}
+
+pub(crate) fn promise_static_all_settled(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iter = match vm.make_iterator(&iterable) {
+        Ok(iter) => iter,
+        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+    };
+    let mut values = Vec::new();
+    loop {
+        let (value, done) = match vm.iterator_next(&iter) {
+            Ok(step) => step,
+            Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+        };
+        if done {
+            break;
+        }
+        let entry = match vm.await_value(value) {
+            Ok(value) => settled_result_object(vm, "fulfilled", "value", value)?,
+            Err(err) => {
+                settled_result_object(vm, "rejected", "reason", promise_rejection_value(&err))?
+            }
+        };
+        values.push(entry);
+    }
+    let array = make_value_array(vm, values)?;
+    make_fulfilled_promise(vm, array)
+}
+
+pub(crate) fn promise_static_any(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iter = match vm.make_iterator(&iterable) {
+        Ok(iter) => iter,
+        Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+    };
+    let mut errors = Vec::new();
+    loop {
+        let (value, done) = match vm.iterator_next(&iter) {
+            Ok(step) => step,
+            Err(err) => return make_rejected_promise(vm, promise_rejection_value(&err)),
+        };
+        if done {
+            break;
+        }
+        match vm.await_value(value) {
+            Ok(value) => return make_fulfilled_promise(vm, value),
+            Err(err) => errors.push(promise_rejection_value(&err)),
+        }
+    }
+    let errors = make_value_array(vm, errors)?;
+    make_rejected_promise(vm, errors)
+}
+
+pub(crate) fn promise_static_try(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return make_rejected_promise(
+            vm,
+            Value::String(Arc::from("Promise.try callback is not a function")),
+        );
+    }
+    match vm.call_function(&callback, &args[1..], Some(Value::Undefined)) {
+        Ok(value) => make_fulfilled_promise(vm, value),
+        Err(err) => make_rejected_promise(vm, promise_rejection_value(&err)),
+    }
+}
+
+pub(crate) fn promise_finally(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let on_finally = args.first().cloned().unwrap_or(Value::Undefined);
+    promise_then(vm, &[on_finally.clone(), on_finally], this)
+}
+
+pub(crate) fn promise_species_get(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(this.unwrap_or(Value::Undefined))
 }
 
 pub(crate) fn promise_then(

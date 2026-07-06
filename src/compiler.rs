@@ -70,6 +70,16 @@ enum PathStep {
     RestFrom(usize),
 }
 
+#[derive(Clone, Copy)]
+enum AssignTargetTemp {
+    IdentRef(usize),
+    Member {
+        obj_idx: usize,
+        key_idx: usize,
+        computed: bool,
+    },
+}
+
 impl Default for Compiler {
     fn default() -> Self {
         Self::new()
@@ -2047,8 +2057,8 @@ impl Compiler {
                             self.compile_assign_value_to_target(inner, rest_idx, None)?;
                         }
                         _ => {
-                            let member_target = self
-                                .compile_assign_member_target_temps(Self::assignment_target(el))?;
+                            let target_temp =
+                                self.compile_assign_target_temp(Self::assignment_target(el))?;
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
                             let done_idx = self.intern("#arr-assign-done");
@@ -2060,7 +2070,7 @@ impl Compiler {
                                 elem_idx,
                                 iter_idx,
                                 done_idx,
-                                member_target,
+                                target_temp,
                             )?;
                         }
                     }
@@ -2072,15 +2082,16 @@ impl Compiler {
                     match &p.key {
                         PropertyKey::Ident(s) | PropertyKey::String(s) => {
                             new_path.push(PathStep::Prop(s.clone()));
-                            if let Some(member_target) =
-                                self.compile_assign_member_target_temps(&p.value)?
-                            {
-                                self.load_path(temp_idx, &new_path);
-                                self.store_current_value_to_member_target(member_target);
-                                continue;
-                            }
+                            let target_temp =
+                                self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
+                            self.load_path(temp_idx, &new_path);
+                            let t2 = self.intern("#d2");
+                            self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
+                            self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
                         }
                         PropertyKey::Number(n) => {
+                            let target_temp =
+                                self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
                             let key = self
                                 .chunk
                                 .add_constant(Value::String(Arc::from(n.to_string().as_str())));
@@ -2090,8 +2101,7 @@ impl Compiler {
                             self.chunk.emit(Op::GetElem, self.current_line);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                            self.compile_assign_pattern(&p.value, t2, &[])?;
-                            continue;
+                            self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
                         }
                         PropertyKey::Computed(e) => {
                             self.compile_expr(e)?;
@@ -2099,43 +2109,20 @@ impl Compiler {
                             let source_key = self.intern("#dkey");
                             self.chunk
                                 .emit(Op::DeclareEnv(source_key), self.current_line);
-                            if let Some(member_target) =
-                                self.compile_assign_member_target_temps(&p.value)?
-                            {
-                                self.load_path(temp_idx, path);
-                                self.chunk.emit(Op::LoadEnv(source_key), self.current_line);
-                                self.chunk.emit(Op::GetElem, self.current_line);
-                                self.store_current_value_to_member_target(member_target);
-                                continue;
-                            }
+                            let target_temp =
+                                self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
                             self.load_path(temp_idx, path);
                             self.chunk.emit(Op::LoadEnv(source_key), self.current_line);
                             self.chunk.emit(Op::GetElem, self.current_line);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                            self.compile_assign_pattern(&p.value, t2, &[])?;
-                            continue;
+                            self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
                         }
                         PropertyKey::Spread(_) => {
                             return Err(error::Error::syntax(
                                 "spread in assignment target object".to_string(),
                             ));
                         }
-                    }
-                    // shorthand `o.a` assigns to existing var named `a`;
-                    // `o.a: b` assigns to `b` (p.value is the target).
-                    if p.shorthand {
-                        self.load_path(temp_idx, &new_path);
-                        if let Expr::Ident(name) = &p.value {
-                            self.store_identifier_target_value(name);
-                            self.chunk.emit(Op::Pop, self.current_line);
-                        } else {
-                            let t2 = self.intern("#d2");
-                            self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                            self.compile_assign_pattern(&p.value, t2, &[])?;
-                        }
-                    } else {
-                        self.compile_assign_pattern(&p.value, temp_idx, &new_path)?;
                     }
                 }
             }
@@ -2188,11 +2175,11 @@ impl Compiler {
         value_idx: usize,
         iter_idx: usize,
         done_idx: usize,
-        member_target: Option<(usize, usize, bool)>,
+        target_temp: Option<AssignTargetTemp>,
     ) -> error::Result<()> {
         let finally_guard_ip = self.chunk.code.len();
         self.chunk.emit(Op::PushFinally(0), self.current_line);
-        self.compile_assign_value_to_target(target, value_idx, member_target)?;
+        self.compile_assign_value_to_target(target, value_idx, target_temp)?;
         self.chunk.emit(Op::PopFinally, self.current_line);
         let jump_after_finally = self.chunk.code.len();
         self.chunk.emit(Op::Jump(0), self.current_line);
@@ -2220,7 +2207,7 @@ impl Compiler {
         &mut self,
         target: &Expr,
         value_idx: usize,
-        member_target: Option<(usize, usize, bool)>,
+        target_temp: Option<AssignTargetTemp>,
     ) -> error::Result<()> {
         match target {
             Expr::Assign(AssignOp::Assign, left, default) => {
@@ -2236,19 +2223,30 @@ impl Compiler {
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#arr-assign-value");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                self.compile_assign_value_to_target(left, t2, member_target)?;
+                self.compile_assign_value_to_target(left, t2, target_temp)?;
             }
             Expr::Ident(name) => {
                 self.load_path(value_idx, &[]);
-                self.store_identifier_target_value(name);
+                if let Some(AssignTargetTemp::IdentRef(ref_idx)) = target_temp {
+                    self.store_current_value_to_identifier_target(ref_idx);
+                } else {
+                    self.store_identifier_target_value(name);
+                }
                 self.chunk.emit(Op::Pop, self.current_line);
             }
             Expr::Member { .. } => {
-                let target = match member_target {
-                    Some(target) => target,
+                let target = match target_temp {
+                    Some(AssignTargetTemp::Member {
+                        obj_idx,
+                        key_idx,
+                        computed,
+                    }) => (obj_idx, key_idx, computed),
                     None => self
                         .compile_assign_member_target_temps(target)?
                         .ok_or_else(|| error::Error::internal("expected member target"))?,
+                    Some(AssignTargetTemp::IdentRef(_)) => {
+                        return Err(error::Error::internal("expected member target"));
+                    }
                 };
                 self.load_path(value_idx, &[]);
                 self.store_current_value_to_member_target(target);
@@ -2298,6 +2296,34 @@ impl Compiler {
         Ok(Some((obj_idx, key_idx, *computed)))
     }
 
+    fn compile_assign_target_temp(
+        &mut self,
+        target: &Expr,
+    ) -> error::Result<Option<AssignTargetTemp>> {
+        match target {
+            Expr::Ident(name) => {
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                let ref_idx = self.intern("#dtarget_ref");
+                self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
+                Ok(Some(AssignTargetTemp::IdentRef(ref_idx)))
+            }
+            Expr::Member { .. } => {
+                let Some((obj_idx, key_idx, computed)) =
+                    self.compile_assign_member_target_temps(target)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(AssignTargetTemp::Member {
+                    obj_idx,
+                    key_idx,
+                    computed,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn store_current_value_to_member_target(&mut self, target: (usize, usize, bool)) {
         let (obj_idx, key_idx, computed) = target;
         self.chunk.emit(Op::LoadEnv(obj_idx), self.current_line);
@@ -2310,6 +2336,11 @@ impl Compiler {
             self.chunk.emit(Op::SetProp, self.current_line);
         }
         self.chunk.emit(Op::Pop, self.current_line);
+    }
+
+    fn store_current_value_to_identifier_target(&mut self, ref_idx: usize) {
+        self.chunk.emit(Op::LoadEnv(ref_idx), self.current_line);
+        self.chunk.emit(Op::PutValue, self.current_line);
     }
 
     fn compile_super_member_target_temps(

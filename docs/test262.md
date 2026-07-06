@@ -176,6 +176,24 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   assignments, and compound assignments, while primitive string binding
   objects expose `length`. The focused `language/statements/with`
   plus assignment/update cluster runs at **398 pass / 0 fail / 410 skip**.
+- **Destructuring assignment Reference target preservation** —
+  Object and array destructuring assignment targets now evaluate identifier
+  References before reading source properties, stepping iterators, or running
+  default initializers. This preserves the selected `with` object-environment
+  binding even if those later operations delete the property before `PutValue`.
+  The focused Reference cluster
+  `language/statements/with language/expressions/assignment
+  language/expressions/destructuring language/expressions/compound-assignment
+  language/expressions/logical-assignment language/expressions/delete` runs at
+  **904 pass / 0 fail / 363 skip**.
+- **Promise built-in surface expansion** —
+  `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
+  Promise static surface `all`/`race`/`allSettled`/`any`/`try` are now exposed,
+  and `String(Symbol(...))` uses the special `String` constructor conversion.
+  A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
+  **90 pass / 163 fail / 2 timeout / 448 skip**. The Promise skip remains in
+  the supported runner until constructor capability, species constructors, and
+  thenable assimilation are implemented more fully.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,

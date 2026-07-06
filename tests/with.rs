@@ -187,6 +187,65 @@ fn with_destructuring_assignment_uses_inherited_object_binding() {
 }
 
 #[test]
+fn with_destructuring_identifier_target_preserves_reference_before_source_get() {
+    let src = r#"
+        var x = "outer";
+        var o = { x: "inner" };
+        var source = {
+            get a() {
+                delete o.x;
+                return "assigned";
+            }
+        };
+        with (o) {
+            ({ a: x } = source);
+        }
+        o.x + ":" + x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("assigned:outer:true")));
+}
+
+#[test]
+fn with_array_destructuring_identifier_target_preserves_reference_before_iterator_step() {
+    let src = r#"
+        var x = "outer";
+        var o = { x: "inner" };
+        var iterable = {
+            [Symbol.iterator]: function() {
+                return {
+                    next: function() {
+                        delete o.x;
+                        return { value: "assigned", done: false };
+                    }
+                };
+            }
+        };
+        with (o) {
+            [x] = iterable;
+        }
+        o.x + ":" + x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("assigned:outer:true")));
+}
+
+#[test]
+fn with_destructuring_identifier_target_preserves_reference_before_default() {
+    let src = r#"
+        var x = "outer";
+        var o = { x: "inner" };
+        function fallback() {
+            delete o.x;
+            return "assigned";
+        }
+        with (o) {
+            ({ a: x = fallback() } = { a: undefined });
+        }
+        o.x + ":" + x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("assigned:outer:true")));
+}
+
+#[test]
 fn with_unscopables_for_in_identifier_head_uses_outer_binding() {
     let src = r#"
         var x = "outer";

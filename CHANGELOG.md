@@ -24,6 +24,26 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Destructuring assignment Reference target preservation**: identifier
+  targets in object and array destructuring assignments now capture the
+  spec Reference before reading the source property, stepping the iterator, or
+  evaluating a default initializer. This keeps `with` object-environment
+  targets stable even when a getter, iterator step, or default expression
+  deletes the selected property before `PutValue`. The focused Reference
+  cluster
+  `language/statements/with language/expressions/assignment
+  language/expressions/destructuring language/expressions/compound-assignment
+  language/expressions/logical-assignment language/expressions/delete` runs at
+  **904 pass / 0 fail / 363 skip**, and the supported subset remains
+  **5003 pass / 0 fail / 0 timeout**.
+- **Promise built-in surface expansion**: `Symbol.species` is now exposed,
+  `String(Symbol(...))` follows the special `String` constructor path instead
+  of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,
+  `any`, `try`, `prototype.finally`, and the `Promise[@@species]` accessor.
+  The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
+  lifted is now **90 pass / 163 fail / 2 timeout / 448 skip**; full Promise
+  capability/species/thenable semantics remain future work before lifting the
+  `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now
   preserve the enclosing method's `super` property parse context while still
   rejecting direct `super()` calls, and non-declaration

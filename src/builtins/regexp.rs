@@ -611,6 +611,10 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
                 PropertyKey::from("unscopables"),
                 data_prop(Value::Symbol(vm.well_known_symbols.unscopables)),
             );
+            obj.props().lock().insert(
+                PropertyKey::from("species"),
+                data_prop(Value::Symbol(vm.well_known_symbols.species)),
+            );
         });
     }
     // Symbol.prototype: a plain Object with a toString method. Symbol is a
