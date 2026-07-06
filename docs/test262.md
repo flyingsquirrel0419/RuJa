@@ -138,6 +138,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Realm execution, and distinguishes constructable native constructors from
   callable-only native functions. This closes the remaining cross-realm
   supported-subset failures and the Proxy subclass edge case.
+- **Sparse array holes and own-key enumeration** — Dense arrays now keep a
+  separate present-bit vector so an explicit `undefined` element is distinct
+  from an elision or deleted element. Array literal holes, `Array(length)`,
+  dense index assignment/deletion, descriptors, `hasOwnProperty`,
+  `propertyIsEnumerable`, `Object.keys`, `Object.getOwnPropertyNames`, and
+  array `for...in` now agree on whether an index is present. Boxed String
+  exotic indices are also included in `for...in`, matching
+  `Object.keys(new String(...))`. The focused Object own-key cluster
+  `built-ins/Object/getOwnPropertyNames built-ins/Object/keys` now runs at
+  **90 pass / 0 fail / 14 skip**.
 - **ArrayBuffer/DataView prototype accessors and detach host hook** —
   `ArrayBuffer.prototype.byteLength` and DataView `buffer`/`byteLength`/
   `byteOffset` are now real accessor properties with named getter functions,

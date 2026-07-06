@@ -1964,6 +1964,11 @@ impl Compiler {
                 self.chunk.emit(Op::DeclareEnv(iter_idx), self.current_line);
                 for el in elems {
                     match el {
+                        Expr::ArrayHole => {
+                            self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
+                            self.chunk.emit(Op::IteratorNext, self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                        }
                         Expr::Spread(inner) => {
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
@@ -2382,6 +2387,7 @@ impl Compiler {
             }
             Expr::Null => self.chunk.emit(Op::Null, self.current_line),
             Expr::Undefined => self.chunk.emit(Op::Undefined, self.current_line),
+            Expr::ArrayHole => self.chunk.emit(Op::Undefined, self.current_line),
             Expr::This => {
                 let name_idx = self.intern("this");
                 self.chunk.emit(Op::LoadEnv(name_idx), self.current_line);
@@ -2824,6 +2830,9 @@ impl Compiler {
                 self.chunk.emit(Op::NewArray(0), self.current_line); // [arr]
                 for e in elements {
                     match e {
+                        Expr::ArrayHole => {
+                            self.chunk.emit(Op::ArrayHolePush, self.current_line);
+                        }
                         Expr::Spread(inner) => {
                             self.compile_expr(inner)?; // [arr, iterable]
                             self.chunk.emit(Op::SpreadPush, self.current_line); // [arr]

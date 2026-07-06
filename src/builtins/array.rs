@@ -133,6 +133,9 @@ pub(crate) fn array_push(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
                 a.items.lock().extend_from_slice(args);
+                a.present
+                    .lock()
+                    .extend(std::iter::repeat_n(true, args.len()));
             }
         });
         let len = vm.heap.with_obj(idx.0, |obj| {
@@ -150,6 +153,7 @@ pub(crate) fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
     if let Some(Value::Object(idx)) = this {
         return Ok(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
+                a.present.lock().pop();
                 a.items.lock().pop().unwrap_or(Value::Undefined)
             } else {
                 Value::Undefined
@@ -788,6 +792,7 @@ pub(crate) fn array_reverse(
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
                 a.items.lock().reverse();
+                a.present.lock().reverse();
             }
         });
         return Ok(Value::Object(idx));
@@ -852,9 +857,11 @@ pub(crate) fn array_shift(
         return Ok(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
                 let mut items = a.items.lock();
+                let mut present = a.present.lock();
                 if items.is_empty() {
                     Value::Undefined
                 } else {
+                    present.remove(0);
                     items.remove(0)
                 }
             } else {
@@ -873,8 +880,10 @@ pub(crate) fn array_unshift(
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
                 let mut items = a.items.lock();
+                let mut present = a.present.lock();
                 for (i, v) in args.iter().enumerate() {
                     items.insert(i, v.clone());
+                    present.insert(i, true);
                 }
             }
         });
@@ -924,9 +933,12 @@ pub(crate) fn array_splice(
         let removed: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Array(a) = obj {
                 let mut items = a.items.lock();
+                let mut present = a.present.lock();
                 let r: Vec<Value> = items.drain(start..start + delete_count).collect();
+                present.drain(start..start + delete_count);
                 for (i, v) in args.iter().skip(2).enumerate() {
                     items.insert(start + i, v.clone());
+                    present.insert(start + i, true);
                 }
                 r
             } else {
@@ -1232,7 +1244,7 @@ pub(crate) fn array_constructor(
     // create an array of the given elements. `this` (from `new`) is ignored:
     // ES ArrayConstructor always returns a fresh Array exotic object, not the
     // `[[Construct]]`-provided ordinary object.
-    let items = if args.len() == 1 {
+    let (items, holes_len) = if args.len() == 1 {
         if let Some(Value::Number(n)) = args.first() {
             // Validate the length per ArrayCreate: must be a non-negative
             // integer that fits in u32. Negative / fractional / huge values
@@ -1248,16 +1260,20 @@ pub(crate) fn array_constructor(
             if len > 1 << 24 {
                 return Err(Error::range("Invalid array length"));
             }
-            vec![Value::Undefined; len]
+            (Vec::new(), Some(len))
         } else {
-            args.to_vec()
+            (args.to_vec(), None)
         }
     } else {
-        args.to_vec()
+        (args.to_vec(), None)
     };
     let default_proto = vm.array_proto.clone();
     let proto = native_constructor_prototype(vm, default_proto)?;
-    let arr = HeapObj::Array(ArrayData::new(items, Some(proto)));
+    let arr = if let Some(len) = holes_len {
+        HeapObj::Array(ArrayData::new_holes(len, Some(proto)))
+    } else {
+        HeapObj::Array(ArrayData::new(items, Some(proto)))
+    };
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 

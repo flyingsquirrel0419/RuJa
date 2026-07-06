@@ -958,7 +958,10 @@ impl Vm {
                 let mut own = Vec::new();
                 if let HeapObj::Array(a) = o {
                     let props = a.props.lock();
-                    for i in 0..a.items.lock().len() {
+                    for (i, present) in a.present.lock().iter().copied().enumerate() {
+                        if !present {
+                            continue;
+                        }
                         let key = i.to_string();
                         let enumerable = props
                             .get(&crate::value::PropertyKey::from(key.as_str()))
@@ -970,6 +973,13 @@ impl Vm {
                     for (k, _) in m.entries.lock().iter().map(|(k, v)| (&k.0, v)) {
                         if let Value::String(s) = k {
                             own.push((s.clone(), true));
+                        }
+                    }
+                }
+                if let HeapObj::Object(od) = o {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        for i in 0..crate::value::utf16_len(&s) {
+                            own.push((Arc::from(i.to_string().as_str()), true));
                         }
                     }
                 }
@@ -1129,10 +1139,19 @@ impl Vm {
             let (found, enumerable, proto) = self.heap.with_obj(idx.0, |o| {
                 let pkey = crate::value::PropertyKey::from(key);
                 if let HeapObj::Array(a) = o {
-                    if key.parse::<usize>().is_ok_and(|i| i < a.items.lock().len()) {
+                    if crate::value::parse_array_index(key).is_some_and(|i| a.is_dense_present(i)) {
                         let enumerable =
                             a.props.lock().get(&pkey).is_none_or(|desc| desc.enumerable);
                         return (true, enumerable, o.proto().lock().clone());
+                    }
+                }
+                if let HeapObj::Object(od) = o {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        if crate::value::parse_array_index(key)
+                            .is_some_and(|i| i < crate::value::utf16_len(&s))
+                        {
+                            return (true, true, o.proto().lock().clone());
+                        }
                     }
                 }
                 let desc = o.props().lock().get(&pkey).cloned();

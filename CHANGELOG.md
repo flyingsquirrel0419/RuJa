@@ -16,6 +16,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   This closes the remaining cross-realm eval/template/non-constructor checks
   plus the Proxy subclass edge case, raising the supported subset to **4180
   pass / 0 fail / 0 timeout**.
+- **Sparse array holes and own-key enumeration**: dense arrays now track
+  whether each backing-store slot is actually present, so array literal
+  elisions, `Array(length)` holes, `delete array[index]`, `hasOwnProperty`,
+  `propertyIsEnumerable`, `Object.keys`, and
+  `Object.getOwnPropertyNames` agree on absent elements. `for...in` now uses
+  the same present-bit model for arrays and includes boxed String exotic
+  indices. The focused Object own-key cluster now runs at **90 pass / 0 fail /
+  14 skip**.
 - **ArrayBuffer/DataView prototype accessors and detach host hook**:
   `ArrayBuffer.prototype.byteLength` and DataView `buffer`/`byteLength`/
   `byteOffset` are now installed as spec-visible accessor properties with

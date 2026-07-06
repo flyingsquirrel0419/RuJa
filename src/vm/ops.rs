@@ -1418,6 +1418,20 @@ impl Vm {
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Array(a) = o {
                                 a.items.lock().push(value.clone());
+                                a.present.lock().push(true);
+                            }
+                        });
+                    }
+                    self.stack.push(arr);
+                }
+                Op::ArrayHolePush => {
+                    // stack: [array]; append an elision hole.
+                    let arr = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &arr {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::Array(a) = o {
+                                a.items.lock().push(Value::Undefined);
+                                a.present.lock().push(false);
                             }
                         });
                     }
@@ -1438,6 +1452,7 @@ impl Vm {
                             self.heap.with_obj(arr_idx.0, |o| {
                                 if let HeapObj::Array(a) = o {
                                     a.items.lock().push(v.clone());
+                                    a.present.lock().push(true);
                                 }
                             });
                         }
@@ -1764,10 +1779,10 @@ impl Vm {
                             if let crate::value::PropertyKey::Str(ref s) = &pkey {
                                 if s.as_ref() == "length" {
                                     Value::Bool(false)
-                                } else if let Ok(i) = s.parse::<usize>() {
+                                } else if let Some(i) = crate::value::parse_array_index(s) {
                                     let exists = self.heap.with_obj(idx.0, |o| {
                                         if let HeapObj::Array(a) = o {
-                                            i < a.items.lock().len()
+                                            a.is_dense_present(i)
                                                 || a.props.lock().contains_key(&pkey)
                                         } else {
                                             false
@@ -1785,6 +1800,10 @@ impl Vm {
                                                 let mut items = a.items.lock();
                                                 if i < items.len() {
                                                     items[i] = Value::Undefined;
+                                                    if let Some(slot) = a.present.lock().get_mut(i)
+                                                    {
+                                                        *slot = false;
+                                                    }
                                                 }
                                             }
                                         });

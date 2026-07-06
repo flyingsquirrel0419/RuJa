@@ -84,9 +84,12 @@ impl Vm {
                                 }
                                 return Some(Value::Undefined);
                             }
-                            return Some(
-                                a.items.lock().get(i).cloned().unwrap_or(Value::Undefined),
-                            );
+                            if a.is_dense_present(i) {
+                                return Some(
+                                    a.items.lock().get(i).cloned().unwrap_or(Value::Undefined),
+                                );
+                            }
+                            return None;
                         }
                     }
                     let r = o.props().lock().get(&pkey).map(|d| d.value.clone());
@@ -127,6 +130,33 @@ impl Vm {
     pub fn delete_property(&mut self, obj: &Value, key: &str) -> error::Result<bool> {
         if let Value::Object(idx) = obj {
             let pkey = crate::value::PropertyKey::from(key);
+            let array_delete = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    if key == "length" {
+                        return Some(false);
+                    }
+                    if let Some(i) = crate::value::parse_array_index(key) {
+                        if let Some(map) = a.arguments_map.lock().as_mut() {
+                            if let Some(slot) = map.names.get_mut(i) {
+                                *slot = None;
+                            }
+                        }
+                        a.props.lock().shift_remove(&pkey);
+                        let mut items = a.items.lock();
+                        if i < items.len() {
+                            items[i] = Value::Undefined;
+                            if let Some(slot) = a.present.lock().get_mut(i) {
+                                *slot = false;
+                            }
+                        }
+                        return Some(true);
+                    }
+                }
+                None
+            });
+            if let Some(result) = array_delete {
+                return Ok(result);
+            }
             let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
                 o.props()
                     .lock()
@@ -906,13 +936,19 @@ impl Vm {
             if let HeapObj::Array(a) = o {
                 let is_arguments = a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
                 let mut items = a.items.lock();
+                let mut present = a.present.lock();
                 if !is_arguments {
                     while items.len() <= i {
                         items.push(Value::Undefined);
+                        present.push(false);
                     }
                 }
                 if i < items.len() {
                     items[i] = value;
+                    if present.len() <= i {
+                        present.resize(i + 1, false);
+                    }
+                    present[i] = true;
                 } else {
                     let pkey = crate::value::PropertyKey::from_string(i.to_string());
                     a.props
@@ -958,6 +994,7 @@ impl Vm {
             if let HeapObj::Array(a) = o {
                 let cap = crate::value::MAX_DENSE_ARRAY_LEN;
                 let mut items = a.items.lock();
+                let mut present = a.present.lock();
                 // Drop any sparse properties whose index is >= new_len, and
                 // recompute sparse_max so length stays consistent.
                 {
@@ -980,11 +1017,14 @@ impl Vm {
                     // Fits in the dense backing store.
                     if new_len < items.len() {
                         items.truncate(new_len);
+                        present.truncate(new_len);
                     } else {
                         while items.len() < new_len {
                             items.push(Value::Undefined);
+                            present.push(false);
                         }
                     }
+                    drop(present);
                     drop(items);
                     *a.sparse_max.lock() = None;
                 } else {
@@ -993,7 +1033,9 @@ impl Vm {
                     // millions of holes.
                     if items.len() > cap {
                         items.truncate(cap);
+                        present.truncate(cap);
                     }
+                    drop(present);
                     drop(items);
                     *a.sparse_max.lock() = Some(new_len);
                 }

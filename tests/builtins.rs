@@ -808,6 +808,22 @@ fn object_keys_len() {
 }
 
 #[test]
+fn sparse_array_holes_are_not_own_keys() {
+    assert_eq!(
+        run("Object.keys([1,,3,,5]).join('|');"),
+        Value::String(Arc::from("0|2|4"))
+    );
+    assert_eq!(
+        run("var a=[1,2]; delete a[0]; [a.length, 0 in a, a.hasOwnProperty('0'), Object.keys(a).join('|'), Object.getOwnPropertyNames(a).join('|')].join(',');"),
+        Value::String(Arc::from("2,false,false,1,1|length"))
+    );
+    assert_eq!(
+        run("[[undefined].hasOwnProperty('0'), [,].hasOwnProperty('0'), Object.keys(Array(3)).length].join(',');"),
+        Value::String(Arc::from("true,false,0"))
+    );
+}
+
+#[test]
 fn object_values_sum() {
     assert_eq!(
         run("Object.values({a:1,b:2}).reduce((x,y)=>x+y,0);"),

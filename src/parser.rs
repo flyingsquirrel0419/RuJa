@@ -1835,7 +1835,7 @@ impl Parser {
             Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
             Expr::Assign(AssignOp::Assign, left, _) => Self::is_assignment_pattern(left),
             Expr::Array(elements) => elements.iter().all(|element| match element {
-                Expr::Undefined => true,
+                Expr::ArrayHole => true,
                 Expr::Spread(inner) => Self::is_assignment_pattern(inner),
                 other => Self::is_assignment_pattern(other),
             }),
@@ -2615,7 +2615,7 @@ impl Parser {
         while !self.check(&TokenKind::RBracket) {
             if self.check(&TokenKind::Comma) {
                 self.advance();
-                elements.push(Expr::Undefined); // hole
+                elements.push(Expr::ArrayHole);
                 continue;
             }
             if self.check(&TokenKind::Spread) {
@@ -3581,7 +3581,7 @@ impl Parser {
             Expr::Array(elements) => {
                 for element in elements {
                     match element {
-                        Expr::Undefined => {}
+                        Expr::ArrayHole => {}
                         Expr::Spread(inner) => {
                             Self::reject_duplicate_proto_assignment_pattern(inner)?;
                         }

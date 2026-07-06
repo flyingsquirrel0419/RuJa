@@ -59,6 +59,7 @@ pub enum Expr {
     Ident(Arc<str>),
     This,
     Super,
+    ArrayHole,
     Array(Vec<Expr>),
     Object(Vec<Property>),
     Function(FunctionExpr),

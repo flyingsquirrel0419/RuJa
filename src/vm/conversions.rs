@@ -442,7 +442,16 @@ impl Vm {
             }
             depth += 1;
             let (has, proto) = self.heap.with_obj(idx.0, |o| {
-                (o.props().lock().contains_key(key), o.proto().lock().clone())
+                let has = if o.props().lock().contains_key(key) {
+                    true
+                } else if let HeapObj::Array(a) = o {
+                    key.as_str()
+                        .and_then(crate::value::parse_array_index)
+                        .is_some_and(|i| a.is_dense_present(i))
+                } else {
+                    false
+                };
+                (has, o.proto().lock().clone())
             });
             if has {
                 return true;
@@ -484,14 +493,16 @@ impl Vm {
         // indexed chars and `length`. Treat those as present.
         match obj {
             Value::Object(idx) => {
-                let (is_arr, len) = self.heap.with_obj(idx.0, |o| {
+                let (is_arr, has_dense_index) = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
-                        (true, a.items.lock().len())
+                        let has = crate::value::parse_array_index(name)
+                            .is_some_and(|i| a.is_dense_present(i));
+                        (true, has)
                     } else {
-                        (false, 0)
+                        (false, false)
                     }
                 });
-                if is_arr && (name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)) {
+                if is_arr && (name == "length" || has_dense_index) {
                     return Ok(true);
                 }
                 Ok(false)
@@ -516,8 +527,8 @@ impl Vm {
                     if name == "length" {
                         return true;
                     }
-                    if let Ok(i) = name.parse::<usize>() {
-                        return i < a.items.lock().len();
+                    if let Some(i) = crate::value::parse_array_index(name) {
+                        return a.is_dense_present(i);
                     }
                     // array extra props live in props()
                 }
@@ -852,8 +863,11 @@ impl Vm {
                                 }
                                 return Ok(Value::Undefined);
                             }
-                            let items = a.items.lock();
-                            return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
+                            if a.is_dense_present(i) {
+                                let items = a.items.lock();
+                                return Ok(items.get(i).cloned().unwrap_or(Value::Undefined));
+                            }
+                            return Ok(Value::Undefined);
                         }
                     }
                     if let HeapObj::Map(m) = o {

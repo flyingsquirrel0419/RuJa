@@ -577,8 +577,8 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
                     return true;
                 }
                 if let Some(name) = key.as_str() {
-                    if let Ok(i) = name.parse::<usize>() {
-                        return i < a.items.lock().len();
+                    if let Some(i) = crate::value::parse_array_index(name) {
+                        return a.is_dense_present(i);
                     }
                 }
             }
@@ -666,8 +666,8 @@ fn object_property_is_enumerable(
                         return false;
                     }
                     if let Some(name) = key.as_str() {
-                        if let Ok(i) = name.parse::<usize>() {
-                            return i < a.items.lock().len();
+                        if let Some(i) = crate::value::parse_array_index(name) {
+                            return a.is_dense_present(i);
                         }
                     }
                 }
@@ -903,8 +903,10 @@ fn own_property_keys(
 
             if let HeapObj::Array(a) = o {
                 if include_strings {
-                    for i in 0..a.items.lock().len() {
-                        index_keys.push(i as u32);
+                    for (i, present) in a.present.lock().iter().copied().enumerate() {
+                        if present {
+                            index_keys.push(i as u32);
+                        }
                     }
                     if !enumerable_only {
                         string_keys.push(PropertyKey::from("length"));
@@ -1429,7 +1431,7 @@ fn own_property_descriptor_for_key(
                 }
                 if let Some(i) = canonical_string_index(key) {
                     let items = a.items.lock();
-                    if i < items.len() {
+                    if i < items.len() && a.is_dense_present(i) {
                         return Some(PropertyDescriptor::data(items[i].clone()));
                     }
                 }

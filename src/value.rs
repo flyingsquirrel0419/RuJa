@@ -477,6 +477,9 @@ pub enum PrivateSlot {
 
 pub struct ArrayData {
     pub items: Mutex<Vec<Value>>,
+    /// Dense index presence bits. `items[i] == Undefined` can mean either an
+    /// explicit `undefined` value or an array hole.
+    pub present: Mutex<Vec<bool>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     /// Largest array index currently stored as a named property rather
@@ -500,14 +503,28 @@ pub struct ArgumentsMap {
 
 impl ArrayData {
     pub fn new(items: Vec<Value>, proto: Option<Value>) -> Self {
+        let present = vec![true; items.len()];
+        Self::with_present(items, present, proto)
+    }
+
+    pub fn new_holes(len: usize, proto: Option<Value>) -> Self {
+        Self::with_present(vec![Value::Undefined; len], vec![false; len], proto)
+    }
+
+    fn with_present(items: Vec<Value>, present: Vec<bool>, proto: Option<Value>) -> Self {
         ArrayData {
             items: Mutex::new(items),
+            present: Mutex::new(present),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(proto),
             sparse_max: Mutex::new(None),
             arguments_map: Mutex::new(None),
             is_arguments: AtomicBool::new(false),
         }
+    }
+
+    pub fn is_dense_present(&self, index: usize) -> bool {
+        self.present.lock().get(index).copied().unwrap_or(false)
     }
 }
 
