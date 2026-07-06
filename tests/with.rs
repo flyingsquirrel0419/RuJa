@@ -258,6 +258,65 @@ fn with_unscopables_deleted_binding_then_strict_set_throws() {
 }
 
 #[test]
+fn with_delete_identifier_deletes_object_environment_binding() {
+    let src = r#"
+        var o = { x: 2 };
+        var deleted;
+        with (o) {
+            deleted = delete x;
+        }
+        deleted + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true:false")));
+}
+
+#[test]
+fn with_delete_identifier_uses_inherited_object_environment_binding() {
+    let src = r#"
+        var x = 1;
+        var proto = { x: 2 };
+        var o = Object.create(proto);
+        var deleted;
+        with (o) {
+            deleted = delete x;
+        }
+        deleted + ":" + x + ":" + o.hasOwnProperty("x") + ":" + proto.x;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true:1:false:2")));
+}
+
+#[test]
+fn with_delete_identifier_honors_unscopables() {
+    let src = r#"
+        var x = 1;
+        var o = { x: 2 };
+        o[Symbol.unscopables] = { x: true };
+        var deleted;
+        with (o) {
+            deleted = delete x;
+        }
+        deleted + ":" + x + ":" + o.hasOwnProperty("x") + ":" + o.x;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("false:1:true:2")));
+}
+
+#[test]
+fn with_delete_identifier_propagates_unscopables_getter_error() {
+    let err = run_err(
+        r#"
+        var o = { x: 2 };
+        Object.defineProperty(o, Symbol.unscopables, {
+            get: function() { throw new Error("boom"); }
+        });
+        with (o) {
+            delete x;
+        }
+        "#,
+    );
+    assert!(err.contains("boom"), "got: {err}");
+}
+
+#[test]
 fn with_var_initializer_resolves_binding_before_rhs() {
     let src = r#"
         var obj = { test262id: 1 };

@@ -69,6 +69,15 @@ Current supported subset count: **4276 pass / 0 fail / 0 timeout**.
   unscopables getter. This closes `language/statements/with` at **169 pass / 0
   fail / 12 skip** and moves the Reference-focused with/assignment/inc/dec
   cluster to **409 pass / 0 fail / 399 skip**.
+- **`delete` through `with` object environments**: identifier deletion now
+  routes `with` object environment records through the same `[[HasProperty]]`
+  and `Symbol.unscopables` HasBinding logic used by reads and writes before
+  applying ordinary property deletion. This preserves inherited `with`
+  bindings, leaves unscopables-hidden properties untouched while falling
+  through to outer bindings, and propagates abrupt unscopables getters. The
+  focused `language/statements/with language/expressions/delete` run stays at
+  **235 pass / 0 fail / 15 skip**, and the broader Reference-focused delete
+  cluster runs at **404 pass / 0 fail / 409 skip**.
 - **Arrow lexical `new.target`**: arrow closures now capture their enclosing
   frame's `new.target` at creation time and reuse it when executing later,
   including arrows returned from constructors. `optional-catch-binding` and

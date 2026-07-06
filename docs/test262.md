@@ -203,6 +203,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/expressions/logical-assignment language/expressions/update` cluster
   runs at **338 pass / 0 fail / 406 skip**, with local regression coverage for
   the previously untested Reference edges.
+- **`delete` through `with` object environments** —
+  Identifier deletion now routes `with` object environment records through
+  the same `[[HasProperty]]` and `Symbol.unscopables` HasBinding logic as
+  reads and writes before applying ordinary property deletion. Inherited
+  `with` bindings, unscopables-hidden properties, and abrupt unscopables
+  getters now follow the same Reference path as other identifier operations.
+  The focused `language/statements/with language/expressions/delete` run
+  stays at **235 pass / 0 fail / 15 skip**, and the broader
+  Reference-focused delete cluster runs at **404 pass / 0 fail / 409 skip**.
 - **Strict directive and future-reserved-word early errors** —
   Sloppy binding names now accept strict-only future reserved words such as
   `implements`, `interface`, `package`, `private`, `protected`, `public`,
@@ -951,6 +960,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `logical-assignment-operators` is removed from the skip filters at **57
   pass / 0 fail / 21 skip**, raising the supported subset to **4276 pass / 0
   fail / 0 timeout**.
+- **`delete` through `with` object environments** — `delete x` now uses the
+  object environment HasBinding path for `with` objects, including inherited
+  properties, `Symbol.unscopables`, and abrupt unscopables getters. The
+  supported subset remains at **4276 pass / 0 fail / 0 timeout** while closing
+  this untracked Reference edge.
 
 ## Why the full-suite rate is not higher
 
