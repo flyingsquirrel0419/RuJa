@@ -83,8 +83,12 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   existing local var bindings during eval declaration instantiation, makes
   newly-created local eval bindings deletable, respects `with` object lookup
   inside eval source, and reflects cross-Realm indirect eval declarations on
-  that Realm's global object. The focused `language/eval-code` cluster now
-  runs at **137 pass / 88 fail / 122 skip**.
+  that Realm's global object. Direct eval during function, arrow, and
+  generator parameter initialization now rejects `var arguments` declarations
+  against an existing arguments binding, and generator calls now run parameter
+  and declaration-instantiation bytecode before returning the suspended
+  generator object. The focused `language/eval-code` cluster now runs at
+  **225 pass / 0 fail / 122 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

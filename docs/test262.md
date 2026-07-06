@@ -202,9 +202,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   environment, keeps existing local var bindings intact, makes newly-created
   local eval bindings deletable, preserves `with` object lookup inside eval
   source, and reflects cross-Realm indirect eval declarations on the target
-  Realm's global object. The focused `language/eval-code` cluster now runs at
-  **137 pass / 88 fail / 122 skip**, with the remaining failures isolated to
-  direct-eval early-error generation.
+  Realm's global object. Direct eval during function, arrow, and generator
+  parameter initialization now rejects `var arguments` declarations against an
+  existing arguments binding, and generator calls now execute parameter and
+  declaration-instantiation bytecode before returning a suspended generator.
+  The focused `language/eval-code` cluster now runs at **225 pass / 0 fail /
+  122 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

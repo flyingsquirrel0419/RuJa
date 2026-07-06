@@ -135,6 +135,9 @@ pub struct CallFrame {
     /// environment is a local declarative environment. Newly-created
     /// var/function bindings are deletable per EvalDeclarationInstantiation.
     pub eval_deletable_bindings: bool,
+    /// True while a function frame is evaluating parameter initializers before
+    /// entering the body variable environment.
+    pub in_parameter_initializers: bool,
     /// True when this frame is a derived class constructor (extends ...).
     /// In derived constructors, returning a non-object value after super()
     /// is a TypeError.
@@ -171,6 +174,7 @@ impl CallFrame {
             finally_stack: Vec::new(),
             eval_global_bindings: false,
             eval_deletable_bindings: false,
+            in_parameter_initializers: false,
             is_derived_ctor: false,
         }
     }
@@ -192,6 +196,14 @@ enum Flow {
     Continue,
     /// A Halt/Return ended execution with a value.
     Value(Value),
+}
+
+pub(crate) struct GeneratorPrologueState {
+    pub env: GcIdx,
+    pub ip: usize,
+    pub stack: Vec<Value>,
+    pub locals: Vec<Value>,
+    pub catch_stack: Vec<(usize, u32, GcIdx)>,
 }
 
 pub enum Microtask {
@@ -675,6 +687,19 @@ impl Vm {
         }
         if !is_strict {
             for name in &var_names {
+                let declaring_arguments = name.as_ref() == "arguments";
+                let in_parameter_initializers = self
+                    .frames
+                    .last()
+                    .is_some_and(|frame| frame.in_parameter_initializers);
+                if declaring_arguments
+                    && in_parameter_initializers
+                    && crate::environment::has_own_binding(&self.heap, caller_env, name)
+                {
+                    return Err(Error::syntax(
+                        "Cannot declare 'arguments' from direct eval in parameter initializer",
+                    ));
+                }
                 if var_env != self.global
                     && function_names
                         .iter()
@@ -776,6 +801,9 @@ impl Vm {
             env,
             this_val,
         ));
+        if let Some(frame) = self.frames.last_mut() {
+            frame.in_parameter_initializers = fdef.has_parameter_expressions;
+        }
         // Apply `new.target` if this call was a Construct.
         if let Some(nt) = self.pending_new_target.take() {
             if let Some(frame) = self.frames.last_mut() {
@@ -801,6 +829,58 @@ impl Vm {
             self.heap.maybe_collect(&roots);
         }
         result
+    }
+
+    pub(crate) fn execute_generator_prologue(
+        &mut self,
+        fdef: Arc<crate::function::FunctionDef>,
+        env: GcIdx,
+        this_val: Value,
+        args: &[Value],
+    ) -> error::Result<GeneratorPrologueState> {
+        let mut locals = vec![Value::Undefined; fdef.num_locals.max(256)];
+        for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
+            let slot = fdef.param_slots.get(i).copied().unwrap_or(i);
+            if slot < locals.len() {
+                locals[slot] = a.clone();
+            }
+        }
+
+        let stack_base = self.stack.len();
+        self.frames.push(CallFrame::new(
+            fdef.chunk.clone(),
+            0,
+            stack_base,
+            locals,
+            env,
+            this_val,
+        ));
+        if let Some(frame) = self.frames.last_mut() {
+            frame.in_parameter_initializers = fdef.has_parameter_expressions;
+        }
+
+        let target_depth = self.frames.len() - 1;
+        let result = self.interpret_to_depth_until_ip(target_depth, fdef.chunk.body_start_ip);
+        if let Err(err) = result {
+            if self.frames.len() > target_depth {
+                self.frames.truncate(target_depth);
+            }
+            self.stack.truncate(stack_base);
+            return Err(err);
+        }
+
+        let frame = self
+            .frames
+            .pop()
+            .ok_or_else(|| Error::internal("generator prologue frame missing"))?;
+        let saved_stack = self.stack.split_off(stack_base);
+        Ok(GeneratorPrologueState {
+            env: frame.env,
+            ip: frame.ip,
+            stack: saved_stack,
+            locals: frame.locals,
+            catch_stack: frame.catch_stack,
+        })
     }
 
     /// Resume (or start) a lazy generator, running until the next `yield` or
@@ -866,18 +946,22 @@ impl Vm {
             ResumeKind::Return(_) => Value::Undefined, // handled above
         };
 
-        // On the first resume, initialize the locals table with the arguments.
+        // On the first resume, either continue after the call-time generator
+        // prologue or initialize legacy generator state created before that
+        // prologue existed.
         if !started {
-            locals = vec![Value::Undefined; fdef.num_locals.max(256)];
-            for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
-                let slot = fdef.param_slots.get(i).copied().unwrap_or(i);
-                if slot < locals.len() {
-                    locals[slot] = a.clone();
+            if locals.is_empty() {
+                locals = vec![Value::Undefined; fdef.num_locals.max(256)];
+                for (i, a) in args.iter().enumerate().take(fdef.params.len()) {
+                    let slot = fdef.param_slots.get(i).copied().unwrap_or(i);
+                    if slot < locals.len() {
+                        locals[slot] = a.clone();
+                    }
                 }
+                ip = 0;
+                stack.clear();
+                catch_stack.clear();
             }
-            ip = 0;
-            stack.clear();
-            catch_stack.clear();
         } else if let ResumeKind::Throw(_e) = &kind {
             // `throw(e)`: do NOT push a resume value; instead, set a flag so
             // the next dispatch in this frame throws `e` at the yield point.
@@ -898,6 +982,9 @@ impl Vm {
             env,
             this_val.clone(),
         ));
+        if let Some(frame) = self.frames.last_mut() {
+            frame.in_parameter_initializers = fdef.has_parameter_expressions;
+        }
         // Restore the saved catch_stack onto the new frame.
         self.current_frame_mut()?.catch_stack = catch_stack;
         // Swap in a dedicated operand stack for the generator run, preserving
@@ -1002,11 +1089,19 @@ impl Vm {
     }
 
     fn interpret(&mut self) -> error::Result<Value> {
-        self.interpret_catch(None)
+        self.interpret_catch(None, None)
     }
 
     fn interpret_to_depth(&mut self, target_depth: usize) -> error::Result<Value> {
-        self.interpret_catch(Some(target_depth))
+        self.interpret_catch(Some(target_depth), None)
+    }
+
+    fn interpret_to_depth_until_ip(
+        &mut self,
+        target_depth: usize,
+        stop_ip: usize,
+    ) -> error::Result<Value> {
+        self.interpret_catch(Some(target_depth), Some((target_depth, stop_ip)))
     }
 
     /// Build a catchable `Error` object for a native (non-thrown) error, so
@@ -1064,9 +1159,13 @@ impl Vm {
     /// converts errors raised by builtins/operators (TypeError, ReferenceError,
     /// ...) into catchable exceptions so that `try { f() } catch(e)` works for
     /// native errors too.
-    fn interpret_catch(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
+    fn interpret_catch(
+        &mut self,
+        return_depth: Option<usize>,
+        stop_at: Option<(usize, usize)>,
+    ) -> error::Result<Value> {
         loop {
-            match self.interpret_inner(return_depth) {
+            match self.interpret_inner(return_depth, stop_at) {
                 Ok(v) => return Ok(v),
                 Err(e) => {
                     if !e.catchable() {
@@ -1142,8 +1241,12 @@ impl Vm {
         }
     }
 
-    fn interpret_inner(&mut self, return_depth: Option<usize>) -> error::Result<Value> {
-        match self.interpret_inner_raw(return_depth) {
+    fn interpret_inner(
+        &mut self,
+        return_depth: Option<usize>,
+        stop_at: Option<(usize, usize)>,
+    ) -> error::Result<Value> {
+        match self.interpret_inner_raw(return_depth, stop_at) {
             Ok(v) => Ok(v),
             Err(e) => {
                 // Stamp the source line of the faulting instruction (the

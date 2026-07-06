@@ -152,6 +152,63 @@ fn direct_eval_local_function_bindings_are_deletable_when_new() {
 }
 
 #[test]
+fn direct_eval_parameter_initializer_rejects_arguments_redeclaration() {
+    assert!(run_err(
+        r#"
+            function f(p = eval("var arguments")) {}
+            f();
+        "#
+    )
+    .contains("SyntaxError"));
+
+    assert!(run_err(
+        r#"
+            var f = (p = eval("var arguments"), arguments) => {};
+            f();
+        "#
+    )
+    .contains("SyntaxError"));
+
+    assert_eq!(
+        run(r#"
+            var f = (p = eval("var arguments = 'param'")) => arguments;
+            f();
+            "#),
+        Value::String(Arc::from("param"))
+    );
+}
+
+#[test]
+fn generator_parameter_initializers_run_at_call_time() {
+    assert!(run_err(
+        r#"
+            function* g(p = eval("var arguments")) {}
+            g();
+        "#
+    )
+    .contains("SyntaxError"));
+
+    assert_eq!(
+        run(r#"
+            var seen = 0;
+            function* g(p = (seen = 1)) { yield seen; }
+            var iter = g();
+            seen;
+            "#),
+        Value::Number(1.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            function* g(p = 1) { yield p; }
+            var iter = g();
+            iter.next().value;
+            "#),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
 fn indirect_eval_runs_in_global_scope() {
     let src = r#"
         function f() {

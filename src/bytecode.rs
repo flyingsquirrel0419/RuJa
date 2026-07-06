@@ -20,6 +20,9 @@ pub struct Chunk {
     /// Whether this chunk was compiled under strict-mode rules. The VM uses
     /// this to apply strict-direct-eval semantics (no var leak).
     pub is_strict: bool,
+    /// For function chunks, the first instruction that belongs to the actual
+    /// body after parameter initialization and declaration instantiation.
+    pub body_start_ip: usize,
 }
 
 impl Chunk {
@@ -30,6 +33,7 @@ impl Chunk {
             let_names: Vec::new(),
             lines: Vec::new(),
             is_strict: false,
+            body_start_ip: 0,
         }
     }
 

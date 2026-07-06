@@ -589,6 +589,12 @@ impl Vm {
                 let _ = &this_val;
                 let is_gen = func.is_generator;
                 if is_gen {
+                    let prologue = self.execute_generator_prologue(
+                        func.clone(),
+                        call_env,
+                        this_val.clone(),
+                        args,
+                    )?;
                     let generator_instance_proto = {
                         let callee = Value::Object(idx);
                         let proto = self
@@ -609,13 +615,13 @@ impl Vm {
                         crate::value::LazyGeneratorData {
                             fdef: func.clone(),
                             closure: call_env,
-                            env: Mutex::new(call_env),
+                            env: Mutex::new(prologue.env),
                             this_val: Mutex::new(this_val.clone()),
                             args: Mutex::new(args.to_vec()),
-                            ip: AtomicUsize::new(0),
-                            stack: Mutex::new(Vec::new()),
-                            locals: Mutex::new(Vec::new()),
-                            catch_stack: Mutex::new(Vec::new()),
+                            ip: AtomicUsize::new(prologue.ip),
+                            stack: Mutex::new(prologue.stack),
+                            locals: Mutex::new(prologue.locals),
+                            catch_stack: Mutex::new(prologue.catch_stack),
                             started: AtomicBool::new(false),
                             done: AtomicBool::new(false),
                             resume_value: Mutex::new(Value::Undefined),

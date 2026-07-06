@@ -567,6 +567,15 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
     false
 }
 
+pub fn has_own_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            return e.vars.lock().contains_key(name);
+        }
+        false
+    })
+}
+
 pub fn binding_env_and_kind(heap: &Heap, env: GcIdx, name: &str) -> Option<(GcIdx, BindingKind)> {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {

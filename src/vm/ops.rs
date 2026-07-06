@@ -62,6 +62,7 @@ impl Vm {
     pub(crate) fn interpret_inner_raw(
         &mut self,
         return_depth: Option<usize>,
+        stop_at: Option<(usize, usize)>,
     ) -> error::Result<Value> {
         loop {
             // Execution fuel: bound untrusted code. Checked before each
@@ -86,6 +87,11 @@ impl Vm {
             }
             let frame = self.current_frame()?;
             let ip = frame.ip;
+            if stop_at.is_some_and(|(depth, stop_ip)| {
+                self.frames.len().saturating_sub(1) == depth && ip == stop_ip
+            }) {
+                return Ok(Value::Undefined);
+            }
             if ip >= frame.chunk.code.len() {
                 return Ok(Value::Undefined);
             }
@@ -1084,6 +1090,7 @@ impl Vm {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let new_env = env::new_env(&self.heap, Some(cur_env), true)?;
                     self.current_frame_mut()?.env = new_env;
+                    self.current_frame_mut()?.in_parameter_initializers = false;
                 }
                 Op::PopScope => {
                     let parent = self.frames.last().and_then(|f| {

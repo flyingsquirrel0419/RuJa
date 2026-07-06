@@ -1781,6 +1781,7 @@ impl Compiler {
             let lex = Self::collect_lexical_names(body_stmts);
             self.emit_lexical_hoist(&lex)?;
         }
+        let body_start_ip = self.chunk.code.len();
         for stmt in body_stmts {
             if matches!(&stmt.node, StmtNode::FunctionDecl(_)) {
                 continue;
@@ -1791,6 +1792,7 @@ impl Compiler {
         self.pop_scope();
         let mut func_chunk = std::mem::take(&mut self.chunk);
         func_chunk.is_strict = f.is_strict;
+        func_chunk.body_start_ip = body_start_ip;
         self.name_map = saved_names;
         self.chunk = saved_chunk;
         self.switch_val_depth = saved_switch_val;
