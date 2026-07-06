@@ -28,7 +28,7 @@ SKIP_FEATURES = {
     "class-static-methods-private", "decorators",
     "default-parameters", "destructuring-binding",
     "dynamic-import", "error-cause", "explicit-resource-management",
-    "export-star-as-namespace-from-module", "for-of",
+    "export-star-as-namespace-from-module",
     "generators", "hashbang", "import-assertions",
     "import-attributes", "import-defer", "import.meta", "iterator-helpers",
     "json-modules", "module",
@@ -38,7 +38,7 @@ SKIP_FEATURES = {
     "regexp-named-groups", "regexp-unicode-property-escapes", "regexp-v-flag",
     "resizable-arraybuffer", "shadowrealm",
     "sharedarraybuffer", "source-phase-imports",
-    "source-phase-imports-module-source", "super", "tail-call-optimization",
+    "source-phase-imports-module-source", "tail-call-optimization",
     "top-level-await", "u180e",
 }
 

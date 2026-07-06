@@ -361,10 +361,15 @@ impl Parser {
         &mut self,
         generator_enabled: bool,
         async_enabled: bool,
+        super_property_allowed: bool,
     ) -> error::Result<ParsedParams> {
         let saved_defaults = std::mem::take(&mut self.cur_param_defaults);
         let saved_rest = self.cur_rest_param.take();
         let saved_dstr = std::mem::take(&mut self.cur_param_destructure_decls);
+        let saved_super = self.super_depth;
+        let saved_super_call = self.super_call_depth;
+        self.super_depth = if super_property_allowed { 1 } else { 0 };
+        self.super_call_depth = 0;
         let params = match self
             .with_function_context(generator_enabled, async_enabled, |p| p.parse_params())
         {
@@ -373,6 +378,8 @@ impl Parser {
                 self.cur_param_defaults = saved_defaults;
                 self.cur_rest_param = saved_rest;
                 self.cur_param_destructure_decls = saved_dstr;
+                self.super_depth = saved_super;
+                self.super_call_depth = saved_super_call;
                 return Err(err);
             }
         };
@@ -382,6 +389,8 @@ impl Parser {
         self.cur_param_defaults = saved_defaults;
         self.cur_rest_param = saved_rest;
         self.cur_param_destructure_decls = saved_dstr;
+        self.super_depth = saved_super;
+        self.super_call_depth = saved_super_call;
         Ok((params, param_defaults, rest_param, dstr_decls))
     }
 
@@ -888,7 +897,7 @@ impl Parser {
             self.check_binding_name(name)?;
         }
         let (params, param_defaults, rest_param, dstr_decls) =
-            self.parse_params_scoped(is_generator, is_async)?;
+            self.parse_params_scoped(is_generator, is_async, false)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = self.last_fn_body_use_strict_directive;
         let has_destructuring_params = !dstr_decls.is_empty();
@@ -3033,7 +3042,7 @@ impl Parser {
             };
             if is_getter || is_setter {
                 let (params, param_defaults, rest_param, dstr_decls) =
-                    self.parse_params_scoped(false, false)?;
+                    self.parse_params_scoped(false, false, true)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
                 let body_contains_use_strict = self.last_fn_body_use_strict_directive;
@@ -3089,7 +3098,7 @@ impl Parser {
             } else if self.check(&TokenKind::LParen) {
                 // method shorthand or value
                 let (params, param_defaults, rest_param, dstr_decls) =
-                    self.parse_params_scoped(is_generator_method, is_async_method)?;
+                    self.parse_params_scoped(is_generator_method, is_async_method, true)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body =
                     self.parse_fn_body(true, false, is_generator_method, is_async_method)?;
@@ -3246,7 +3255,7 @@ impl Parser {
             self.check_binding_name(name)?;
         }
         let (params, param_defaults, rest_param, dstr_decls) =
-            self.parse_params_scoped(is_generator, is_async)?;
+            self.parse_params_scoped(is_generator, is_async, false)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = self.last_fn_body_use_strict_directive;
         let has_destructuring_params = !dstr_decls.is_empty();
@@ -4352,7 +4361,7 @@ impl Parser {
                     unreachable!()
                 };
                 let (params, param_defaults, rest_param, dstr_decls) =
-                    self.parse_params_scoped(false, false)?;
+                    self.parse_params_scoped(false, false, true)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
                 let body_contains_use_strict = self.last_fn_body_use_strict_directive;
@@ -4390,7 +4399,7 @@ impl Parser {
                 if is_private_method {
                     self.advance(); // consume #name
                     let (params, param_defaults, rest_param, dstr_decls) =
-                        self.parse_params_scoped(false, false)?;
+                        self.parse_params_scoped(false, false, true)?;
                     Self::reject_duplicate_formal_params(
                         &params,
                         &dstr_decls,
@@ -4526,7 +4535,7 @@ impl Parser {
                 ));
             }
             let (params, param_defaults, rest_param, dstr_decls) =
-                self.parse_params_scoped(is_generator_method, is_async_method)?;
+                self.parse_params_scoped(is_generator_method, is_async_method, true)?;
             Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
             let super_call_allowed = superclass.is_some() && is_constructor;
             let mut body = self.parse_fn_body(
@@ -5357,6 +5366,36 @@ mod tests {
             "let async; for (\\u0061sync of [7]) ;",
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_method_parameter_defaults_allow_super_property() {
+        for src in [
+            "var obj = { method(x = super.toString) { return x; } };",
+            "var obj = { method(x = super['toString']) { return x; } };",
+            "var obj = { *method(x = super.toString) { yield x; } };",
+            "var obj = { async method(x = super.toString) { return x; } };",
+            "class C { method(x = super.toString) {} }",
+            "class C { static method(x = super.toString) {} }",
+            "class C extends B { constructor(x = super.toString) { super(); } }",
+            "var obj = { method(x = () => super.toString) { return x; } };",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_method_parameter_defaults_reject_super_call_and_non_method_super() {
+        for src in [
+            "var obj = { method(x = super()) {} };",
+            "class C { method(x = super()) {} }",
+            "class C extends B { constructor(x = super()) { super(); } }",
+            "function f(x = super.toString) {}",
+            "var f = function(x = super.toString) {};",
+            "var obj = { method(x = function(y = super.toString) {}) {} };",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
         }
     }
 

@@ -468,6 +468,15 @@ fn for_of_destructure() {
 }
 
 #[test]
+fn for_of_assignment_destructure() {
+    assert_eq!(
+        run("var x; var c=0; for ([x] of [[0]]) { c += x + 1; } x + ':' + c;"),
+        Value::String(Arc::from("0:1"))
+    );
+    assert_eq!(run("var x; for ({x} of [{x:2}]) {} x;"), Value::Number(2.0));
+}
+
+#[test]
 fn for_of_array() {
     assert_eq!(
         run("let s=0; for(let x of [1,2,3]){s+=x;} s;"),
@@ -1197,6 +1206,7 @@ fn object_methods_reject_super_call() {
         "({ method(){ super(); } });",
         "({ get x(){ super(); } });",
         "({ set x(v){ super(); } });",
+        "({ method(x = super()) {} });",
     ] {
         let err = common::run_err(src);
         assert!(
@@ -1204,6 +1214,40 @@ fn object_methods_reject_super_call() {
             "{err}"
         );
     }
+}
+
+#[test]
+fn object_method_parameter_defaults_allow_super_property() {
+    let src = r#"
+        var obj = {
+            method(x = super.toString) { return x; }
+        };
+        obj.toString = null;
+        obj.method() === Object.prototype.toString;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+
+    assert_eq!(
+        run("let proto={get x(){return 41;}, m(){return this.n+1;}}; let obj={__proto__:proto,n:4, method(a=super.x,b=super.m()){return a+':'+b;}}; obj.method();"),
+        Value::String(Arc::from("41:5"))
+    );
+}
+
+#[test]
+fn class_method_parameter_defaults_allow_super_property() {
+    assert_eq!(
+        run("class B{get x(){return 3;} m(){return 7;}} class C extends B{method(a=super.x,b=super.m()){return a+':'+b;}} new C().method();"),
+        Value::String(Arc::from("3:7"))
+    );
+}
+
+#[test]
+fn regular_function_parameter_defaults_do_not_inherit_method_super() {
+    let err = common::run_err("({ method(){ function f(x = super.toString) {} } });");
+    assert!(
+        err.contains("super keyword") || err.contains("SyntaxError"),
+        "{err}"
+    );
 }
 
 #[test]

@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 30.8% of all matrix files; 61.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5000 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -1022,6 +1022,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   skip**, call/new/array/super spread tests at **217 pass / 0 fail / 80
   skip**, and class/function/arrow tests at **1117 pass / 0 fail / 8367
   skip**, raising the supported subset to **5000 pass / 0 fail / 0 timeout**.
+- **`super`/`for-of` feature lift** — method parameter default initializers
+  now preserve the enclosing method's `super` property parse context while
+  still rejecting direct `super()` calls, and non-declaration
+  `for ([x] of iterable)` / `for ({x} of iterable)` heads now route through
+  destructuring assignment instead of discarding the iterator value. `super`
+  and `for-of` are removed from the skip filters; focused verification over
+  `language/statements/for-of` and object method definitions runs at
+  **134 pass / 0 fail / 920 skip**, raising the supported subset to
+  **5003 pass / 0 fail / 0 timeout**.
 - **`typeof` through `with` object environments** — `typeof identifier` now
   reuses the VM's spec Reference-record resolution path before applying
   `GetValue`, except for the required unresolvable-reference `"undefined"`

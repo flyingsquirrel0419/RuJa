@@ -22,8 +22,17 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5000 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **`super`/`for-of` feature lift**: method parameter default initializers now
+  preserve the enclosing method's `super` property parse context while still
+  rejecting direct `super()` calls, and non-declaration
+  `for ([x] of iterable)` / `for ({x} of iterable)` heads now use the existing
+  destructuring-assignment compiler path instead of discarding the iterator
+  value. `super` and `for-of` are removed from the test262 skip filters after
+  focused verification over `language/statements/for-of` and object method
+  definitions ran at **134 pass / 0 fail / 920 skip**, raising the supported
+  subset to **5003 pass / 0 fail / 0 timeout**.
 - **ES2015 syntax/global feature lift**: `computed-property-names`,
   `rest-parameters`, `object-spread`, and `globalThis` are removed from the
   test262 skip filters after the supported subset verified at 0 failures. The

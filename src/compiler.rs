@@ -1532,6 +1532,11 @@ impl Compiler {
                             }
                             self.chunk.emit(Op::Pop, self.current_line);
                         }
+                        Expr::Array(_) | Expr::Object(_) => {
+                            let temp_idx = self.intern("#for-assign");
+                            self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
+                            self.compile_assign_value_to_target(expr, temp_idx, None)?;
+                        }
                         _ => {
                             self.compile_assign_target(expr)?;
                         }
