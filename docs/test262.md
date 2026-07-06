@@ -190,6 +190,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   remain configurable, and strict global block-level function declarations stay
   block-scoped. The focused `language/global-code` cluster now runs at **31
   pass / 0 fail / 11 skip**.
+- **Eval global declaration bindings** —
+  Non-strict direct and indirect eval now preflight global `var`/function
+  declarations with eval-specific global declaration checks and create
+  configurable global eval bindings. `$262.evalScript()` remains routed
+  through script-global declaration semantics, so its global declarations stay
+  non-configurable. Same-Realm indirect eval now runs in a fresh lexical
+  environment, preventing eval-local lexical declarations and strict
+  `var`/function declarations from leaking to the global object. The focused
+  `language/eval-code` cluster now runs at **131 pass / 94 fail / 122 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

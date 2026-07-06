@@ -35,6 +35,73 @@ fn eval_var_leaks_to_global() {
 }
 
 #[test]
+fn indirect_eval_global_bindings_are_configurable() {
+    assert_eq!(
+        run(r#"
+            (0, eval)("var rujaIndirectVar = 9; function rujaIndirectFn() { return 7; }");
+            var vd = Object.getOwnPropertyDescriptor(this, "rujaIndirectVar");
+            var fd = Object.getOwnPropertyDescriptor(this, "rujaIndirectFn");
+            [
+              rujaIndirectVar,
+              rujaIndirectFn(),
+              vd.writable, vd.enumerable, vd.configurable,
+              fd.writable, fd.enumerable, fd.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("9,7,true,true,true,true,true,true"))
+    );
+}
+
+#[test]
+fn indirect_eval_strict_and_lexical_bindings_do_not_leak_to_global() {
+    assert_eq!(
+        run(r#"
+            let outside = "outer";
+            (0, eval)("let outside = 'inner'; const hidden = 1;");
+            (0, eval)("'use strict'; var strictHidden = 2; function strictFn() {}");
+            [
+              outside,
+              typeof hidden,
+              typeof strictHidden,
+              typeof strictFn
+            ].join(",");
+            "#),
+        Value::String(Arc::from("outer,undefined,undefined,undefined"))
+    );
+}
+
+#[test]
+fn direct_eval_global_instantiation_checks_and_configurable_functions() {
+    assert_eq!(
+        run(r#"
+            Object.defineProperty(this, "rujaEvalFnDescriptor", {
+              value: 0,
+              writable: false,
+              enumerable: false,
+              configurable: true
+            });
+            eval("function rujaEvalFnDescriptor() { return 345; }");
+            var d = Object.getOwnPropertyDescriptor(this, "rujaEvalFnDescriptor");
+            [rujaEvalFnDescriptor(), d.writable, d.enumerable, d.configurable].join(",");
+            "#),
+        Value::String(Arc::from("345,true,true,true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            Object.preventExtensions(this);
+            var ok = [];
+            try { eval("var rujaNoEvalVar;"); ok.push(false); }
+            catch (e) { ok.push(e.constructor === TypeError); }
+            try { eval("function NaN() {}"); ok.push(false); }
+            catch (e) { ok.push(e.constructor === TypeError); }
+            ok.join(",");
+            "#),
+        Value::String(Arc::from("true,true"))
+    );
+}
+
+#[test]
 fn indirect_eval_runs_in_global_scope() {
     let src = r#"
         function f() {

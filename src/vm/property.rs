@@ -859,6 +859,14 @@ impl Vm {
     }
 
     pub(crate) fn create_global_var_binding(&mut self, name: &str) -> error::Result<()> {
+        self.create_global_var_binding_with_configurable(name, false)
+    }
+
+    pub(crate) fn create_global_var_binding_with_configurable(
+        &mut self,
+        name: &str,
+        configurable: bool,
+    ) -> error::Result<()> {
         let global_this = self.global_this.clone();
         let existing_desc = self.global_property_descriptor(&global_this, name);
         if existing_desc.is_none() {
@@ -868,7 +876,7 @@ impl Vm {
                     name
                 )));
             }
-            self.set_global_var_property(name, Value::Undefined);
+            self.set_global_var_property_with_configurable(name, Value::Undefined, configurable);
         }
         if !crate::environment::has(&self.heap, self.global, name) {
             let value = existing_desc
@@ -891,6 +899,15 @@ impl Vm {
         name: &str,
         value: Value,
     ) -> error::Result<()> {
+        self.create_global_function_binding_with_configurable(name, value, false)
+    }
+
+    pub(crate) fn create_global_function_binding_with_configurable(
+        &mut self,
+        name: &str,
+        value: Value,
+        configurable: bool,
+    ) -> error::Result<()> {
         let global_this = self.global_this.clone();
         if !self.can_declare_global_function(&global_this, name) {
             return Err(Error::type_err(format!(
@@ -902,6 +919,10 @@ impl Vm {
             return Ok(());
         };
         let pkey = crate::value::PropertyKey::from(name);
+        let desc_configurable = self
+            .global_property_descriptor(&Value::Object(idx), name)
+            .map(|desc| desc.configurable)
+            .unwrap_or(true);
         self.heap.with_obj(idx.0, |obj| {
             obj.props().lock().insert(
                 pkey,
@@ -909,7 +930,11 @@ impl Vm {
                     value: value.clone(),
                     writable: true,
                     enumerable: true,
-                    configurable: false,
+                    configurable: if desc_configurable {
+                        configurable
+                    } else {
+                        false
+                    },
                     get: None,
                     set: None,
                     is_accessor: false,
@@ -956,6 +981,15 @@ impl Vm {
     }
 
     pub(crate) fn set_global_var_property(&mut self, name: &str, value: Value) {
+        self.set_global_var_property_with_configurable(name, value, false);
+    }
+
+    pub(crate) fn set_global_var_property_with_configurable(
+        &mut self,
+        name: &str,
+        value: Value,
+        configurable: bool,
+    ) {
         let Value::Object(idx) = &self.global_this else {
             return;
         };
@@ -975,7 +1009,7 @@ impl Vm {
                     value,
                     writable: true,
                     enumerable: true,
-                    configurable: false,
+                    configurable,
                     get: None,
                     set: None,
                     is_accessor: false,

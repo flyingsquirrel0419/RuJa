@@ -441,7 +441,7 @@ fn test262_eval_script(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
         Value::String(s) => s.to_string(),
         _ => return Ok(Value::Undefined),
     };
-    vm.eval_indirect(&src)
+    vm.eval_script_global(&src)
 }
 
 fn test262_detach_array_buffer(

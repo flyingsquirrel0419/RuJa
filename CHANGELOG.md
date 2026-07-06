@@ -72,6 +72,14 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   configurable, and strict global block-level function declarations remain
   block-scoped. The focused `language/global-code` cluster now runs at **31
   pass / 0 fail / 11 skip**.
+- **Eval global declaration bindings**: non-strict direct and indirect eval
+  now preflight global `var`/function declarations with
+  `EvalDeclarationInstantiation`-style checks and create configurable global
+  eval bindings, while `$262.evalScript()` keeps script-global
+  non-configurable binding semantics. Same-Realm indirect eval also gets a
+  fresh lexical environment so eval-local lexical and strict `var`/function
+  bindings do not leak to the global object. The focused `language/eval-code`
+  cluster now runs at **131 pass / 94 fail / 122 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

@@ -295,7 +295,11 @@ impl Vm {
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let root = crate::environment::function_scope_root(&self.heap, env);
                     if root == self.global {
-                        self.create_global_var_binding(&name)?;
+                        let configurable = self
+                            .frames
+                            .last()
+                            .is_some_and(|frame| frame.eval_global_bindings);
+                        self.create_global_var_binding_with_configurable(&name, configurable)?;
                     } else {
                         crate::environment::ensure_var(&self.heap, env, &name);
                     }
@@ -328,8 +332,15 @@ impl Vm {
                     // First, ensure the var binding exists in the function
                     // scope root (hoisting). This creates it as undefined if
                     // not already present, without touching with-objects.
+                    let eval_global_bindings = self
+                        .frames
+                        .last()
+                        .is_some_and(|frame| frame.eval_global_bindings);
                     if root == self.global {
-                        self.create_global_var_binding(&name)?;
+                        self.create_global_var_binding_with_configurable(
+                            &name,
+                            eval_global_bindings,
+                        )?;
                     } else {
                         crate::environment::ensure_var(&self.heap, cur_env, &name);
                     }
@@ -376,7 +387,11 @@ impl Vm {
                         }
                     }
                     if root == self.global {
-                        self.set_global_var_property(&name, value);
+                        if eval_global_bindings {
+                            self.set_global_eval_var_property(&name, value);
+                        } else {
+                            self.set_global_var_property(&name, value);
+                        }
                     }
                 }
                 Op::DeclareGlobalFunction(name_idx) => {
@@ -397,7 +412,15 @@ impl Vm {
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let root = crate::environment::function_scope_root(&self.heap, cur_env);
                     if root == self.global {
-                        self.create_global_function_binding(&name, value)?;
+                        let configurable = self
+                            .frames
+                            .last()
+                            .is_some_and(|frame| frame.eval_global_bindings);
+                        self.create_global_function_binding_with_configurable(
+                            &name,
+                            value,
+                            configurable,
+                        )?;
                     } else {
                         crate::environment::declare_var(&self.heap, cur_env, &name, value);
                     }

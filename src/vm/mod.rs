@@ -127,6 +127,10 @@ pub struct CallFrame {
     /// non-local transfer (return/break/continue/throw) that hits an active
     /// finally diverts to the finally target after recording its completion.
     pub finally_stack: Vec<(usize, u32)>,
+    /// True while executing non-strict eval code whose variable environment is
+    /// the global environment. Global var/function bindings created from this
+    /// frame use EvalDeclarationInstantiation's configurable=true argument.
+    pub eval_global_bindings: bool,
     /// True when this frame is a derived class constructor (extends ...).
     /// In derived constructors, returning a non-object value after super()
     /// is a TypeError.
@@ -161,6 +165,7 @@ impl CallFrame {
             finally_completion_tag: AtomicU8::new(0),
             finally_completion_val: Mutex::new(Value::Undefined),
             finally_stack: Vec::new(),
+            eval_global_bindings: false,
             is_derived_ctor: false,
         }
     }
@@ -380,6 +385,7 @@ impl Vm {
         chunk: Chunk,
         env: GcIdx,
         this_val: Value,
+        eval_global_bindings: bool,
     ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         // eval runs on the shared stack. Push a sentinel Undefined so that
@@ -395,6 +401,9 @@ impl Vm {
             env,
             this_val,
         ));
+        if let Some(frame) = self.frames.last_mut() {
+            frame.eval_global_bindings = eval_global_bindings;
+        }
         let depth_before = self.frames.len();
         let result = self.interpret();
         // Restore caller stack to its pre-eval state, then push the result.
@@ -422,6 +431,29 @@ impl Vm {
         self.eval_indirect_in(self.global, self.global_this.clone(), src)
     }
 
+    /// Evaluate a test262 host `evalScript` string as script code in the
+    /// current Realm's global scope. Unlike indirect eval, script global
+    /// declarations use non-configurable global bindings.
+    pub(crate) fn eval_script_global(&mut self, src: &str) -> error::Result<Value> {
+        let program = crate::parser::Parser::parse(src)?;
+        self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
+        let mut compiler = crate::compiler::Compiler::new();
+        let (chunk, funcs) = compiler.compile_program(&program)?;
+        let chunk = self.append_compiled_functions(chunk, funcs);
+        crate::environment::declare(
+            &self.heap,
+            self.global,
+            "this",
+            self.global_this.clone(),
+            crate::value::BindingKind::Const,
+        );
+        let result = self.execute_chunk_scoped(chunk, self.global, self.global_this.clone(), false);
+        if !self.microtask_queue.is_empty() {
+            self.run_microtasks()?;
+        }
+        result
+    }
+
     /// Evaluate a source string as an *indirect* eval in a specific Realm
     /// global environment. This is used for cross-Realm eval functions whose
     /// [[Realm]] is represented by their closure environment.
@@ -432,20 +464,31 @@ impl Vm {
         src: &str,
     ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
-        if global_env == self.global {
-            self.check_global_declaration_instantiation(&program, global_env, &global_this)?;
+        let is_strict = program.is_strict;
+        if !is_strict && global_env == self.global {
+            self.check_eval_global_declaration_instantiation(&program, global_env, &global_this)?;
         }
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions(chunk, funcs);
+        let eval_env = if global_env == self.global {
+            crate::environment::new_env(&self.heap, Some(global_env), is_strict)?
+        } else {
+            global_env
+        };
         crate::environment::declare(
             &self.heap,
-            global_env,
+            eval_env,
             "this",
             global_this.clone(),
             crate::value::BindingKind::Const,
         );
-        let result = self.execute_chunk_scoped(chunk, global_env, global_this);
+        let result = self.execute_chunk_scoped(
+            chunk,
+            eval_env,
+            global_this,
+            !is_strict && global_env == self.global,
+        );
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }
@@ -474,6 +517,57 @@ impl Vm {
                 )));
             }
         }
+
+        for name in &var_names {
+            if self.has_global_lexical_declaration(global_env, name) {
+                return Err(Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    name
+                )));
+            }
+        }
+
+        let mut declared_functions = std::collections::HashSet::new();
+        for name in function_names.iter().rev() {
+            if declared_functions.insert(name.clone())
+                && !self.can_declare_global_function(global_this, name)
+            {
+                return Err(Error::type_err(format!(
+                    "Cannot declare global function '{}'",
+                    name
+                )));
+            }
+        }
+
+        let function_set: std::collections::HashSet<Arc<str>> =
+            function_names.into_iter().collect();
+        let mut declared_vars = std::collections::HashSet::new();
+        for name in &var_names {
+            if function_set.contains(name) {
+                continue;
+            }
+            if declared_vars.insert(name.clone()) && !self.can_declare_global_var(global_this, name)
+            {
+                return Err(Error::type_err(format!(
+                    "Cannot declare global variable '{}'",
+                    name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_eval_global_declaration_instantiation(
+        &self,
+        program: &crate::ast::Program,
+        global_env: GcIdx,
+        global_this: &Value,
+    ) -> error::Result<()> {
+        let (_, var_names, function_names) =
+            crate::compiler::Compiler::collect_global_declaration_names(
+                &program.body,
+                program.is_strict,
+            );
 
         for name in &var_names {
             if self.has_global_lexical_declaration(global_env, name) {
@@ -551,7 +645,14 @@ impl Vm {
         } else {
             crate::compiler::Compiler::collect_var_names(&program.body)
         };
+        let (_, _, function_names) = crate::compiler::Compiler::collect_global_declaration_names(
+            &program.body,
+            program.is_strict,
+        );
         let var_env = crate::environment::function_scope_root(&self.heap, caller_env);
+        if !is_strict && var_env == self.global {
+            self.check_eval_global_declaration_instantiation(&program, var_env, &self.global_this)?;
+        }
         if !is_strict {
             for name in &var_names {
                 if crate::environment::has_lexical_declaration_between(
@@ -566,7 +667,7 @@ impl Vm {
             }
         }
         let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), true)?;
-        let result = self.execute_chunk_scoped(chunk, eval_env, this_val);
+        let result = self.execute_chunk_scoped(chunk, eval_env, this_val, false);
         // After running, copy the var/function bindings that the eval body
         // established back into the caller's variable environment (they leak per
         // spec). `let`/`const`/`class` stay in eval_env and are discarded with
@@ -597,9 +698,19 @@ impl Vm {
             ) {
                 continue;
             }
-            crate::environment::declare_var(&self.heap, var_env, &name, value.clone());
             if var_env == self.global {
-                self.set_global_eval_var_property(&name, value);
+                if function_names
+                    .iter()
+                    .any(|function_name| function_name == &name)
+                {
+                    self.create_global_function_binding_with_configurable(&name, value, true)?;
+                } else {
+                    crate::environment::declare_var(&self.heap, var_env, &name, value.clone());
+                    self.create_global_var_binding_with_configurable(&name, true)?;
+                    self.set_global_eval_var_property(&name, value);
+                }
+            } else {
+                crate::environment::declare_var(&self.heap, var_env, &name, value);
             }
         }
         if !self.microtask_queue.is_empty() {
