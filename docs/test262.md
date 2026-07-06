@@ -195,10 +195,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   non-constructor shape, and `Function.prototype` inheritance. Static
   `Promise.resolve` and `Promise.reject` now create and invoke a
   receiver-constructor capability instead of directly allocating a base
-  Promise. `Promise.prototype.catch` now invokes the receiver's observable
-  `then` property, including getter and call abrupt completions.
+  Promise. `Promise.prototype.catch` and `Promise.prototype.finally` now invoke
+  the receiver's observable `then` property, including getter and call abrupt
+  completions.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **124 pass / 130 fail / 1 timeout / 448 skip**. The Promise skip remains in
+  **130 pass / 124 fail / 1 timeout / 448 skip**. The Promise skip remains in
   the supported runner until constructor capability, species constructors, and
   thenable assimilation are implemented more fully.
 - **Mapped arguments exotic descriptors** —

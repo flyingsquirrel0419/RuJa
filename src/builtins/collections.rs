@@ -1146,8 +1146,10 @@ pub(crate) fn promise_finally(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    let promise = this.unwrap_or(Value::Undefined);
     let on_finally = args.first().cloned().unwrap_or(Value::Undefined);
-    promise_then(vm, &[on_finally.clone(), on_finally], this)
+    let then = vm.get_property(&promise, "then")?;
+    vm.call_function(&then, &[on_finally.clone(), on_finally], Some(promise))
 }
 
 pub(crate) fn promise_species_get(
