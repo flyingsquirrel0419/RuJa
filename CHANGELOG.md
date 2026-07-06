@@ -57,6 +57,15 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   block-level function declarations stay block-scoped instead of leaking
   through Annex B hoisting. The focused `language/function-code` cluster now
   runs at **217 pass / 0 fail / 0 skip**.
+- **Global declaration instantiation edges**: global scripts now perform
+  declaration-instantiation preflight for lexical/global-var collisions,
+  restricted global properties, and non-extensible global objects before any
+  script body side effect runs. Global function declarations now use
+  `CreateGlobalFunctionBinding` descriptor rules, global `var` declarations
+  use `CreateGlobalVarBinding`, sloppy direct-eval global `var` properties are
+  configurable, and strict global block-level function declarations remain
+  block-scoped. The focused `language/global-code` cluster now runs at **31
+  pass / 0 fail / 11 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
   lexer whitespace/comment handling now recognizes ES Unicode space separators,
   treats only CR/LF/LS/PS as line terminators, reports unterminated multiline

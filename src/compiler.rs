@@ -79,6 +79,7 @@ impl Default for Compiler {
 /// A loop-stack frame: (continue target, pending break jumps,
 /// pending continue jumps, optional label, is switch, scope depth at entry).
 type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool, usize);
+pub type GlobalDeclarationNames = (Vec<Arc<str>>, Vec<Arc<str>>, Vec<Arc<str>>);
 
 impl Compiler {
     pub fn new() -> Self {
@@ -174,7 +175,11 @@ impl Compiler {
         // Hoist `var` declarations as undefined at the top level.
         for stmt in &program.body {
             let mut var_names = Vec::new();
-            collect_var_names_recursive(&stmt.node, &mut var_names);
+            if program.is_strict {
+                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
+            } else {
+                collect_var_names_recursive(&stmt.node, &mut var_names);
+            }
             for name in &var_names {
                 // Skip names already hoisted by function declaration hoisting.
                 if fn_decl_names.contains(&**name) {
@@ -602,6 +607,38 @@ impl Compiler {
             collect_var_names_recursive(&stmt.node, &mut out);
         }
         out
+    }
+
+    pub fn collect_global_declaration_names(
+        body: &[Stmt],
+        is_strict: bool,
+    ) -> GlobalDeclarationNames {
+        let lexical_names = Self::collect_lexical_names(body)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let mut function_names = Vec::new();
+        for stmt in body {
+            if let StmtNode::FunctionDecl(f) = &stmt.node {
+                if let Some(name) = &f.name {
+                    function_names.push(name.clone());
+                }
+            }
+        }
+        let mut var_names = Vec::new();
+        for stmt in body {
+            if is_strict {
+                collect_var_names_recursive_skip_functions(&stmt.node, &mut var_names);
+            } else {
+                collect_var_names_recursive(&stmt.node, &mut var_names);
+            }
+        }
+        for name in &function_names {
+            if !var_names.iter().any(|existing| existing == name) {
+                var_names.push(name.clone());
+            }
+        }
+        (lexical_names, var_names, function_names)
     }
 
     /// Emit TDZ (uninitialized) declarations for lexical bindings at scope entry.
@@ -1162,9 +1199,8 @@ impl Compiler {
                     } else {
                         // store as global so recursive calls can find it
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                        // Use DeclareVar (always creates binding) instead of
-                        // StoreGlobal (which throws for undeclared in strict).
-                        self.chunk.emit(Op::DeclareVar(name_idx), self.current_line);
+                        self.chunk
+                            .emit(Op::DeclareGlobalFunction(name_idx), self.current_line);
                     }
                 }
             }

@@ -294,9 +294,10 @@ impl Vm {
                     // scope root, without touching with-object properties.
                     let env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let root = crate::environment::function_scope_root(&self.heap, env);
-                    crate::environment::ensure_var(&self.heap, env, &name);
                     if root == self.global {
-                        self.set_global_var_property(&name, Value::Undefined);
+                        self.create_global_var_binding(&name)?;
+                    } else {
+                        crate::environment::ensure_var(&self.heap, env, &name);
                     }
                 }
                 Op::DeclareVar(name_idx) => {
@@ -327,7 +328,11 @@ impl Vm {
                     // First, ensure the var binding exists in the function
                     // scope root (hoisting). This creates it as undefined if
                     // not already present, without touching with-objects.
-                    crate::environment::ensure_var(&self.heap, cur_env, &name);
+                    if root == self.global {
+                        self.create_global_var_binding(&name)?;
+                    } else {
+                        crate::environment::ensure_var(&self.heap, cur_env, &name);
+                    }
                     // Now set the value via identifier resolution (set_checked),
                     // which respects the env chain: a var binding in the
                     // function scope takes precedence over a with-object
@@ -372,6 +377,29 @@ impl Vm {
                     }
                     if root == self.global {
                         self.set_global_var_property(&name, value);
+                    }
+                }
+                Op::DeclareGlobalFunction(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        let v = frame
+                            .chunk
+                            .constants
+                            .get(name_idx)
+                            .cloned()
+                            .unwrap_or(Value::Undefined);
+                        match v {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+                    let root = crate::environment::function_scope_root(&self.heap, cur_env);
+                    if root == self.global {
+                        self.create_global_function_binding(&name, value)?;
+                    } else {
+                        crate::environment::declare_var(&self.heap, cur_env, &name, value);
                     }
                 }
                 Op::DeclareLet(name_idx) => {

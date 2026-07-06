@@ -316,6 +316,10 @@ pub enum Op {
     /// original loop-scope env, and the env chain does not grow per iteration).
     RestoreParentEnv,
     DeclareVar(usize), // name index
+    /// Create/update a function declaration binding. At the real global scope
+    /// this applies CreateGlobalFunctionBinding descriptor rules; in eval or
+    /// function scopes it falls back to an ordinary var binding.
+    DeclareGlobalFunction(usize), // name index
     /// Hoist a `var` binding in the function scope root as `undefined`,
     /// without touching any `with`-object properties. Used at function/block
     /// entry to create the hoisted binding before the initializer runs.

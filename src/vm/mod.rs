@@ -330,6 +330,7 @@ impl Vm {
     /// Run a source string and return the value of the last top-level expression.
     pub fn run(&mut self, src: &str) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
+        self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions(chunk, funcs);
@@ -431,6 +432,9 @@ impl Vm {
         src: &str,
     ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
+        if global_env == self.global {
+            self.check_global_declaration_instantiation(&program, global_env, &global_this)?;
+        }
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions(chunk, funcs);
@@ -446,6 +450,68 @@ impl Vm {
             self.run_microtasks()?;
         }
         result
+    }
+
+    fn check_global_declaration_instantiation(
+        &self,
+        program: &crate::ast::Program,
+        global_env: GcIdx,
+        global_this: &Value,
+    ) -> error::Result<()> {
+        let (lexical_names, var_names, function_names) =
+            crate::compiler::Compiler::collect_global_declaration_names(
+                &program.body,
+                program.is_strict,
+            );
+
+        for name in &lexical_names {
+            if self.has_global_lexical_declaration(global_env, name)
+                || self.has_restricted_global_property(global_this, name)
+            {
+                return Err(Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    name
+                )));
+            }
+        }
+
+        for name in &var_names {
+            if self.has_global_lexical_declaration(global_env, name) {
+                return Err(Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    name
+                )));
+            }
+        }
+
+        let mut declared_functions = std::collections::HashSet::new();
+        for name in function_names.iter().rev() {
+            if declared_functions.insert(name.clone())
+                && !self.can_declare_global_function(global_this, name)
+            {
+                return Err(Error::type_err(format!(
+                    "Cannot declare global function '{}'",
+                    name
+                )));
+            }
+        }
+
+        let function_set: std::collections::HashSet<Arc<str>> =
+            function_names.into_iter().collect();
+        let mut declared_vars = std::collections::HashSet::new();
+        for name in &var_names {
+            if function_set.contains(name) {
+                continue;
+            }
+            if declared_vars.insert(name.clone()) && !self.can_declare_global_var(global_this, name)
+            {
+                return Err(Error::type_err(format!(
+                    "Cannot declare global variable '{}'",
+                    name
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Evaluate a source string as a *direct* eval: run it in a child of the
@@ -533,7 +599,7 @@ impl Vm {
             }
             crate::environment::declare_var(&self.heap, var_env, &name, value.clone());
             if var_env == self.global {
-                self.set_global_var_property(&name, value);
+                self.set_global_eval_var_property(&name, value);
             }
         }
         if !self.microtask_queue.is_empty() {

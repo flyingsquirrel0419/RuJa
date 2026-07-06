@@ -181,6 +181,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   lexical bindings instead of leaking through Annex B function-scope hoisting.
   The focused `language/function-code` cluster now runs at **217 pass / 0 fail
   / 0 skip**.
+- **Global declaration instantiation edges** —
+  Global scripts now validate lexical/global-var collisions, restricted global
+  properties, and non-extensible global objects before executing script body
+  side effects. Global function declarations use
+  `CreateGlobalFunctionBinding` descriptor rules, global `var` declarations
+  use `CreateGlobalVarBinding`, sloppy direct-eval global `var` properties
+  remain configurable, and strict global block-level function declarations stay
+  block-scoped. The focused `language/global-code` cluster now runs at **31
+  pass / 0 fail / 11 skip**.
 - **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
   The lexer now skips ES Unicode space separators and BOM as whitespace,
   handles CR/LF/LS/PS as the only line terminators for single-line comments,

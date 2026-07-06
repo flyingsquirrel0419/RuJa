@@ -799,6 +799,162 @@ impl Vm {
         })
     }
 
+    pub(crate) fn has_global_lexical_declaration(&self, env: GcIdx, name: &str) -> bool {
+        self.global_binding_kind(env, name).is_some_and(|kind| {
+            matches!(
+                kind,
+                crate::value::BindingKind::Let
+                    | crate::value::BindingKind::Const
+                    | crate::value::BindingKind::FunctionName
+            )
+        })
+    }
+
+    fn global_binding_kind(&self, env: GcIdx, name: &str) -> Option<crate::value::BindingKind> {
+        self.heap.with_obj(env.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                return e.vars.lock().get(name).map(|binding| binding.kind);
+            }
+            None
+        })
+    }
+
+    pub(crate) fn has_restricted_global_property(&self, global_this: &Value, name: &str) -> bool {
+        self.global_property_descriptor(global_this, name)
+            .is_some_and(|desc| !desc.configurable)
+    }
+
+    pub(crate) fn can_declare_global_var(&self, global_this: &Value, name: &str) -> bool {
+        if self.global_property_descriptor(global_this, name).is_some() {
+            return true;
+        }
+        self.global_object_is_extensible(global_this)
+    }
+
+    pub(crate) fn can_declare_global_function(&self, global_this: &Value, name: &str) -> bool {
+        let Some(desc) = self.global_property_descriptor(global_this, name) else {
+            return self.global_object_is_extensible(global_this);
+        };
+        desc.configurable || (!desc.is_accessor && desc.writable && desc.enumerable)
+    }
+
+    fn global_property_descriptor(
+        &self,
+        global_this: &Value,
+        name: &str,
+    ) -> Option<crate::value::PropertyDescriptor> {
+        let Value::Object(idx) = global_this else {
+            return None;
+        };
+        let pkey = crate::value::PropertyKey::from(name);
+        self.heap
+            .with_obj(idx.0, |obj| obj.props().lock().get(&pkey).cloned())
+    }
+
+    fn global_object_is_extensible(&self, global_this: &Value) -> bool {
+        let Value::Object(idx) = global_this else {
+            return false;
+        };
+        self.heap.with_obj(idx.0, |obj| obj.is_extensible())
+    }
+
+    pub(crate) fn create_global_var_binding(&mut self, name: &str) -> error::Result<()> {
+        let global_this = self.global_this.clone();
+        let existing_desc = self.global_property_descriptor(&global_this, name);
+        if existing_desc.is_none() {
+            if !self.global_object_is_extensible(&global_this) {
+                return Err(Error::type_err(format!(
+                    "Cannot declare global variable '{}'",
+                    name
+                )));
+            }
+            self.set_global_var_property(name, Value::Undefined);
+        }
+        if !crate::environment::has(&self.heap, self.global, name) {
+            let value = existing_desc
+                .filter(|desc| !desc.is_accessor)
+                .map(|desc| desc.value)
+                .unwrap_or(Value::Undefined);
+            crate::environment::declare(
+                &self.heap,
+                self.global,
+                name,
+                value,
+                crate::value::BindingKind::Var,
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn create_global_function_binding(
+        &mut self,
+        name: &str,
+        value: Value,
+    ) -> error::Result<()> {
+        let global_this = self.global_this.clone();
+        if !self.can_declare_global_function(&global_this, name) {
+            return Err(Error::type_err(format!(
+                "Cannot declare global function '{}'",
+                name
+            )));
+        }
+        let Value::Object(idx) = global_this else {
+            return Ok(());
+        };
+        let pkey = crate::value::PropertyKey::from(name);
+        self.heap.with_obj(idx.0, |obj| {
+            obj.props().lock().insert(
+                pkey,
+                crate::value::PropertyDescriptor {
+                    value: value.clone(),
+                    writable: true,
+                    enumerable: true,
+                    configurable: false,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
+        crate::environment::declare(
+            &self.heap,
+            self.global,
+            name,
+            value,
+            crate::value::BindingKind::Var,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn set_global_eval_var_property(&mut self, name: &str, value: Value) {
+        let Value::Object(idx) = &self.global_this else {
+            return;
+        };
+        let pkey = crate::value::PropertyKey::from(name);
+        self.heap.with_obj(idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            if let Some(desc) = props.get_mut(&pkey) {
+                if !desc.is_accessor && desc.writable {
+                    desc.value = value;
+                }
+                return;
+            }
+            props.insert(
+                pkey,
+                crate::value::PropertyDescriptor {
+                    value,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
+    }
+
     pub(crate) fn set_global_var_property(&mut self, name: &str, value: Value) {
         let Value::Object(idx) = &self.global_this else {
             return;
