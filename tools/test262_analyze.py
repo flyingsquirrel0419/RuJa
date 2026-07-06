@@ -22,7 +22,7 @@ SKIP_FEATURES = {
     "class-fields-public", "class-methods-private",
     "class-static-fields-private", "class-static-fields-public",
     "class-static-methods-private", "computed-property-names", "decorators",
-    "default-parameters", "destructuring-assignment", "destructuring-binding",
+    "default-parameters", "destructuring-binding",
     "dynamic-import", "error-cause", "explicit-resource-management",
     "export-star-as-namespace-from-module", "for-of",
     "generators", "globalThis", "hashbang", "import-assertions",

@@ -3146,7 +3146,8 @@ impl Parser {
                 }
                 // Shorthand property: `{x}` is equivalent to `{x: x}`.
                 let value = if let PropertyKey::Ident(s) = &key {
-                    if Self::is_reserved_identifier_reference_word(s) {
+                    if Self::is_reserved_identifier_reference_word(s) || Self::is_future_reserved(s)
+                    {
                         return Err(error::Error::syntax(format!(
                             "'{}' cannot be used as a shorthand property name",
                             s
@@ -4671,8 +4672,14 @@ impl Parser {
                         self.parse_destructure_pattern()?
                     } else {
                         match &key {
-                            PropertyKey::Ident(s) => Pattern::Ident(s.clone()),
-                            PropertyKey::String(s) => Pattern::Ident(s.clone()),
+                            PropertyKey::Ident(s) => {
+                                self.check_binding_name(s)?;
+                                Pattern::Ident(s.clone())
+                            }
+                            PropertyKey::String(s) => {
+                                self.check_binding_name(s)?;
+                                Pattern::Ident(s.clone())
+                            }
                             _ => {
                                 return Err(error::Error::syntax(
                                     "Numeric/computed destructuring key requires a binding"
@@ -4697,14 +4704,17 @@ impl Parser {
                 Ok(Pattern::Object(props, rest))
             }
             TokenKind::Ident(s) => {
+                self.check_binding_name(&s)?;
                 self.advance();
                 Ok(Pattern::Ident(Arc::from(s.as_str())))
             }
             TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                self.check_binding_name("yield")?;
                 self.advance();
                 Ok(Pattern::Ident(Arc::from("yield")))
             }
             TokenKind::Await if self.await_as_identifier_allowed() => {
+                self.check_binding_name("await")?;
                 self.advance();
                 Ok(Pattern::Ident(Arc::from("await")))
             }
@@ -5030,6 +5040,12 @@ mod tests {
             "class l\\u0065t {}",
             "class st\\u0061tic {}",
             "class tru\\u0065 {}",
+            "var { bre\\u0061k } = {};",
+            "({ bre\\u0061k } = {});",
+            "var f = ({ bre\\u0061k }) => {};",
+            "function f({ bre\\u0061k }) {}",
+            "({ \\u0065num });",
+            "({ \\u0065num } = {});",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
@@ -5038,6 +5054,8 @@ mod tests {
             "var obj = {}; obj.st\\u0061tic = 1;",
             "({ st\\u0061tic: 1 });",
             "({ f\\u{61}lse: 1 });",
+            "var { bre\\u0061k: x } = {};",
+            "({ bre\\u0061k: x } = {});",
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }

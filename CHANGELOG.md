@@ -22,7 +22,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **4335 pass / 0 fail / 0 timeout**.
+Current supported subset count: **4470 pass / 0 fail / 0 timeout**.
 
 - **Thrown custom object display**: uncaught ordinary objects created by custom
   constructors now include their prototype constructor name in the host error
@@ -50,6 +50,13 @@ Current supported subset count: **4335 pass / 0 fail / 0 timeout**.
   language/keywords language/future-reserved-words` cluster now runs at
   **113 pass / 0 fail / 1 skip**, and `language/literals` improves to
   **315 pass / 159 fail / 60 skip**.
+- **Destructuring assignment feature lift**: object/array destructuring
+  assignment patterns now reject escaped reserved words when they would become
+  binding identifiers, including shorthand object assignment properties and
+  arrow/function destructuring parameters, while escaped reserved words remain
+  valid property names in renamed patterns. `destructuring-assignment` is
+  removed from the test262 skip filters at **135 pass / 0 fail / 6 skip**,
+  raising the supported subset to **4470 pass / 0 fail / 0 timeout**.
 - **`with` object-environment HasBinding**: `with` statements now box
   primitive binding objects with `ToObject` after the nullish TypeError check,
   and object-environment binding lookup uses `[[HasProperty]]` over the

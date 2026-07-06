@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 29.2% of all matrix files; 59.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4335 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4470 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -999,6 +999,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `with` object properties can shadow eval and abrupt eval getters propagate
   before arguments run. The supported subset remains at **4276 pass / 0 fail
   / 0 timeout** while closing this untracked Reference/eval edge.
+- **Destructuring assignment feature lift** — object/array destructuring
+  assignment patterns now reject escaped reserved words when the target would
+  bind an identifier, including shorthand object assignment properties and
+  destructuring arrow/function parameters. Escaped reserved words remain valid
+  property names in renamed patterns such as `{ bre\u0061k: x }`. This removes
+  `destructuring-assignment` from the skip filters at **135 pass / 0 fail / 6
+  skip**, raising the supported subset to **4470 pass / 0 fail / 0 timeout**.
 
 ## Why the full-suite rate is not higher
 
