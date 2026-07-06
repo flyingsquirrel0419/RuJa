@@ -406,7 +406,10 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     define_realm_global(vm, realm_env, &global, "globalThis", global.clone());
 
     let eval_idx = vm.new_native_function_in_env("eval", global_eval, 1, realm_env)?;
-    define_realm_global(vm, realm_env, &global, "eval", Value::Object(eval_idx));
+    let eval_value = Value::Object(eval_idx);
+    vm.realm_eval_functions
+        .insert(realm_env.0, eval_value.clone());
+    define_realm_global(vm, realm_env, &global, "eval", eval_value);
 
     let parse_int_idx =
         vm.new_native_function_in_env("parseInt", global_parse_int, 2, realm_env)?;
@@ -2510,7 +2513,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let idx = vm.new_native_function("isFinite", global_is_finite, 1)?;
     define_global(vm, "isFinite", Value::Object(idx));
     let eval_idx = vm.new_native_function("eval", global_eval, 1)?;
-    define_global(vm, "eval", Value::Object(eval_idx));
+    let eval_value = Value::Object(eval_idx);
+    vm.realm_eval_functions
+        .insert(vm.global.0, eval_value.clone());
+    define_global(vm, "eval", eval_value);
     for name in [
         "decodeURI",
         "decodeURIComponent",

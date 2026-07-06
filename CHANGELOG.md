@@ -78,6 +78,15 @@ Current supported subset count: **4276 pass / 0 fail / 0 timeout**.
   focused `language/statements/with language/expressions/delete` run stays at
   **235 pass / 0 fail / 15 skip**, and the broader Reference-focused delete
   cluster runs at **404 pass / 0 fail / 409 skip**.
+- **Direct eval through `with` object environments**: unqualified `eval(...)`
+  calls now resolve the callee at runtime before deciding whether the call is
+  direct eval. A `with` object can shadow `eval` with an ordinary function,
+  abrupt `eval` getters propagate before argument evaluation, and
+  `with ({ eval }) { eval(src) }` still stays direct when the resolved value
+  is the current Realm's intrinsic `%eval%`. The focused
+  `language/statements/with` run stays closed at **169 pass / 0 fail / 12
+  skip**, and the supported subset remains at **4276 pass / 0 fail / 16162
+  skip** while closing this untracked Reference/eval edge.
 - **Arrow lexical `new.target`**: arrow closures now capture their enclosing
   frame's `new.target` at creation time and reuse it when executing later,
   including arrows returned from constructors. `optional-catch-binding` and
@@ -1602,7 +1611,8 @@ now run the `finally` body before completing the transfer (single-level).
   lexical chain), then fall back to lexical/global.
 - **`eval`**: global `eval(x)` returns non-strings unchanged and parses/compiles/
   runs strings at runtime. Indirect eval runs globally (var leaks to global);
-  direct `eval(...)` is detected at compile time and runs in the caller's scope.
+  direct `eval(...)` is detected from runtime callee resolution and runs in the
+  caller's scope.
 
 - **Strict mode**: `"use strict"` directive prologues are parsed and propagated
   through the AST/compiler scope chain. `with` is a SyntaxError in strict mode;

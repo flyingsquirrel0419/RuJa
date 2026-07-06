@@ -15,7 +15,8 @@
   member, and element targets
 - Optional chaining `?.` for property access, computed access, and calls
 - Template literals with `${}` and tagged templates (`tag`...``); numeric separators (`1_000`, `0xff_ff`)
-- `eval` (indirect runs globally; direct `eval(...)` runs in the caller's scope)
+- `eval` (indirect runs globally; direct `eval(...)` is detected after runtime
+  name resolution and runs in the caller's scope)
 - `with` statement (dynamic object environment records)
 - `new.target` meta-property (constructor-aware)
 - `for(;;)` with any combination of empty init/condition/update

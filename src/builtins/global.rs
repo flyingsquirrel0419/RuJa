@@ -308,8 +308,9 @@ pub(crate) fn bigint_value_of(
 }
 
 /// `eval(x)`: if `x` is not a string, return it as-is. Otherwise parse and
-/// run it. A direct `eval(...)` call (detected via the CallDirectEval opcode)
-/// runs in the caller's scope; an indirect eval runs in the global scope.
+/// run it. Unqualified `eval(...)` is upgraded to direct eval by `CallEval`
+/// only when runtime name resolution produced the Realm's intrinsic eval
+/// function; other calls run as indirect eval in the callee's Realm.
 pub(crate) fn global_eval(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
     let src = match &arg {

@@ -188,9 +188,13 @@ pub enum Op {
     CallMethod(usize),    // arg count (method call: this is on stack)
     CallMethodOpt(usize), // arg count (optional method call: skip if method is nullish)
     CallSpread,           // callee + args-array on stack; spread array into call args
-    /// Direct `eval(src)`: compile `src` and run it in the caller's scope.
-    /// Stack: [src, argCount-extras...]; uses the current frame's env + this.
-    CallDirectEval(usize), // arg count
+    /// Unqualified `eval(...)`: call directly only if the resolved callee is
+    /// the current Realm's intrinsic eval function; otherwise call normally.
+    /// Stack: [callee, args...].
+    CallEval(usize), // arg count
+    /// Spread form of unqualified `eval(...)`.
+    /// Stack: [callee, argsArray].
+    CallEvalSpread,
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
     CallSuperCtorSpread,  // super(...args): stack [this, superCtor, argsArray]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]

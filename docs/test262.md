@@ -212,6 +212,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   The focused `language/statements/with language/expressions/delete` run
   stays at **235 pass / 0 fail / 15 skip**, and the broader
   Reference-focused delete cluster runs at **404 pass / 0 fail / 409 skip**.
+- **Direct eval through `with` object environments** —
+  Unqualified `eval(...)` now evaluates the `eval` identifier and then
+  decides direct-vs-indirect eval from the resolved callee. This lets `with`
+  object properties shadow eval with ordinary functions, propagates abrupt
+  `eval` getters in the correct order, and still treats `with ({ eval }) {
+  eval(src) }` as direct eval when the resolved function is the current
+  Realm's intrinsic `%eval%`. The focused `language/statements/with` run
+  remains **169 pass / 0 fail / 12 skip**, and the supported subset remains
+  **4276 pass / 0 fail / 16162 skip** while closing this previously untracked
+  Reference/eval edge.
 - **Strict directive and future-reserved-word early errors** —
   Sloppy binding names now accept strict-only future reserved words such as
   `implements`, `interface`, `package`, `private`, `protected`, `public`,
@@ -965,6 +975,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   properties, `Symbol.unscopables`, and abrupt unscopables getters. The
   supported subset remains at **4276 pass / 0 fail / 0 timeout** while closing
   this untracked Reference edge.
+- **Direct eval through `with` object environments** — unqualified `eval(...)`
+  now performs runtime callee resolution before direct-eval classification, so
+  `with` object properties can shadow eval and abrupt eval getters propagate
+  before arguments run. The supported subset remains at **4276 pass / 0 fail
+  / 0 timeout** while closing this untracked Reference/eval edge.
 
 ## Why the full-suite rate is not higher
 

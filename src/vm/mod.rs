@@ -67,6 +67,10 @@ pub struct Vm {
     pub(crate) well_known_symbols: WellKnownSymbols,
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
+    /// Realm global environment index -> that Realm's original intrinsic
+    /// `%eval%` function object. Direct eval detection must not consult the
+    /// mutable global `eval` property because scripts may replace it.
+    pub(crate) realm_eval_functions: HashMap<usize, Value>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
     /// Optional execution fuel: when set, each dispatched opcode decrements
     /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
@@ -321,6 +325,7 @@ impl Vm {
             },
             global_names: HashMap::new(),
             global_constants: Vec::new(),
+            realm_eval_functions: HashMap::new(),
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,

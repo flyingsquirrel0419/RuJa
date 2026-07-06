@@ -3099,35 +3099,8 @@ impl Compiler {
                     _ => {
                         // If any argument is a spread, build an args array and use CallSpread.
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
-                        // Direct eval: a plain `eval(...)` call (callee is the
-                        // unqualified identifier `eval`) runs in the caller's
-                        // scope. Compile the first argument (the source) and
-                        // emit CallDirectEval so the VM can compile+run it
-                        // against the current frame's environment.
-                        if !*call_opt
-                            && matches!(callee.as_ref(), Expr::Ident(name) if &**name == "eval")
-                        {
-                            // Direct eval: only the first argument is the source
-                            // string; extras (including spread) are ignored per
-                            // spec. Suppressed only if the first arg itself is a
-                            // spread (source not statically first) or `eval` is
-                            // shadowed by a lexical binding.
-                            let is_global_eval = self.resolve("eval").is_none();
-                            let first_is_spread = args
-                                .first()
-                                .map(|a| matches!(a, Expr::Spread(_)))
-                                .unwrap_or(false);
-                            if is_global_eval && !first_is_spread {
-                                // Compile only the source (first arg); arity is 1.
-                                if let Some(a) = args.first() {
-                                    self.compile_expr(a)?;
-                                } else {
-                                    self.chunk.emit(Op::Undefined, self.current_line);
-                                }
-                                self.chunk.emit(Op::CallDirectEval(1), self.current_line);
-                                return Ok(());
-                            }
-                        }
+                        let is_eval_call = !*call_opt
+                            && matches!(callee.as_ref(), Expr::Ident(name) if &**name == "eval");
                         let mut jend = 0usize;
                         self.compile_expr(callee)?; // [callee]
                         if *call_opt {
@@ -3158,7 +3131,12 @@ impl Compiler {
                                     }
                                 }
                             }
-                            self.chunk.emit(Op::CallSpread, self.current_line); // pops argsArr then callee
+                            if is_eval_call {
+                                self.chunk.emit(Op::CallEvalSpread, self.current_line);
+                            } else {
+                                self.chunk.emit(Op::CallSpread, self.current_line);
+                                // pops argsArr then callee
+                            }
                         } else {
                             for a in args {
                                 if let Expr::Spread(_) = a {
@@ -3166,7 +3144,11 @@ impl Compiler {
                                     self.compile_expr(a)?;
                                 }
                             }
-                            self.chunk.emit(Op::Call(args.len()), self.current_line);
+                            if is_eval_call {
+                                self.chunk.emit(Op::CallEval(args.len()), self.current_line);
+                            } else {
+                                self.chunk.emit(Op::Call(args.len()), self.current_line);
+                            }
                         }
                         if *call_opt {
                             let end = self.chunk.code.len();

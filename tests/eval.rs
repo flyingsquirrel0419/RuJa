@@ -222,6 +222,56 @@ fn indirect_eval_runs_in_global_scope() {
 }
 
 #[test]
+fn direct_eval_with_object_environment_shadow_calls_fake_eval() {
+    let src = r#"
+        function f() {
+            var local = "caller-local";
+            var o = {
+                eval: function(src) {
+                    return this === o ? "fake:" + src : "wrong-this";
+                }
+            };
+            with (o) {
+                return eval("local");
+            }
+        }
+        f();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("fake:local")));
+}
+
+#[test]
+fn direct_eval_with_object_environment_getter_error_propagates() {
+    let err = run_err(
+        r#"
+        var o = {};
+        Object.defineProperty(o, "eval", {
+            get: function() { throw new Error("eval getter boom"); }
+        });
+        with (o) {
+            eval("1");
+        }
+        "#,
+    );
+    assert!(err.contains("eval getter boom"));
+}
+
+#[test]
+fn direct_eval_with_object_environment_intrinsic_eval_stays_direct() {
+    let src = r#"
+        function f() {
+            var local = "caller-local";
+            var o = { eval: eval };
+            with (o) {
+                return eval("local");
+            }
+        }
+        f();
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("caller-local")));
+}
+
+#[test]
 fn test262_create_realm_eval_runs_in_its_own_global_scope() {
     let src = r#"
         var x = "outside";
@@ -235,6 +285,16 @@ fn test262_create_realm_eval_runs_in_its_own_global_scope() {
         x + "," + otherX;
     "#;
     assert_eq!(run(src), Value::String(Arc::from("outside,inside")));
+}
+
+#[test]
+fn test262_create_realm_direct_eval_uses_that_realms_intrinsic_eval() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        other.eval('function f() { var x = "other-local"; return eval("x"); }');
+        other.eval('f();');
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("other-local")));
 }
 
 #[test]

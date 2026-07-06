@@ -2563,6 +2563,7 @@ impl Vm {
                 Op::Call(arg_count) => self.op_call(arg_count)?,
                 Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
                 Op::CallMethodOpt(arg_count) => self.op_call_method_opt(arg_count)?,
+                Op::CallEval(arg_count) => self.op_call_eval(arg_count)?,
                 Op::YieldValue => {
                     // Lazy generator: pop the yielded value and suspend execution.
                     // The `yield` expression's *result* (the value sent in by the
@@ -2682,35 +2683,7 @@ impl Vm {
                     self.stack.push(result);
                 }
                 Op::CallSpread => self.op_call_spread()?,
-                Op::CallDirectEval(arg_count) => {
-                    // Direct `eval(src, ...)`: per spec only the first argument
-                    // is the source string; extras are ignored. Compile and run
-                    // it in the caller's scope (current frame env + this).
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let src = match args.first() {
-                        Some(Value::String(s)) => s.to_string(),
-                        // Non-string first arg: return it as-is.
-                        Some(v) => {
-                            self.stack.push(v.clone());
-                            continue;
-                        }
-                        None => {
-                            self.stack.push(Value::Undefined);
-                            continue;
-                        }
-                    };
-                    let (caller_env, this_val, caller_strict) = self
-                        .frames
-                        .last()
-                        .map(|f| (f.env, f.this_val.clone(), f.chunk.is_strict))
-                        .unwrap_or((self.global, Value::Undefined, false));
-                    let result = self.eval_direct(&src, caller_env, this_val, caller_strict)?;
-                    self.stack.push(result);
-                }
+                Op::CallEvalSpread => self.op_call_eval_spread()?,
                 Op::New(arg_count) => self.op_new(arg_count)?,
                 Op::NewSpread => self.op_new_spread()?,
                 Op::MakeClosure(func_idx) => self.op_make_closure(func_idx)?,
@@ -2989,6 +2962,69 @@ impl Vm {
         Ok(())
     }
 
+    fn realm_eval_function_for_env(&self, env: GcIdx) -> Option<Value> {
+        let mut cur_env = Some(env);
+        while let Some(e_idx) = cur_env {
+            if let Some(eval) = self.realm_eval_functions.get(&e_idx.0) {
+                return Some(eval.clone());
+            }
+            cur_env = self.heap.with_obj(e_idx.0, |obj| {
+                if let HeapObj::Environment(e) = obj {
+                    *e.parent.lock()
+                } else {
+                    None
+                }
+            });
+        }
+        None
+    }
+
+    fn is_current_realm_eval(&self, callee: &Value, caller_env: GcIdx) -> bool {
+        match (callee, self.realm_eval_function_for_env(caller_env)) {
+            (Value::Object(a), Some(Value::Object(b))) => a == &b,
+            _ => false,
+        }
+    }
+
+    fn call_direct_eval_from_args(&mut self, args: &[Value]) -> error::Result<Value> {
+        let arg = args.first().cloned().unwrap_or(Value::Undefined);
+        let src = match arg {
+            Value::String(s) => s.to_string(),
+            _ => return Ok(arg),
+        };
+        let (caller_env, this_val, caller_strict) = self
+            .frames
+            .last()
+            .map(|f| (f.env, f.this_val.clone(), f.chunk.is_strict))
+            .unwrap_or((self.global, Value::Undefined, false));
+        self.eval_direct(&src, caller_env, this_val, caller_strict)
+    }
+
+    /// `Op::CallEval(arg_count)`: unqualified `eval(...)`. The parser/compiler
+    /// can identify the syntactic shape, but only runtime resolution can tell
+    /// whether `eval` was shadowed by `with` or a mutable binding.
+    fn op_call_eval(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+        let with_this = self
+            .frames
+            .last()
+            .map(|f| f.pending_with_this.lock().take())
+            .unwrap_or(None);
+        let result = if self.is_current_realm_eval(&callee, caller_env) {
+            self.call_direct_eval_from_args(&args)?
+        } else {
+            self.call_function(&callee, &args, with_this.or(Some(Value::Undefined)))?
+        };
+        self.stack.push(result);
+        Ok(())
+    }
+
     /// `Op::CallMethod(arg_count)`: `obj.key(...args)` (computed member call).
     fn op_call_method(&mut self, arg_count: usize) -> error::Result<()> {
         let mut args = Vec::with_capacity(arg_count);
@@ -3038,6 +3074,33 @@ impl Vm {
             });
         }
         let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::CallEvalSpread`: spread form of unqualified `eval(...)`.
+    fn op_call_eval_spread(&mut self) -> error::Result<()> {
+        let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let mut args = Vec::new();
+        if let Value::Object(idx) = &args_arr {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    args = a.items.lock().clone();
+                }
+            });
+        }
+        let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+        let with_this = self
+            .frames
+            .last()
+            .map(|f| f.pending_with_this.lock().take())
+            .unwrap_or(None);
+        let result = if self.is_current_realm_eval(&callee, caller_env) {
+            self.call_direct_eval_from_args(&args)?
+        } else {
+            self.call_function(&callee, &args, with_this.or(Some(Value::Undefined)))?
+        };
         self.stack.push(result);
         Ok(())
     }
