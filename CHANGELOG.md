@@ -9,6 +9,12 @@
   parse-negative test262 files are no longer reported as false failure
   buckets during focused analysis.
 
+### Runtime hardening
+
+- The VM call-stack guard now trips at a more conservative depth before
+  recursive interpreted calls can exhaust smaller debug/CI thread stacks,
+  preserving the catchable `RangeError` behavior for runaway recursion.
+
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).

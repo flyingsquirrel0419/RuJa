@@ -339,10 +339,10 @@ impl Vm {
         // an unbounded JS recursion would overflow the Rust stack (each JS
         // call recurses through `call_function` -> `execute_chunk_func` ->
         // `interpret_to_depth`), killing the process with a hard stack
-        // overflow instead of a catchable RangeError. The limit is generous
-        // (well below the Rust default 8 MiB stack) and matches the spirit of
-        // V8's "Maximum call stack size exceeded".
-        const MAX_CALL_STACK_DEPTH: usize = 850;
+        // overflow instead of a catchable RangeError. Keep the limit
+        // conservative for debug builds on small CI stacks while still
+        // allowing ordinary recursive code to run.
+        const MAX_CALL_STACK_DEPTH: usize = 512;
         if self.frames.len() >= MAX_CALL_STACK_DEPTH {
             return Err(Error::range("Maximum call stack size exceeded"));
         }

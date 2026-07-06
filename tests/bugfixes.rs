@@ -256,8 +256,8 @@ fn deep_recursion_throws_range_error_not_crash() {
 #[test]
 fn deep_but_bounded_recursion_succeeds() {
     // A modest depth (well under the limit) must still work.
-    let v = run_num_big_stack("function sum(n) { return n <= 1 ? 1 : n + sum(n - 1); } sum(800);");
-    assert_eq!(v, 320400.0);
+    let v = run_num_big_stack("function sum(n) { return n <= 1 ? 1 : n + sum(n - 1); } sum(400);");
+    assert_eq!(v, 80200.0);
 }
 
 // ---------------------------------------------------------------------------
