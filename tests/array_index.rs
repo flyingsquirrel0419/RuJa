@@ -304,6 +304,30 @@ fn char_code_at_in_range_works() {
 }
 
 #[test]
+fn from_char_code_applies_to_number_and_to_uint16() {
+    assert_eq!(
+        run(r#"String.fromCharCode("0x000A").charCodeAt(0)"#),
+        Value::Number(10.0)
+    );
+    assert_eq!(
+        run(r#"String.fromCharCode(-1).charCodeAt(0)"#),
+        Value::Number(65535.0)
+    );
+    assert_eq!(
+        run(r#"String.fromCharCode(NaN, Infinity).length"#),
+        Value::Number(2.0)
+    );
+}
+
+#[test]
+fn from_char_code_line_terminator_ends_single_line_comment() {
+    assert_eq!(
+        run(r#"var yy = 0; eval("//var " + String.fromCharCode("0x000A") + "yy = -1"); yy;"#),
+        Value::Number(-1.0)
+    );
+}
+
+#[test]
 fn code_point_at_out_of_range_is_undefined() {
     let v = run(r#""abc".codePointAt(-1)"#);
     assert_eq!(v, Value::Undefined);

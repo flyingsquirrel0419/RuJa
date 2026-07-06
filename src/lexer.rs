@@ -56,6 +56,13 @@ fn is_id_start(c: char) -> bool {
     c == '$' || c == '_' || c.is_alphabetic() || c == '\u{2118}' || c == '\u{212E}'
 }
 
+fn is_unicode_space_separator(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}'
+    )
+}
+
 /// Read a Unicode escape that may appear inside an identifier: `\uXXXX` or
 /// `\u{XXXX...}`. Returns the decoded char and the number of source bytes
 /// consumed (including the leading backslash). `None` if not a valid escape.
@@ -170,11 +177,6 @@ impl<'a> Lexer<'a> {
                 self.line += 1;
                 self.col = 1;
                 self.saw_newline = true;
-            } else if b == 0x85 && self.pos >= 2 && self.src.get(self.pos - 2) == Some(&0xC2) {
-                // NEL (U+0085) is a line terminator.
-                self.line += 1;
-                self.col = 1;
-                self.saw_newline = true;
             } else {
                 self.col += 1;
             }
@@ -182,7 +184,7 @@ impl<'a> Lexer<'a> {
         c
     }
 
-    fn skip_ws_and_comments(&mut self) {
+    fn skip_ws_and_comments(&mut self) -> Option<TokenKind> {
         loop {
             match self.peek() {
                 Some(b' ') | Some(b'\t') | Some(b'\r') => {
@@ -201,25 +203,26 @@ impl<'a> Lexer<'a> {
                 Some(b'\n') => {
                     self.advance();
                 }
-                // NEL (U+0085) line terminator: 0xC2 0x85
-                Some(0xC2) if self.peek_at(1) == Some(0x85) => {
-                    self.advance();
-                    self.advance();
-                    self.saw_newline = true;
-                }
                 // LS (U+2028) / PS (U+2029) line terminators: 0xE2 0x80 0xA8/0xA9
                 Some(0xE2)
                     if self.peek_at(1) == Some(0x80)
                         && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
                 {
-                    self.advance();
-                    self.advance();
-                    self.advance();
-                    self.saw_newline = true;
+                    self.read_line_terminator_sequence();
+                }
+                Some(c) if c >= 0x80 => {
+                    let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
+                    if len > 0 && is_unicode_space_separator(ch) {
+                        for _ in 0..len {
+                            self.advance();
+                        }
+                    } else {
+                        break;
+                    }
                 }
                 Some(b'/') if self.peek_at(1) == Some(b'/') => {
-                    while let Some(c) = self.peek() {
-                        if c == b'\n' {
+                    while self.peek().is_some() {
+                        if self.is_line_terminator_start() {
                             break;
                         }
                         self.advance();
@@ -228,18 +231,30 @@ impl<'a> Lexer<'a> {
                 Some(b'/') if self.peek_at(1) == Some(b'*') => {
                     self.advance();
                     self.advance();
+                    let mut closed = false;
                     while let Some(c) = self.peek() {
                         if c == b'*' && self.peek_at(1) == Some(b'/') {
                             self.advance();
                             self.advance();
+                            closed = true;
                             break;
                         }
+                        if self.is_line_terminator_start() {
+                            self.read_line_terminator_sequence();
+                            continue;
+                        }
                         self.advance();
+                    }
+                    if !closed {
+                        return Some(TokenKind::LexError(
+                            "unterminated multiline comment".to_string(),
+                        ));
                     }
                 }
                 _ => break,
             }
         }
+        None
     }
 
     fn read_number(&mut self) -> TokenKind {
@@ -888,7 +903,11 @@ impl<'a> Lexer<'a> {
         // right after `}` — do NOT skip whitespace, as it's part of the
         // template string content.
         if self.template_state != 3 {
-            self.skip_ws_and_comments();
+            if let Some(kind) = self.skip_ws_and_comments() {
+                let mut tok = Token::new(kind, self.line, self.col);
+                tok.preceded_by_newline = self.saw_newline;
+                return tok;
+            }
         }
         let line = self.line;
         let col = self.col;
@@ -951,8 +970,14 @@ impl<'a> Lexer<'a> {
                 self.read_ident_or_keyword()
             }
             Some(c) if c >= 0x80 => {
-                // Unicode identifier start (e.g. `π`, `café`, CJK names).
                 let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
+                if len > 0 && is_unicode_space_separator(ch) {
+                    for _ in 0..len {
+                        self.advance();
+                    }
+                    return self.next_token();
+                }
+                // Unicode identifier start (e.g. `π`, `café`, CJK names).
                 if len > 0 && is_id_start(ch) {
                     self.read_ident_or_keyword()
                 } else {
@@ -988,22 +1013,12 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 return self.next_token();
             }
-            // NEL (U+0085) line terminator.
-            Some(0xC2) if self.peek_at(1) == Some(0x85) => {
-                self.advance();
-                self.advance();
-                self.saw_newline = true;
-                return self.next_token();
-            }
             // LS (U+2028) / PS (U+2029) line terminators.
             Some(0xE2)
                 if self.peek_at(1) == Some(0x80)
                     && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9)) =>
             {
-                self.advance();
-                self.advance();
-                self.advance();
-                self.saw_newline = true;
+                self.read_line_terminator_sequence();
                 return self.next_token();
             }
             _ => {
@@ -1087,7 +1102,11 @@ impl<'a> Lexer<'a> {
         self.advance(); // consume opening `/`
         let mut pattern = String::new();
         let mut in_class = false;
+        let mut closed = false;
         while let Some(c) = self.peek() {
+            if self.is_line_terminator_start() {
+                return TokenKind::LexError("unterminated regular expression literal".to_string());
+            }
             if c == b'\\' {
                 // Escaped char: keep the backslash and the following char.
                 self.advance(); // consume backslash
@@ -1112,10 +1131,14 @@ impl<'a> Lexer<'a> {
             }
             if c == b'/' && !in_class {
                 self.advance();
+                closed = true;
                 break;
             }
             pattern.push(c as char);
             self.advance();
+        }
+        if !closed {
+            return TokenKind::LexError("unterminated regular expression literal".to_string());
         }
         let mut flags = String::new();
         while let Some(c) = self.peek() {
@@ -1138,7 +1161,6 @@ impl<'a> Lexer<'a> {
     fn is_line_terminator_start(&self) -> bool {
         match self.peek() {
             Some(b'\n') | Some(b'\r') => true,
-            Some(0xC2) => self.peek_at(1) == Some(0x85),
             Some(0xE2) => {
                 self.peek_at(1) == Some(0x80) && matches!(self.peek_at(2), Some(0xA8) | Some(0xA9))
             }
@@ -1170,6 +1192,9 @@ impl<'a> Lexer<'a> {
                 buf.push(self.advance().unwrap());
                 buf.push(self.advance().unwrap());
                 buf.push(self.advance().unwrap());
+                self.line += 1;
+                self.col = 1;
+                self.saw_newline = true;
             }
             _ => {}
         }
@@ -1553,5 +1578,45 @@ mod tests {
     fn comments() {
         assert_eq!(kinds("1 // hi\n2"), vec![Number(1.0), Number(2.0), Eof]);
         assert_eq!(kinds("1 /* x */ 2"), vec![Number(1.0), Number(2.0), Eof]);
+    }
+
+    #[test]
+    fn unicode_space_separators_are_whitespace() {
+        assert_eq!(
+            kinds("/x/g\u{2000}; /x/g\u{200A}; /x/g\u{202F}; /x/g\u{205F}; /x/g\u{3000}; /x/g\u{FEFF};"),
+            vec![
+                Regex("x".into(), "g".into()),
+                Semicolon,
+                Regex("x".into(), "g".into()),
+                Semicolon,
+                Regex("x".into(), "g".into()),
+                Semicolon,
+                Regex("x".into(), "g".into()),
+                Semicolon,
+                Regex("x".into(), "g".into()),
+                Semicolon,
+                Regex("x".into(), "g".into()),
+                Semicolon,
+                Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn comments_respect_line_terminators_and_errors() {
+        assert_eq!(kinds("// hi\u{2028}42"), vec![Number(42.0), Eof]);
+        assert_eq!(kinds("// hi\u{2029}42"), vec![Number(42.0), Eof]);
+        assert_eq!(kinds("// hi\u{0085}42"), vec![Eof]);
+        assert!(matches!(
+            kinds("/* unterminated")[0],
+            LexError(ref msg) if msg.contains("unterminated multiline comment")
+        ));
+        assert!(matches!(
+            kinds("x*/")[2],
+            LexError(ref msg) if msg.contains("unterminated regular expression")
+        ));
+
+        let tokens = Lexer::new("a/*\u{2028}*/b").tokens();
+        assert!(tokens[1].preceded_by_newline);
     }
 }

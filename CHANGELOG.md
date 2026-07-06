@@ -7,6 +7,15 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
 
+- **Unicode whitespace/comment lexing and `String.fromCharCode` coercion**:
+  lexer whitespace/comment handling now recognizes ES Unicode space separators,
+  treats only CR/LF/LS/PS as line terminators, reports unterminated multiline
+  comments and regular-expression literals, and preserves ASI newline tracking
+  across multiline comments. `String.fromCharCode` now applies `ToNumber` and
+  `ToUint16` to every argument instead of ignoring non-number values. The
+  focused `language/comments language/white-space` cluster now runs at **85
+  pass / 0 fail / 34 skip**, and the CI subset rises to **823 pass / 41 fail /
+  2 timeout** locally.
 - **test262 `$262.createRealm()` and native constructability**: added a
   test262 host object with `createRealm()`/`evalScript()`, realm-bound global
   `eval` and `parseInt` functions, and indirect eval execution against the

@@ -867,24 +867,25 @@ pub(crate) fn str_substr(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     Ok(Value::String(Arc::from(result.as_str())))
 }
 
+fn to_uint16_code_unit(n: f64) -> u16 {
+    if !n.is_finite() || n == 0.0 {
+        return 0;
+    }
+    n.trunc().rem_euclid(65536.0) as u16
+}
+
 pub(crate) fn str_from_char_code(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
     // Build from UTF-16 code units. Unlike char::from_u32, this handles
     // surrogate pairs and lone surrogates correctly (each arg is one code
     // unit in [0, 65535] after ToUint16).
-    let codes: Vec<u16> = args
-        .iter()
-        .filter_map(|v| {
-            if let Value::Number(n) = v {
-                Some((*n as u32) as u16)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut codes = Vec::with_capacity(args.len());
+    for arg in args {
+        codes.push(to_uint16_code_unit(vm.to_number(arg)?));
+    }
     let s = crate::value::utf16_from_codes(&codes);
     Ok(Value::String(Arc::from(s.as_str())))
 }

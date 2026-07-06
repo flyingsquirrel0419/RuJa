@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 26.5% of all matrix files; 55.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
-| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.7% | `CI` workflow job summary |
+| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 95.3% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
 supported-subset rate (100.0%).** It reflects the portion of the spec
@@ -115,14 +115,14 @@ This is a regression gate, not a conformance metric:
 |-------|-----|------|------|---------|-----------|
 | identifiers | 206 | 165 | 41 | 2 | 80.1% |
 | punctuators | 11 | 11 | 0 | 0 | 100.0% |
-| white-space | 65 | 49 | 16 | 0 | 75.4% |
+| white-space | 65 | 65 | 0 | 0 | 100.0% |
 | keywords | 25 | 25 | 0 | 0 | 100.0% |
 | types | 109 | 109 | 0 | 0 | 100.0% |
-| comments | 20 | 14 | 6 | 0 | 70.0% |
+| comments | 20 | 20 | 0 | 0 | 100.0% |
 | expressions/arrow-function | 90 | 90 | 0 | 0 | 100.0% |
 | expressions/function | 53 | 53 | 0 | 0 | 100.0% |
 | expressions/object | 285 | 285 | 0 | 0 | 100.0% |
-| **Total** | 864 | 801 | 63 | 2 | 92.7% |
+| **Total** | 864 | 823 | 41 | 2 | 95.3% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
@@ -132,6 +132,17 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Unicode whitespace/comment lexing and `String.fromCharCode` coercion** —
+  The lexer now skips ES Unicode space separators and BOM as whitespace,
+  handles CR/LF/LS/PS as the only line terminators for single-line comments,
+  preserves ASI newline tracking through multiline comments, and reports
+  unterminated multiline comments and regular-expression literals. NEL
+  (U+0085) remains ordinary comment text rather than a line terminator.
+  `String.fromCharCode` now applies `ToNumber` and `ToUint16` to every
+  argument, so hex string code units such as `"0x000A"` create the expected
+  line terminator. The focused `language/comments language/white-space`
+  cluster now runs at **85 pass / 0 fail / 34 skip**, and the CI subset now
+  runs locally at **823 pass / 41 fail / 2 timeout**.
 - **test262 `$262.createRealm()` and native constructability** — RuJa now
   exposes the test262 host `createRealm()` surface, runs indirect eval against
   the callee's Realm environment, keeps tagged-template caches per compiled
