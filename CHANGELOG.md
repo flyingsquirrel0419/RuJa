@@ -22,7 +22,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **4276 pass / 0 fail / 0 timeout**.
+Current supported subset count: **4335 pass / 0 fail / 0 timeout**.
 
 - **Thrown custom object display**: uncaught ordinary objects created by custom
   constructors now include their prototype constructor name in the host error
@@ -97,6 +97,14 @@ Current supported subset count: **4276 pass / 0 fail / 0 timeout**.
   language/expressions/logical-assignment language/expressions/update` run is
   **463 pass / 0 fail / 69 skip**; private class feature tests remain skipped
   by the runner, so local class regression tests cover this edge.
+- **Class static block feature lift**: class static blocks now parse as
+  dedicated static initialization blocks instead of ordinary function bodies,
+  so `return` is rejected, `super.prop` is accepted, and static-block early
+  errors reject direct `await`, `yield`, `arguments`, and duplicate labels
+  without crossing function/static-block boundaries. Class methods now carry
+  async-method metadata through compilation. The `class-static-block` feature
+  is removed from the test262 skip filters; the supported subset moves to
+  **4335 pass / 0 fail / 16103 skip**.
 - **Arrow lexical `new.target`**: arrow closures now capture their enclosing
   frame's `new.target` at creation time and reuse it when executing later,
   including arrows returned from constructors. `optional-catch-binding` and

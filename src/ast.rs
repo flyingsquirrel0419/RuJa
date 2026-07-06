@@ -28,6 +28,7 @@ pub struct ClassMethod {
     pub body: Vec<Stmt>,
     pub is_static: bool,
     pub is_constructor: bool,
+    pub is_async: bool,
     pub is_generator: bool,
     pub kind: PropKind,
     pub is_private: bool,

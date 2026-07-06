@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 29.1% of all matrix files; 59.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4276 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4335 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -44,8 +44,9 @@ statements), functions, closures, try/catch/finally, throw, strict mode,
 the full standard library (Array, String, Number, Math, Object, JSON,
 Date, RegExp, Error hierarchy).
 
-**Selected ES2015+**: arrow functions, classes/extends/super, default &
-rest parameters, destructuring (array/object/nested), template literals,
+**Selected ES2015+**: arrow functions, classes/extends/super, class static
+blocks, default & rest parameters, destructuring (array/object/nested),
+template literals,
 tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.unscopables, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
@@ -213,6 +214,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   **463 pass / 0 fail / 69 skip**. Private class feature tests are still
   skipped by the runner's unsupported-feature filters, so this edge is guarded
   by local class regression tests until those filters are lifted.
+- **Class static block feature lift** —
+  Static initialization blocks now have their own parse context instead of
+  being parsed as function bodies: `return` is rejected, `super.prop` is
+  accepted, and static-block early errors catch direct `await`, `yield`,
+  `arguments`, and duplicate labels without crossing function/static-block
+  boundaries. Async class method metadata is also preserved through
+  compilation. `class-static-block` is now removed from the skip filters, and
+  the supported subset runs at **4335 pass / 0 fail / 16103 skip**.
 - **`delete` through `with` object environments** —
   Identifier deletion now routes `with` object environment records through
   the same `[[HasProperty]]` and `Symbol.unscopables` HasBinding logic as

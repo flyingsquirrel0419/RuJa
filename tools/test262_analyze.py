@@ -19,7 +19,7 @@ SKIP_FEATURES = {
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
     "WeakSet", "arraybuffer", "async-functions", "async-iteration", "atomics",
     "class", "class-fields-private", "class-fields-private-in",
-    "class-fields-public", "class-methods-private", "class-static-block",
+    "class-fields-public", "class-methods-private",
     "class-static-fields-private", "class-static-fields-public",
     "class-static-methods-private", "computed-property-names", "decorators",
     "default-parameters", "destructuring-assignment", "destructuring-binding",

@@ -319,7 +319,7 @@ impl Parser {
     }
 
     fn await_as_identifier_allowed(&self) -> bool {
-        !self.is_strict_context && self.async_depth == 0
+        self.async_depth == 0
     }
 
     fn with_generator_context<T>(
@@ -461,13 +461,45 @@ impl Parser {
                 | TokenKind::AndAssign
                 | TokenKind::OrAssign
                 | TokenKind::NullishAssign
+                | TokenKind::Eq
+                | TokenKind::NotEq
+                | TokenKind::EqEqEq
+                | TokenKind::NotEqEqEq
+                | TokenKind::Lt
+                | TokenKind::Gt
+                | TokenKind::Lte
+                | TokenKind::Gte
+                | TokenKind::Plus
+                | TokenKind::Minus
+                | TokenKind::Star
+                | TokenKind::Slash
+                | TokenKind::Percent
+                | TokenKind::StarStar
+                | TokenKind::BitAnd
+                | TokenKind::BitOr
+                | TokenKind::BitXor
+                | TokenKind::Shl
+                | TokenKind::Shr
+                | TokenKind::Ushr
+                | TokenKind::And
+                | TokenKind::Or
+                | TokenKind::Nullish
+                | TokenKind::Inc
+                | TokenKind::Dec
+                | TokenKind::Dot
+                | TokenKind::QuestionDot
+                | TokenKind::LBracket
+                | TokenKind::LParen
                 | TokenKind::Comma
                 | TokenKind::Semicolon
                 | TokenKind::RParen
                 | TokenKind::RBracket
                 | TokenKind::RBrace
                 | TokenKind::Colon
+                | TokenKind::Question
                 | TokenKind::Instanceof
+                | TokenKind::In
+                | TokenKind::Arrow
                 | TokenKind::Eof
         )
     }
@@ -1039,6 +1071,43 @@ impl Parser {
         self.with_function_context(false, async_body, |p| {
             p.parse_fn_body_inner_inherited_super()
         })
+    }
+
+    fn parse_static_block_body(&mut self) -> error::Result<Vec<Stmt>> {
+        self.expect(&TokenKind::LBrace, "{")?;
+        let saved_loop_depth = self.loop_depth;
+        let saved_switch_depth = self.switch_depth;
+        let saved_label_stack = std::mem::take(&mut self.label_stack);
+        let saved_function_depth = self.function_depth;
+        let saved_super = self.super_depth;
+        let saved_super_call = self.super_call_depth;
+
+        self.loop_depth = 0;
+        self.switch_depth = 0;
+        self.function_depth = 0;
+        self.super_depth += 1;
+        self.super_call_depth = 0;
+
+        let result = (|| {
+            let mut body = Vec::new();
+            self.with_lexical_declaration_context(true, |p| {
+                while !p.check(&TokenKind::RBrace) && !p.check(&TokenKind::Eof) {
+                    body.push(p.parse_stmt()?);
+                }
+                Ok(())
+            })?;
+            self.expect(&TokenKind::RBrace, "}")?;
+            Self::reject_static_block_early_errors(&body)?;
+            Ok(body)
+        })();
+
+        self.loop_depth = saved_loop_depth;
+        self.switch_depth = saved_switch_depth;
+        self.label_stack = saved_label_stack;
+        self.function_depth = saved_function_depth;
+        self.super_depth = saved_super;
+        self.super_call_depth = saved_super_call;
+        result
     }
 
     fn parse_fn_body_inner_inherited_super(&mut self) -> error::Result<Vec<Stmt>> {
@@ -3837,6 +3906,315 @@ impl Parser {
         }
     }
 
+    fn reject_static_block_early_errors(body: &[Stmt]) -> error::Result<()> {
+        let mut labels = std::collections::HashSet::new();
+        for stmt in body {
+            Self::check_static_block_stmt(stmt, &mut labels)?;
+        }
+        Ok(())
+    }
+
+    fn check_static_block_stmt(
+        stmt: &Stmt,
+        labels: &mut std::collections::HashSet<Arc<str>>,
+    ) -> error::Result<()> {
+        match &stmt.node {
+            StmtNode::VarDecl { decls, .. } => {
+                for (name, init) in decls {
+                    Self::check_static_block_name(name)?;
+                    if let Some(init) = init {
+                        Self::check_static_block_expr(init)?;
+                    }
+                }
+            }
+            StmtNode::ExprStmt(expr) | StmtNode::Throw(expr) => {
+                Self::check_static_block_expr(expr)?;
+            }
+            StmtNode::Block(body) => {
+                for stmt in body {
+                    Self::check_static_block_stmt(stmt, labels)?;
+                }
+            }
+            StmtNode::If { cond, then, else_ } => {
+                Self::check_static_block_expr(cond)?;
+                Self::check_static_block_stmt(then, labels)?;
+                if let Some(else_) = else_ {
+                    Self::check_static_block_stmt(else_, labels)?;
+                }
+            }
+            StmtNode::While { cond, body } | StmtNode::DoWhile { body, cond } => {
+                Self::check_static_block_expr(cond)?;
+                Self::check_static_block_stmt(body, labels)?;
+            }
+            StmtNode::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
+                    Self::check_static_block_stmt(init, labels)?;
+                }
+                if let Some(cond) = cond {
+                    Self::check_static_block_expr(cond)?;
+                }
+                if let Some(update) = update {
+                    Self::check_static_block_expr(update)?;
+                }
+                Self::check_static_block_stmt(body, labels)?;
+            }
+            StmtNode::ForIn { left, right, body } => {
+                Self::check_static_block_stmt(left, labels)?;
+                Self::check_static_block_expr(right)?;
+                Self::check_static_block_stmt(body, labels)?;
+            }
+            StmtNode::ForOf {
+                left, right, body, ..
+            } => {
+                Self::check_static_block_stmt(left, labels)?;
+                Self::check_static_block_expr(right)?;
+                Self::check_static_block_stmt(body, labels)?;
+            }
+            StmtNode::With { object, body } => {
+                Self::check_static_block_expr(object)?;
+                Self::check_static_block_stmt(body, labels)?;
+            }
+            StmtNode::Return(expr) => {
+                if let Some(expr) = expr {
+                    Self::check_static_block_expr(expr)?;
+                }
+            }
+            StmtNode::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => {
+                Self::check_static_block_stmt(try_body, labels)?;
+                if let Some(param) = catch_param {
+                    Self::check_static_block_pattern(param)?;
+                }
+                if let Some(catch_body) = catch_body {
+                    Self::check_static_block_stmt(catch_body, labels)?;
+                }
+                if let Some(finally_body) = finally_body {
+                    Self::check_static_block_stmt(finally_body, labels)?;
+                }
+            }
+            StmtNode::FunctionDecl(func) => {
+                if let Some(name) = &func.name {
+                    Self::check_static_block_name(name)?;
+                }
+            }
+            StmtNode::Labeled(label, body) => {
+                Self::check_static_block_name(label)?;
+                if !labels.insert(label.clone()) {
+                    return Err(error::Error::syntax(
+                        "Duplicate label in static block".to_string(),
+                    ));
+                }
+                Self::check_static_block_stmt(body, labels)?;
+                labels.remove(label);
+            }
+            StmtNode::Switch { disc, cases } => {
+                Self::check_static_block_expr(disc)?;
+                for case in cases {
+                    if let Some(test) = &case.test {
+                        Self::check_static_block_expr(test)?;
+                    }
+                    for stmt in &case.body {
+                        Self::check_static_block_stmt(stmt, labels)?;
+                    }
+                }
+            }
+            StmtNode::Destructure { pattern, init, .. } => {
+                Self::check_static_block_pattern(pattern)?;
+                if let Some(init) = init {
+                    Self::check_static_block_expr(init)?;
+                }
+            }
+            StmtNode::Break(_) | StmtNode::Continue(_) | StmtNode::Empty => {}
+        }
+        Ok(())
+    }
+
+    fn check_static_block_expr(expr: &Expr) -> error::Result<()> {
+        match expr {
+            Expr::Ident(name) => Self::check_static_block_name(name),
+            Expr::Await(_) => Err(error::Error::syntax(
+                "await is not allowed in class static block".to_string(),
+            )),
+            Expr::Array(elements) => {
+                for element in elements {
+                    Self::check_static_block_expr(element)?;
+                }
+                Ok(())
+            }
+            Expr::Object(props) => {
+                for prop in props {
+                    Self::check_static_block_property_key(&prop.key)?;
+                    Self::check_static_block_expr(&prop.value)?;
+                }
+                Ok(())
+            }
+            Expr::Unary(_, expr)
+            | Expr::Update(_, _, expr)
+            | Expr::Spread(expr)
+            | Expr::YieldDelegate(expr) => Self::check_static_block_expr(expr),
+            Expr::Binary(_, left, right)
+            | Expr::Logical(_, left, right)
+            | Expr::Assign(_, left, right) => {
+                Self::check_static_block_expr(left)?;
+                Self::check_static_block_expr(right)
+            }
+            Expr::Conditional(cond, then_expr, else_expr) => {
+                Self::check_static_block_expr(cond)?;
+                Self::check_static_block_expr(then_expr)?;
+                Self::check_static_block_expr(else_expr)
+            }
+            Expr::Call { callee, args, .. } => {
+                Self::check_static_block_expr(callee)?;
+                for arg in args {
+                    Self::check_static_block_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::New { callee, args } => {
+                Self::check_static_block_expr(callee)?;
+                for arg in args {
+                    Self::check_static_block_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::Member {
+                object, property, ..
+            } => {
+                Self::check_static_block_expr(object)?;
+                Self::check_static_block_expr(property)
+            }
+            Expr::PrivateGet { object, .. } => Self::check_static_block_expr(object),
+            Expr::PrivateSet { object, value, .. } => {
+                Self::check_static_block_expr(object)?;
+                Self::check_static_block_expr(value)
+            }
+            Expr::PrivateDefineAccessor { object, .. } => Self::check_static_block_expr(object),
+            Expr::PrivateFieldDecl {
+                init: Some(init), ..
+            } => Self::check_static_block_expr(init),
+            Expr::TemplateInterp { exprs, .. } => {
+                for expr in exprs {
+                    Self::check_static_block_expr(expr)?;
+                }
+                Ok(())
+            }
+            Expr::TaggedTemplate { tag, exprs, .. } => {
+                Self::check_static_block_expr(tag)?;
+                for expr in exprs {
+                    Self::check_static_block_expr(expr)?;
+                }
+                Ok(())
+            }
+            Expr::Sequence(exprs) => {
+                for expr in exprs {
+                    Self::check_static_block_expr(expr)?;
+                }
+                Ok(())
+            }
+            Expr::Class(cls) => {
+                if let Some(name) = &cls.name {
+                    Self::check_static_block_name(name)?;
+                }
+                if let Some(superclass) = &cls.superclass {
+                    Self::check_static_block_expr(superclass)?;
+                }
+                for method in &cls.methods {
+                    if let Some(computed_name) = &method.computed_name {
+                        Self::check_static_block_expr(computed_name)?;
+                    }
+                }
+                for field in &cls.private_fields {
+                    if let Some(init) = &field.init {
+                        Self::check_static_block_expr(init)?;
+                    }
+                }
+                Ok(())
+            }
+            Expr::Arrow(func) => {
+                for default in func.param_defaults.iter().flatten() {
+                    Self::check_static_block_expr(default)?;
+                }
+                for pattern in &func.param_decls {
+                    Self::check_static_block_pattern(pattern)?;
+                }
+                Ok(())
+            }
+            Expr::Function(_) => Ok(()),
+            Expr::Yield(_) => Err(error::Error::syntax(
+                "yield is not allowed in class static block".to_string(),
+            )),
+            Expr::Number(_)
+            | Expr::BigInt(_)
+            | Expr::String(_)
+            | Expr::TemplateStr(_)
+            | Expr::Bool(_)
+            | Expr::Null
+            | Expr::Undefined
+            | Expr::This
+            | Expr::Super
+            | Expr::ArrayHole
+            | Expr::Regex(_, _)
+            | Expr::NewTarget => Ok(()),
+            Expr::PrivateFieldDecl { init: None, .. } => Ok(()),
+        }
+    }
+
+    fn check_static_block_pattern(pattern: &Pattern) -> error::Result<()> {
+        match pattern {
+            Pattern::Ident(name) => Self::check_static_block_name(name),
+            Pattern::Array(elements) => {
+                for element in elements {
+                    Self::check_static_block_pattern(element)?;
+                }
+                Ok(())
+            }
+            Pattern::Object(props, rest) => {
+                for (key, value) in props {
+                    Self::check_static_block_property_key(key)?;
+                    Self::check_static_block_pattern(value)?;
+                }
+                if let Some(rest) = rest {
+                    Self::check_static_block_pattern(rest)?;
+                }
+                Ok(())
+            }
+            Pattern::Assign(pattern, expr) => {
+                Self::check_static_block_pattern(pattern)?;
+                Self::check_static_block_expr(expr)
+            }
+            Pattern::Rest(pattern) => Self::check_static_block_pattern(pattern),
+            Pattern::Hole => Ok(()),
+        }
+    }
+
+    fn check_static_block_property_key(key: &PropertyKey) -> error::Result<()> {
+        match key {
+            PropertyKey::Computed(expr) | PropertyKey::Spread(expr) => {
+                Self::check_static_block_expr(expr)
+            }
+            PropertyKey::Ident(_) | PropertyKey::String(_) | PropertyKey::Number(_) => Ok(()),
+        }
+    }
+
+    fn check_static_block_name(name: &Arc<str>) -> error::Result<()> {
+        if matches!(&**name, "await" | "arguments") {
+            return Err(error::Error::syntax(format!(
+                "'{}' is not allowed in class static block",
+                name
+            )));
+        }
+        Ok(())
+    }
+
     /// SetFunctionName for `var x = <function/class>`: if `value` is an
     /// anonymous function/arrow/class and `name` is a plain identifier, set
     /// its display name to it.
@@ -3923,7 +4301,7 @@ impl Parser {
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
                 self.advance(); // static
-                let block = self.parse_fn_body(false, false, false, false)?;
+                let block = self.parse_static_block_body()?;
                 static_blocks.push(block);
                 continue;
             }
@@ -3978,6 +4356,7 @@ impl Parser {
                     body,
                     is_static,
                     is_constructor: false,
+                    is_async: false,
                     is_generator: false,
                     kind,
                     is_private: true,
@@ -4019,6 +4398,7 @@ impl Parser {
                         body,
                         is_static,
                         is_constructor: false,
+                        is_async: false,
                         is_generator: false,
                         kind: crate::ast::PropKind::Method,
                         is_private: true,
@@ -4057,9 +4437,22 @@ impl Parser {
             if is_getter || is_setter {
                 self.advance();
             }
-            let is_generator_method = !is_getter && !is_setter && self.eat(&TokenKind::Star);
+            let is_async_method = !is_getter
+                && !is_setter
+                && matches!(self.peek(), TokenKind::Async)
+                && !self.peek_at_tok(1).preceded_by_newline
+                && !matches!(
+                    self.peek_at_tok(1).kind,
+                    TokenKind::LParen | TokenKind::Assign | TokenKind::Semicolon
+                );
+            if is_async_method {
+                self.advance();
+            }
+            let is_generator_method =
+                !is_getter && !is_setter && !is_async_method && self.eat(&TokenKind::Star);
             let is_constructor = !is_getter
                 && !is_setter
+                && !is_async_method
                 && !is_generator_method
                 && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
             // Computed method name: [expr]
@@ -4093,11 +4486,15 @@ impl Parser {
                 }
             };
             let (params, param_defaults, rest_param, dstr_decls) =
-                self.parse_params_scoped(is_generator_method, false)?;
+                self.parse_params_scoped(is_generator_method, is_async_method)?;
             Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
             let super_call_allowed = superclass.is_some() && is_constructor;
-            let mut body =
-                self.parse_fn_body(true, super_call_allowed, is_generator_method, false)?;
+            let mut body = self.parse_fn_body(
+                true,
+                super_call_allowed,
+                is_generator_method,
+                is_async_method,
+            )?;
             let body_contains_use_strict = self.last_fn_body_use_strict_directive;
             let has_destructuring_params = !dstr_decls.is_empty();
             Self::reject_use_strict_with_non_simple_params(
@@ -4120,6 +4517,7 @@ impl Parser {
                 body,
                 is_static,
                 is_constructor,
+                is_async: is_async_method,
                 is_generator: is_generator_method,
                 kind: if is_getter {
                     crate::ast::PropKind::Get

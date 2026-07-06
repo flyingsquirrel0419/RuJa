@@ -93,6 +93,44 @@ fn static_block_does_not_leak_locals() {
     );
 }
 
+#[test]
+fn static_block_allows_super_property() {
+    assert_eq!(
+        run("class B{static get x(){return 4;}}class C extends B{static{this.y=super.x;}}C.y;"),
+        Value::Number(4.0)
+    );
+}
+
+#[test]
+fn static_block_await_identifier_contexts() {
+    assert_eq!(
+        run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var await=3, seen=0;class C{static{new (class{constructor(x=await){seen=x;}});}}seen;"
+        ),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn static_block_rejects_early_error_names_and_control() {
+    for src in [
+        "class C{static{await: 0;}}",
+        "class C{static{class await{}}}",
+        "function *g(){class C{static{yield;}}}",
+        "function f(){class C{static{return;}}}",
+        "class C{static{({await});}}",
+        "class C{static{((x=await)=>0);}}",
+        "class C{static{(class{[arguments](){}});}}",
+        "class C{static{x:x:0;}}",
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+}
+
 // --- private methods ---
 
 #[test]
