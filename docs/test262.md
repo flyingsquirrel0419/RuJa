@@ -22,9 +22,9 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 26.5% of all matrix files; 55.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 26.5% of all matrix files; 55.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (4180 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
-| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.0% | `CI` workflow job summary |
+| **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 92.7% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
 supported-subset rate (100.0%).** It reflects the portion of the spec
@@ -93,12 +93,12 @@ run:
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 48,465 |
-| Actually run | 23,160-23,162 |
-| Pass | 12,832-12,834 |
-| Fail | 10,328 |
-| Timeout | 13-15 |
+| Actually run | 23,160 |
+| Pass | 12,853 |
+| Fail | 10,307 |
+| Timeout | 15 |
 | Skip | 25,290 |
-| **Pass rate (of run)** | **55.4%** |
+| **Pass rate (of run)** | **55.5%** |
 | **Pass rate (of total)** | **26.5%** |
 
 This number is dominated by tests for features RuJa does not support.
@@ -116,13 +116,13 @@ This is a regression gate, not a conformance metric:
 | identifiers | 206 | 165 | 41 | 2 | 80.1% |
 | punctuators | 11 | 11 | 0 | 0 | 100.0% |
 | white-space | 65 | 49 | 16 | 0 | 75.4% |
-| keywords | 25 | 24 | 1 | 0 | 96.0% |
-| types | 109 | 104 | 5 | 0 | 95.4% |
+| keywords | 25 | 25 | 0 | 0 | 100.0% |
+| types | 109 | 109 | 0 | 0 | 100.0% |
 | comments | 20 | 14 | 6 | 0 | 70.0% |
 | expressions/arrow-function | 90 | 90 | 0 | 0 | 100.0% |
 | expressions/function | 53 | 53 | 0 | 0 | 100.0% |
 | expressions/object | 285 | 285 | 0 | 0 | 100.0% |
-| **Total** | 864 | 795 | 69 | 2 | 92.0% |
+| **Total** | 864 | 801 | 63 | 2 | 92.7% |
 
 (Numbers move as bugs are fixed; the CI job summary is the source of truth
 for the current commit.)
