@@ -138,6 +138,14 @@ fn generated_symbols_do_not_collide_with_well_known_symbols() {
     assert_eq!(run("Symbol() === Symbol.unscopables;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.species;"), Value::Bool(false));
     assert_eq!(
+        run("Symbol.for('x') === Symbol.for('x');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("Symbol.for('x') === Symbol.for('y');"),
+        Value::Bool(false)
+    );
+    assert_eq!(
         run("typeof Symbol.species + ':' + typeof Symbol.unscopables;"),
         Value::String(Arc::from("symbol:symbol"))
     );
@@ -1507,6 +1515,33 @@ fn object_statics() {
     assert_eq!(
         run("typeof Object.create(null);"),
         Value::String(Arc::from("object"))
+    );
+}
+
+#[test]
+fn reflect_own_keys_includes_symbols_and_non_enumerables_in_spec_order() {
+    assert_eq!(
+        run(r#"
+            var first = Symbol("first");
+            var second = Symbol("second");
+            var obj = {};
+            obj.z = 1;
+            obj[2] = 2;
+            Object.defineProperty(obj, "hidden", { value: 3, enumerable: false });
+            obj.a = 4;
+            obj[first] = 5;
+            Object.defineProperty(obj, second, { value: 6, enumerable: false });
+            Reflect.ownKeys(obj).map(function(key) {
+              if (key === first) return "first";
+              if (key === second) return "second";
+              return key;
+            }).join("|");
+            "#),
+        Value::String(Arc::from("2|z|hidden|a|first|second"))
+    );
+    assert!(
+        run_err("Reflect.ownKeys('abc');").contains("TypeError"),
+        "Reflect.ownKeys must reject primitive targets"
     );
 }
 

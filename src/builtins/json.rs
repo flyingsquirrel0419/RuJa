@@ -925,8 +925,14 @@ pub(crate) fn reflect_own_keys(
     _: Option<Value>,
 ) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    let keys = own_string_keys(vm, &target);
-    make_str_array(vm, keys)
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err("Reflect.ownKeys target must be an object"));
+    }
+    let keys = own_property_keys(vm, &target, false, true, true)
+        .iter()
+        .map(property_key_to_value)
+        .collect();
+    make_value_array(vm, keys)
 }
 fn reflect_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     object_get_prototype_of(vm, args, None)

@@ -24,6 +24,16 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **`Reflect.ownKeys` Symbol key coverage**: `Reflect.ownKeys` now rejects
+  primitive targets with `TypeError` and returns the full
+  `[[OwnPropertyKeys]]` list by preserving non-enumerable string keys and
+  Symbol keys in spec order. `Symbol.for` now uses a VM-level global symbol
+  registry for repeat-key identity, which closes the Symbol-backed
+  `Reflect.ownKeys` ordering case. Focused `built-ins/Reflect/ownKeys` with
+  `Reflect` and `Symbol` feature skips temporarily lifted runs at
+  **11 pass / 0 fail / 2 skip**; the remaining `built-ins/Symbol/for`
+  failures are separate cross-realm and `Symbol.prototype.description`
+  coverage.
 - **Destructuring assignment Reference target preservation**: identifier
   targets in object and array destructuring assignments now capture the
   spec Reference before reading the source property, stepping the iterator, or

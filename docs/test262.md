@@ -139,6 +139,14 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **`Reflect.ownKeys` Symbol key coverage** —
+  `Reflect.ownKeys` now uses RuJa's full own-property-key helper instead of
+  the string-only enumerable-key path, so it returns array-index strings,
+  ordinary strings, and Symbols in `[[OwnPropertyKeys]]` order and includes
+  non-enumerable keys. Primitive targets now throw `TypeError`.
+  `Symbol.for` also reuses a VM-level global symbol registry for repeat keys.
+  With `Reflect` and `Symbol` skips temporarily lifted, focused
+  `built-ins/Reflect/ownKeys` runs at **11 pass / 0 fail / 2 skip**.
 - **Thrown custom object display** —
   Uncaught ordinary objects created by custom constructors now include their
   prototype constructor name in the host error message. This preserves

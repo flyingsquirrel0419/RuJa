@@ -599,9 +599,14 @@ pub(crate) fn symbol_constructor(
     vm.next_symbol_id += 1;
     Ok(Value::Symbol(id))
 }
-pub(crate) fn symbol_for(vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn symbol_for(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let key = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    if let Some(id) = vm.symbol_registry.get(&key) {
+        return Ok(Value::Symbol(*id));
+    }
     let id = vm.next_symbol_id;
     vm.next_symbol_id += 1;
+    vm.symbol_registry.insert(key, id);
     Ok(Value::Symbol(id))
 }
 pub(crate) fn symbol_to_string(
