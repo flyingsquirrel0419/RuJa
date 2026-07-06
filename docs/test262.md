@@ -226,14 +226,21 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   functions with `alreadyCalled` guards, preserves rejection order, and rejects
   with a minimal `AggregateError` carrying a non-enumerable `errors` array.
   `Promise.all` also rejects its outer capability if the final capability
-  resolve abruptly completes.
+  resolve abruptly completes. `Promise.allKeyed` and
+  `Promise.allSettledKeyed` now expose the `await-dictionary` proposal
+  surface, construct through the receiver capability, read `C.resolve` once,
+  enumerate own enumerable string and Symbol keys, preserve key order
+  independently of settlement order, invoke each resolved entry's observable
+  `then`, and resolve to a null-prototype keyed result object.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **241 pass / 14 fail / 0 timeout / 448 skip**. Focused
-  `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
+  **255 pass / 0 fail / 0 timeout / 448 skip**. Focused
+  `built-ins/Promise/allKeyed built-ins/Promise/allSettledKeyed` runs at
+  **18 pass / 0 fail / 45 skip**, `built-ins/Promise/any` runs at
+  **26 pass / 0 fail / 68 skip**, and the
   `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
-  **136 pass / 0 fail / 284 skip**. The Promise skip remains in
-  the supported runner until thenable assimilation and the remaining combinator
-  semantics are implemented more fully.
+  **136 pass / 0 fail / 284 skip**. The Promise skip remains in the supported
+  runner until the broader skipped async/proposal coverage is intentionally
+  lifted.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,

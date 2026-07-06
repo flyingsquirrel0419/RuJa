@@ -1722,15 +1722,17 @@ fn promise_static_surface_and_species_descriptor() {
     assert_eq!(
         run("[
                 typeof Promise.all,
+                typeof Promise.allKeyed,
                 typeof Promise.race,
                 typeof Promise.allSettled,
+                typeof Promise.allSettledKeyed,
                 typeof Promise.any,
                 typeof Promise.try,
                 typeof Promise.withResolvers,
                 typeof Promise.prototype.finally
              ].join(',');"),
         Value::String(Arc::from(
-            "function,function,function,function,function,function,function"
+            "function,function,function,function,function,function,function,function,function"
         ))
     );
     assert_eq!(
@@ -1753,6 +1755,21 @@ fn promise_static_surface_and_species_descriptor() {
         ),
         Value::String(Arc::from("true:false:true:1:all"))
     );
+    assert_eq!(
+        run(
+            "Object.getOwnPropertyDescriptor(Promise, 'allKeyed').writable + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'allKeyed').enumerable + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'allKeyed').configurable + ':' +
+             Promise.allKeyed.length + ':' + Promise.allKeyed.name + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'allSettledKeyed').writable + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'allSettledKeyed').enumerable + ':' +
+             Object.getOwnPropertyDescriptor(Promise, 'allSettledKeyed').configurable + ':' +
+             Promise.allSettledKeyed.length + ':' + Promise.allSettledKeyed.name;"
+        ),
+        Value::String(Arc::from(
+            "true:false:true:1:allKeyed:true:false:true:1:allSettledKeyed"
+        ))
+    );
 }
 
 #[test]
@@ -1760,13 +1777,15 @@ fn promise_static_combinators_return_promises() {
     assert_eq!(
         run("[
                 Promise.all([Promise.resolve(1), 2]) instanceof Promise,
+                Promise.allKeyed({a: Promise.resolve(1), b: 2}) instanceof Promise,
                 Promise.race([Promise.resolve(1), 2]) instanceof Promise,
                 Promise.allSettled([Promise.resolve(1), Promise.reject(2)]) instanceof Promise,
+                Promise.allSettledKeyed({a: Promise.resolve(1), b: Promise.reject(2)}) instanceof Promise,
                 Promise.any([Promise.reject(1), Promise.resolve(2)]) instanceof Promise,
                 Promise.try(function(){ return 3; }) instanceof Promise,
                 Promise.resolve(1).finally(function(){}) instanceof Promise
              ].join(',');"),
-        Value::String(Arc::from("true,true,true,true,true,true"))
+        Value::String(Arc::from("true,true,true,true,true,true,true,true"))
     );
 }
 
@@ -1898,6 +1917,149 @@ fn promise_all_settled_uses_receiver_resolve_and_then() {
                settledValues[0].value === 1 &&
                settledValues[1].status === 'rejected' &&
                settledValues[1].reason === 'bad';"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_all_keyed_uses_receiver_resolve_and_then() {
+    assert_eq!(
+        run("var callCount = 0, executorLength = 0;
+             class SubPromise extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 executorLength = executor.length;
+               }
+             }
+             var result = Promise.allKeyed.call(SubPromise, {});
+             result instanceof SubPromise && callCount === 1 && executorLength === 2;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var resolveGetCount = 0, resolveCallCount = 0, thenCallCount = 0;
+             var resolvedValues;
+             var C = function(executor) {
+               executor(function(values) { resolvedValues = values; }, function() {});
+             };
+             Object.defineProperty(C, 'resolve', {
+               configurable: true,
+               get: function() {
+                 resolveGetCount += 1;
+                 return function(value) {
+                   resolveCallCount += 1;
+                   return {
+                     then: function(resolve, reject) {
+                       thenCallCount += 1;
+                       resolve(value);
+                     }
+                   };
+                 };
+               }
+             });
+             Promise.allKeyed.call(C, {a: 1, b: 2});
+             resolveGetCount === 1 && resolveCallCount === 2 &&
+               thenCallCount === 2 && Object.getPrototypeOf(resolvedValues) === null &&
+               Object.keys(resolvedValues).join(',') === 'a,b' &&
+               resolvedValues.a === 1 && resolvedValues.b === 2;"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_all_keyed_preserves_symbols_and_rejects_non_object() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "var sym = Symbol('s');
+         var hidden = Symbol('hidden');
+         var out;
+         var input = {str: Promise.resolve(1)};
+         input[sym] = Promise.resolve(2);
+         Object.defineProperty(input, hidden, {value: 3, enumerable: false});
+         Promise.allKeyed(input).then(function(value) { out = value; });",
+    )
+    .expect("evaluation errored");
+    assert_eq!(
+        vm.run(
+            "Object.getPrototypeOf(out) === null &&
+             Object.keys(out).join(',') === 'str' &&
+             Object.getOwnPropertySymbols(out).length === 1 &&
+             Object.getOwnPropertySymbols(out)[0] === sym &&
+             out.str === 1 && out[sym] === 2 &&
+             !Object.prototype.hasOwnProperty.call(out, hidden);"
+        )
+        .expect("evaluation errored"),
+        Value::Bool(true)
+    );
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "var rejected;
+         Promise.allKeyed(null).then(function() {}, function(e) { rejected = e; });",
+    )
+    .expect("evaluation errored");
+    assert_eq!(
+        vm.run("rejected instanceof TypeError;")
+            .expect("evaluation errored"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_all_settled_keyed_uses_receiver_resolve_and_then() {
+    assert_eq!(
+        run("var callCount = 0, executorLength = 0;
+             class SubPromise extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 executorLength = executor.length;
+               }
+             }
+             var result = Promise.allSettledKeyed.call(SubPromise, {});
+             result instanceof SubPromise && callCount === 1 && executorLength === 2;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "var resolveGetCount = 0, resolveCallCount = 0, thenCallCount = 0;
+             var seenThis, settledValues;
+             var C = function(executor) {
+               executor(function(values) { settledValues = values; }, function() {});
+             };
+             Object.defineProperty(C, 'resolve', {
+               configurable: true,
+               get: function() {
+                 resolveGetCount += 1;
+                 return function(value) {
+                   resolveCallCount += 1;
+                   seenThis = this;
+                   return {
+                     then: function(resolve, reject) {
+                       thenCallCount += 1;
+                       if (value === 2) {
+                         reject('bad');
+                         resolve('ignored');
+                       } else {
+                         resolve(value);
+                         reject('ignored');
+                       }
+                     }
+                   };
+                 };
+               }
+             });
+             Promise.allSettledKeyed.call(C, {a: 1, b: 2});
+             resolveGetCount === 1 && resolveCallCount === 2 &&
+               thenCallCount === 2 && seenThis === C &&
+               Object.getPrototypeOf(settledValues) === null &&
+               Object.keys(settledValues).join(',') === 'a,b' &&
+               settledValues.a.status === 'fulfilled' &&
+               settledValues.a.value === 1 &&
+               settledValues.b.status === 'rejected' &&
+               settledValues.b.reason === 'bad';"
         ),
         Value::Bool(true)
     );

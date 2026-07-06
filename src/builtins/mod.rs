@@ -636,7 +636,7 @@ fn to_property_key_descriptor(vm: &mut Vm, value: &Value) -> error::Result<Prope
     }
 }
 
-fn property_key_to_value(key: &PropertyKey) -> Value {
+pub(crate) fn property_key_to_value(key: &PropertyKey) -> Value {
     match key {
         PropertyKey::Str(s) => Value::String(s.clone()),
         PropertyKey::Symbol(id) => Value::Symbol(*id),
@@ -914,7 +914,7 @@ fn push_unique_key(
     }
 }
 
-fn own_property_keys(
+pub(crate) fn own_property_keys(
     vm: &mut Vm,
     obj: &Value,
     enumerable_only: bool,
@@ -2608,8 +2608,11 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let resolve_static = vm.new_native_function("resolve", promise_static_resolve, 1)?;
     let reject_static = vm.new_native_function("reject", promise_static_reject, 1)?;
     let all_static = vm.new_native_function("all", promise_static_all, 1)?;
+    let all_keyed_static = vm.new_native_function("allKeyed", promise_static_all_keyed, 1)?;
     let race_static = vm.new_native_function("race", promise_static_race, 1)?;
     let all_settled_static = vm.new_native_function("allSettled", promise_static_all_settled, 1)?;
+    let all_settled_keyed_static =
+        vm.new_native_function("allSettledKeyed", promise_static_all_settled_keyed, 1)?;
     let any_static = vm.new_native_function("any", promise_static_any, 1)?;
     let try_static = vm.new_native_function("try", promise_static_try, 1)?;
     let with_resolvers_static =
@@ -2629,12 +2632,20 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             data_prop(Value::Object(all_static)),
         );
         obj.props().lock().insert(
+            PropertyKey::from("allKeyed"),
+            data_prop(Value::Object(all_keyed_static)),
+        );
+        obj.props().lock().insert(
             PropertyKey::from("race"),
             data_prop(Value::Object(race_static)),
         );
         obj.props().lock().insert(
             PropertyKey::from("allSettled"),
             data_prop(Value::Object(all_settled_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("allSettledKeyed"),
+            data_prop(Value::Object(all_settled_keyed_static)),
         );
         obj.props().lock().insert(
             PropertyKey::from("any"),

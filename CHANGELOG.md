@@ -79,14 +79,21 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   capability and `C.resolve` path, invokes observable `then`, tracks
   per-element rejection functions with `alreadyCalled` guards, preserves
   rejection order, and rejects with a minimal `AggregateError` carrying a
-  non-enumerable `errors` array.
+  non-enumerable `errors` array. `Promise.allKeyed` and
+  `Promise.allSettledKeyed` are now exposed for the `await-dictionary`
+  proposal surface: they construct through the receiver capability, read
+  `C.resolve` once, enumerate own enumerable string and Symbol keys, preserve
+  key order independently of settlement order, invoke each resolved entry's
+  observable `then`, and resolve to a null-prototype keyed result object.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **241 pass / 14 fail / 0 timeout / 448 skip**. Focused
-  `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
+  lifted is now **255 pass / 0 fail / 0 timeout / 448 skip**. Focused
+  `built-ins/Promise/allKeyed built-ins/Promise/allSettledKeyed` runs at
+  **18 pass / 0 fail / 45 skip**, `built-ins/Promise/any` runs at
+  **26 pass / 0 fail / 68 skip**, and the
   `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
-  **136 pass / 0 fail / 284 skip**; full Promise
-  thenable assimilation and the remaining combinator semantics remain future
-  work before lifting the `Promise` skip filter.
+  **136 pass / 0 fail / 284 skip**. The Promise skip remains in the supported
+  runner until the broader skipped async/proposal coverage is intentionally
+  lifted.
 - **`super`/`for-of` feature lift**: method parameter default initializers now
   preserve the enclosing method's `super` property parse context while still
   rejecting direct `super()` calls, and non-declaration
