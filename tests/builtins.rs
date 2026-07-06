@@ -2,7 +2,7 @@
 
 mod common;
 use common::{run, run_err};
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
@@ -1590,6 +1590,37 @@ fn promise_then_uses_species_capability_path() {
 }
 
 #[test]
+fn promise_then_adopts_returned_fulfilled_promise() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "var out = 0;
+         Promise.resolve(1)
+           .then(function() { return Promise.resolve(7); })
+           .then(function(v) { out = v; });",
+    )
+    .expect("evaluation errored");
+    assert_eq!(
+        vm.run("out;").expect("evaluation errored"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
+fn promise_then_rejects_self_resolution_with_type_error() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        "var caught = false;
+         var q = Promise.resolve().then(function() { return q; });
+         q.catch(function(e) { caught = e instanceof TypeError; });",
+    )
+    .expect("evaluation errored");
+    assert_eq!(
+        vm.run("caught;").expect("evaluation errored"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_catch_reject() {
     // reject -> catch returns a derived promise (object), not the error value.
     let r = run("new Promise(function(_, rej){ rej('boom'); }) \
@@ -1653,6 +1684,20 @@ fn promise_finally_invokes_observable_then() {
              try { Promise.prototype.finally.call(poisoned); }
              catch (e) { ok = e instanceof TypeError; }
              ok;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_finally_honors_symbol_species_accessor() {
+    assert_eq!(
+        run("class FooPromise extends Promise {
+               static get [Symbol.species]() { return Promise; }
+             }
+             var p = Promise.resolve().finally(function() {
+               return FooPromise.resolve();
+             });
+             p instanceof Promise && !(p instanceof FooPromise);"),
         Value::Bool(true)
     );
 }

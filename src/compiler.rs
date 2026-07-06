@@ -3784,7 +3784,7 @@ impl Compiler {
                                 .emit(Op::DeclareEnv(static_super_idx), self.current_line);
                             if let Some(ce) = &method.computed_name {
                                 self.compile_expr(ce)?;
-                                self.chunk.emit(Op::ToString, self.current_line);
+                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             } else {
                                 let key_idx =
                                     self.chunk.add_constant(Value::String(method.name.clone()));
@@ -3812,7 +3812,7 @@ impl Compiler {
                             self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
                             if let Some(ce) = &method.computed_name {
                                 self.compile_expr(ce)?;
-                                self.chunk.emit(Op::ToString, self.current_line);
+                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             } else {
                                 let key_idx =
                                     self.chunk.add_constant(Value::String(method.name.clone()));
@@ -3835,7 +3835,7 @@ impl Compiler {
                             .emit(Op::DeclareEnv(static_super_idx), self.current_line);
                         if let Some(ce) = &method.computed_name {
                             self.compile_expr(ce)?;
-                            self.chunk.emit(Op::ToString, self.current_line);
+                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
                         } else {
                             let key_idx =
                                 self.chunk.add_constant(Value::String(method.name.clone()));
@@ -3860,7 +3860,7 @@ impl Compiler {
                             .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
                         if let Some(ce) = &method.computed_name {
                             self.compile_expr(ce)?;
-                            self.chunk.emit(Op::ToString, self.current_line);
+                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
                         } else {
                             let key_idx =
                                 self.chunk.add_constant(Value::String(method.name.clone()));

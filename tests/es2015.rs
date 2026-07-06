@@ -189,6 +189,14 @@ fn class_computed_accessor_names() {
         run("var k='x'; class A{static get [k](){return 5;} static set [k](v){this.y=v+1;}} var before=A.x; A.x=6; before + A.y;"),
         Value::Number(12.0)
     );
+    assert_eq!(
+        run("var s = Symbol(); class A{[s](){return 9;} static [s](){return 4;}} new A()[s]() + A[s]();"),
+        Value::Number(13.0)
+    );
+    assert_eq!(
+        run("var s = Symbol(); class A{get [s](){return 5;} static get [s](){return 6;}} new A()[s] + A[s];"),
+        Value::Number(11.0)
+    );
 }
 
 #[test]

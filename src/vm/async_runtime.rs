@@ -76,35 +76,42 @@ impl Vm {
                             .heap
                             .with_obj(ret_idx.0, |o| matches!(o, HeapObj::Promise(_)));
                         if is_promise {
-                            // chain: when ret settles, settle derived
-                            self.heap.with_obj(ret_idx.0, |o| {
+                            if matches!(&capability.promise, Value::Object(idx) if *idx == ret_idx)
+                            {
+                                let err = Error::type_err("Cannot resolve promise with itself");
+                                let reason = self.make_error_value(&err)?;
+                                self.settle_promise_capability(&capability, reason, true)?;
+                                return Ok(());
+                            }
+                            // If `ret` is already settled, adding a handler to
+                            // its stored handler list is both unnecessary and
+                            // leaves no resolver to drain that list. Schedule
+                            // the pass-through reaction directly; only pending
+                            // promises retain handlers for a future settle.
+                            let state = self.heap.with_obj(ret_idx.0, |o| {
                                 if let HeapObj::Promise(p) = o {
-                                    p.handlers.lock().push(crate::value::PromiseHandler {
-                                        on_fulfilled: Value::Undefined,
-                                        on_rejected: Value::Undefined,
-                                        derived: Some(capability.clone()),
-                                    });
-                                }
-                            });
-                            // If `ret` is already settled, the handler we just
-                            // registered will never be drained (promise_resolve/
-                            // reject only drain handlers while Pending). Run it
-                            // now so the derived promise settles.
-                            let (settled, state) = self.heap.with_obj(ret_idx.0, |o| {
-                                if let HeapObj::Promise(p) = o {
-                                    (*p.state.lock() != PromiseStatus::Pending, *p.state.lock())
+                                    *p.state.lock()
                                 } else {
-                                    (false, PromiseStatus::Pending)
+                                    PromiseStatus::Pending
                                 }
                             });
-                            if settled {
+                            if state == PromiseStatus::Pending {
+                                self.heap.with_obj(ret_idx.0, |o| {
+                                    if let HeapObj::Promise(p) = o {
+                                        p.handlers.lock().push(crate::value::PromiseHandler {
+                                            on_fulfilled: Value::Undefined,
+                                            on_rejected: Value::Undefined,
+                                            derived: Some(capability.clone()),
+                                        });
+                                    }
+                                });
+                            } else {
                                 self.microtask_queue.push_back(Microtask::Then {
                                     promise: ret_idx,
                                     on_fulfilled: Value::Undefined,
                                     on_rejected: Value::Undefined,
                                     derived: Some(capability),
                                 });
-                                let _ = state;
                             }
                             // Do NOT also resolve `derived` now: the adoption
                             // handler registered above settles `derived` when

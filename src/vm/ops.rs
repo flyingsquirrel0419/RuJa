@@ -1774,18 +1774,19 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
+                    let pkey = match &key {
+                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
+                    };
                     if let Value::Object(idx) = &obj {
                         let mut desc = crate::value::PropertyDescriptor::data(value.clone());
                         desc.enumerable = false;
                         desc.configurable = true;
                         desc.writable = true;
-                        self.define_own_property_or_throw(
-                            &obj,
-                            crate::value::PropertyKey::from(key_str.as_str()),
-                            desc,
-                        )?;
-                        self.ic_invalidate(idx.0, &key_str);
+                        self.define_own_property_or_throw(&obj, pkey.clone(), desc)?;
+                        if let crate::value::PropertyKey::Str(key_str) = &pkey {
+                            self.ic_invalidate(idx.0, key_str.as_ref());
+                        }
                     }
                     self.stack.push(value);
                 }

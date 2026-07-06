@@ -206,7 +206,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `undefined`. `Promise.try` now creates its result through
   `NewPromiseCapability(this)`, so subclass/custom receivers, constructor
   abrupt completions, and non-constructor receiver validation follow the spec
-  path. `Promise.race` now constructs
+  path. Class computed method and accessor names now use `ToPropertyKey`, and
+  method definition preserves Symbol keys, so `static get [Symbol.species]`
+  defines the well-known Symbol property instead of a string-named property.
+  Promise reactions that return an already-settled Promise now schedule direct
+  pass-through adoption instead of storing an undrainable handler, avoiding
+  hangs while preserving pending-Promise adoption. `Promise.race` now constructs
   through the receiver capability, reads `C.resolve` once, and invokes each
   resolved entry's observable `then` with the capability resolve/reject
   functions. `Promise.all` now constructs through the receiver capability,
@@ -223,7 +228,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `Promise.all` also rejects its outer capability if the final capability
   resolve abruptly completes.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **239 pass / 16 fail / 0 timeout / 448 skip**. Focused
+  **241 pass / 14 fail / 0 timeout / 448 skip**. Focused
   `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
   `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
   **136 pass / 0 fail / 284 skip**. The Promise skip remains in
