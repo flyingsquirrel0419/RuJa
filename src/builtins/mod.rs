@@ -2610,6 +2610,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let all_settled_static = vm.new_native_function("allSettled", promise_static_all_settled, 1)?;
     let any_static = vm.new_native_function("any", promise_static_any, 1)?;
     let try_static = vm.new_native_function("try", promise_static_try, 1)?;
+    let with_resolvers_static =
+        vm.new_native_function("withResolvers", promise_with_resolvers, 0)?;
     let species_getter = vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
     vm.heap.with_obj(promise_ctor.0, |obj| {
         obj.props().lock().insert(
@@ -2639,6 +2641,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         obj.props().lock().insert(
             PropertyKey::from("try"),
             data_prop(Value::Object(try_static)),
+        );
+        obj.props().lock().insert(
+            PropertyKey::from("withResolvers"),
+            data_prop(Value::Object(with_resolvers_static)),
         );
         obj.props().lock().insert(
             PropertyKey::Symbol(vm.well_known_symbols.species),

@@ -56,7 +56,7 @@
 ## Async & generators
 
 - `Promise` with `then`/`catch` chaining and microtask draining
-- `Promise.resolve`/`Promise.reject`
+- `Promise.resolve`/`Promise.reject`, static combinators, and `withResolvers`
 - `async`/`await` (async functions and async arrows return a Promise; await resolves it)
 - Lazy generators (`function*`/`yield`): pull-based `next()`/`for...of`/spread
   that suspend at each `yield`; supports infinite generators; `next(v)` resumes

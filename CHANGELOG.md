@@ -39,9 +39,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,
-  `any`, `try`, `prototype.finally`, and the `Promise[@@species]` accessor.
+  `any`, `try`, `withResolvers`, `prototype.finally`, and the
+  `Promise[@@species]` accessor. Promise resolve/reject functions created by
+  the constructor are now anonymous unary built-ins with the expected
+  `length`/`name` descriptors and no own `prototype`.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **90 pass / 163 fail / 2 timeout / 448 skip**; full Promise
+  lifted is now **101 pass / 153 fail / 1 timeout / 448 skip**; full Promise
   capability/species/thenable semantics remain future work before lifting the
   `Promise` skip filter.
 - **`super`/`for-of` feature lift**: method parameter default initializers now

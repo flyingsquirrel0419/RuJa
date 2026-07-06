@@ -641,61 +641,12 @@ pub(crate) fn promise_constructor(
             proto: Mutex::new(Some(proto)),
         }))?;
     let p_val = Value::Object(GcIdx(p_idx));
-    // create resolve/reject native functions bound via `this` = promise
-    let resolve_target = vm.new_native_function("resolve", promise_resolve, 1)?;
-    let reject_target = vm.new_native_function("reject", promise_reject, 1)?;
-    // Wrap as bound functions with  = the promise, so resolve/reject know
-    // which promise to settle.
-    let resolve_fn = vm
-        .heap
-        .allocate(HeapObj::Function(crate::value::FunctionData {
-            name: Some(Arc::from("resolve")),
-            kind: crate::value::FunctionKind::Bound {
-                target: resolve_target,
-                this_val: p_val.clone(),
-                bound_args: Vec::new(),
-            },
-            closure: vm.global,
-            lexical_new_target: Value::Undefined,
-            is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-            prototype: Mutex::new(None),
-            proto: Mutex::new(match vm.function_proto {
-                Value::Object(_) => Some(vm.function_proto.clone()),
-                _ => None,
-            }),
-            props: Mutex::new(IndexMap::new()),
-            extensible: std::sync::atomic::AtomicBool::new(true),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-        }))?;
-    let reject_fn = vm
-        .heap
-        .allocate(HeapObj::Function(crate::value::FunctionData {
-            name: Some(Arc::from("reject")),
-            kind: crate::value::FunctionKind::Bound {
-                target: reject_target,
-                this_val: p_val.clone(),
-                bound_args: Vec::new(),
-            },
-            closure: vm.global,
-            lexical_new_target: Value::Undefined,
-            is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-            prototype: Mutex::new(None),
-            proto: Mutex::new(match vm.function_proto {
-                Value::Object(_) => Some(vm.function_proto.clone()),
-                _ => None,
-            }),
-            props: Mutex::new(IndexMap::new()),
-            extensible: std::sync::atomic::AtomicBool::new(true),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-        }))?;
-    match vm.call_function(
-        &executor,
-        &[
-            Value::Object(GcIdx(resolve_fn)),
-            Value::Object(GcIdx(reject_fn)),
-        ],
-        Some(p_val.clone()),
-    ) {
+    let resolve_fn = create_promise_resolving_function(vm, p_val.clone(), promise_resolve)?;
+    let pins = vm.pin_many(&[p_val.clone(), resolve_fn.clone()]);
+    let reject_fn = create_promise_resolving_function(vm, p_val.clone(), promise_reject);
+    vm.unpin_many(pins);
+    let reject_fn = reject_fn?;
+    match vm.call_function(&executor, &[resolve_fn, reject_fn], Some(p_val.clone())) {
         Ok(_) => {}
         Err(e) => {
             // executor threw: reject the promise with the thrown value
@@ -707,6 +658,49 @@ pub(crate) fn promise_constructor(
         }
     }
     Ok(p_val)
+}
+
+fn create_bound_native_function(
+    vm: &mut Vm,
+    name: &str,
+    target_name: &str,
+    func: NativeFn,
+    length: usize,
+    this_val: Value,
+) -> error::Result<Value> {
+    let target = vm.new_native_function(target_name, func, length)?;
+    let target_val = Value::Object(target);
+    let pins = vm.pin_many(&[target_val, this_val.clone()]);
+    let idx = vm.heap.allocate(HeapObj::Function(FunctionData {
+        name: Some(Arc::from(name)),
+        kind: FunctionKind::Bound {
+            target,
+            this_val,
+            bound_args: Vec::new(),
+        },
+        closure: vm.global,
+        lexical_new_target: Value::Undefined,
+        is_class_ctor: AtomicBool::new(false),
+        prototype: Mutex::new(None),
+        proto: Mutex::new(match vm.function_proto {
+            Value::Object(_) => Some(vm.function_proto.clone()),
+            _ => None,
+        }),
+        props: Mutex::new(builtin_function_own_props(name, length)),
+        extensible: AtomicBool::new(true),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+    }));
+    vm.unpin_many(pins);
+    let idx = idx?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
+fn create_promise_resolving_function(
+    vm: &mut Vm,
+    promise: Value,
+    func: NativeFn,
+) -> error::Result<Value> {
+    create_bound_native_function(vm, "", "", func, 1, promise)
 }
 
 pub(crate) fn promise_resolve(
@@ -964,6 +958,68 @@ pub(crate) fn promise_static_try(
         Ok(value) => make_fulfilled_promise(vm, value),
         Err(err) => make_rejected_promise(vm, promise_rejection_value(&err)),
     }
+}
+
+pub(crate) fn promise_with_resolvers_executor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let result_obj = match this {
+        Some(Value::Object(idx)) => idx,
+        _ => return Err(Error::type_err("Promise.withResolvers executor receiver")),
+    };
+    let resolve = args.first().cloned().unwrap_or(Value::Undefined);
+    let reject = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.heap.with_obj(result_obj.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(
+            PropertyKey::from("resolve"),
+            PropertyDescriptor::data(resolve),
+        );
+        props.insert(
+            PropertyKey::from("reject"),
+            PropertyDescriptor::data(reject),
+        );
+    });
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn promise_with_resolvers(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let ctor = this.unwrap_or(Value::Undefined);
+    if !vm.is_constructor_value(&ctor) {
+        return Err(Error::type_err(
+            "Promise.withResolvers receiver is not a constructor",
+        ));
+    }
+
+    let result_idx = vm.new_object()?;
+    let result = Value::Object(result_idx);
+    let executor = create_bound_native_function(
+        vm,
+        "",
+        "",
+        promise_with_resolvers_executor,
+        2,
+        result.clone(),
+    )?;
+    let pins = vm.pin_many(&[ctor.clone(), result.clone(), executor.clone()]);
+    let promise = vm.construct(&ctor, std::slice::from_ref(&executor));
+    vm.unpin_many(pins);
+    let promise = promise?;
+
+    vm.heap.with_obj(result_idx.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("promise"),
+            PropertyDescriptor::data(promise),
+        );
+    });
+    Ok(result)
 }
 
 pub(crate) fn promise_finally(

@@ -33,7 +33,8 @@ no `unsafe` code anywhere in the engine.
 
 ### Supported language subset
 
-ES5.1 + classes, async/await, generators, Promises with static combinators,
+ES5.1 + classes, async/await, generators, Promises with static combinators
+and `withResolvers`,
 destructuring,
 getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
 Reflect, Proxy, Uint8Array, BigInt, Date, regex, and more. RuJa does not

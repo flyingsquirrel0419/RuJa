@@ -1619,6 +1619,53 @@ fn promise_static_combinators_return_promises() {
 }
 
 #[test]
+fn promise_resolving_functions_are_anonymous_unary_builtins() {
+    assert_eq!(
+        run("var resolve, reject;
+             new Promise(function(res, rej) { resolve = res; reject = rej; });
+             [
+               resolve.name, resolve.length,
+               reject.name, reject.length,
+               Object.prototype.hasOwnProperty.call(resolve, 'prototype'),
+               Object.getOwnPropertyNames(resolve).join(',')
+             ].join(':');"),
+        Value::String(Arc::from(":1::1:false:length,name"))
+    );
+}
+
+#[test]
+fn promise_with_resolvers_basic_and_subclass() {
+    assert_eq!(
+        run("var r = Promise.withResolvers();
+             [
+               r.promise instanceof Promise,
+               r.promise.constructor === Promise,
+               typeof r.resolve, r.resolve.name, r.resolve.length,
+               typeof r.reject, r.reject.name, r.reject.length
+             ].join(':');"),
+        Value::String(Arc::from("true:true:function::1:function::1"))
+    );
+    assert_eq!(
+        run("class SubPromise extends Promise {}
+             var r = Promise.withResolvers.call(SubPromise);
+             r.promise instanceof SubPromise && r.promise.constructor === SubPromise;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn promise_with_resolvers_result_properties_are_enumerable_data_props() {
+    assert_eq!(
+        run("var r = Promise.withResolvers();
+             ['promise', 'resolve', 'reject'].map(function(k) {
+               var d = Object.getOwnPropertyDescriptor(r, k);
+               return d.writable + ',' + d.enumerable + ',' + d.configurable;
+             }).join(':');"),
+        Value::String(Arc::from("true,true,true:true,true,true:true,true,true"))
+    );
+}
+
+#[test]
 fn promise_subclass_requires_callable_executor_and_uses_new_target_prototype() {
     assert_eq!(
         run("class Prom extends Promise {} try { new Prom(); false; } catch (e) { e instanceof TypeError; }"),

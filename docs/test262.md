@@ -188,10 +188,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   **904 pass / 0 fail / 363 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
-  Promise static surface `all`/`race`/`allSettled`/`any`/`try` are now exposed,
-  and `String(Symbol(...))` uses the special `String` constructor conversion.
+  Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`
+  are now exposed, and `String(Symbol(...))` uses the special `String`
+  constructor conversion. Promise constructor resolve/reject functions now have
+  the expected anonymous `name`, unary `length`, property order, extensibility,
+  non-constructor shape, and `Function.prototype` inheritance.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **90 pass / 163 fail / 2 timeout / 448 skip**. The Promise skip remains in
+  **101 pass / 153 fail / 1 timeout / 448 skip**. The Promise skip remains in
   the supported runner until constructor capability, species constructors, and
   thenable assimilation are implemented more fully.
 - **Mapped arguments exotic descriptors** —
