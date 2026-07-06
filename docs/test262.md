@@ -203,7 +203,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   executor validation follow the spec path. The `Promise` constructor now
   rejects calls made without `new` and invokes its executor with `undefined` as
   the receiver, so sloppy executors see `globalThis` while strict executors keep
-  `undefined`. `Promise.race` now constructs
+  `undefined`. `Promise.try` now creates its result through
+  `NewPromiseCapability(this)`, so subclass/custom receivers, constructor
+  abrupt completions, and non-constructor receiver validation follow the spec
+  path. `Promise.race` now constructs
   through the receiver capability, reads `C.resolve` once, and invokes each
   resolved entry's observable `then` with the capability resolve/reject
   functions. `Promise.all` now constructs through the receiver capability,
@@ -220,7 +223,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `Promise.all` also rejects its outer capability if the final capability
   resolve abruptly completes.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **235 pass / 20 fail / 0 timeout / 448 skip**. Focused
+  **239 pass / 16 fail / 0 timeout / 448 skip**. Focused
   `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
   `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
   **136 pass / 0 fail / 284 skip**. The Promise skip remains in

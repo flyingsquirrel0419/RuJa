@@ -2091,19 +2091,35 @@ pub(crate) fn promise_static_any(
 pub(crate) fn promise_static_try(
     vm: &mut Vm,
     args: &[Value],
-    _this: Option<Value>,
+    this: Option<Value>,
 ) -> error::Result<Value> {
+    let ctor = this.unwrap_or(Value::Undefined);
+    let capability = new_promise_capability(vm, ctor)?;
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
-    if !is_callable(&callback, &vm.heap) {
-        return make_rejected_promise(
-            vm,
-            Value::String(Arc::from("Promise.try callback is not a function")),
-        );
-    }
-    match vm.call_function(&callback, &args[1..], Some(Value::Undefined)) {
-        Ok(value) => make_fulfilled_promise(vm, value),
-        Err(err) => make_rejected_promise(vm, promise_rejection_value(&err)),
-    }
+
+    let mut roots = vec![
+        capability.promise.clone(),
+        capability.resolve.clone(),
+        capability.reject.clone(),
+        callback.clone(),
+    ];
+    roots.extend(args.iter().skip(1).cloned());
+    let pins = vm.pin_many(&roots);
+
+    let callback_result = if is_callable(&callback, &vm.heap) {
+        vm.call_function(&callback, &args[1..], Some(Value::Undefined))
+    } else {
+        Err(Error::type_err("Promise.try callback is not a function"))
+    };
+    let settle_result = match callback_result {
+        Ok(value) => call_promise_capability_function(vm, &capability.resolve, value),
+        Err(err) => {
+            call_promise_capability_function(vm, &capability.reject, promise_rejection_value(&err))
+        }
+    };
+    vm.unpin_many(pins);
+    settle_result?;
+    Ok(capability.promise)
 }
 
 pub(crate) fn promise_with_resolvers_executor(

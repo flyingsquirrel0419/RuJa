@@ -1726,6 +1726,38 @@ fn promise_static_combinators_return_promises() {
 }
 
 #[test]
+fn promise_try_uses_receiver_constructor_capability() {
+    assert_eq!(
+        run("var callCount = 0, executorLength = 0;
+             class SubPromise extends Promise {
+               constructor(executor) {
+                 super(executor);
+                 callCount += 1;
+                 executorLength = executor.length;
+               }
+             }
+             var result = Promise.try.call(SubPromise, function() { return 7; });
+             result instanceof SubPromise && callCount === 1 && executorLength === 2;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var badCtor = false, badPrimitive = false;
+             try { Promise.try.call(eval); } catch (e) { badCtor = e instanceof TypeError; }
+             try { Promise.try.call(null); } catch (e) { badPrimitive = e instanceof TypeError; }
+             badCtor && badPrimitive;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(
+            "function BadPromise(executor) { throw new RangeError('bad'); }
+             try { Promise.try.call(BadPromise, function() {}); false; }
+             catch (e) { e instanceof RangeError; }"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_all_uses_receiver_resolve_and_then() {
     assert_eq!(
         run("var callCount = 0, executorLength = 0;
