@@ -891,7 +891,7 @@ impl Vm {
                         }
                         if has_with {
                             if let Some(with_obj) = with_obj_val {
-                                let has_prop = self.has_own_property(&with_obj, &name);
+                                let has_prop = self.has_property(&with_obj, &name)?;
                                 if has_prop {
                                     let v = self.get_property(&with_obj, &name)?;
                                     if matches!(v, Value::Object(_)) {
@@ -1029,7 +1029,7 @@ impl Vm {
                         }
                         if has_with {
                             if let Some(with_obj) = with_obj_val {
-                                if self.has_own_property(&with_obj, &name_str) {
+                                if self.has_property(&with_obj, &name_str)? {
                                     base = crate::value::ReferenceBase::ObjectEnvironment(
                                         Box::new(with_obj),
                                     );
@@ -1114,6 +1114,7 @@ impl Vm {
                             "with statement requires an object".to_string(),
                         ));
                     }
+                    let object = self.to_object(&object)?;
                     let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
                     let new_env = env::new_with_env(&self.heap, cur_env, object)?;
                     self.current_frame_mut()?.env = new_env;

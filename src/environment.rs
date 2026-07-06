@@ -162,7 +162,7 @@ pub fn clone_loop_vars_to_sibling(
 }
 
 /// Create a `with`-statement environment record wrapping `object`: name lookups
-/// that miss the lexical chain fall back to `object`'s own properties.
+/// that miss lexical bindings fall back to `object`'s [[HasProperty]] result.
 pub fn new_with_env(
     heap: &Heap,
     parent: GcIdx,

@@ -545,9 +545,7 @@ impl Vm {
         false
     }
 
-    /// Does `obj` have an **own** property (not inherited)? Used by the
-    /// `with`-statement HasBinding check, which per spec only considers own
-    /// properties of the binding object.
+    /// Does `obj` have an **own** property (not inherited)?
     pub fn has_own_property(&self, obj: &Value, name: &str) -> bool {
         if let Value::Object(idx) = obj {
             let pkey = crate::value::PropertyKey::from(name);
@@ -574,21 +572,32 @@ impl Vm {
         // indexed chars and `length`. Treat those as present.
         match obj {
             Value::Object(idx) => {
-                let (is_arr, has_dense_index) = self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        if name == "length"
-                            && a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
-                        {
-                            return (false, false);
+                let (is_arr, has_dense_index, has_boxed_string_property) =
+                    self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::Array(a) = o {
+                            if name == "length"
+                                && a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                return (false, false, false);
+                            }
+                            let has = crate::value::parse_array_index(name)
+                                .is_some_and(|i| a.is_dense_present(i));
+                            return (true, has, false);
                         }
-                        let has = crate::value::parse_array_index(name)
-                            .is_some_and(|i| a.is_dense_present(i));
-                        (true, has)
-                    } else {
-                        (false, false)
-                    }
-                });
+                        if let HeapObj::Object(od) = o {
+                            if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                                let len = crate::value::utf16_len(&s);
+                                let has = name == "length"
+                                    || name.parse::<usize>().is_ok_and(|i| i < len);
+                                return (false, false, has);
+                            }
+                        }
+                        (false, false, false)
+                    });
                 if is_arr && (name == "length" || has_dense_index) {
+                    return Ok(true);
+                }
+                if has_boxed_string_property {
                     return Ok(true);
                 }
                 Ok(false)

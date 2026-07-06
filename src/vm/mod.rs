@@ -1349,7 +1349,7 @@ impl Vm {
                             }
                             if has_with {
                                 if let Some(with_obj) = with_obj_val {
-                                    if self.has_own_property(&with_obj, &name) {
+                                    if self.has_property(&with_obj, &name)? {
                                         return self.get_property(&with_obj, &name);
                                     }
                                 }
@@ -1529,7 +1529,7 @@ impl Vm {
                             }
                             if has_with {
                                 if let Some(with_obj) = with_obj_val {
-                                    if self.has_own_property(&with_obj, &name) {
+                                    if self.has_property(&with_obj, &name)? {
                                         self.set_property(&with_obj, &name, value)?;
                                         return Ok(());
                                     }

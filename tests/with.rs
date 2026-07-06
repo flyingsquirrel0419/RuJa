@@ -44,6 +44,73 @@ fn with_assignment_writes_to_object() {
 }
 
 #[test]
+fn with_reads_inherited_property() {
+    let src = r#"
+        let proto = { x: 1 };
+        let o = Object.create(proto);
+        let r;
+        with (o) {
+            r = x;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
+}
+
+#[test]
+fn with_assignment_to_inherited_property_creates_own_property() {
+    let src = r#"
+        let proto = { x: 1 };
+        let o = Object.create(proto);
+        with (o) {
+            x = 2;
+        }
+        proto.x + ":" + o.x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("1:2:true")));
+}
+
+#[test]
+fn with_compound_assignment_uses_inherited_property_reference() {
+    let src = r#"
+        let proto = { x: 1 };
+        let o = Object.create(proto);
+        with (o) {
+            x += 4;
+        }
+        proto.x + ":" + o.x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("1:5:true")));
+}
+
+#[test]
+fn with_inherited_method_call_binds_this_to_with_object() {
+    let src = r#"
+        let proto = { f: function() { return this.tag; } };
+        let o = Object.create(proto);
+        o.tag = "with-object";
+        let r;
+        with (o) {
+            r = f();
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("with-object")));
+}
+
+#[test]
+fn with_boxes_primitive_binding_object() {
+    let src = r#"
+        let r;
+        with ("abc") {
+            r = length;
+        }
+        r;
+    "#;
+    assert_eq!(run(src), Value::Number(3.0));
+}
+
+#[test]
 fn with_var_initializer_resolves_binding_before_rhs() {
     let src = r#"
         var obj = { test262id: 1 };

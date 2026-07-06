@@ -50,6 +50,17 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   language/keywords language/future-reserved-words` cluster now runs at
   **113 pass / 0 fail / 1 skip**, and `language/literals` improves to
   **315 pass / 159 fail / 60 skip**.
+- **`with` object-environment HasBinding**: `with` statements now box
+  primitive binding objects with `ToObject` after the nullish TypeError check,
+  and object-environment binding lookup uses `[[HasProperty]]` over the
+  prototype chain instead of own-property checks. Inherited `with` properties
+  now resolve for reads, calls, assignments, and compound assignments, while
+  primitive strings expose `length` inside `with`. The focused
+  `language/statements/with language/expressions/assignment
+  language/expressions/prefix-increment language/expressions/prefix-decrement
+  language/expressions/postfix-increment
+  language/expressions/postfix-decrement` cluster runs at **398 pass / 0 fail
+  / 410 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped

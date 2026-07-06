@@ -166,6 +166,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/keywords language/future-reserved-words` cluster now runs at **113
   pass / 0 fail / 1 skip**, and `language/literals` improves to **315 pass /
   159 fail / 60 skip**.
+- **`with` object-environment HasBinding** —
+  `with` statements now box primitive binding objects with `ToObject` after
+  rejecting null/undefined, and object-environment binding lookup uses
+  `[[HasProperty]]` over the prototype chain instead of own-property checks.
+  Inherited properties now resolve through `with` for reads, calls,
+  assignments, and compound assignments, while primitive string binding
+  objects expose `length`. The focused `language/statements/with`
+  plus assignment/update cluster runs at **398 pass / 0 fail / 410 skip**.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,
