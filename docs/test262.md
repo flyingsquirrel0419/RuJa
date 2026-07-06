@@ -94,16 +94,16 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28791076494 on `f137084`.
+`test262-full` 28792521563 on `3b39263`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
-| Actually run | 23,181 |
-| Pass | 13,536 |
-| Fail | 9,645 |
-| Timeout | 13 |
-| Skip | 24,523 |
+| Actually run | 23,214 |
+| Pass | 13,561 |
+| Fail | 9,653 |
+| Timeout | 0 |
+| Skip | 24,490 |
 | **Pass rate (of run)** | **58.4%** |
 | **Pass rate (of total)** | **28.4%** |
 
@@ -928,6 +928,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/expressions/postfix-decrement` now runs at **409 pass / 0 fail /
   399 skip**, raising the supported subset to **4191 pass / 0 fail / 0
   timeout**.
+- **Arrow lexical `new.target` and optional catch binding** — arrow closures
+  now capture enclosing `new.target`, and the runner no longer skips
+  `optional-catch-binding` or `new.target` feature tests. This closes the
+  focused `language/statements/try language/expressions/new.target
+  language/expressions/arrow-function` cluster at **204 pass / 0 fail / 354
+  skip**, raising the supported subset to **4215 pass / 0 fail / 0 timeout**.
 
 ## Why the full-suite rate is not higher
 
