@@ -626,6 +626,11 @@ pub(crate) fn promise_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err(
+            "Promise constructor must be called with new",
+        ));
+    }
     let executor = args.first().cloned().unwrap_or(Value::Undefined);
     if !is_callable(&executor, &vm.heap) {
         return Err(Error::type_err("Promise resolver is not a function"));
@@ -646,7 +651,7 @@ pub(crate) fn promise_constructor(
     let reject_fn = create_promise_resolving_function(vm, p_val.clone(), promise_reject);
     vm.unpin_many(pins);
     let reject_fn = reject_fn?;
-    match vm.call_function(&executor, &[resolve_fn, reject_fn], Some(p_val.clone())) {
+    match vm.call_function(&executor, &[resolve_fn, reject_fn], Some(Value::Undefined)) {
         Ok(_) => {}
         Err(e) => {
             // executor threw: reject the promise with the thrown value

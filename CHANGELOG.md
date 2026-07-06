@@ -52,6 +52,9 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   as a real Promise, resolves the derived promise through
   `SpeciesConstructor`, and stores Promise reaction capabilities so custom
   species constructors and capability executor validation follow the spec path.
+  The `Promise` constructor now rejects calls made without `new` and invokes
+  its executor with `undefined` as the receiver, letting ordinary sloppy
+  functions see `globalThis` while strict executors preserve `undefined`.
   `Promise.race` now constructs through the receiver capability, reads
   `C.resolve` once, and invokes each resolved entry's observable `then` with
   the capability resolve/reject functions. `Promise.all` now follows the same
@@ -69,7 +72,7 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   rejection order, and rejects with a minimal `AggregateError` carrying a
   non-enumerable `errors` array.
   The diagnostic `built-ins/Promise` run with only the `Promise` feature skip
-  lifted is now **232 pass / 23 fail / 0 timeout / 448 skip**. Focused
+  lifted is now **235 pass / 20 fail / 0 timeout / 448 skip**. Focused
   `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
   `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
   **136 pass / 0 fail / 284 skip**; full Promise

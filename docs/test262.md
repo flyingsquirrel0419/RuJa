@@ -200,7 +200,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   completions. `Promise.prototype.then` now validates its receiver as a real
   Promise, uses `SpeciesConstructor` for the derived promise, and stores
   Promise reaction capabilities so custom species constructors and capability
-  executor validation follow the spec path. `Promise.race` now constructs
+  executor validation follow the spec path. The `Promise` constructor now
+  rejects calls made without `new` and invokes its executor with `undefined` as
+  the receiver, so sloppy executors see `globalThis` while strict executors keep
+  `undefined`. `Promise.race` now constructs
   through the receiver capability, reads `C.resolve` once, and invokes each
   resolved entry's observable `then` with the capability resolve/reject
   functions. `Promise.all` now constructs through the receiver capability,
@@ -217,7 +220,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `Promise.all` also rejects its outer capability if the final capability
   resolve abruptly completes.
   A diagnostic `built-ins/Promise` run with only the `Promise` skip lifted is
-  **232 pass / 23 fail / 0 timeout / 448 skip**. Focused
+  **235 pass / 20 fail / 0 timeout / 448 skip**. Focused
   `built-ins/Promise/any` runs at **26 pass / 0 fail / 68 skip**, and the
   `all`/`race`/`allSettled`/`any`/`resolve` diagnostic cluster runs at
   **136 pass / 0 fail / 284 skip**. The Promise skip remains in

@@ -2070,6 +2070,31 @@ fn promise_subclass_requires_callable_executor_and_uses_new_target_prototype() {
     );
 }
 
+#[test]
+fn promise_constructor_requires_new_and_calls_executor_with_undefined_this() {
+    assert_eq!(
+        run("var ok1 = false, ok2 = false, ok3 = false;
+             try { Promise(function() {}); } catch (e) { ok1 = e instanceof TypeError; }
+             try { Promise.call(null, function() {}); } catch (e) { ok2 = e instanceof TypeError; }
+             try { Promise.call(new Promise(function() {}), function() {}); }
+             catch (e) { ok3 = e instanceof TypeError; }
+             ok1 && ok2 && ok3;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var seen;
+             new Promise(function() { seen = this; });
+             seen === globalThis;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var seen;
+             new Promise(function() { 'use strict'; seen = this; });
+             seen === undefined;"),
+        Value::Bool(true)
+    );
+}
+
 // --- RegExp ---
 
 #[test]
