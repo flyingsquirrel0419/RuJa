@@ -95,18 +95,18 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28801695745 on `ae624aa`.
+`test262-full` 28804654626 on `5338bd7`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
-| Actually run | 23,343 |
-| Pass | 13,956 |
+| Actually run | 23,478 |
+| Pass | 14,091 |
 | Fail | 9,387 |
 | Timeout | 0 |
-| Skip | 24,361 |
-| **Pass rate (of run)** | **59.8%** |
-| **Pass rate (of total)** | **29.2%** |
+| Skip | 24,226 |
+| **Pass rate (of run)** | **60.0%** |
+| **Pass rate (of total)** | **29.5%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -1015,6 +1015,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/statements/with` run stays at **169 pass / 0 fail / 12 skip**,
   and the broader Reference-focused cluster runs at **900 pass / 0 fail / 367
   skip** while the supported subset remains at **4470 pass / 0 fail / 0
+  timeout**.
+- **Identifier writes through destructuring and `for-in`/`for-of` heads** —
+  destructuring-assignment identifier targets and non-declaration
+  `for-in`/`for-of` identifier heads now store through the same spec
+  Reference-record path as ordinary assignment. This fixes `with`
+  object-environment writes where inherited properties should receive the
+  assignment and `Symbol.unscopables` should fall through to an outer binding.
+  The focused `language/statements/with` run stays at **169 pass / 0 fail / 12
+  skip**, the broader Reference-focused cluster stays at **900 pass / 0 fail /
+  367 skip**, and the supported subset remains at **4470 pass / 0 fail / 0
   timeout**.
 
 ## Why the full-suite rate is not higher

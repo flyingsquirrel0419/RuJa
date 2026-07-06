@@ -140,6 +140,81 @@ fn with_unscopables_assignment_uses_outer_binding() {
 }
 
 #[test]
+fn with_unscopables_destructuring_assignment_uses_outer_binding() {
+    let src = r#"
+        var x = "outer";
+        var o = { x: "inner" };
+        o[Symbol.unscopables] = { x: true };
+        with (o) {
+            ({ a: x } = { a: "assigned" });
+        }
+        o.x + ":" + x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("inner:assigned:true")));
+}
+
+#[test]
+fn with_destructuring_assignment_uses_outer_binding_when_property_absent() {
+    let src = r#"
+        var x = "outer";
+        var o = {};
+        with (o) {
+            ({ a: x } = { a: "assigned" });
+        }
+        o.hasOwnProperty("x") + ":" + o.x + ":" + x;
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("false:undefined:assigned"))
+    );
+}
+
+#[test]
+fn with_destructuring_assignment_uses_inherited_object_binding() {
+    let src = r#"
+        var x = "outer";
+        var proto = { x: "inherited" };
+        var o = Object.create(proto);
+        with (o) {
+            ({ a: x } = { a: "assigned" });
+        }
+        proto.x + ":" + o.x + ":" + x + ":" + o.hasOwnProperty("x");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("inherited:assigned:outer:true"))
+    );
+}
+
+#[test]
+fn with_unscopables_for_in_identifier_head_uses_outer_binding() {
+    let src = r#"
+        var x = "outer";
+        var o = { x: "inner" };
+        o[Symbol.unscopables] = { x: true };
+        with (o) {
+            for (x in { assigned: 1 }) {}
+        }
+        o.x + ":" + x;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("inner:assigned")));
+}
+
+#[test]
+fn with_unscopables_for_of_identifier_head_uses_outer_binding() {
+    let src = r#"
+        var x = "outer";
+        var o = { x: "inner" };
+        o[Symbol.unscopables] = { x: true };
+        with (o) {
+            for (x of ["assigned"]) {}
+        }
+        o.x + ":" + x;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("inner:assigned")));
+}
+
+#[test]
 fn with_unscopables_getter_not_referenced_when_property_absent() {
     let src = r#"
         let calls = 0;

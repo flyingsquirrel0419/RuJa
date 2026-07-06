@@ -93,6 +93,13 @@ Current supported subset count: **4470 pass / 0 fail / 0 timeout**.
   `language/statements/with` run stays at **169 pass / 0 fail / 12 skip**,
   while the broader Reference-focused cluster now runs at **900 pass / 0 fail
   / 367 skip**.
+- **Identifier writes through destructuring and `for-in`/`for-of` heads**:
+  destructuring-assignment identifier targets and non-declaration
+  `for-in`/`for-of` identifier heads now create a spec Reference record before
+  `PutValue`, matching ordinary assignment. This preserves `with`
+  object-environment `[[HasProperty]]`, inherited binding, and
+  `Symbol.unscopables` behavior instead of writing through the current
+  environment directly.
 - **Direct eval through `with` object environments**: unqualified `eval(...)`
   calls now resolve the callee at runtime before deciding whether the call is
   direct eval. A `with` object can shadow `eval` with an ordinary function,

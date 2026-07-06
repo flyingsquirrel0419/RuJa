@@ -1498,17 +1498,7 @@ impl Compiler {
                 // position for SetProp ([obj, key, value]).
                 if let StmtNode::ExprStmt(expr) = &left.node {
                     match expr {
-                        Expr::Ident(name) => {
-                            if self.scopes.len() > 1 {
-                                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                                self.chunk
-                                    .emit(Op::StoreEnvName(name_idx), self.current_line);
-                            } else {
-                                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                                self.chunk.emit(Op::Const(name_idx), self.current_line);
-                                self.chunk.emit(Op::StoreGlobal, self.current_line);
-                            }
-                        }
+                        Expr::Ident(name) => self.store_identifier_target_value(name),
                         Expr::Member {
                             object,
                             property,
@@ -2132,9 +2122,7 @@ impl Compiler {
                     if p.shorthand {
                         self.load_path(temp_idx, &new_path);
                         if let Expr::Ident(name) = &p.value {
-                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                            self.chunk
-                                .emit(Op::StoreEnvName(name_idx), self.current_line);
+                            self.store_identifier_target_value(name);
                             self.chunk.emit(Op::Pop, self.current_line);
                         } else {
                             let t2 = self.intern("#d2");
@@ -2163,9 +2151,7 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 self.load_path(temp_idx, path);
-                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk
-                    .emit(Op::StoreEnvName(name_idx), self.current_line);
+                self.store_identifier_target_value(name);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
             Expr::Member { .. } => {
@@ -2249,9 +2235,7 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 self.load_path(value_idx, &[]);
-                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk
-                    .emit(Op::StoreEnvName(name_idx), self.current_line);
+                self.store_identifier_target_value(name);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
             Expr::Member { .. } => {
@@ -4091,17 +4075,7 @@ impl Compiler {
 
     fn compile_assign_target(&mut self, target: &Expr) -> error::Result<()> {
         match target {
-            Expr::Ident(name) => {
-                if self.scopes.len() > 1 {
-                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk
-                        .emit(Op::StoreEnvName(name_idx), self.current_line);
-                } else {
-                    let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                    self.chunk.emit(Op::Const(name_idx), self.current_line);
-                    self.chunk.emit(Op::StoreGlobal, self.current_line);
-                }
-            }
+            Expr::Ident(name) => self.store_identifier_target_value(name),
             Expr::Member {
                 object,
                 property,
@@ -4130,6 +4104,12 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+
+    fn store_identifier_target_value(&mut self, name: &Arc<str>) {
+        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+        self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+        self.chunk.emit(Op::PutValue, self.current_line);
     }
 
     /// Compile a numeric/bitwise compound assignment (`+=`, `-=`, `<<=`, ...).
