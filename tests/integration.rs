@@ -85,6 +85,22 @@ fn prototype_inheritance() {
 }
 
 #[test]
+fn statement_list_regex_literal_after_block_like_statement() {
+    assert_eq!(
+        run("var result = eval('{}/1/g;'); result.toString() + '|' + result.flags;"),
+        Value::String(Arc::from("/1/g|g"))
+    );
+    assert_eq!(
+        run("var result = eval('function fn() {}/1/;'); result.toString();"),
+        Value::String(Arc::from("/1/"))
+    );
+    assert_eq!(
+        run("var x = { value: 8 } / 2; isNaN(x);"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn nested_functions() {
     let src = r#"function outer() { let x = 10; function inner() { return x; } return inner(); } outer();"#;
     assert_eq!(run(src), Value::Number(10.0));

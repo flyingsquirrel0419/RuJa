@@ -2493,6 +2493,7 @@ impl Parser {
                     Arc::from(flags.as_str()),
                 ))
             }
+            TokenKind::Slash => self.parse_slash_regex_literal(),
             TokenKind::Number(n) => {
                 self.advance();
                 Ok(Expr::Number(n))
@@ -2611,6 +2612,82 @@ impl Parser {
                 other
             ))),
         }
+    }
+
+    fn parse_slash_regex_literal(&mut self) -> error::Result<Expr> {
+        self.expect(&TokenKind::Slash, "/")?;
+        let mut pattern = String::new();
+        while !self.check(&TokenKind::Slash) {
+            if self.check(&TokenKind::Eof) {
+                return Err(error::Error::syntax(
+                    "unterminated regular expression literal".to_string(),
+                ));
+            }
+            pattern.push_str(&Self::regex_token_fragment(self.peek())?);
+            self.advance();
+        }
+        self.expect(&TokenKind::Slash, "/")?;
+
+        let mut flags = String::new();
+        loop {
+            match self.peek().clone() {
+                TokenKind::Ident(s) => {
+                    flags.push_str(&s);
+                    self.advance();
+                }
+                other if other.as_keyword_str().is_some() => {
+                    flags.push_str(other.as_keyword_str().unwrap());
+                    self.advance();
+                }
+                _ => break,
+            }
+        }
+
+        Ok(Expr::Regex(Arc::from(pattern), Arc::from(flags)))
+    }
+
+    fn regex_token_fragment(tok: &TokenKind) -> error::Result<String> {
+        let fragment = match tok {
+            TokenKind::Number(n) | TokenKind::LegacyNumber(n) => {
+                if n.fract() == 0.0 {
+                    format!("{:.0}", n)
+                } else {
+                    n.to_string()
+                }
+            }
+            TokenKind::BigInt(s) | TokenKind::Ident(s) | TokenKind::String(s) => s.clone(),
+            other if other.as_keyword_str().is_some() => other.as_keyword_str().unwrap().into(),
+            TokenKind::Plus => "+".into(),
+            TokenKind::Minus => "-".into(),
+            TokenKind::Star => "*".into(),
+            TokenKind::Percent => "%".into(),
+            TokenKind::Dot => ".".into(),
+            TokenKind::LParen => "(".into(),
+            TokenKind::RParen => ")".into(),
+            TokenKind::LBracket => "[".into(),
+            TokenKind::RBracket => "]".into(),
+            TokenKind::LBrace => "{".into(),
+            TokenKind::RBrace => "}".into(),
+            TokenKind::Question => "?".into(),
+            TokenKind::Colon => ":".into(),
+            TokenKind::Comma => ",".into(),
+            TokenKind::BitAnd => "&".into(),
+            TokenKind::BitOr => "|".into(),
+            TokenKind::BitXor => "^".into(),
+            TokenKind::BitNot => "~".into(),
+            TokenKind::Lt => "<".into(),
+            TokenKind::Gt => ">".into(),
+            TokenKind::Assign => "=".into(),
+            TokenKind::Not => "!".into(),
+            TokenKind::Regex(pattern, flags) => format!("{}/{}", pattern, flags),
+            other => {
+                return Err(error::Error::syntax(format!(
+                    "Unexpected token in regular expression literal: {:?}",
+                    other
+                )))
+            }
+        };
+        Ok(fragment)
     }
 
     /// Finish parsing a template literal after consuming its first `TemplateString` quasi.

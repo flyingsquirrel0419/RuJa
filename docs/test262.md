@@ -143,6 +143,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   test262's `Test262Error` marker while keeping the actual thrown value
   unchanged for `catch` blocks. The focused `language/line-terminators` shard
   now runs at **41 pass / 0 fail / 0 skip**.
+- **Statement-list regex literal recovery** —
+  Regular expression literals that start a new statement after a preceding
+  block-like statement boundary are now recovered in parser primary-expression
+  position when the eager lexer emitted `/` tokens. This closes the focused
+  `language/statementList` regex-literal failures, raising that shard to
+  **60 pass / 0 fail / 20 skip**.
 - **Mapped arguments exotic descriptors** —
   Non-strict arguments objects now use `Object.prototype`, expose `length` as
   a configurable ordinary data property rather than Array exotic length,

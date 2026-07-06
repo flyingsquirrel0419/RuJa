@@ -29,6 +29,11 @@ Current supported subset count: **4180 pass / 0 fail / 0 timeout**.
   message, preserving test262's `Test262Error` signal without changing the
   caught thrown value. This closes the remaining `language/line-terminators`
   failures, raising that shard to **41 pass / 0 fail / 0 skip**.
+- **Statement-list regex literal recovery**: parser primary-expression
+  handling now recovers regular expression literals that the eager lexer can
+  only tokenize as `/` after a preceding block-like statement boundary. This
+  closes the `language/statementList` regex-literal failures, raising that
+  shard to **60 pass / 0 fail / 20 skip**.
 - **Mapped arguments exotic descriptors**: non-strict arguments objects now
   use `Object.prototype`, expose `length` as a configurable ordinary data
   property, report `Array.isArray(arguments) === false`, and keep mapped
