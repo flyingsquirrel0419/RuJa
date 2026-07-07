@@ -37,6 +37,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   species lookup follows the inherited accessor path. With the `Symbol`
   feature skip temporarily lifted, the whole `built-ins/Symbol` diagnostic now
   runs at **67 pass / 0 fail / 31 skip**.
+- **`new.target` eval-context early errors**: `new.target` is now rejected in
+  script/global code, indirect eval code, and direct eval code reached through
+  arrow-function code, while direct eval inside non-arrow function code sees
+  the caller's active `new.target`. Function parameter defaults also parse
+  `new.target` in the same ordinary-function context. The focused
+  `language/global-code language/eval-code` cluster now runs at
+  **331 pass / 0 fail / 58 skip**.
 - **Symbol description/keyFor registry semantics**: Symbols now retain
   optional descriptions, well-known Symbols expose spec-style descriptions,
   `Symbol.prototype.description` and `Symbol.keyFor` are implemented with

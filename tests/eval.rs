@@ -391,6 +391,61 @@ fn direct_eval_with_spread_args_still_direct() {
     assert_eq!(run(src), Value::Number(99.0));
 }
 
+#[test]
+fn eval_new_target_contexts_follow_script_and_function_rules() {
+    assert!(run_err("new.target;").contains("SyntaxError"));
+    assert!(run_err("() => { new.target; };").contains("SyntaxError"));
+
+    assert_eq!(
+        run(r#"
+            var caught;
+            try { eval("new.target;"); } catch (err) { caught = err; }
+            caught && caught.constructor === SyntaxError;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var caught;
+            var f = () => eval("new.target;");
+            try { f(); } catch (err) { caught = err; }
+            caught && caught.constructor === SyntaxError;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var seen = null, paramSeen = null;
+            function F(param = new.target) {
+                paramSeen = param;
+                seen = eval("new.target;");
+            }
+            var callResult = F();
+            var callSeen = seen;
+            var callParam = paramSeen;
+            var constructResult = new F();
+            callResult === undefined && callSeen === undefined &&
+                callParam === undefined && seen === F && paramSeen === F &&
+                constructResult instanceof F;
+            "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var caughtGlobal, caughtFunction;
+            try { (0, eval)("new.target;"); } catch (err) { caughtGlobal = err; }
+            try { (function() { (0, eval)("new.target;"); }()); }
+            catch (err) { caughtFunction = err; }
+            caughtGlobal.constructor === SyntaxError &&
+                caughtFunction.constructor === SyntaxError;
+            "#),
+        Value::Bool(true)
+    );
+}
+
 // ---- direct eval lexical-environment isolation (#4) ----
 
 #[test]

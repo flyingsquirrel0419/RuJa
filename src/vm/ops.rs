@@ -2937,12 +2937,33 @@ impl Vm {
             Value::String(s) => s.to_string(),
             _ => return Ok(arg),
         };
-        let (caller_env, this_val, caller_strict) = self
+        let (caller_env, this_val, caller_strict, caller_new_target, new_target_allowed) = self
             .frames
             .last()
-            .map(|f| (f.env, f.this_val.clone(), f.chunk.is_strict))
-            .unwrap_or((self.global, Value::Undefined, false));
-        self.eval_direct(&src, caller_env, this_val, caller_strict)
+            .map(|f| {
+                (
+                    f.env,
+                    f.this_val.clone(),
+                    f.chunk.is_strict,
+                    f.new_target.clone(),
+                    f.direct_eval_new_target_allowed,
+                )
+            })
+            .unwrap_or((
+                self.global,
+                Value::Undefined,
+                false,
+                Value::Undefined,
+                false,
+            ));
+        self.eval_direct(
+            &src,
+            caller_env,
+            this_val,
+            caller_strict,
+            caller_new_target,
+            new_target_allowed,
+        )
     }
 
     /// `Op::CallEval(arg_count)`: unqualified `eval(...)`. The parser/compiler

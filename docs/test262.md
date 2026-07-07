@@ -148,6 +148,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   return the receiver, preserving subclass species lookup. With the `Symbol`
   skip temporarily lifted, the full `built-ins/Symbol` diagnostic runs at
   **67 pass / 0 fail / 31 skip**.
+- **`new.target` eval-context early errors** —
+  Script/global code, indirect eval code, and direct eval code contained in
+  arrow-function code now reject `new.target` with `SyntaxError`, while direct
+  eval contained in non-arrow function code inherits the caller's active
+  `new.target`. Ordinary function parameter defaults parse under the same
+  `new.target` context. The focused
+  `language/global-code language/eval-code` cluster now runs at
+  **331 pass / 0 fail / 58 skip**.
 - **Symbol description/keyFor registry semantics** —
   Symbols now retain optional descriptions, `Symbol.prototype.description`
   and `Symbol.keyFor` are exposed with spec receiver checks, and

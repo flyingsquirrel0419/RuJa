@@ -61,6 +61,11 @@ pub struct Parser {
     /// Current function nesting depth. 0 = top-level program code.
     /// `return` at depth 0 is a SyntaxError.
     function_depth: usize,
+    /// Whether the current syntactic context permits `new.target`.
+    /// Ordinary function/method bodies enable it; arrow functions inherit it
+    /// from their enclosing context; direct eval enables it only when the eval
+    /// call is contained in non-arrow function code.
+    new_target_allowed: bool,
     /// Current generator-function parsing depth. `yield` is an expression
     /// keyword only inside generator parameter/body contexts; outside strict
     /// mode non-generator code it remains an ordinary identifier.
@@ -108,6 +113,7 @@ impl Parser {
             switch_depth: 0,
             label_stack: Vec::new(),
             function_depth: 0,
+            new_target_allowed: false,
             generator_depth: 0,
             async_depth: 0,
             lexical_declaration_allowed: true,
@@ -141,6 +147,7 @@ impl Parser {
         inherited_strict: bool,
         super_allowed: bool,
         super_call_allowed: bool,
+        new_target_allowed: bool,
     ) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
@@ -154,6 +161,7 @@ impl Parser {
         if super_call_allowed {
             p.super_call_depth = 1;
         }
+        p.new_target_allowed = new_target_allowed;
         p.parse_program()
     }
 
@@ -368,8 +376,10 @@ impl Parser {
         let saved_dstr = std::mem::take(&mut self.cur_param_destructure_decls);
         let saved_super = self.super_depth;
         let saved_super_call = self.super_call_depth;
+        let saved_new_target_allowed = self.new_target_allowed;
         self.super_depth = if super_property_allowed { 1 } else { 0 };
         self.super_call_depth = 0;
+        self.new_target_allowed = true;
         let params = match self
             .with_function_context(generator_enabled, async_enabled, |p| p.parse_params())
         {
@@ -380,6 +390,7 @@ impl Parser {
                 self.cur_param_destructure_decls = saved_dstr;
                 self.super_depth = saved_super;
                 self.super_call_depth = saved_super_call;
+                self.new_target_allowed = saved_new_target_allowed;
                 return Err(err);
             }
         };
@@ -391,6 +402,7 @@ impl Parser {
         self.cur_param_destructure_decls = saved_dstr;
         self.super_depth = saved_super;
         self.super_call_depth = saved_super_call;
+        self.new_target_allowed = saved_new_target_allowed;
         Ok((params, param_defaults, rest_param, dstr_decls))
     }
 
@@ -1090,12 +1102,14 @@ impl Parser {
         let saved_function_depth = self.function_depth;
         let saved_super = self.super_depth;
         let saved_super_call = self.super_call_depth;
+        let saved_new_target_allowed = self.new_target_allowed;
 
         self.loop_depth = 0;
         self.switch_depth = 0;
         self.function_depth = 0;
         self.super_depth += 1;
         self.super_call_depth = 0;
+        self.new_target_allowed = true;
 
         let result = (|| {
             let mut body = Vec::new();
@@ -1116,6 +1130,7 @@ impl Parser {
         self.function_depth = saved_function_depth;
         self.super_depth = saved_super;
         self.super_call_depth = saved_super_call;
+        self.new_target_allowed = saved_new_target_allowed;
         result
     }
 
@@ -1160,6 +1175,7 @@ impl Parser {
         }
         let saved_super = self.super_depth;
         let saved_super_call = self.super_call_depth;
+        let saved_new_target_allowed = self.new_target_allowed;
         if super_allowed {
             self.super_depth += 1;
         } else {
@@ -1170,6 +1186,7 @@ impl Parser {
         } else {
             self.super_call_depth = 0;
         }
+        self.new_target_allowed = true;
         self.function_depth += 1;
         let result = self.with_function_statement_control_context(|p| {
             let mut body = Vec::new();
@@ -1186,6 +1203,7 @@ impl Parser {
         self.is_strict_context = saved_strict;
         self.super_depth = saved_super;
         self.super_call_depth = saved_super_call;
+        self.new_target_allowed = saved_new_target_allowed;
         self.last_fn_body_use_strict_directive = body_is_strict;
         result
     }
@@ -3325,6 +3343,11 @@ impl Parser {
             let target = self.peek_at_tok(1);
             if let TokenKind::Ident(s) = target.kind.clone() {
                 if s == "target" && !new_had_escape && !target.had_escape {
+                    if !self.new_target_allowed {
+                        return Err(error::Error::syntax(
+                            "new.target is not allowed here".to_string(),
+                        ));
+                    }
                     self.advance(); // .
                     self.advance(); // target
                     return Ok(Expr::NewTarget);

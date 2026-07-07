@@ -153,6 +153,11 @@ pub struct CallFrame {
     /// True while a function frame is evaluating parameter initializers before
     /// entering the body variable environment.
     pub in_parameter_initializers: bool,
+    /// True only for non-arrow function frames. Direct eval code may contain
+    /// `new.target` only when the eval call is contained in non-arrow function
+    /// code; eval frames themselves keep this false so nested eval code must
+    /// satisfy the same syntactic condition again.
+    pub direct_eval_new_target_allowed: bool,
     /// True when this frame is a derived class constructor (extends ...).
     /// In derived constructors, returning a non-object value after super()
     /// is a TypeError.
@@ -191,6 +196,7 @@ impl CallFrame {
             eval_global_bindings: false,
             eval_deletable_bindings: false,
             in_parameter_initializers: false,
+            direct_eval_new_target_allowed: false,
             is_derived_ctor: false,
         }
     }
@@ -481,6 +487,7 @@ impl Vm {
         this_val: Value,
         eval_global_bindings: bool,
         eval_deletable_bindings: bool,
+        new_target: Value,
     ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         // eval runs on the shared stack. Push a sentinel Undefined so that
@@ -499,6 +506,7 @@ impl Vm {
         if let Some(frame) = self.frames.last_mut() {
             frame.eval_global_bindings = eval_global_bindings;
             frame.eval_deletable_bindings = eval_deletable_bindings;
+            frame.new_target = new_target;
         }
         let depth_before = self.frames.len();
         let result = self.interpret();
@@ -543,8 +551,14 @@ impl Vm {
             self.global_this.clone(),
             crate::value::BindingKind::Const,
         );
-        let result =
-            self.execute_chunk_scoped(chunk, self.global, self.global_this.clone(), false, false);
+        let result = self.execute_chunk_scoped(
+            chunk,
+            self.global,
+            self.global_this.clone(),
+            false,
+            false,
+            Value::Undefined,
+        );
         if !self.microtask_queue.is_empty() {
             self.run_microtasks()?;
         }
@@ -590,6 +604,7 @@ impl Vm {
             global_this.clone(),
             !is_strict && global_env == self.global,
             false,
+            Value::Undefined,
         );
         if !is_strict && global_env != self.global {
             for name in &var_names {
@@ -727,6 +742,8 @@ impl Vm {
         caller_env: GcIdx,
         this_val: Value,
         caller_strict: bool,
+        caller_new_target: Value,
+        new_target_allowed: bool,
     ) -> error::Result<Value> {
         let super_allowed = crate::environment::has(&self.heap, caller_env, "#super");
         let super_call_allowed = crate::environment::has(&self.heap, caller_env, "#superctor");
@@ -735,6 +752,7 @@ impl Vm {
             caller_strict,
             super_allowed,
             super_call_allowed,
+            new_target_allowed,
         )?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
@@ -801,6 +819,7 @@ impl Vm {
             this_val,
             !is_strict && var_env == self.global,
             !is_strict && var_env != self.global,
+            caller_new_target,
         );
         // After running, copy the var/function bindings that the eval body
         // established back into the caller's variable environment (they leak per
@@ -884,6 +903,7 @@ impl Vm {
             frame.callee = callee;
             frame.in_parameter_initializers = fdef.has_parameter_expressions;
             frame.new_target = new_target;
+            frame.direct_eval_new_target_allowed = !fdef.is_arrow;
         }
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
