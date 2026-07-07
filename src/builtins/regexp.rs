@@ -319,14 +319,30 @@ pub(crate) fn regexp_exec(
         }
         return Ok(Value::Null);
     }
-    let region = crate::value::utf16_slice(&input, start, utf16_len);
-    // For sticky, match must start exactly at `start`; for global, find from start.
-    let m = if sticky {
-        re.captures_at(&region, 0)
-            .filter(|c| c.get(0).map(|mch| mch.start() == 0).unwrap_or(false))
-    } else {
-        re.captures(&region)
+    let Some(start_byte) = crate::value::utf16_index_to_byte(&input, start) else {
+        if global || sticky {
+            if let Some(Value::Object(idx)) = &this {
+                vm.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Object(obj) = o {
+                        obj.props.lock().insert(
+                            PropertyKey::from("lastIndex"),
+                            regexp_last_index_prop(Value::Number(0.0)),
+                        );
+                    }
+                });
+            }
+        }
+        return Ok(Value::Null);
     };
+    // Run against the whole input so `^` still observes the real input start
+    // and multiline line starts; sticky only requires the match to begin at
+    // lastIndex.
+    let m = re.captures_at(&input, start_byte).filter(|c| {
+        !sticky
+            || c.get(0)
+                .map(|mch| mch.start() == start_byte)
+                .unwrap_or(false)
+    });
     match m {
         Some(caps) => {
             let items: Vec<Value> = caps
@@ -337,8 +353,10 @@ pub(crate) fn regexp_exec(
                 })
                 .collect();
             if global || sticky {
-                let match_end = start
-                    + crate::value::utf16_len(caps.get(0).map(|mch| mch.as_str()).unwrap_or(""));
+                let match_end = caps
+                    .get(0)
+                    .map(|mch| crate::value::utf16_len(&input[..mch.end()]))
+                    .unwrap_or(start);
                 if let Some(Value::Object(idx)) = &this {
                     vm.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Object(obj) = o {

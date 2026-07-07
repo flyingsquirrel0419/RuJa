@@ -1080,6 +1080,31 @@ pub fn utf16_len(s: &str) -> usize {
     }
 }
 
+/// Convert a UTF-16 code-unit index into a UTF-8 byte index when the position
+/// is also a Rust string boundary. Returns `None` for positions inside a
+/// supplementary character or past the end.
+pub fn utf16_index_to_byte(s: &str, index: usize) -> Option<usize> {
+    if s.is_ascii() {
+        return (index <= s.len()).then_some(index);
+    }
+
+    let mut utf16_pos = 0;
+    for (byte_pos, ch) in s.char_indices() {
+        if utf16_pos == index {
+            return Some(byte_pos);
+        }
+        utf16_pos += if sentinel_to_surrogate(ch).is_some() {
+            1
+        } else {
+            ch.len_utf16()
+        };
+        if utf16_pos > index {
+            return None;
+        }
+    }
+    (utf16_pos == index).then_some(s.len())
+}
+
 /// Get the code unit at UTF-16 index `i`, or None if out of range.
 /// Fast path: ASCII strings can index directly by byte.
 pub fn utf16_get(s: &str, i: usize) -> Option<u16> {

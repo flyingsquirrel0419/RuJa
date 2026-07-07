@@ -3237,6 +3237,26 @@ fn regexp_null_escape_matches_null_character() {
 }
 
 #[test]
+fn regexp_sticky_start_assertion_uses_full_input() {
+    assert_eq!(
+        run("var re = /^a/y; re.lastIndex = 1; re.test(' a') + ',' + re.lastIndex;"),
+        Value::String(Arc::from("false,0"))
+    );
+    assert_eq!(
+        run("var re = /^a/y; re.lastIndex = 1; re.test('\\na') + ',' + re.lastIndex;"),
+        Value::String(Arc::from("false,0"))
+    );
+    assert_eq!(
+        run("var re = /^a/my; re.lastIndex = 1; re.test('\\na') + ',' + re.lastIndex;"),
+        Value::String(Arc::from("true,2"))
+    );
+    assert_eq!(
+        run("var re = /a/g; re.lastIndex = 1; re.test('xxa') + ',' + re.lastIndex;"),
+        Value::String(Arc::from("true,3"))
+    );
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

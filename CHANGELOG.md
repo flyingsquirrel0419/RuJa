@@ -96,6 +96,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `language/literals/regexp` diagnostic now runs at **173 pass / 7 fail / 58
   skip**, and broader `language/literals` improves to **467 pass / 7 fail /
   60 skip**.
+- **RegExp sticky start assertions**: `RegExp.prototype.exec` now runs
+  global/sticky matches against the full input at the UTF-16 `lastIndex`
+  position instead of slicing the input first, so `^` still observes the real
+  beginning of input and multiline line starts. Global `lastIndex` updates now
+  use the actual match end even when the search skips ahead. The focused
+  `language/literals/regexp` diagnostic now runs at **174 pass / 6 fail / 58
+  skip**, and broader `language/literals` improves to **468 pass / 6 fail /
+  60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a

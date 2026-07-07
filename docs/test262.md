@@ -221,6 +221,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `lastIndex`. The focused `language/literals/regexp` diagnostic now runs at
   **173 pass / 7 fail / 58 skip**, and broader `language/literals` improves to
   **467 pass / 7 fail / 60 skip**.
+- **RegExp sticky start assertions** —
+  `RegExp.prototype.exec` now applies global and sticky matches to the full
+  input at the UTF-16 `lastIndex` position instead of slicing the input before
+  matching. This keeps `^` anchored to the real input start, or to real
+  multiline line starts, even when the `y` flag is present. Global
+  `lastIndex` updates now use the actual match end after skipped input. The
+  focused `language/literals/regexp` diagnostic now runs at **174 pass / 6
+  fail / 58 skip**, and broader `language/literals` improves to **468 pass /
+  6 fail / 60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,
