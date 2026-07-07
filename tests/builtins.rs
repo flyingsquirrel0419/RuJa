@@ -3099,6 +3099,31 @@ fn regexp_modifiers_empty_remove_list_compiles() {
         run("/^a\\n(?m-:^b$)\\nc$/.test('a\\nb\\nc');"),
         Value::Bool(true)
     );
+    assert_eq!(run("/(?s:^.$)/.test('𐌀');"), Value::Bool(false));
+    assert_eq!(run("/(?s:^.$)/u.test('𐌀');"), Value::Bool(true));
+    assert_eq!(run("/(?s:(?-s:.))/.test('\\n');"), Value::Bool(false));
+    assert_eq!(run("/(?s:(?-s:(?s:.)))/.test('\\n');"), Value::Bool(true));
+    assert_eq!(run("/(?i:\\p{Lu})/u.test('a');"), Value::Bool(true));
+    assert_eq!(run("/(?i:\\P{Lu})/u.test('A');"), Value::Bool(true));
+    assert_eq!(
+        run("/(?i:\\P{Uppercase_Letter})/u.test('A');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("/(?i:\\P{General_Category=Uppercase_Letter})/u.test('A');"),
+        Value::Bool(true)
+    );
+    assert_eq!(run("/(?i:[\\P{Lu}])/u.test('A');"), Value::Bool(true));
+    assert_eq!(
+        run("/(?i:[\\P{Uppercase_Letter}])/u.test('A');"),
+        Value::Bool(true)
+    );
+    assert_eq!(run("/(?-i:\\w)/ui.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/(?-i:\\W)/ui.test('ſ');"), Value::Bool(true));
+    assert_eq!(run("/(?-i:[\\w])/ui.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/(?-i:[\\W])/ui.test('ſ');"), Value::Bool(true));
+    assert_eq!(run("/(?-i:\\b)ſ/ui.test('ſ');"), Value::Bool(false));
+    assert_eq!(run("/(?-i:\\B)ſ/ui.test('ſ');"), Value::Bool(true));
 }
 
 #[test]
@@ -3194,6 +3219,7 @@ fn regexp_unicode_mode_syntax_reports_early_error() {
         "/\\u{110000}/u;",
         "/\\u{1,}/u;",
         "/\\u{1F_639}/u;",
+        "/\\p{}/u;",
     ] {
         assert!(
             run_err(source).contains("regular expression"),
@@ -3206,12 +3232,14 @@ fn regexp_unicode_mode_syntax_reports_early_error() {
         "new RegExp('\\\\8', 'u');",
         "new RegExp('\\\\u{110000}', 'u');",
         "new RegExp('\\\\u{1,}', 'u');",
+        "new RegExp('\\\\p{}', 'u');",
     ] {
         assert!(
             run_err(source).contains("regular expression"),
             "expected constructor unicode-mode syntax error for {source}"
         );
     }
+    assert!(run_err("/\\p{Bad}/u;").contains("Invalid regex"));
 }
 
 #[test]

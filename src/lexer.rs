@@ -1772,6 +1772,10 @@ fn validate_regex_unicode_mode_syntax(pattern: &str, flags: &str) -> Result<(), 
                     i += 2;
                     continue;
                 }
+                'p' | 'P' => {
+                    i = validate_regex_unicode_property_escape_at(&chars, i + 1)?;
+                    continue;
+                }
                 '1'..='9' => {
                     let (value, end) = read_regex_decimal_escape(&chars, i + 1);
                     if value == 0 || value > capture_count {
@@ -2221,6 +2225,28 @@ fn regex_group_end(chars: &[char], start: usize) -> Option<usize> {
     }
 
     None
+}
+
+fn validate_regex_unicode_property_escape_at(chars: &[char], idx: usize) -> Result<usize, String> {
+    if chars.get(idx + 1) != Some(&'{') {
+        return Err("invalid regular expression property escape".to_string());
+    }
+    let mut i = idx + 2;
+    let mut saw_char = false;
+    while let Some(ch) = chars.get(i).copied() {
+        if ch == '}' {
+            if saw_char {
+                return Ok(i + 1);
+            }
+            return Err("invalid regular expression property escape".to_string());
+        }
+        if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '=') {
+            return Err("invalid regular expression property escape".to_string());
+        }
+        saw_char = true;
+        i += 1;
+    }
+    Err("invalid regular expression property escape".to_string())
 }
 
 fn validate_regex_modifier_groups(pattern: &str) -> Result<(), String> {

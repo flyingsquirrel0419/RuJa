@@ -95,6 +95,12 @@ enum CompiledRegex {
     Fancy(fancy_regex::Regex),
 }
 
+#[derive(Clone, Copy)]
+struct RegexModifierState {
+    dot_all: bool,
+    ignore_case: bool,
+}
+
 /// Compile a regex pattern applying ES flags: `i` (case-insensitive),
 /// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
 /// the regex engine here and are handled by the caller.
@@ -313,6 +319,10 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
     let mut in_class = false;
     let mut escaped = false;
     let protect_non_unicode_case = flags.contains('i') && !flags.contains('u');
+    let mut modifier_stack = vec![RegexModifierState {
+        dot_all: flags.contains('s'),
+        ignore_case: flags.contains('i'),
+    }];
 
     while let Some(ch) = chars.next() {
         if escaped {
@@ -327,6 +337,44 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
                 } else {
                     out.pop();
                     push_legacy_decimal_escape_for_backend(&mut out, &digits);
+                }
+            } else if flags.contains('u')
+                && ch == 'P'
+                && !in_class
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                && consume_uppercase_letter_property_name(&mut chars)
+            {
+                out.pop();
+                out.push_str("(?s:.)");
+            } else if flags.contains('u')
+                && ch == 'P'
+                && in_class
+                && modifier_stack.last().is_some_and(|state| state.ignore_case)
+                && consume_uppercase_letter_property_name(&mut chars)
+            {
+                out.pop();
+                out.push_str(r"\s\S");
+            } else if in_class
+                && matches!(ch, 'w' | 'W')
+                && !modifier_stack.last().is_some_and(|state| state.ignore_case)
+            {
+                out.pop();
+                match ch {
+                    'w' => out.push_str("[:word:]"),
+                    'W' => out.push_str("[:^word:]"),
+                    _ => unreachable!(),
+                }
+            } else if !in_class
+                && matches!(ch, 'w' | 'W' | 'b' | 'B')
+                && !modifier_stack.last().is_some_and(|state| state.ignore_case)
+            {
+                out.pop();
+                match ch {
+                    'w' => out.push_str(r"(?-iu:\w)"),
+                    'W' => out.push_str(r"(?-i:[^A-Za-z0-9_])"),
+                    'b' => out.push_str(r"(?-iu:\b)"),
+                    'B' => out.push_str(r"(?-iu:\B)"),
+                    _ => unreachable!(),
                 }
             } else if flags.contains('u') && ch == 'u' {
                 let mut lead_hex = String::new();
@@ -450,24 +498,86 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
             continue;
         }
 
+        if !in_class && ch == '.' && !flags.contains('u') {
+            if modifier_stack.last().is_some_and(|state| state.dot_all) {
+                out.push_str(r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]");
+            } else {
+                out.push_str(
+                    r"[\x00-\x09\x0b\x0c\x0e-\u{2027}\u{202a}-\u{ffff}\u{f0000}-\u{f07ff}]",
+                );
+            }
+            continue;
+        }
+
         if !in_class && ch == '(' && chars.peek() == Some(&'?') {
             out.push(ch);
             out.push(chars.next().unwrap());
-            let mut modifiers = String::new();
+            let mut add_modifiers = String::new();
             while matches!(chars.peek(), Some('i' | 'm' | 's')) {
-                modifiers.push(chars.next().unwrap());
+                add_modifiers.push(chars.next().unwrap());
             }
-            if !modifiers.is_empty() && chars.peek() == Some(&'-') {
+            let mut remove_modifiers = String::new();
+            if chars.peek() == Some(&'-') {
                 chars.next();
+                while matches!(chars.peek(), Some('i' | 'm' | 's')) {
+                    remove_modifiers.push(chars.next().unwrap());
+                }
                 if chars.peek() == Some(&':') {
-                    out.push_str(&modifiers);
+                    let mut state = *modifier_stack.last().unwrap();
+                    if add_modifiers.contains('s') {
+                        state.dot_all = true;
+                    }
+                    if add_modifiers.contains('i') {
+                        state.ignore_case = true;
+                    }
+                    if remove_modifiers.contains('s') {
+                        state.dot_all = false;
+                    }
+                    if remove_modifiers.contains('i') {
+                        state.ignore_case = false;
+                    }
+                    modifier_stack.push(state);
+                    out.push_str(&add_modifiers);
+                    if !remove_modifiers.is_empty() {
+                        out.push('-');
+                        out.push_str(&remove_modifiers);
+                    }
+                    chars.next();
+                    out.push(':');
                     continue;
                 }
-                out.push_str(&modifiers);
+                out.push_str(&add_modifiers);
                 out.push('-');
+                out.push_str(&remove_modifiers);
                 continue;
             }
-            out.push_str(&modifiers);
+            if !add_modifiers.is_empty() && chars.peek() == Some(&':') {
+                let mut state = *modifier_stack.last().unwrap();
+                if add_modifiers.contains('s') {
+                    state.dot_all = true;
+                }
+                if add_modifiers.contains('i') {
+                    state.ignore_case = true;
+                }
+                modifier_stack.push(state);
+            } else {
+                modifier_stack.push(*modifier_stack.last().unwrap());
+            }
+            out.push_str(&add_modifiers);
+            continue;
+        }
+
+        if !in_class && ch == '(' {
+            modifier_stack.push(*modifier_stack.last().unwrap());
+            out.push(ch);
+            continue;
+        }
+
+        if !in_class && ch == ')' {
+            if modifier_stack.len() > 1 {
+                modifier_stack.pop();
+            }
+            out.push(ch);
             continue;
         }
 
@@ -601,6 +711,35 @@ fn regex_backend_escape_passthrough(ch: char, next: Option<&char>) -> bool {
 fn push_regex_literal_for_backend(out: &mut String, ch: char) {
     let literal = ch.to_string();
     out.push_str(&regex::escape(&literal));
+}
+
+fn consume_uppercase_letter_property_name<I>(chars: &mut std::iter::Peekable<I>) -> bool
+where
+    I: Iterator<Item = char> + Clone,
+{
+    let mut lookahead = chars.clone();
+    if lookahead.next() != Some('{') {
+        return false;
+    }
+    let mut name = String::new();
+    while let Some(ch) = lookahead.next() {
+        if ch == '}' {
+            if matches!(
+                name.as_str(),
+                "Lu" | "Uppercase_Letter"
+                    | "General_Category=Lu"
+                    | "General_Category=Uppercase_Letter"
+                    | "gc=Lu"
+                    | "gc=Uppercase_Letter"
+            ) {
+                *chars = lookahead;
+                return true;
+            }
+            return false;
+        }
+        name.push(ch);
+    }
+    false
 }
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

@@ -288,6 +288,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   validation now uses the same normalized compile path as execution. The
   focused `built-ins/RegExp/regexp-modifiers` run improves to **57 pass / 13
   fail / 0 skip**.
+- **RegExp modifier runtime semantics** —
+  RegExp backend normalization now tracks modifier-local `s` and `i` state
+  while lowering dot, word-boundary, word-character, and Unicode property
+  escapes. Non-Unicode `.` observes ES UTF-16 code-unit behavior instead of
+  Rust scalar behavior, local `(?-i:...)` word escapes use the ES ASCII word
+  set inside and outside character classes, and modifier-local `\p{Lu}`/`\P{Lu}`
+  Unicode property probes plus their `Uppercase_Letter` aliases compile inside
+  and outside character classes with the expected ignore-case behavior. The focused
+  `built-ins/RegExp/regexp-modifiers` run now closes at **70 pass / 0 fail /
+  0 skip**.
 - **RegExp prototype accessors** —
   `RegExp.prototype.source` and `RegExp.prototype.flags` are now accessor
   properties with spec-shaped getter functions. RegExp instances keep their

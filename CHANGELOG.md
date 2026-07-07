@@ -163,6 +163,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   add-only modifier groups without changing modifier properties on the
   RegExp instance. The focused `built-ins/RegExp/regexp-modifiers` run now
   improves to **57 pass / 13 fail / 0 skip**.
+- **RegExp modifier runtime semantics**: backend normalization now tracks
+  modifier-local `s` and `i` state when lowering dot, word-boundary, word
+  character, and Unicode property escapes. Non-Unicode `.` now follows ES
+  UTF-16 code-unit semantics instead of Rust scalar matching, local
+  `(?-i:...)` word escapes use the ES ASCII word set inside and outside
+  character classes, and modifier-local `\p{Lu}`/`\P{Lu}` probes plus their
+  `Uppercase_Letter` aliases compile both inside and outside character classes
+  in Unicode mode. The focused
+  `built-ins/RegExp/regexp-modifiers` run now closes at **70 pass / 0 fail /
+  0 skip**.
 - **RegExp prototype accessors**: `RegExp.prototype.source` and
   `RegExp.prototype.flags` are now accessor properties with spec-shaped
   getter functions. RegExp instances keep their raw pattern and flags in
