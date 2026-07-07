@@ -56,6 +56,20 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   delete-then-readded values in insertion order. The focused
   `built-ins/{Map,Set}/prototype` iterator/forEach/Symbol.iterator cluster now
   runs at **104 pass / 0 fail / 38 skip**.
+- **Set composition methods and constructor iterable compliance**:
+  `Set.prototype.union`, `intersection`, `difference`,
+  `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, and `isDisjointFrom`
+  are now exposed with Set-like operand handling, direct Set result
+  allocation, live receiver traversal where required, iterator closing for
+  early exits, Set-like size validation, and SameValueZero key semantics.
+  `Array.prototype.values()` now returns an iterator object instead of an array
+  snapshot, which lets Set-like `keys()` methods return array iterators without
+  relaxing `GetIteratorFromMethod` validation. `new Set(iterable)` now checks
+  `new.target`, observes the instance `add` method once before iteration, calls
+  it for each iterated value, and closes the iterator when `add` throws. The
+  focused Set composition cluster runs at **179 pass / 0 fail / 7 skip**,
+  `built-ins/Set` now closes at **340 pass / 0 fail / 43 skip**, and
+  `built-ins/Map built-ins/Set` improves to **432 pass / 17 fail / 138 skip**.
 - **String literal escape conformance**: string literals now decode UTF-8
   `NonEscapeCharacter` escapes such as `\А` as source code points instead of
   corrupting the UTF-8 tail byte, allow literal U+2028/U+2029 in strings per

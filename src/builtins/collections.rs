@@ -70,7 +70,12 @@ fn collection_iterator_next(
                 iter.done.load(std::sync::atomic::Ordering::Relaxed),
             )
         } else {
-            (Value::Undefined, CollectionIteratorKind::SetValues, 0, true)
+            (
+                Value::Undefined,
+                CollectionIteratorKind::ArrayValues,
+                0,
+                true,
+            )
         }
     });
     if already_done {
@@ -78,6 +83,17 @@ fn collection_iterator_next(
     }
 
     let next_value = match (&source, kind) {
+        (_, CollectionIteratorKind::ArrayValues) => {
+            let len = match vm.get_property(&source, "length")? {
+                Value::Number(n) if n.is_finite() && n > 0.0 => n.floor() as usize,
+                _ => 0,
+            };
+            if index < len {
+                Some(vm.get_property(&source, &index.to_string())?)
+            } else {
+                None
+            }
+        }
         (Value::Object(source_idx), CollectionIteratorKind::MapEntries) => {
             map_entry_at(vm, *source_idx, index)?
                 .map(|(key, value)| make_value_array(vm, vec![key, value]))
@@ -159,6 +175,213 @@ fn set_keys_in_order(vm: &Vm, idx: GcIdx) -> Vec<MapKey> {
             Vec::new()
         }
     })
+}
+
+struct SetRecord {
+    object: Value,
+    size: f64,
+    has: Value,
+    keys: Value,
+}
+
+enum SetRecordKeysIterator {
+    Internal(Value),
+    Js { object: Value, next: Value },
+}
+
+fn new_empty_set(vm: &mut Vm) -> error::Result<Value> {
+    let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
+        items: Mutex::new(IndexSet::new()),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.set_proto.clone())),
+    }))?;
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn set_insert_direct(vm: &mut Vm, set: &Value, value: Value) {
+    if let Value::Object(idx) = set {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(set) = obj {
+                set.items.lock().insert(MapKey::new(value));
+            }
+        });
+    }
+}
+
+fn set_delete_direct(vm: &mut Vm, set: &Value, value: &Value) {
+    if let Value::Object(idx) = set {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(set) = obj {
+                set.items.lock().shift_remove(&MapKey::new(value.clone()));
+            }
+        });
+    }
+}
+
+fn set_has_direct(vm: &Vm, idx: GcIdx, value: &Value) -> bool {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(set) = obj {
+            set.items.lock().contains(&MapKey::new(value.clone()))
+        } else {
+            false
+        }
+    })
+}
+
+fn copy_set_direct(vm: &mut Vm, source: GcIdx) -> error::Result<Value> {
+    let result = new_empty_set(vm)?;
+    for key in set_keys_in_order(vm, source) {
+        set_insert_direct(vm, &result, key.0);
+    }
+    Ok(result)
+}
+
+fn set_record_size(vm: &mut Vm, value: &Value) -> error::Result<f64> {
+    let number_size = vm.to_number(value)?;
+    if number_size.is_nan() {
+        return Err(Error::type_err("Set-like object size must not be NaN"));
+    }
+    let int_size = if number_size == 0.0 {
+        0.0
+    } else if number_size.is_infinite() {
+        number_size
+    } else {
+        number_size.trunc()
+    };
+    if int_size < 0.0 {
+        return Err(Error::range("Set-like object size must be non-negative"));
+    }
+    Ok(int_size)
+}
+
+fn require_set_record(vm: &mut Vm, value: Value) -> error::Result<SetRecord> {
+    if !matches!(value, Value::Object(_)) {
+        return Err(Error::type_err("Set-like object must be an object"));
+    }
+    let raw_size = vm.get_property(&value, "size")?;
+    let size = set_record_size(vm, &raw_size)?;
+    let has = vm.get_property(&value, "has")?;
+    if !is_callable(&has, &vm.heap) {
+        return Err(Error::type_err("Set-like object has is not callable"));
+    }
+    let keys = vm.get_property(&value, "keys")?;
+    if !is_callable(&keys, &vm.heap) {
+        return Err(Error::type_err("Set-like object keys is not callable"));
+    }
+    Ok(SetRecord {
+        object: value,
+        size,
+        has,
+        keys,
+    })
+}
+
+fn set_record_has(vm: &mut Vm, record: &SetRecord, value: Value) -> error::Result<bool> {
+    Ok(vm
+        .call_function(&record.has, &[value], Some(record.object.clone()))?
+        .is_truthy())
+}
+
+fn set_record_keys_iterator(
+    vm: &mut Vm,
+    record: &SetRecord,
+) -> error::Result<SetRecordKeysIterator> {
+    let iter_obj = vm.call_function(&record.keys, &[], Some(record.object.clone()))?;
+    if !matches!(iter_obj, Value::Object(_)) {
+        return Err(Error::type_err("Set-like keys must return an object"));
+    }
+    let is_internal_iterator = match &iter_obj {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |obj| matches!(obj, HeapObj::Iterator(_))),
+        _ => false,
+    };
+    if is_internal_iterator {
+        return Ok(SetRecordKeysIterator::Internal(iter_obj));
+    }
+    let next = vm.get_property(&iter_obj, "next")?;
+    if !is_callable(&next, &vm.heap) {
+        return Err(Error::type_err(
+            "Set-like keys iterator next is not callable",
+        ));
+    }
+    Ok(SetRecordKeysIterator::Js {
+        object: iter_obj,
+        next,
+    })
+}
+
+fn set_record_keys_iterator_next(
+    vm: &mut Vm,
+    iterator: &SetRecordKeysIterator,
+) -> error::Result<(Value, bool)> {
+    match iterator {
+        SetRecordKeysIterator::Internal(iter) => vm.iterator_next(iter),
+        SetRecordKeysIterator::Js { object, next } => {
+            let result = vm.call_function(next, &[], Some(object.clone()))?;
+            if !matches!(result, Value::Object(_)) {
+                return Err(Error::type_err("Iterator next result is not an object"));
+            }
+            let done = vm.get_property(&result, "done")?.is_truthy();
+            if done {
+                Ok((Value::Undefined, true))
+            } else {
+                Ok((vm.get_property(&result, "value")?, false))
+            }
+        }
+    }
+}
+
+fn set_record_keys_iterator_close(
+    vm: &mut Vm,
+    iterator: &SetRecordKeysIterator,
+) -> error::Result<()> {
+    match iterator {
+        SetRecordKeysIterator::Internal(iter) => vm.iterator_close(iter),
+        SetRecordKeysIterator::Js { object, .. } => {
+            let return_method = vm.get_property(object, "return")?;
+            if return_method.is_undefined() || return_method.is_null() {
+                return Ok(());
+            }
+            if !is_callable(&return_method, &vm.heap) {
+                return Err(Error::type_err("Iterator return is not callable"));
+            }
+            let result = vm.call_function(&return_method, &[], Some(object.clone()))?;
+            if !matches!(result, Value::Object(_)) {
+                return Err(Error::type_err("Iterator return result is not an object"));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn for_each_set_record_iterator_key<F>(
+    vm: &mut Vm,
+    iter: &SetRecordKeysIterator,
+    mut visit: F,
+) -> error::Result<()>
+where
+    F: FnMut(&mut Vm, Value) -> error::Result<bool>,
+{
+    loop {
+        let (value, done) = set_record_keys_iterator_next(vm, iter)?;
+        if done {
+            break;
+        }
+        if !visit(vm, value)? {
+            set_record_keys_iterator_close(vm, iter)?;
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn for_each_set_record_key<F>(vm: &mut Vm, record: &SetRecord, visit: F) -> error::Result<()>
+where
+    F: FnMut(&mut Vm, Value) -> error::Result<bool>,
+{
+    let iter = set_record_keys_iterator(vm, record)?;
+    for_each_set_record_iterator_key(vm, &iter, visit)
 }
 
 fn extend_collection_visit_queue(
@@ -785,34 +1008,278 @@ pub(crate) fn set_for_each(
     }
     Ok(Value::Undefined)
 }
+
+pub(crate) fn set_union(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.union")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    let iter = set_record_keys_iterator(vm, &other)?;
+    let result = copy_set_direct(vm, idx)?;
+    for_each_set_record_iterator_key(vm, &iter, |vm, value| {
+        set_insert_direct(vm, &result, value);
+        Ok(true)
+    })?;
+    Ok(result)
+}
+
+pub(crate) fn set_intersection(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.intersection")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    let result = new_empty_set(vm)?;
+    let this_size = set_keys_in_order(vm, idx).len() as f64;
+    if this_size <= other.size {
+        let mut queue = set_keys_in_order(vm, idx);
+        let mut cursor = 0;
+        let mut last_yielded: Option<MapKey> = None;
+        while cursor < queue.len() {
+            let key = queue[cursor].clone();
+            cursor += 1;
+            if !set_has_direct(vm, idx, &key.0) {
+                extend_collection_visit_queue(
+                    &mut queue,
+                    cursor,
+                    &set_keys_in_order(vm, idx),
+                    last_yielded.as_ref(),
+                );
+                continue;
+            }
+            let value = key.0.clone();
+            if set_record_has(vm, &other, value.clone())? {
+                set_insert_direct(vm, &result, value);
+            }
+            last_yielded = Some(key);
+            extend_collection_visit_queue(
+                &mut queue,
+                cursor,
+                &set_keys_in_order(vm, idx),
+                last_yielded.as_ref(),
+            );
+        }
+    } else {
+        for_each_set_record_key(vm, &other, |vm, value| {
+            if set_has_direct(vm, idx, &value) {
+                set_insert_direct(vm, &result, value);
+            }
+            Ok(true)
+        })?;
+    }
+    Ok(result)
+}
+
+pub(crate) fn set_difference(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.difference")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    let result = copy_set_direct(vm, idx)?;
+    let this_size = set_keys_in_order(vm, idx).len() as f64;
+    if this_size <= other.size {
+        let mut queue = set_keys_in_order(vm, idx);
+        let mut cursor = 0;
+        let mut last_yielded: Option<MapKey> = None;
+        while cursor < queue.len() {
+            let key = queue[cursor].clone();
+            cursor += 1;
+            if !set_has_direct(vm, idx, &key.0) {
+                extend_collection_visit_queue(
+                    &mut queue,
+                    cursor,
+                    &set_keys_in_order(vm, idx),
+                    last_yielded.as_ref(),
+                );
+                continue;
+            }
+            let value = key.0.clone();
+            if set_record_has(vm, &other, value.clone())? {
+                set_delete_direct(vm, &result, &value);
+            }
+            last_yielded = Some(key);
+            extend_collection_visit_queue(
+                &mut queue,
+                cursor,
+                &set_keys_in_order(vm, idx),
+                last_yielded.as_ref(),
+            );
+        }
+    } else {
+        for_each_set_record_key(vm, &other, |vm, value| {
+            set_delete_direct(vm, &result, &value);
+            Ok(true)
+        })?;
+    }
+    Ok(result)
+}
+
+pub(crate) fn set_symmetric_difference(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.symmetricDifference")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    let iter = set_record_keys_iterator(vm, &other)?;
+    let result = copy_set_direct(vm, idx)?;
+    for_each_set_record_iterator_key(vm, &iter, |vm, value| {
+        if set_has_direct(vm, idx, &value) {
+            set_delete_direct(vm, &result, &value);
+        } else {
+            set_insert_direct(vm, &result, value);
+        }
+        Ok(true)
+    })?;
+    Ok(result)
+}
+
+pub(crate) fn set_is_subset_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.isSubsetOf")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    if (set_keys_in_order(vm, idx).len() as f64) > other.size {
+        return Ok(Value::Bool(false));
+    }
+    let mut queue = set_keys_in_order(vm, idx);
+    let mut cursor = 0;
+    let mut last_yielded: Option<MapKey> = None;
+    while cursor < queue.len() {
+        let key = queue[cursor].clone();
+        cursor += 1;
+        if !set_has_direct(vm, idx, &key.0) {
+            extend_collection_visit_queue(
+                &mut queue,
+                cursor,
+                &set_keys_in_order(vm, idx),
+                last_yielded.as_ref(),
+            );
+            continue;
+        }
+        if !set_record_has(vm, &other, key.0.clone())? {
+            return Ok(Value::Bool(false));
+        }
+        last_yielded = Some(key);
+        extend_collection_visit_queue(
+            &mut queue,
+            cursor,
+            &set_keys_in_order(vm, idx),
+            last_yielded.as_ref(),
+        );
+    }
+    Ok(Value::Bool(true))
+}
+
+pub(crate) fn set_is_superset_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.isSupersetOf")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    if (set_keys_in_order(vm, idx).len() as f64) < other.size {
+        return Ok(Value::Bool(false));
+    }
+    let mut result = true;
+    for_each_set_record_key(vm, &other, |vm, value| {
+        if !set_has_direct(vm, idx, &value) {
+            result = false;
+            return Ok(false);
+        }
+        Ok(true)
+    })?;
+    Ok(Value::Bool(result))
+}
+
+pub(crate) fn set_is_disjoint_from(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.isDisjointFrom")?;
+    let other = require_set_record(vm, args.first().cloned().unwrap_or(Value::Undefined))?;
+    let this_size = set_keys_in_order(vm, idx).len() as f64;
+    if this_size <= other.size {
+        let mut queue = set_keys_in_order(vm, idx);
+        let mut cursor = 0;
+        let mut last_yielded: Option<MapKey> = None;
+        while cursor < queue.len() {
+            let key = queue[cursor].clone();
+            cursor += 1;
+            if !set_has_direct(vm, idx, &key.0) {
+                extend_collection_visit_queue(
+                    &mut queue,
+                    cursor,
+                    &set_keys_in_order(vm, idx),
+                    last_yielded.as_ref(),
+                );
+                continue;
+            }
+            if set_record_has(vm, &other, key.0.clone())? {
+                return Ok(Value::Bool(false));
+            }
+            last_yielded = Some(key);
+            extend_collection_visit_queue(
+                &mut queue,
+                cursor,
+                &set_keys_in_order(vm, idx),
+                last_yielded.as_ref(),
+            );
+        }
+        Ok(Value::Bool(true))
+    } else {
+        let mut result = true;
+        for_each_set_record_key(vm, &other, |vm, value| {
+            if set_has_direct(vm, idx, &value) {
+                result = false;
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+        Ok(Value::Bool(result))
+    }
+}
+
 pub(crate) fn set_constructor(
     vm: &mut Vm,
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err("Set constructor must be called with new"));
+    }
+    let proto = native_constructor_prototype(vm, vm.set_proto.clone())?;
     let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.set_proto.clone())),
+        proto: Mutex::new(Some(proto)),
     }))?;
+    let set = Value::Object(GcIdx(obj_idx));
     // Initialize from an optional iterable.
     if let Some(iterable) = _args.first() {
         if !iterable.is_undefined() && !iterable.is_null() {
+            let add = vm.get_property(&set, "add")?;
+            if !is_callable(&add, &vm.heap) {
+                return Err(Error::type_err("Set add is not callable"));
+            }
             let it = vm.make_iterator(iterable)?;
             loop {
                 let (v, done) = vm.iterator_next(&it)?;
                 if done {
                     break;
                 }
-                vm.heap.with_obj(obj_idx, |o| {
-                    if let HeapObj::Set(s) = o {
-                        s.items.lock().insert(MapKey::new(v));
-                    }
-                });
+                if let Err(err) = vm.call_function(&add, &[v], Some(set.clone())) {
+                    vm.iterator_close(&it)?;
+                    return Err(err);
+                }
             }
         }
     }
-    Ok(Value::Object(GcIdx(obj_idx)))
+    Ok(set)
 }
 
 // =========================================================================

@@ -177,6 +177,23 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   unvisited values, and revisits delete-then-readded values in insertion order.
   The focused `built-ins/{Map,Set}/prototype` iterator/forEach/Symbol.iterator
   cluster now runs at **104 pass / 0 fail / 38 skip**.
+- **Set composition methods and constructor iterable compliance** —
+  `Set.prototype.union`, `intersection`, `difference`,
+  `symmetricDifference`, `isSubsetOf`, `isSupersetOf`, and `isDisjointFrom`
+  now implement the ES Set composition algorithms against Set-like operands,
+  bypass user-overridden result `add`/`Symbol.species`, preserve live Set
+  traversal where the algorithms require it, and close operand iterators on
+  early exits. Set-like size handling now rejects negative sizes and truncates
+  fractional sizes for algorithmic size comparisons. `Array.prototype.values()`
+  now returns an iterator object instead of an array snapshot, so array
+  iterators work as Set-like `keys()` results without accepting arbitrary
+  iterables where an iterator is required. `new Set(iterable)` now requires
+  construction with `new`, observes the instance `add` method before iterator
+  creation, calls it for each iterated value, and closes the iterator if that
+  call throws. The focused
+  Set composition cluster now runs at **179 pass / 0 fail / 7 skip**,
+  `built-ins/Set` now closes at **340 pass / 0 fail / 43 skip**, and
+  `built-ins/Map built-ins/Set` improves to **432 pass / 17 fail / 138 skip**.
 - **String literal escape conformance** —
   String literal scanning now decodes UTF-8 `NonEscapeCharacter` escapes as
   source code points, permits literal U+2028/U+2029 in strings per

@@ -1256,18 +1256,13 @@ pub(crate) fn array_values(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let items = if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    };
-    make_value_array(vm, items)
+    let source = this.unwrap_or(Value::Undefined);
+    if source.is_undefined() || source.is_null() {
+        return Err(Error::type_err(
+            "Array.prototype.values called on null or undefined",
+        ));
+    }
+    new_collection_iterator(vm, source, CollectionIteratorKind::ArrayValues)
 }
 pub(crate) fn array_entries(
     vm: &mut Vm,

@@ -772,6 +772,13 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("keys", set_keys, 0),
             ("values", set_values, 0),
             ("forEach", set_for_each, 1),
+            ("union", set_union, 1),
+            ("intersection", set_intersection, 1),
+            ("difference", set_difference, 1),
+            ("symmetricDifference", set_symmetric_difference, 1),
+            ("isSubsetOf", set_is_subset_of, 1),
+            ("isSupersetOf", set_is_superset_of, 1),
+            ("isDisjointFrom", set_is_disjoint_from, 1),
         ],
     )?;
     vm.set_proto = Value::Object(set_proto);

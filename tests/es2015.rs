@@ -769,6 +769,45 @@ fn set_basic() {
     );
     assert_eq!(run("new Set([NaN, Number('x')]).size;"), Value::Number(1.0));
     assert_eq!(run("new Set([0, 0n]).size;"), Value::Number(2.0));
+    assert_eq!(
+        run("let a = new Set([1,2,3]); let b = new Set([3,4]); [Array.from(a.union(b)).join(','), Array.from(a.intersection(b)).join(','), Array.from(a.difference(b)).join(','), Array.from(a.symmetricDifference(b)).join(','), a.isSubsetOf(b), a.isSupersetOf(b), a.isDisjointFrom(new Set([5]))].join('|');"),
+        Value::String(Arc::from("1,2,3,4|3|1,2|1,2,4|false|false|true"))
+    );
+    assert_eq!(
+        run("class MySet extends Set { static get [Symbol.species]() { throw new Error('no'); } } let out = new MySet([1]).union(new Set([2])); [out instanceof Set, out instanceof MySet, Array.from(out).join(',')].join('|');"),
+        Value::String(Arc::from("true|false|1,2"))
+    );
+    assert_eq!(
+        run("let calls = []; let other = { get size(){ calls.push('size'); return { valueOf(){ calls.push('number'); return 3; } }; }, get has(){ calls.push('has'); return function(v){ calls.push('has:' + v); return v !== 2; }; }, get keys(){ calls.push('keys'); return function(){ throw new Error('no keys'); }; } }; let result = new Set([1,2]).difference(other); Array.from(result).join(',') + '|' + calls.join(',');"),
+        Value::String(Arc::from("2|size,number,has,keys,has:1,has:2"))
+    );
+    assert!(run_err("Set();").contains("TypeError"));
+    assert!(run_err("Set([]);").contains("TypeError"));
+    assert_eq!(
+        run("let setAdd = Set.prototype.add; let calls = 0; Set.prototype.add = function(v){ calls++; return setAdd.call(this, v); }; let s = new Set([1,2]); calls + '|' + Array.from(s).join(',');"),
+        Value::String(Arc::from("2|1,2"))
+    );
+    assert!(run_err("Set.prototype.add = null; new Set([1,2]);").contains("TypeError"));
+    assert_eq!(
+        run("let calls = 0; Object.defineProperty(Set.prototype, 'add', { get(){ calls++; throw new Error('no'); }, configurable: true }); try { new Set(); } catch (e) {} calls;"),
+        Value::Number(0.0)
+    );
+    assert_eq!(run("[1, 2].values().next().value;"), Value::Number(1.0));
+    assert!(run_err(
+        "new Set([1]).union({ size: 1, has(){ return false; }, keys(){ return [2]; } });"
+    )
+    .contains("TypeError"));
+    assert!(run_err("new Set([1]).union({ size: 1, has(){ return false; }, keys(){ return { next(){ return 1; } }; } });").contains("TypeError"));
+    assert!(run_err("new Set([1]).union({ size: -1, get has(){ throw new Error('late'); }, get keys(){ throw new Error('late'); } });").contains("RangeError"));
+    assert_eq!(
+        run("new Set([1,2]).isSupersetOf({ size: 2.9, has(){ throw new Error('no has'); }, keys(){ let i = 0; return { next(){ i++; return i <= 2 ? { value: i, done: false } : { done: true }; } }; } });"),
+        Value::Bool(true)
+    );
+    assert!(run_err("new Set([1]).isSupersetOf({ size: 1, has(){ throw new Error('no has'); }, keys(){ return { next(){ return { value: 2, done: false }; }, return(){ return 1; } }; } });").contains("TypeError"));
+    assert_eq!(
+        run("let s = new Set([1]); let other = { size: 0, has(){ return false; }, keys(){ s.add(2); return [].values(); } }; Array.from(s.union(other)).join(',') + '|' + Array.from(s.symmetricDifference(other)).join(',');"),
+        Value::String(Arc::from("1,2|1,2"))
+    );
 }
 
 #[test]
