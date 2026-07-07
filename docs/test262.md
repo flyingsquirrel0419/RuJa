@@ -151,6 +151,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/indexOf
   built-ins/String/prototype/lastIndexOf` cluster runs at **62 pass / 0 fail
   / 10 skip**.
+- **String trim whitespace set** —
+  `String.prototype.trim`, `trimStart`, and `trimEnd` now trim exactly the
+  ECMAScript `WhiteSpace` plus `LineTerminator` set instead of Rust's host
+  whitespace predicate. Boundary BOM (`\uFEFF`) is removed, while
+  non-ECMAScript whitespace such as `\u180E` and `\u0085` is preserved. The
+  focused
+  `built-ins/String/prototype/trim
+  built-ins/String/prototype/trimStart
+  built-ins/String/prototype/trimEnd` cluster runs at **143 pass / 2 fail /
+  30 skip**; the remaining failures are broader object `ToString`
+  representation gaps.
 - **String repeat count coercion** —
   `String.prototype.repeat` now applies the shared integer coercion path to
   its count argument before range checking. `NaN`, `undefined`, `false`,

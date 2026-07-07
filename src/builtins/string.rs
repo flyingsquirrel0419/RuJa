@@ -61,6 +61,26 @@ fn string_search_arg(vm: &mut Vm, value: &Value) -> error::Result<String> {
     Ok(vm.to_string(value)?.to_string())
 }
 
+fn is_js_trim_whitespace(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{0009}'
+            | '\u{000A}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{000D}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{1680}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202F}'
+            | '\u{205F}'
+            | '\u{3000}'
+            | '\u{FEFF}'
+    ) || matches!(ch, '\u{2000}'..='\u{200A}')
+}
+
 fn is_regexp(vm: &mut Vm, value: &Value) -> error::Result<bool> {
     let Value::Object(idx) = value else {
         return Ok(false);
@@ -296,7 +316,10 @@ pub(crate) fn str_locale_compare(
 }
 
 pub(crate) fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(Arc::from(str_val(vm, &this)?.trim())))
+    let s = str_val(vm, &this)?;
+    Ok(Value::String(Arc::from(
+        s.trim_matches(is_js_trim_whitespace),
+    )))
 }
 pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
@@ -741,7 +764,9 @@ pub(crate) fn str_trim_start(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    Ok(Value::String(Arc::from(s.trim_start())))
+    Ok(Value::String(Arc::from(
+        s.trim_start_matches(is_js_trim_whitespace),
+    )))
 }
 pub(crate) fn str_trim_end(
     vm: &mut Vm,
@@ -749,7 +774,9 @@ pub(crate) fn str_trim_end(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    Ok(Value::String(Arc::from(s.trim_end())))
+    Ok(Value::String(Arc::from(
+        s.trim_end_matches(is_js_trim_whitespace),
+    )))
 }
 pub(crate) fn str_replace_all(
     vm: &mut Vm,

@@ -1435,6 +1435,22 @@ fn string_pad_at_replaceall_substring() {
         run("'  hi  '.trimStart();"),
         Value::String(Arc::from("hi  "))
     );
+    assert_eq!(
+        run(r#"'\uFEFF\u00A0hi\uFEFF'.trim();"#),
+        Value::String(Arc::from("hi"))
+    );
+    assert_eq!(
+        run(r#"'\uFEFFhi\uFEFF'.trimStart();"#),
+        Value::String(Arc::from("hi\u{FEFF}"))
+    );
+    assert_eq!(
+        run(r#"'\uFEFFhi\uFEFF'.trimEnd();"#),
+        Value::String(Arc::from("\u{FEFF}hi"))
+    );
+    assert_eq!(
+        run(r#"'\u180Ehi\u0085'.trim();"#),
+        Value::String(Arc::from("\u{180E}hi\u{0085}"))
+    );
 }
 
 #[test]

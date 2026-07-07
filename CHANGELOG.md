@@ -36,6 +36,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/String/prototype/indexOf
   built-ins/String/prototype/lastIndexOf` cluster now runs at
   **62 pass / 0 fail / 10 skip**.
+- **String trim whitespace set**: `String.prototype.trim`, `trimStart`, and
+  `trimEnd` now use the ECMAScript `WhiteSpace` plus `LineTerminator` set
+  instead of Rust's host whitespace predicate, so BOM (`\uFEFF`) is trimmed
+  at string boundaries while non-ECMAScript whitespace such as `\u180E` and
+  `\u0085` is preserved. The focused
+  `built-ins/String/prototype/trim
+  built-ins/String/prototype/trimStart
+  built-ins/String/prototype/trimEnd` cluster now runs at
+  **143 pass / 2 fail / 30 skip**; the remaining failures are broader
+  object `ToString` representation gaps.
 - **String repeat count coercion**: `String.prototype.repeat` now applies
   `ToIntegerOrInfinity`-style truncation to its count before range checking,
   so `NaN`, `undefined`, `false`, `"0"`, and `0.9` produce the empty string
