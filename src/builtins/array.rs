@@ -640,28 +640,86 @@ pub(crate) fn from_index_arg(
     Ok(start)
 }
 
+const MAX_SAFE_ARRAY_LENGTH: f64 = 9_007_199_254_740_991.0;
+
+fn to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() || n <= 0.0 {
+        return Ok(0);
+    }
+    if n.is_infinite() {
+        return Ok(MAX_SAFE_ARRAY_LENGTH as usize);
+    }
+    Ok(n.trunc().min(MAX_SAFE_ARRAY_LENGTH) as usize)
+}
+
+fn length_of_array_like(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    let len = vm.get_property(value, "length")?;
+    to_length(vm, &len)
+}
+
+fn array_search_start(
+    vm: &mut Vm,
+    args: &[Value],
+    len: usize,
+    default: f64,
+) -> error::Result<Option<usize>> {
+    if len == 0 {
+        return Ok(None);
+    }
+    let raw = match args.get(1) {
+        Some(v) => vm.to_number(v)?,
+        None => default,
+    };
+    if raw.is_nan() {
+        return Ok(Some(0));
+    }
+    if raw.is_infinite() {
+        return Ok(if raw.is_sign_positive() {
+            Some(len)
+        } else {
+            Some(0)
+        });
+    }
+    let n = raw.trunc();
+    if n < 0.0 {
+        Ok(Some(((len as f64 + n).max(0.0)) as usize))
+    } else {
+        Ok(Some((n as usize).min(len)))
+    }
+}
+
+fn array_search_has_property(vm: &mut Vm, object: &Value, key: &str) -> error::Result<bool> {
+    if vm.has_property(object, key)? {
+        return Ok(true);
+    }
+    match object {
+        Value::Bool(_) | Value::Number(_) | Value::BigInt(_) | Value::Symbol(_) => {
+            Ok(!vm.get_property(object, key)?.is_undefined())
+        }
+        _ => Ok(false),
+    }
+}
+
 pub(crate) fn array_index_of(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items.len();
-        let start = from_index_arg(vm, args, 1, len)?;
-        for (i, v) in items.iter().enumerate().skip(start) {
-            if v == &target {
+    let object = this.unwrap_or(Value::Undefined);
+    let len = length_of_array_like(vm, &object)?;
+    let Some(start) = array_search_start(vm, args, len, 0.0)? else {
+        return Ok(Value::Number(-1.0));
+    };
+    for i in start..len {
+        let key = i.to_string();
+        if array_search_has_property(vm, &object, &key)? {
+            let value = vm.get_property(&object, &key)?;
+            if vm.strict_eq(&value, &target) {
                 return Ok(Value::Number(i as f64));
             }
         }
-        return Ok(Value::Number(-1.0));
     }
     Ok(Value::Number(-1.0))
 }
@@ -671,23 +729,18 @@ pub(crate) fn array_includes(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items.len();
-        let start = from_index_arg(vm, args, 1, len)?;
-        // includes uses SameValueZero: NaN matches NaN (unlike indexOf's ===).
-        for (_i, v) in items.iter().enumerate().skip(start) {
-            if v.same_value_zero(&target) {
-                return Ok(Value::Bool(true));
-            }
-        }
+    let object = this.unwrap_or(Value::Undefined);
+    let len = length_of_array_like(vm, &object)?;
+    let Some(start) = array_search_start(vm, args, len, 0.0)? else {
         return Ok(Value::Bool(false));
+    };
+    // includes uses SameValueZero and intentionally reads holes as undefined.
+    for i in start..len {
+        let key = i.to_string();
+        let value = vm.get_property(&object, &key)?;
+        if value.same_value_zero(&target) {
+            return Ok(Value::Bool(true));
+        }
     }
     Ok(Value::Bool(false))
 }
@@ -956,31 +1009,39 @@ pub(crate) fn array_last_index_of(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let target = args.first().unwrap_or(&Value::Undefined).clone();
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let len = items.len();
-        // fromIndex for lastIndexOf: default +Inf (start from end); negative
-        // wraps from the end; clamped into [0, len-1].
-        let raw = match args.get(1) {
-            Some(v) => vm.to_number(v)?,
-            None => f64::INFINITY,
-        };
-        let end = if raw.is_nan() {
-            len
-        } else if raw.is_infinite() && raw < 0.0 {
-            return Ok(Value::Number(-1.0));
+    let object = this.unwrap_or(Value::Undefined);
+    let len = length_of_array_like(vm, &object)?;
+    if len == 0 {
+        return Ok(Value::Number(-1.0));
+    }
+    let raw = match args.get(1) {
+        Some(v) => vm.to_number(v)?,
+        None => f64::INFINITY,
+    };
+    if raw.is_infinite() && raw.is_sign_negative() {
+        return Ok(Value::Number(-1.0));
+    }
+    let start = if raw.is_nan() {
+        0
+    } else if raw.is_infinite() {
+        len - 1
+    } else {
+        let n = raw.trunc();
+        if n >= 0.0 {
+            (n as usize).min(len - 1)
         } else {
-            let n = raw as i64;
-            (if n < 0 { len as i64 + n } else { n }).clamp(0, len as i64) as usize
-        };
-        for i in (0..end).rev() {
-            if vm.strict_eq(&items[i], &target) {
+            let k = len as f64 + n;
+            if k < 0.0 {
+                return Ok(Value::Number(-1.0));
+            }
+            k as usize
+        }
+    };
+    for i in (0..=start).rev() {
+        let key = i.to_string();
+        if array_search_has_property(vm, &object, &key)? {
+            let value = vm.get_property(&object, &key)?;
+            if vm.strict_eq(&value, &target) {
                 return Ok(Value::Number(i as f64));
             }
         }

@@ -48,6 +48,28 @@ fn array_includes_nan() {
 }
 
 #[test]
+fn array_search_methods_use_array_like_property_access() {
+    assert_eq!(
+        run("var obj = {0:'x', 1:true, length:2}; Array.prototype.indexOf.call(obj, true);"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var obj = {0:'x', 1:Infinity, length:2}; Array.prototype.lastIndexOf.call(obj, Infinity);"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var marker = {}; Boolean.prototype[1] = marker; Boolean.prototype.length = 2; var r = Array.prototype.indexOf.call(true, marker); delete Boolean.prototype[1]; delete Boolean.prototype.length; r;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("Array.prototype.indexOf.call(new String('null'), 'l');"),
+        Value::Number(2.0)
+    );
+    assert_eq!(run("[0,,2].indexOf(undefined);"), Value::Number(-1.0));
+    assert_eq!(run("[0,,2].includes(undefined);"), Value::Bool(true));
+}
+
+#[test]
 fn array_sort() {
     assert_eq!(
         run("[3,1,2].sort().join(',');"),
