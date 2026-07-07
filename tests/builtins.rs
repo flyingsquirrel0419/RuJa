@@ -3046,6 +3046,43 @@ fn regex_exec_captures() {
 }
 
 #[test]
+fn regexp_exec_result_shape_and_last_index_semantics() {
+    assert_eq!(
+        run("var m = /b(c)/.exec('abc'); [m[0], m[1], m.index, m.input].join('|');"),
+        Value::String(Arc::from("bc|c|1|abc"))
+    );
+    assert_eq!(
+        run("Object.keys(/b/.exec('abc')).join(',');"),
+        Value::String(Arc::from("0,index,input,groups"))
+    );
+    assert_eq!(run("/b/.exec('abc').groups;"), Value::Undefined);
+    assert_eq!(
+        run("/undefined/.exec()[0];"),
+        Value::String(Arc::from("undefined"))
+    );
+    assert_eq!(
+        run("var gets = 0; var marker = { valueOf: function(){ gets++; return 0; } }; var r = /./; r.lastIndex = marker; var m = r.exec('abc'); m[0] + ',' + (r.lastIndex === marker) + ',' + gets;"),
+        Value::String(Arc::from("a,true,1"))
+    );
+    assert_eq!(
+        run("var gets = 0; var r = /./g; r.lastIndex = { valueOf: function(){ gets++; return -1; } }; var m = r.exec('abc'); m[0] + ',' + r.lastIndex + ',' + gets;"),
+        Value::String(Arc::from("a,1,1"))
+    );
+    assert_eq!(
+        run("var r = /./g; r.lastIndex = 0; var before = r.lastIndex; r.exec('abc'); before + ',' + r.lastIndex;"),
+        Value::String(Arc::from("0,1"))
+    );
+    assert_eq!(
+        run("var r = /z/g; r.lastIndex = 1; var before = r.lastIndex; r.exec('abc'); before + ',' + r.lastIndex;"),
+        Value::String(Arc::from("1,0"))
+    );
+    assert!(run_err(
+        "var r = /c/y; Object.defineProperty(r, 'lastIndex', { writable: false }); r.exec('abc');"
+    )
+    .contains("TypeError"));
+}
+
+#[test]
 fn regex_exec_no_match() {
     assert_eq!(run("/zzz/.exec('abc');"), Value::Null);
 }
@@ -3365,6 +3402,8 @@ fn regexp_unicode_surrogate_pair_escapes_match_scalar() {
         run("var r = /^[\\ud834\\udf06]$/u; r.source;"),
         Value::String(Arc::from("^[\\ud834\\udf06]$"))
     );
+    assert_eq!(run("/\\udf06/u.test('\\udf06');"), Value::Bool(true));
+    assert_eq!(run("/\\udf06/u.exec('\\ud834\\udf06');"), Value::Null);
 }
 
 #[test]

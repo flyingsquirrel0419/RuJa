@@ -275,28 +275,23 @@ pub(crate) fn regexp_exec(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let source = read_regexp_source(vm, &this)?;
-    let input = match args.first() {
-        Some(Value::String(s)) => s.to_string(),
-        Some(v) => vm.to_string(v)?.to_string(),
-        None => String::new(),
-    };
+    let input = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
     let re = compile_regex(&source, &flags)
         .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     let global = flags.contains('g');
     let sticky = flags.contains('y');
-    // Read lastIndex (a number property; default 0).
-    let last_idx: f64 = match &this {
-        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| {
-            o.props()
-                .lock()
-                .get(&PropertyKey::from("lastIndex"))
-                .map(|d| match &d.value {
-                    Value::Number(n) => *n,
-                    _ => 0.0,
-                })
-                .unwrap_or(0.0)
-        }),
+    let this_value = match &this {
+        Some(value @ Value::Object(_)) => Some(value.clone()),
+        _ => None,
+    };
+    let last_idx = match &this_value {
+        Some(value) => {
+            let last_index_value = vm.get_property(value, "lastIndex")?;
+            regexp_to_length(vm, &last_index_value)?
+        }
         _ => 0.0,
     };
     // Start position: for global/sticky, read lastIndex; else 0.
@@ -307,29 +302,17 @@ pub(crate) fn regexp_exec(
     };
     let utf16_len = crate::value::utf16_len(&input);
     if start > utf16_len {
-        if let Some(Value::Object(idx)) = &this {
-            vm.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Object(obj) = o {
-                    obj.props.lock().insert(
-                        PropertyKey::from("lastIndex"),
-                        regexp_last_index_prop(Value::Number(0.0)),
-                    );
-                }
-            });
+        if global || sticky {
+            if let Some(value) = &this_value {
+                set_regexp_last_index(vm, value, 0.0)?;
+            }
         }
         return Ok(Value::Null);
     }
     let Some(start_byte) = crate::value::utf16_index_to_byte(&input, start) else {
         if global || sticky {
-            if let Some(Value::Object(idx)) = &this {
-                vm.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Object(obj) = o {
-                        obj.props.lock().insert(
-                            PropertyKey::from("lastIndex"),
-                            regexp_last_index_prop(Value::Number(0.0)),
-                        );
-                    }
-                });
+            if let Some(value) = &this_value {
+                set_regexp_last_index(vm, value, 0.0)?;
             }
         }
         return Ok(Value::Null);
@@ -357,35 +340,108 @@ pub(crate) fn regexp_exec(
                     .get(0)
                     .map(|mch| crate::value::utf16_len(&input[..mch.end()]))
                     .unwrap_or(start);
-                if let Some(Value::Object(idx)) = &this {
-                    vm.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Object(obj) = o {
-                            obj.props.lock().insert(
-                                PropertyKey::from("lastIndex"),
-                                regexp_last_index_prop(Value::Number(match_end as f64)),
-                            );
-                        }
-                    });
+                if let Some(value) = &this_value {
+                    set_regexp_last_index(vm, value, match_end as f64)?;
                 }
             }
-            make_value_array(vm, items)
+            let match_start = caps
+                .get(0)
+                .map(|mch| crate::value::utf16_len(&input[..mch.start()]))
+                .unwrap_or(start);
+            let result = make_value_array(vm, items)?;
+            add_regexp_exec_result_props(vm, &result, match_start, &input)?;
+            Ok(result)
         }
         None => {
             // No match: for global/sticky, reset lastIndex to 0.
             if global || sticky {
-                if let Some(Value::Object(idx)) = &this {
-                    vm.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Object(obj) = o {
-                            obj.props.lock().insert(
-                                PropertyKey::from("lastIndex"),
-                                regexp_last_index_prop(Value::Number(0.0)),
-                            );
-                        }
-                    });
+                if let Some(value) = &this_value {
+                    set_regexp_last_index(vm, value, 0.0)?;
                 }
             }
             Ok(Value::Null)
         }
+    }
+}
+
+fn regexp_to_length(vm: &mut Vm, value: &Value) -> error::Result<f64> {
+    let number = vm.to_number(value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0.0);
+    }
+    if number.is_infinite() {
+        return Ok(9_007_199_254_740_991.0);
+    }
+    Ok(number.trunc().min(9_007_199_254_740_991.0))
+}
+
+fn enumerable_data_prop(value: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+        get: None,
+        set: None,
+        is_accessor: false,
+    }
+}
+
+fn add_regexp_exec_result_props(
+    vm: &mut Vm,
+    result: &Value,
+    match_start: usize,
+    input: &str,
+) -> error::Result<()> {
+    let Value::Object(idx) = result else {
+        return Ok(());
+    };
+    vm.heap.with_obj(idx.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(
+            PropertyKey::from("index"),
+            enumerable_data_prop(Value::Number(match_start as f64)),
+        );
+        props.insert(
+            PropertyKey::from("input"),
+            enumerable_data_prop(Value::String(Arc::from(input))),
+        );
+        props.insert(
+            PropertyKey::from("groups"),
+            enumerable_data_prop(Value::Undefined),
+        );
+    });
+    Ok(())
+}
+
+fn set_regexp_last_index(vm: &mut Vm, target: &Value, value: f64) -> error::Result<()> {
+    let Value::Object(idx) = target else {
+        return Err(Error::type_err("not a RegExp".to_string()));
+    };
+    let key = PropertyKey::from("lastIndex");
+    let outcome = vm.heap.with_obj(idx.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        match props.get_mut(&key) {
+            Some(desc) if desc.is_accessor || !desc.writable => false,
+            Some(desc) => {
+                desc.value = Value::Number(value);
+                true
+            }
+            None => {
+                props.insert(key, regexp_last_index_prop(Value::Number(value)));
+                true
+            }
+        }
+    });
+    if outcome {
+        vm.ic_invalidate(idx.0, "lastIndex");
+        Ok(())
+    } else {
+        Err(Error::type_err(
+            "Cannot assign to read only property 'lastIndex' of object",
+        ))
     }
 }
 

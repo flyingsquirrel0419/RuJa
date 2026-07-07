@@ -410,9 +410,10 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
                             out.push_str(&format!("{scalar:x}"));
                             out.push('}');
                         } else {
-                            out.push('u');
-                            out.push_str(&lead_hex);
+                            push_surrogate_sentinel_escape_for_backend(&mut out, lead);
                         }
+                    } else if (0xd800..=0xdfff).contains(&lead) {
+                        push_surrogate_sentinel_escape_for_backend(&mut out, lead);
                     } else {
                         out.push('u');
                         out.push_str(&lead_hex);
@@ -711,6 +712,15 @@ fn regex_backend_escape_passthrough(ch: char, next: Option<&char>) -> bool {
 fn push_regex_literal_for_backend(out: &mut String, ch: char) {
     let literal = ch.to_string();
     out.push_str(&regex::escape(&literal));
+}
+
+fn push_surrogate_sentinel_escape_for_backend(out: &mut String, surrogate: u32) {
+    debug_assert!((0xd800..=0xdfff).contains(&surrogate));
+    let sentinel = 0xf0000 + (surrogate - 0xd800);
+    out.pop();
+    out.push_str("\\u{");
+    out.push_str(&format!("{sentinel:x}"));
+    out.push('}');
 }
 
 fn consume_uppercase_letter_property_name<I>(chars: &mut std::iter::Peekable<I>) -> bool

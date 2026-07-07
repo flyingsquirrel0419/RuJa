@@ -257,6 +257,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   skip**, and broader `language/literals` improves to **471 pass / 3 fail /
   60 skip**, with the remaining RegExp literal failures isolated to
   backreference support.
+- **RegExp exec result shape and `lastIndex` coercion** —
+  `RegExp.prototype.exec` now returns match arrays with enumerable `index`,
+  `input`, and `groups` properties, treats a missing argument as
+  `"undefined"`, reads `lastIndex` through ordinary `Get`/`ToLength` on every
+  call, and reports `TypeError` when global/sticky `lastIndex` write-back
+  fails. Unicode-mode lone surrogate escapes now lower to RuJa's internal
+  surrogate sentinel so `/\udf06/u` compiles and does not match the low half
+  of a surrogate pair.
+  The focused `built-ins/RegExp/prototype/exec` diagnostic now improves from
+  **37 pass / 38 fail / 4 skip** to **74 pass / 1 fail / 4 skip**, with the
+  remaining failure isolated to ES capture-clearing semantics inside repeated
+  groups.
 - **RegExp backreferences and identity escapes** —
   RegExp compilation now keeps ordinary patterns on the existing Rust regex
   fast path, uses a backtracking-capable backend only for true numeric
