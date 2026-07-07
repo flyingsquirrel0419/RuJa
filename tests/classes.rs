@@ -237,6 +237,18 @@ fn private_method_called() {
 }
 
 #[test]
+fn private_method_function_names_include_hash() {
+    assert_eq!(
+        run("class C{#m(){} get(){return this.#m;}}new C().get().name;"),
+        Value::String(Arc::from("#m"))
+    );
+    assert_eq!(
+        run("class C{static #m(){} static get(){return this.#m;}}C.get().name;"),
+        Value::String(Arc::from("#m"))
+    );
+}
+
+#[test]
 fn private_method_mutates_field() {
     assert_eq!(
         run("class C{#c=0;#inc(){this.#c++;}bump(){this.#inc();this.#inc();}get v(){return this.#c;}}let c=new C();c.bump();c.v;"),

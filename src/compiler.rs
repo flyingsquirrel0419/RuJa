@@ -92,6 +92,14 @@ type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool, usize);
 pub type GlobalDeclarationNames = (Vec<Arc<str>>, Vec<Arc<str>>, Vec<Arc<str>>);
 
 impl Compiler {
+    fn private_method_function_name(name: &Arc<str>, kind: PropKind) -> Arc<str> {
+        match kind {
+            PropKind::Get => Arc::from(format!("get #{}", name).as_str()),
+            PropKind::Set => Arc::from(format!("set #{}", name).as_str()),
+            _ => Arc::from(format!("#{}", name).as_str()),
+        }
+    }
+
     pub fn new() -> Self {
         Compiler {
             chunk: Chunk::new(),
@@ -3508,7 +3516,7 @@ impl Compiler {
                             .map(|m| crate::ast::PrivateFieldDecl {
                                 name: m.name.clone(),
                                 init: Some(Box::new(Expr::Function(FunctionExpr {
-                                    name: Some(m.name.clone()),
+                                    name: Some(Self::private_method_function_name(&m.name, m.kind)),
                                     params: m.params.clone(),
                                     param_defaults: m.param_defaults.clone(),
                                     rest_param: m.rest_param.clone(),
@@ -3537,7 +3545,7 @@ impl Compiler {
                             })
                             .map(|m| {
                                 let fn_expr = Expr::Function(FunctionExpr {
-                                    name: Some(m.name.clone()),
+                                    name: Some(Self::private_method_function_name(&m.name, m.kind)),
                                     params: m.params.clone(),
                                     param_defaults: m.param_defaults.clone(),
                                     rest_param: m.rest_param.clone(),
@@ -3891,13 +3899,16 @@ impl Compiler {
                 }
                 for method in cls.methods.iter().filter(|m| m.is_private && m.is_static) {
                     let m_fn = Expr::Function(FunctionExpr {
-                        name: Some(method.name.clone()),
+                        name: Some(Self::private_method_function_name(
+                            &method.name,
+                            method.kind,
+                        )),
                         params: method.params.clone(),
                         param_defaults: method.param_defaults.clone(),
                         rest_param: method.rest_param.clone(),
                         body: method.body.clone(),
                         is_arrow: false,
-                        is_async: false,
+                        is_async: method.is_async,
                         is_generator: method.is_generator,
                         param_decls: Vec::new(),
                         is_strict: true,
