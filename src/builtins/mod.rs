@@ -1148,6 +1148,39 @@ pub(crate) fn make_builtin_constructor(
     Ok((ctor_idx, proto_idx))
 }
 
+fn install_typed_array_constructor(
+    vm: &mut Vm,
+    name: &str,
+    constructor: NativeFn,
+) -> error::Result<()> {
+    let ctor_idx = vm.new_native_function(name, constructor, 1)?;
+    let proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from(name)),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?);
+    vm.heap.with_obj(ctor_idx.0, |o| {
+        if let HeapObj::Function(f) = o {
+            *f.prototype.lock() = Some(Value::Object(proto_idx));
+            f.props.lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(Value::Object(proto_idx)),
+            );
+        }
+    });
+    vm.heap.with_obj(proto_idx.0, |o| {
+        o.props().lock().insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(ctor_idx)),
+        );
+    });
+    define_global(vm, name, Value::Object(ctor_idx));
+    Ok(())
+}
+
 pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(GcIdx, GcIdx)> {
     let proto_parent = if matches!(vm.error_proto, Value::Object(_)) {
         vm.error_proto.clone()
@@ -3976,32 +4009,24 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "DataView", Value::Object(data_view_ctor));
 
-    // Uint8Array constructor.
-    let u8_ctor_idx = vm.new_native_function("Uint8Array", uint8array_constructor, 1)?;
-    let u8_proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from("Uint8Array")),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?);
-    vm.heap.with_obj(u8_ctor_idx.0, |o| {
-        if let HeapObj::Function(f) = o {
-            *f.prototype.lock() = Some(Value::Object(u8_proto_idx));
-            f.props.lock().insert(
-                PropertyKey::from("prototype"),
-                const_prop(Value::Object(u8_proto_idx)),
-            );
-        }
-    });
-    vm.heap.with_obj(u8_proto_idx.0, |o| {
-        o.props().lock().insert(
-            PropertyKey::from("constructor"),
-            data_prop(Value::Object(u8_ctor_idx)),
-        );
-    });
-    define_global(vm, "Uint8Array", Value::Object(u8_ctor_idx));
+    for (name, constructor) in [
+        ("Int8Array", int8array_constructor as NativeFn),
+        ("Uint8Array", uint8array_constructor as NativeFn),
+        (
+            "Uint8ClampedArray",
+            uint8clampedarray_constructor as NativeFn,
+        ),
+        ("Int16Array", int16array_constructor as NativeFn),
+        ("Uint16Array", uint16array_constructor as NativeFn),
+        ("Int32Array", int32array_constructor as NativeFn),
+        ("Uint32Array", uint32array_constructor as NativeFn),
+        ("Float32Array", float32array_constructor as NativeFn),
+        ("Float64Array", float64array_constructor as NativeFn),
+        ("BigInt64Array", bigint64array_constructor as NativeFn),
+        ("BigUint64Array", biguint64array_constructor as NativeFn),
+    ] {
+        install_typed_array_constructor(vm, name, constructor)?;
+    }
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with(
         vm,

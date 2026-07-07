@@ -933,6 +933,29 @@ pub(crate) fn to_uint8_element(n: f64) -> u8 {
     n.trunc().rem_euclid(256.0) as u8
 }
 
+fn to_uint8_clamp_element(n: f64) -> u8 {
+    if n.is_nan() || n <= 0.0 {
+        return 0;
+    }
+    if n >= 255.0 {
+        return 255;
+    }
+    let floor = n.floor();
+    let fractional = n - floor;
+    if fractional < 0.5 {
+        floor as u8
+    } else if fractional > 0.5 {
+        floor as u8 + 1
+    } else {
+        let floor_int = floor as u8;
+        if floor_int.is_multiple_of(2) {
+            floor_int
+        } else {
+            floor_int + 1
+        }
+    }
+}
+
 fn to_uint16_element(n: f64) -> u16 {
     if !n.is_finite() || n == 0.0 {
         return 0;
@@ -947,56 +970,255 @@ fn to_uint32_element(n: f64) -> u32 {
     n.trunc().rem_euclid(4294967296.0) as u32
 }
 
-pub(crate) fn uint8array_constructor(
+pub(crate) fn typed_array_element_count(
+    kind: crate::value::TypedArrayKind,
+    byte_len: usize,
+) -> usize {
+    byte_len / kind.element_size()
+}
+
+pub(crate) fn typed_array_read_element(
+    kind: crate::value::TypedArrayKind,
+    bytes: &[u8],
+    index: usize,
+) -> Option<Value> {
+    let size = kind.element_size();
+    let offset = index.checked_mul(size)?;
+    let end = offset.checked_add(size)?;
+    if end > bytes.len() {
+        return None;
+    }
+    let value = match kind {
+        crate::value::TypedArrayKind::Uint8 | crate::value::TypedArrayKind::Uint8Clamped => {
+            Value::Number(bytes[offset] as f64)
+        }
+        crate::value::TypedArrayKind::Int8 => Value::Number((bytes[offset] as i8) as f64),
+        crate::value::TypedArrayKind::Uint16 => {
+            Value::Number(u16::from_ne_bytes([bytes[offset], bytes[offset + 1]]) as f64)
+        }
+        crate::value::TypedArrayKind::Int16 => {
+            Value::Number(i16::from_ne_bytes([bytes[offset], bytes[offset + 1]]) as f64)
+        }
+        crate::value::TypedArrayKind::Uint32 => Value::Number(u32::from_ne_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as f64),
+        crate::value::TypedArrayKind::Int32 => Value::Number(i32::from_ne_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as f64),
+        crate::value::TypedArrayKind::Float32 => Value::Number(f32::from_ne_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as f64),
+        crate::value::TypedArrayKind::Float64 => Value::Number(f64::from_ne_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+            bytes[offset + 4],
+            bytes[offset + 5],
+            bytes[offset + 6],
+            bytes[offset + 7],
+        ])),
+        crate::value::TypedArrayKind::BigInt64 => {
+            Value::BigInt(BigInt::from(i64::from_ne_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
+            ])))
+        }
+        crate::value::TypedArrayKind::BigUint64 => {
+            Value::BigInt(BigInt::from(u64::from_ne_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
+            ])))
+        }
+    };
+    Some(value)
+}
+
+pub(crate) fn typed_array_value_to_bytes(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+    value: &Value,
+) -> error::Result<Vec<u8>> {
+    let bytes = match kind {
+        crate::value::TypedArrayKind::Uint8 => vec![to_uint8_element(vm.to_number(value)?)],
+        crate::value::TypedArrayKind::Uint8Clamped => {
+            vec![to_uint8_clamp_element(vm.to_number(value)?)]
+        }
+        crate::value::TypedArrayKind::Int8 => vec![to_uint8_element(vm.to_number(value)?)],
+        crate::value::TypedArrayKind::Uint16 => to_uint16_element(vm.to_number(value)?)
+            .to_ne_bytes()
+            .to_vec(),
+        crate::value::TypedArrayKind::Int16 => to_uint16_element(vm.to_number(value)?)
+            .to_ne_bytes()
+            .to_vec(),
+        crate::value::TypedArrayKind::Uint32 => to_uint32_element(vm.to_number(value)?)
+            .to_ne_bytes()
+            .to_vec(),
+        crate::value::TypedArrayKind::Int32 => to_uint32_element(vm.to_number(value)?)
+            .to_ne_bytes()
+            .to_vec(),
+        crate::value::TypedArrayKind::Float32 => {
+            (vm.to_number(value)? as f32).to_ne_bytes().to_vec()
+        }
+        crate::value::TypedArrayKind::Float64 => vm.to_number(value)?.to_ne_bytes().to_vec(),
+        crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
+            bigint_to_u64_element(&vm.to_bigint(value)?)
+                .to_ne_bytes()
+                .to_vec()
+        }
+    };
+    Ok(bytes)
+}
+
+fn typed_array_constructor_with_kind(
     vm: &mut Vm,
     args: &[Value],
-    _this: Option<Value>,
+    kind: crate::value::TypedArrayKind,
 ) -> error::Result<Value> {
     let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
-    let length = if args.is_empty() {
-        0usize
-    } else {
-        match &args[0] {
-            Value::Number(n) => {
-                if *n < 0.0 || n.is_nan() || n.is_infinite() {
-                    return Err(Error::type_err("Invalid typed array length".to_string()));
-                }
-                *n as usize
+    let buffer = match args.first() {
+        None => Vec::new(),
+        Some(Value::Number(n)) => {
+            if *n < 0.0 || n.is_nan() || n.is_infinite() {
+                return Err(Error::type_err("Invalid typed array length".to_string()));
             }
-            Value::Object(idx) => {
-                // Initialize from array-like: copy elements.
-                let items = vm.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        a.items.lock().clone()
-                    } else {
-                        Vec::new()
-                    }
-                });
-                let mut buf = Vec::with_capacity(items.len());
-                for item in &items {
-                    buf.push(to_uint8_element(vm.to_number(item)?));
-                }
-                let idx = vm
-                    .heap
-                    .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
-                        buffer: Mutex::new(buf),
-                        kind: crate::value::TypedArrayKind::Uint8,
-                        props: Mutex::new(IndexMap::new()),
-                        proto: Mutex::new(Some(proto)),
-                    }))?;
-                return Ok(Value::Object(GcIdx(idx)));
-            }
-            _ => 0,
+            let length = *n as usize;
+            vec![0u8; length.saturating_mul(kind.element_size())]
         }
+        Some(Value::Object(idx)) => {
+            let items = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    a.items.lock().clone()
+                } else {
+                    Vec::new()
+                }
+            });
+            let mut bytes = Vec::with_capacity(items.len() * kind.element_size());
+            for item in &items {
+                bytes.extend_from_slice(&typed_array_value_to_bytes(vm, kind, item)?);
+            }
+            bytes
+        }
+        Some(_) => Vec::new(),
     };
 
     let idx = vm
         .heap
         .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
-            buffer: Mutex::new(vec![0u8; length]),
-            kind: crate::value::TypedArrayKind::Uint8,
+            buffer: Mutex::new(buffer),
+            kind,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
+}
+
+pub(crate) fn uint8array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Uint8)
+}
+
+pub(crate) fn uint8clampedarray_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Uint8Clamped)
+}
+
+pub(crate) fn int8array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Int8)
+}
+
+pub(crate) fn uint16array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Uint16)
+}
+
+pub(crate) fn int16array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Int16)
+}
+
+pub(crate) fn uint32array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Uint32)
+}
+
+pub(crate) fn int32array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Int32)
+}
+
+pub(crate) fn float32array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Float32)
+}
+
+pub(crate) fn float64array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::Float64)
+}
+
+pub(crate) fn bigint64array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::BigInt64)
+}
+
+pub(crate) fn biguint64array_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_constructor_with_kind(vm, args, crate::value::TypedArrayKind::BigUint64)
 }

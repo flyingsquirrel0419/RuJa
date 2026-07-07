@@ -54,9 +54,9 @@ Promise, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, Atomics,
-SharedArrayBuffer, most TypedArray variants beyond partial Uint8Array/
-ArrayBuffer/DataView support, WeakRef/FinalizationRegistry, Tail-call
-optimization.
+SharedArrayBuffer, full TypedArray prototype method coverage beyond the
+constructor/index basics and ArrayBuffer/DataView support,
+WeakRef/FinalizationRegistry, Tail-call optimization.
 
 Conformance within this subset is the goal — not the raw test262
 percentage. The full-suite number includes thousands of tests for
@@ -148,8 +148,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   require non-extensible ordinary objects/functions while checking
   Array/arguments descriptors. The
   focused `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at
-  **208 pass / 10 fail / 21 skip**, with remaining failures isolated to missing
-  TypedArray constructors.
+  **218 pass / 0 fail / 21 skip**.
+- **TypedArray constructor surface** —
+  The existing byte-backed TypedArray exotic now exposes `Int8Array`,
+  `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`,
+  `Uint32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, and
+  `BigUint64Array` in addition to `Uint8Array`. The shared implementation now
+  reports element-size-aware `length`/`byteLength`, reads and writes indexed
+  numeric and BigInt elements, and tracks `[[Extensible]]` so Object integrity
+  operations can seal typed-array instances. This removes the final
+  TypedArray-constructor failures from the Object integrity focused run.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel** —
   Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
   integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,
@@ -1719,6 +1727,6 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
-ES Modules, Intl, Atomics, most TypedArray variants, WeakRef, and
-FinalizationRegistry. Those larger feature areas are tracked in `HANDOFF.md`
-and will be pulled into support in later milestones.
+ES Modules, Intl, Atomics, full TypedArray prototype method coverage, WeakRef,
+and FinalizationRegistry. Those larger feature areas are tracked in
+`HANDOFF.md` and will be pulled into support in later milestones.

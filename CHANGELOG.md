@@ -33,9 +33,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `Object.isFrozen` now require non-extensible ordinary objects/functions and
   report Array/arguments integrity from their materialized descriptors while
   preserving primitive receivers as already sealed/frozen. The focused
-  `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at **208
-  pass / 10 fail / 21 skip**, with the remaining failures isolated to missing
-  TypedArray constructors.
+  `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at **218
+  pass / 0 fail / 21 skip**.
+- **TypedArray constructor surface**: the existing byte-backed TypedArray
+  exotic now exposes the full constructor family (`Int8Array`,
+  `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`,
+  `Uint32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, and
+  `BigUint64Array`) alongside `Uint8Array`, with element-size-aware
+  `length`/`byteLength`, indexed reads/writes, BigInt element conversion, and
+  `[[Extensible]]` tracking for `Object.seal`/`Object.preventExtensions`.
+  This removes the final TypedArray-constructor failures from the Object
+  integrity focused run.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel**: transparent Proxy receivers
   for `Object.seal`/`Object.freeze` now tighten the target's own descriptors
   through the Proxy-aware `[[DefineOwnProperty]]` path, and

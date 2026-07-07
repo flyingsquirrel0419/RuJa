@@ -382,6 +382,7 @@ pub struct TypedArrayData {
     pub kind: TypedArrayKind,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 pub struct ArrayBufferData {
@@ -402,6 +403,7 @@ pub struct DataViewData {
 #[derive(Clone, Copy, PartialEq)]
 pub enum TypedArrayKind {
     Uint8,
+    Uint8Clamped,
     Int8,
     Uint16,
     Int16,
@@ -409,21 +411,25 @@ pub enum TypedArrayKind {
     Int32,
     Float32,
     Float64,
+    BigInt64,
+    BigUint64,
 }
 
 impl TypedArrayKind {
     pub fn element_size(&self) -> usize {
         match self {
-            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => 1,
+            TypedArrayKind::Uint8 | TypedArrayKind::Uint8Clamped | TypedArrayKind::Int8 => 1,
             TypedArrayKind::Uint16 | TypedArrayKind::Int16 => 2,
             TypedArrayKind::Uint32 | TypedArrayKind::Int32 => 4,
             TypedArrayKind::Float32 => 4,
             TypedArrayKind::Float64 => 8,
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => 8,
         }
     }
     pub fn name(&self) -> &'static str {
         match self {
             TypedArrayKind::Uint8 => "Uint8Array",
+            TypedArrayKind::Uint8Clamped => "Uint8ClampedArray",
             TypedArrayKind::Int8 => "Int8Array",
             TypedArrayKind::Uint16 => "Uint16Array",
             TypedArrayKind::Int16 => "Int16Array",
@@ -431,6 +437,8 @@ impl TypedArrayKind {
             TypedArrayKind::Int32 => "Int32Array",
             TypedArrayKind::Float32 => "Float32Array",
             TypedArrayKind::Float64 => "Float64Array",
+            TypedArrayKind::BigInt64 => "BigInt64Array",
+            TypedArrayKind::BigUint64 => "BigUint64Array",
         }
     }
 }
@@ -917,6 +925,7 @@ impl HeapObj {
             HeapObj::Object(o) => o.extensible.load(Ordering::Relaxed),
             HeapObj::Array(a) => a.extensible.load(Ordering::Relaxed),
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
+            HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
             _ => true,
         }
     }

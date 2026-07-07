@@ -399,6 +399,45 @@ fn uint8array_subclass_instances_use_new_target_prototype_and_store_elements() {
 }
 
 #[test]
+fn typed_array_constructors_cover_numeric_and_bigint_variants() {
+    assert_eq!(
+        run(r#"
+            [
+              typeof Int8Array,
+              typeof Uint8ClampedArray,
+              typeof Int16Array,
+              typeof Uint16Array,
+              typeof Int32Array,
+              typeof Uint32Array,
+              typeof Float32Array,
+              typeof Float64Array,
+              typeof BigInt64Array,
+              typeof BigUint64Array
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "function,function,function,function,function,function,function,function,function,function"
+        ))
+    );
+    assert_eq!(
+        run("var a=new Int16Array(2); a[0]=-1; a[1]=65535; [a.length,a.byteLength,a[0],a[1]].join(',');"),
+        Value::String(Arc::from("2,4,-1,-1"))
+    );
+    assert_eq!(
+        run("var a=new Uint8ClampedArray([0, 2.5, 3.5, 300, -1, NaN]); [a.length,a.byteLength,a[0],a[1],a[2],a[3],a[4],a[5]].join(',');"),
+        Value::String(Arc::from("6,6,0,2,4,255,0,0"))
+    );
+    assert_eq!(
+        run("var a=new BigInt64Array(1); a[0]=-1n; [a.length,a.byteLength,a[0].toString()].join(',');"),
+        Value::String(Arc::from("1,8,-1"))
+    );
+    assert_eq!(
+        run("var a=new Float32Array(1); a[0]=1.5; Object.seal(a); [Object.isSealed(a), Object.isExtensible(a), a[0]].join(',');"),
+        Value::String(Arc::from("true,false,1.5"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"

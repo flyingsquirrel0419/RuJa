@@ -983,30 +983,28 @@ impl Vm {
                 });
                 if let Some((kind, buf_len)) = ta_info {
                     if key == "length" {
-                        return Ok(Value::Number(buf_len as f64));
+                        return Ok(Value::Number(crate::builtins::typed_array_element_count(
+                            kind, buf_len,
+                        ) as f64));
                     }
                     if key == "byteLength" {
-                        return Ok(Value::Number((buf_len * kind.element_size()) as f64));
+                        return Ok(Value::Number(buf_len as f64));
                     }
                     if key == "byteOffset" {
                         return Ok(Value::Number(0.0));
                     }
                     if let Ok(i) = key.parse::<usize>() {
-                        let elem_size = kind.element_size();
-                        let offset = i * elem_size;
-                        if offset + elem_size <= buf_len {
-                            let val = self.heap.with_obj(idx.0, |o| {
-                                if let crate::value::HeapObj::TypedArray(t) = o {
-                                    let buffer = t.buffer.lock();
-                                    match kind {
-                                        crate::value::TypedArrayKind::Uint8 => buffer[i] as f64,
-                                        _ => buffer[i] as f64, // simplified for now
-                                    }
-                                } else {
-                                    f64::NAN
-                                }
-                            });
-                            return Ok(Value::Number(val));
+                        if let Some(value) = self.heap.with_obj(idx.0, |o| {
+                            if let crate::value::HeapObj::TypedArray(t) = o {
+                                return crate::builtins::typed_array_read_element(
+                                    kind,
+                                    &t.buffer.lock(),
+                                    i,
+                                );
+                            }
+                            None
+                        }) {
+                            return Ok(value);
                         }
                         return Ok(Value::Undefined);
                     }

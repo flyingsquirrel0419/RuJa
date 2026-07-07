@@ -497,6 +497,9 @@ impl Vm {
             HeapObj::Function(f) => f
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::TypedArray(t) => t
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
             _ => {}
         });
         Ok(true)
@@ -602,11 +605,29 @@ impl Vm {
                     }
                 });
                 if let Some(i) = typed_array_index {
-                    let byte = crate::builtins::to_uint8_element(self.to_number(&value)?);
+                    let kind = self.heap.with_obj(idx.0, |o| {
+                        if let HeapObj::TypedArray(t) = o {
+                            return Some(t.kind);
+                        }
+                        None
+                    });
+                    let Some(kind) = kind else {
+                        return Ok(());
+                    };
+                    let element_bytes =
+                        crate::builtins::typed_array_value_to_bytes(self, kind, &value)?;
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::TypedArray(t) = o {
-                            if let Some(slot) = t.buffer.lock().get_mut(i) {
-                                *slot = byte;
+                            let size = t.kind.element_size();
+                            let Some(offset) = i.checked_mul(size) else {
+                                return;
+                            };
+                            let mut buffer = t.buffer.lock();
+                            let Some(end) = offset.checked_add(size) else {
+                                return;
+                            };
+                            if end <= buffer.len() {
+                                buffer[offset..end].copy_from_slice(&element_bytes);
                             }
                         }
                     });
