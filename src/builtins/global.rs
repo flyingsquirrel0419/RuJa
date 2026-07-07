@@ -17,13 +17,8 @@ pub(crate) fn global_parse_int(
     };
     let mut radix = args
         .get(1)
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as u32)
-            } else {
-                None
-            }
-        })
+        .map(|v| vm.to_number(v).map(|n| crate::vm::to_int32(n) as u32))
+        .transpose()?
         .unwrap_or(0);
     let strip_hex = radix == 0 || radix == 16;
     let mut chars = input.char_indices().peekable();
@@ -53,21 +48,26 @@ pub(crate) fn global_parse_int(
     if !(2..=36).contains(&radix) {
         return Ok(Value::Number(f64::NAN));
     }
-    let valid = |c: char| c.is_digit(radix);
+    let digit_value = |c: char| c.to_digit(radix);
     let start = chars.peek().map(|(i, _)| *i).unwrap_or(input.len());
     let digits_end = input[start..]
         .char_indices()
-        .find(|(_, c)| !valid(*c))
+        .find(|(_, c)| digit_value(*c).is_none())
         .map(|(i, _)| start + i)
         .unwrap_or(input.len());
     let digits = &input[start..digits_end];
     if digits.is_empty() {
         return Ok(Value::Number(f64::NAN));
     }
-    match i64::from_str_radix(digits, radix) {
-        Ok(n) => Ok(Value::Number(if neg { -(n as f64) } else { n as f64 })),
-        Err(_) => Ok(Value::Number(f64::NAN)),
+    let mut number = 0.0;
+    for c in digits.chars() {
+        let digit = digit_value(c).unwrap_or(0) as f64;
+        number = number * radix as f64 + digit;
     }
+    if neg {
+        number = -number;
+    }
+    Ok(Value::Number(number))
 }
 pub(crate) fn global_parse_float(
     _vm: &mut Vm,

@@ -1804,6 +1804,31 @@ fn parse_int_prefix() {
 }
 
 #[test]
+fn parse_int_radix_to_int32_and_large_prefix() {
+    assert!(matches!(
+        run("parseInt('11', true);"),
+        Value::Number(n) if n.is_nan()
+    ));
+    assert_eq!(run("parseInt('11', '2');"), Value::Number(3.0));
+    assert_eq!(run("parseInt('11', new Number(2));"), Value::Number(3.0));
+    assert_eq!(run("parseInt('11', new String('2'));"), Value::Number(3.0));
+    assert_eq!(
+        run("parseInt('11', { valueOf: function() { return 2; } });"),
+        Value::Number(3.0)
+    );
+    assert_eq!(run("parseInt('11', Infinity);"), Value::Number(11.0));
+    assert_eq!(run("parseInt('11', 4294967298);"), Value::Number(3.0));
+    assert_eq!(
+        run("parseInt('0x10000000000000000', 16);"),
+        Value::Number(18_446_744_073_709_552_000.0)
+    );
+    assert_eq!(
+        run("parseInt('-10000000000000000000', 10);"),
+        Value::Number(-10_000_000_000_000_000_000.0)
+    );
+}
+
+#[test]
 fn object_statics() {
     assert_eq!(run("Object.is(NaN, NaN);"), Value::Bool(true));
     assert_eq!(run("Object.is(0, -0);"), Value::Bool(false));

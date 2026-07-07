@@ -213,6 +213,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   rather than substituting the bound target. With `Reflect`/
   `Reflect.construct` skips temporarily lifted, the focused
   `built-ins/Reflect/construct` diagnostic runs at **10 pass / 0 fail**.
+- **parseInt radix and large-prefix conformance** —
+  Global `parseInt` now converts its radix argument through `ToNumber` and
+  `ToInt32`, so string, boxed primitive, ordinary object, infinite, and
+  modulo-2^32 radix values select the same parse base as the spec. Digit
+  accumulation no longer routes through fixed-width Rust integer parsing, so
+  large valid prefixes produce their nearest IEEE-754 Number value instead of
+  `NaN`. The focused `built-ins/parseInt` run now closes at **53 pass / 0 fail
+  / 2 skip**.
 - **String literal escape conformance** —
   String literal scanning now decodes UTF-8 `NonEscapeCharacter` escapes as
   source code points, permits literal U+2028/U+2029 in strings per

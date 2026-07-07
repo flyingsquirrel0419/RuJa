@@ -88,6 +88,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `newTarget` instead of resetting it to the bound target. With
   `Reflect`/`Reflect.construct` skips temporarily lifted, the focused
   `built-ins/Reflect/construct` diagnostic now runs at **10 pass / 0 fail**.
+- **parseInt radix and large-prefix conformance**: global `parseInt` now
+  applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
+  infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no
+  longer overflows through Rust integer parsing, so large valid prefixes return
+  their nearest IEEE-754 Number value instead of `NaN`. The focused
+  `built-ins/parseInt` run now closes at **53 pass / 0 fail / 2 skip**.
 - **String literal escape conformance**: string literals now decode UTF-8
   `NonEscapeCharacter` escapes such as `\А` as source code points instead of
   corrupting the UTF-8 tail byte, allow literal U+2028/U+2029 in strings per
