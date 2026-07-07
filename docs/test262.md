@@ -211,6 +211,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/literals/regexp` diagnostic now runs at **168 pass / 12 fail / 58
   skip**, and broader `language/literals` improves to **462 pass / 12 fail /
   60 skip**.
+- **RegExp Unicode property escape validation** —
+  Unicode-mode RegExp literal and constructor validation now parse
+  `\p{...}`/`\P{...}` bodies semantically instead of accepting any non-empty
+  ASCII name. Property-less escapes are limited to binary properties or
+  `General_Category` values, so bare script names such as `\p{Greek}` and
+  loose-cased names such as `\p{Ascii}` now report early syntax errors.
+  Explicit `Script=...`, `Script_Extensions=...`, `gc=...`, and
+  binary-property aliases remain accepted when the regex backend supports
+  them.
 - **RegExp null escapes and UTF-8 literal source** —
   RegExp literal scanning now preserves non-ASCII pattern text as Unicode code
   points instead of UTF-8 byte fragments, including escaped non-ASCII pattern

@@ -3220,6 +3220,17 @@ fn regexp_unicode_mode_syntax_reports_early_error() {
         "/\\u{1,}/u;",
         "/\\u{1F_639}/u;",
         "/\\p{}/u;",
+        "/\\p{Greek}/u;",
+        "/\\p{Ascii}/u;",
+        "/\\p{any}/u;",
+        "/\\p{assigned}/u;",
+        "/\\p{Script_Extensions}/u;",
+        "/\\p{Script_Extensions=}/u;",
+        "/\\p{General_Category=}/u;",
+        "/\\p{General_Category=Not_A_Category}/u;",
+        "/\\p{Script=FooBarBazInvalid}/u;",
+        "/\\p{Script=Greek=Extra}/u;",
+        "/\\p{=Greek}/u;",
     ] {
         assert!(
             run_err(source).contains("regular expression"),
@@ -3233,13 +3244,48 @@ fn regexp_unicode_mode_syntax_reports_early_error() {
         "new RegExp('\\\\u{110000}', 'u');",
         "new RegExp('\\\\u{1,}', 'u');",
         "new RegExp('\\\\p{}', 'u');",
+        "new RegExp('\\\\p{Greek}', 'u');",
+        "new RegExp('\\\\p{Ascii}', 'u');",
+        "new RegExp('\\\\p{any}', 'u');",
+        "new RegExp('\\\\p{assigned}', 'u');",
+        "new RegExp('\\\\p{Script_Extensions}', 'u');",
+        "new RegExp('\\\\p{Script_Extensions=}', 'u');",
+        "new RegExp('\\\\p{General_Category=}', 'u');",
+        "new RegExp('\\\\p{General_Category=Not_A_Category}', 'u');",
+        "new RegExp('\\\\p{Script=FooBarBazInvalid}', 'u');",
+        "new RegExp('\\\\p{Script=Greek=Extra}', 'u');",
+        "new RegExp('\\\\p{=Greek}', 'u');",
     ] {
         assert!(
             run_err(source).contains("regular expression"),
             "expected constructor unicode-mode syntax error for {source}"
         );
     }
-    assert!(run_err("/\\p{Bad}/u;").contains("Invalid regex"));
+    assert!(run_err("/\\p{Bad}/u;").contains("regular expression"));
+    assert_eq!(run("/\\p{Script=Greek}/u.test('Α');"), Value::Bool(true));
+    assert_eq!(
+        run("/\\p{Script_Extensions=Greek}/u.test('Α');"),
+        Value::Bool(true)
+    );
+    assert_eq!(run("/\\p{ASCII}/u.test('A');"), Value::Bool(true));
+    assert_eq!(run("/\\p{Any}/u.test('A');"), Value::Bool(true));
+    assert_eq!(run("/\\p{Assigned}/u.test('A');"), Value::Bool(true));
+    assert_eq!(run("/\\p{Lu}/u.test('A');"), Value::Bool(true));
+    assert_eq!(
+        run("/\\p{Uppercase_Letter}/u.test('A');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("/\\p{gc=Uppercase_Letter}/u.test('A');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("/\\p{General_Category=Uppercase_Letter}/u.test('A');"),
+        Value::Bool(true)
+    );
+    assert_eq!(run("/\\p{Alpha}/u.test('A');"), Value::Bool(true));
+    assert_eq!(run("/\\p{sc=Grek}/u.test('Α');"), Value::Bool(true));
+    assert_eq!(run("/\\p{scx=Greek}/u.test('Α');"), Value::Bool(true));
 }
 
 #[test]

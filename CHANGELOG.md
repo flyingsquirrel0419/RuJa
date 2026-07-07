@@ -87,6 +87,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   parse-negative bucket. The focused `language/literals/regexp` diagnostic now
   runs at **168 pass / 12 fail / 58 skip**, and broader `language/literals`
   improves to **462 pass / 12 fail / 60 skip**.
+- **RegExp Unicode property escape validation**: Unicode-mode RegExp literal
+  and constructor validation now parse `\p{...}`/`\P{...}` bodies instead of
+  accepting any non-empty ASCII name. Property-less escapes are limited to
+  binary properties or `General_Category` values, so bare script names such as
+  `\p{Greek}` and loose-cased names such as `\p{Ascii}` now report early
+  syntax errors. Explicit `Script=...`, `Script_Extensions=...`, `gc=...`,
+  binary-property aliases, and existing modifier/property escape cases remain
+  accepted when the backend supports them.
 - **RegExp null escapes and UTF-8 literal source**: RegExp literals now keep
   non-ASCII pattern source as Unicode code points instead of UTF-8 byte
   fragments, and the internal regex backend lowers ES `\0` null-character
