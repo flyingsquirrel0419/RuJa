@@ -1304,9 +1304,8 @@ impl<'a> Lexer<'a> {
                     );
                 }
                 pattern.push('\\');
-                if let Some(n) = self.peek() {
-                    pattern.push(n as char);
-                    self.advance();
+                if let Some(ch) = self.read_regex_pattern_char() {
+                    pattern.push(ch);
                 }
                 continue;
             }
@@ -1327,8 +1326,9 @@ impl<'a> Lexer<'a> {
                 closed = true;
                 break;
             }
-            pattern.push(c as char);
-            self.advance();
+            if let Some(ch) = self.read_regex_pattern_char() {
+                pattern.push(ch);
+            }
         }
         if !closed {
             return TokenKind::LexError("unterminated regular expression literal".to_string());
@@ -1345,6 +1345,25 @@ impl<'a> Lexer<'a> {
         match validate_regex_literal(&pattern, &flags) {
             Ok(()) => TokenKind::Regex(pattern, flags),
             Err(msg) => TokenKind::LexError(msg),
+        }
+    }
+
+    fn read_regex_pattern_char(&mut self) -> Option<char> {
+        let b = self.peek()?;
+        if b < 0x80 {
+            self.advance();
+            Some(b as char)
+        } else {
+            let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
+            if len == 0 {
+                self.advance();
+                Some(b as char)
+            } else {
+                for _ in 0..len {
+                    self.advance();
+                }
+                Some(ch)
+            }
         }
     }
 
@@ -2528,6 +2547,22 @@ mod tests {
                 Regex("(a)\\1".into(), "u".into()),
                 Semicolon,
                 Regex("[a-\\-]".into(), "u".into()),
+                Semicolon,
+                Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn regex_literals_preserve_utf8_pattern_source() {
+        assert_eq!(
+            kinds("/\\0②/u; /\u{80}/; /[፬]/u;"),
+            vec![
+                Regex("\\0②".into(), "u".into()),
+                Semicolon,
+                Regex("\u{80}".into(), "".into()),
+                Semicolon,
+                Regex("[፬]".into(), "u".into()),
                 Semicolon,
                 Eof,
             ]

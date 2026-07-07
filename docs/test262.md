@@ -211,6 +211,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `language/literals/regexp` diagnostic now runs at **168 pass / 12 fail / 58
   skip**, and broader `language/literals` improves to **462 pass / 12 fail /
   60 skip**.
+- **RegExp null escapes and UTF-8 literal source** —
+  RegExp literal scanning now preserves non-ASCII pattern text as Unicode code
+  points instead of UTF-8 byte fragments, including escaped non-ASCII pattern
+  characters. The internal regex compiler now maps ES `\0` null-character
+  escapes to the backend-supported `\x00` form while preserving the public
+  `source`, and `String.prototype.search` now accepts RegExp arguments for
+  these focused probes while returning UTF-16 indices and preserving
+  `lastIndex`. The focused `language/literals/regexp` diagnostic now runs at
+  **173 pass / 7 fail / 58 skip**, and broader `language/literals` improves to
+  **467 pass / 7 fail / 60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

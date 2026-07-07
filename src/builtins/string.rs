@@ -176,6 +176,21 @@ pub(crate) fn str_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 pub(crate) fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let pattern = args.first().cloned().unwrap_or(Value::Undefined);
+    if is_regexp(vm, &pattern)? {
+        let regexp = Some(pattern);
+        let source = read_regexp_source(vm, &regexp)?;
+        let flags = read_regexp_flags(vm, &regexp).unwrap_or_default();
+        let re = compile_regex(&source, &flags)
+            .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+        let matched = if flags.contains('y') {
+            re.find_at(&s, 0).filter(|m| m.start() == 0)
+        } else {
+            re.find(&s)
+        };
+        return Ok(matched
+            .map(|m| Value::Number(crate::value::utf16_len(&s[..m.start()]) as f64))
+            .unwrap_or(Value::Number(-1.0)));
+    }
     let p = vm.to_string(&pattern)?;
     Ok(crate::value::utf16_index_of(&s, &p, 0)
         .map(|i| Value::Number(i as f64))

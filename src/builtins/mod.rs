@@ -70,7 +70,11 @@ fn normalize_regex_for_backend(source: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if escaped {
-            out.push(ch);
+            if ch == '0' && !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
+                out.push_str("x00");
+            } else {
+                out.push(ch);
+            }
             escaped = false;
             continue;
         }

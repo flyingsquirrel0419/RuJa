@@ -87,6 +87,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   parse-negative bucket. The focused `language/literals/regexp` diagnostic now
   runs at **168 pass / 12 fail / 58 skip**, and broader `language/literals`
   improves to **462 pass / 12 fail / 60 skip**.
+- **RegExp null escapes and UTF-8 literal source**: RegExp literals now keep
+  non-ASCII pattern source as Unicode code points instead of UTF-8 byte
+  fragments, and the internal regex backend lowers ES `\0` null-character
+  escapes to the backend-supported `\x00` form without changing the public
+  `source`. `String.prototype.search` now accepts RegExp arguments for these
+  probes and returns UTF-16 indices while preserving `lastIndex`. The focused
+  `language/literals/regexp` diagnostic now runs at **173 pass / 7 fail / 58
+  skip**, and broader `language/literals` improves to **467 pass / 7 fail /
+  60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a

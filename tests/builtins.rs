@@ -3215,6 +3215,28 @@ fn regexp_unicode_mode_syntax_reports_early_error() {
 }
 
 #[test]
+fn regexp_null_escape_matches_null_character() {
+    assert_eq!(run("/\\0/.test('\\x00');"), Value::Bool(true));
+    assert_eq!(run("/\\0/u.test('\\x00');"), Value::Bool(true));
+    assert_eq!(run("/^\\0a$/u.test('\\x00a');"), Value::Bool(true));
+    assert_eq!(run("new RegExp('\\\\0').test('\\x00');"), Value::Bool(true));
+    assert_eq!(
+        run("var r = /\\0/u; r.source;"),
+        Value::String(Arc::from("\\0"))
+    );
+    assert_eq!(
+        run("'\\x00②'.match(/\\0②/u)[0];"),
+        Value::String(Arc::from("\0②"))
+    );
+    assert_eq!(run("'\\u0000፬'.search(/\\0፬$/u);"), Value::Number(0.0));
+    assert_eq!(run("'a፬'.search(/፬/u);"), Value::Number(1.0));
+    assert_eq!(
+        run("var r = /፬/g; r.lastIndex = 1; var n = 'a፬'.search(r); n + ',' + r.lastIndex;"),
+        Value::String(Arc::from("1,1"))
+    );
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),
