@@ -434,6 +434,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   improves from **934 pass / 170 fail / 7322 skip** to **936 pass / 168 fail /
   7322 skip**. The default supported-subset count is unchanged because those
   private-feature tests remain skipped.
+- **Private async/generator method heads**: class bodies now parse private
+  `async #name()`, `* #name()`, and `async * #name()` method heads, including
+  static forms, so they preserve their async/generator flags while using the
+  private method lowering path. With private class feature skips temporarily
+  lifted over `language/statements/class language/expressions/class`, the
+  diagnostic improves from **936 pass / 168 fail / 7322 skip** to **948 pass /
+  156 fail / 7322 skip**. The default supported-subset count is unchanged
+  because those private-feature tests remain skipped.
 - **Class static block feature lift**: class static blocks now parse as
   dedicated static initialization blocks instead of ordinary function bodies,
   so `return` is rejected, `super.prop` is accepted, and static-block early

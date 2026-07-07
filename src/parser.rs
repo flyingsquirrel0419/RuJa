@@ -4762,6 +4762,70 @@ impl Parser {
             };
             // Private field declaration: #name = init  or  #name;
             // Private method/accessor: #name(params) / get #name() / set #name(v)
+            let is_async_token = match self.peek().clone() {
+                TokenKind::Async => true,
+                TokenKind::Ident(s) => s == "async",
+                _ => false,
+            };
+            let is_private_async_method = is_async_token
+                && !self.peek_at_tok(1).preceded_by_newline
+                && (matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_))
+                    || (matches!(self.peek_at_tok(1).kind, TokenKind::Star)
+                        && matches!(self.peek_at_tok(2).kind, TokenKind::PrivateName(_))));
+            let is_private_generator_method = matches!(self.peek(), TokenKind::Star)
+                && matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_));
+            if is_private_async_method || is_private_generator_method {
+                let is_async = if is_private_async_method {
+                    self.advance(); // async
+                    true
+                } else {
+                    false
+                };
+                let is_generator = self.eat(&TokenKind::Star);
+                let name = if let TokenKind::PrivateName(name) = self.peek().clone() {
+                    self.advance();
+                    name
+                } else {
+                    unreachable!()
+                };
+                Self::record_private_bound_name(
+                    &mut private_bound_names,
+                    &name,
+                    crate::ast::PropKind::Method,
+                )?;
+                let (params, param_defaults, rest_param, dstr_decls) =
+                    self.parse_params_scoped(is_generator, is_async, true)?;
+                Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
+                let mut body = self.parse_fn_body(true, false, is_generator, is_async)?;
+                let body_contains_use_strict = self.last_fn_body_use_strict_directive;
+                let has_destructuring_params = !dstr_decls.is_empty();
+                Self::reject_use_strict_with_non_simple_params(
+                    body_contains_use_strict,
+                    &param_defaults,
+                    rest_param.as_ref(),
+                    has_destructuring_params,
+                )?;
+                {
+                    let mut pre = Self::dstr_prelude_from(dstr_decls);
+                    pre.append(&mut body);
+                    body = pre;
+                }
+                methods.push(ClassMethod {
+                    name: Arc::from(name.as_str()),
+                    computed_name: None,
+                    params,
+                    param_defaults,
+                    rest_param,
+                    body,
+                    is_static,
+                    is_constructor: false,
+                    is_async,
+                    is_generator,
+                    kind: crate::ast::PropKind::Method,
+                    is_private: true,
+                });
+                continue;
+            }
             if matches!(
                 self.peek().clone(),
                 TokenKind::Ident(ref s)
@@ -4910,8 +4974,7 @@ impl Parser {
             if is_async_method {
                 self.advance();
             }
-            let is_generator_method =
-                !is_getter && !is_setter && !is_async_method && self.eat(&TokenKind::Star);
+            let is_generator_method = !is_getter && !is_setter && self.eat(&TokenKind::Star);
             let is_constructor = !is_getter
                 && !is_setter
                 && !is_async_method

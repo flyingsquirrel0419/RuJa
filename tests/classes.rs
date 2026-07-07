@@ -249,6 +249,26 @@ fn private_method_function_names_include_hash() {
 }
 
 #[test]
+fn private_async_and_generator_method_heads_parse() {
+    assert_eq!(
+        run("class C{async #m(){return 1;} get(){return this.#m;}}new C().get().name;"),
+        Value::String(Arc::from("#m"))
+    );
+    assert_eq!(
+        run("class C{* #m(){yield 1;} get(){return this.#m;}}new C().get().name;"),
+        Value::String(Arc::from("#m"))
+    );
+    assert_eq!(
+        run("class C{async * #m(){yield 1;} get(){return this.#m;}}new C().get().name;"),
+        Value::String(Arc::from("#m"))
+    );
+    assert_eq!(
+        run("class C{static async #m(){return 1;} static get(){return this.#m;}}C.get().name;"),
+        Value::String(Arc::from("#m"))
+    );
+}
+
+#[test]
 fn private_method_mutates_field() {
     assert_eq!(
         run("class C{#c=0;#inc(){this.#c++;}bump(){this.#inc();this.#inc();}get v(){return this.#c;}}let c=new C();c.bump();c.v;"),

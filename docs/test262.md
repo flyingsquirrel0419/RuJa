@@ -491,6 +491,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   the diagnostic improves from **934 pass / 170 fail / 7322 skip** to **936 pass
   / 168 fail / 7322 skip**. The default supported-subset count is unchanged
   because those private-feature tests remain skipped.
+- **Private async/generator method heads** —
+  Class bodies now parse private `async #name()`, `* #name()`, and
+  `async * #name()` method heads, including static forms, so they preserve their
+  async/generator flags while using the private method lowering path. With
+  private class feature skips temporarily lifted over
+  `language/statements/class language/expressions/class`, the diagnostic
+  improves from **936 pass / 168 fail / 7322 skip** to **948 pass / 156 fail /
+  7322 skip**. The default supported-subset count is unchanged because those
+  private-feature tests remain skipped.
 - **Class static block feature lift** —
   Static initialization blocks now have their own parse context instead of
   being parsed as function bodies: `return` is rejected, `super.prop` is
