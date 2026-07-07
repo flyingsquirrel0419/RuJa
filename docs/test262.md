@@ -95,18 +95,18 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28892297810 on `3345fa5`.
+`test262-full` 28892680396 on `bd05e20`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 47,717 |
-| Actually run | 24,135 |
-| Pass | 16,155 |
+| Actually run | 24,131 |
+| Pass | 16,151 |
 | Fail | 7,980 |
-| Timeout | 9 |
+| Timeout | 13 |
 | Skip | 23,573 |
 | **Pass rate (of run)** | **66.9%** |
-| **Pass rate (of total)** | **33.9%** |
+| **Pass rate (of total)** | **33.8%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
