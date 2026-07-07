@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 32.0% of all matrix files; 64.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 32.1% of all matrix files; 64.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -95,17 +95,17 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28859523493 on `97dba02`.
+`test262-full` 28860621487 on `8048811`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 48,465 |
 | Actually run | 24,131 |
-| Pass | 15,551 |
-| Fail | 8,580 |
+| Pass | 15,553 |
+| Fail | 8,578 |
 | Timeout | 13 |
 | Skip | 24,321 |
-| **Pass rate (of run)** | **64.4%** |
+| **Pass rate (of run)** | **64.5%** |
 | **Pass rate (of total)** | **32.1%** |
 
 This number is dominated by tests for features RuJa does not support.
