@@ -148,6 +148,63 @@ fn with_proxy_compound_assignment_preserves_reference() {
 }
 
 #[test]
+fn strict_with_proxy_set_false_throws_for_assignment_forms() {
+    let src = r#"
+        var target = { x: 1 };
+        var proxy = new Proxy(target, {
+          has: function(t, k) {
+            return k === "x";
+          },
+          get: function(t, k, r) {
+            return k === Symbol.unscopables ? undefined : Reflect.get(t, k, r);
+          },
+          set: function(t, k, v, r) {
+            return false;
+          }
+        });
+        var out = [];
+        with (proxy) {
+          try { (function() { "use strict"; x = 2; })(); }
+          catch (e) { out.push(e.name); }
+          try { (function() { "use strict"; x += 2; })(); }
+          catch (e) { out.push(e.name); }
+          try { (function() { "use strict"; ++x; })(); }
+          catch (e) { out.push(e.name); }
+          try { (function() { "use strict"; x &&= 2; })(); }
+          catch (e) { out.push(e.name); }
+        }
+        out.join("|") + ":" + target.x;
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("TypeError|TypeError|TypeError|TypeError:1"))
+    );
+}
+
+#[test]
+fn sloppy_with_proxy_set_false_is_silent() {
+    let src = r#"
+        var target = { x: 1 };
+        var proxy = new Proxy(target, {
+          has: function(t, k) {
+            return k === "x";
+          },
+          get: function(t, k, r) {
+            return k === Symbol.unscopables ? undefined : Reflect.get(t, k, r);
+          },
+          set: function(t, k, v, r) {
+            return false;
+          }
+        });
+        with (proxy) {
+          x = 2;
+        }
+        target.x;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
+}
+
+#[test]
 fn with_inherited_method_call_binds_this_to_with_object() {
     let src = r#"
         let proto = { f: function() { return this.tag; } };

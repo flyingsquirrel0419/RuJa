@@ -488,11 +488,14 @@ impl Vm {
                             let trap = self.get_property(&handler, "set")?;
                             if !trap.is_undefined() {
                                 let receiver = obj.clone();
-                                self.call_function(
+                                let trap_result = self.call_function(
                                     &trap,
                                     &[target, key_val, value, receiver],
                                     Some(handler),
                                 )?;
+                                if !self.to_boolean(&trap_result) && self.current_strict() {
+                                    return Err(Error::type_err("Proxy set trap returned false"));
+                                }
                                 return Ok(());
                             }
                             return self.set_property(&target, key, value);

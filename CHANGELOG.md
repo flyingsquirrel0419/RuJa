@@ -271,6 +271,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   built-ins/Reflect/defineProperty
   built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at
   **49 pass / 0 fail / 15 skip**.
+- **Proxy `set` trap failure propagation for `with` References**: Proxy
+  `[[Set]]` now checks the `set` trap's boolean result instead of discarding
+  it. Strict `PutValue` through a Proxy-backed `with` object now throws
+  `TypeError` when the trap returns a falsy value, while sloppy assignment
+  remains a silent failed write. This covers simple, compound, update, and
+  logical assignment forms that preserve the same object-environment
+  Reference. The focused `language/statements/with` run remains at **169 pass
+  / 0 fail / 12 skip**.
 - **Proxy-aware `[[Delete]]` for delete/Reflect**:
   property deletion now routes through Proxy `deleteProperty` traps with the
   handler as `this`, preserves string and Symbol property keys, falls through

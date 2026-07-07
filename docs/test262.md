@@ -401,6 +401,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   built-ins/Reflect/defineProperty
   built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at **49
   pass / 0 fail / 15 skip**.
+- **Proxy `set` trap failure propagation for `with` References** —
+  Proxy `[[Set]]` now observes the boolean result of a `set` trap instead of
+  treating every non-throwing trap call as success. Strict `PutValue` through a
+  Proxy-backed `with` object now throws `TypeError` when that trap returns a
+  falsy value, while sloppy assignment continues to fail silently. Simple,
+  compound, update, and logical assignment forms all use the preserved
+  object-environment Reference for this check. The focused
+  `language/statements/with` run remains at **169 pass / 0 fail / 12 skip**.
 - **Proxy-aware `[[Delete]]` for delete/Reflect** —
   RuJa's property deletion path now invokes Proxy `deleteProperty` traps with
   the handler as `this`, preserves string and Symbol property keys, falls
