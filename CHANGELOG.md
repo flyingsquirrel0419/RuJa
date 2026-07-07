@@ -52,6 +52,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   add-only modifier groups without changing modifier properties on the
   RegExp instance. The focused `built-ins/RegExp/regexp-modifiers` run now
   improves to **57 pass / 13 fail / 0 skip**.
+- **RegExp prototype accessors**: `RegExp.prototype.source` and
+  `RegExp.prototype.flags` are now accessor properties with spec-shaped
+  getter functions. RegExp instances keep their raw pattern and flags in
+  internal storage, while the public `source` getter escapes empty patterns,
+  slashes, and line terminators for literal reconstruction and the `flags`
+  getter reads boolean flag accessors in `dgimsuvy` order. This improves the
+  focused `built-ins/RegExp/prototype/flags
+  built-ins/RegExp/prototype/source` run to **16 pass / 2 fail / 10 skip**,
+  with remaining failures isolated to cross-realm RegExp intrinsics and
+  Unicode surrogate escape handling in the regex backend.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect**:
   internal property-existence checks now route through Proxy `has` traps,
   including revoked-proxy errors and basic non-configurable/non-extensible

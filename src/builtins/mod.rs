@@ -2865,9 +2865,16 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         ],
     )?;
     let source_getter = vm.new_native_function("get source", regexp_source_get, 0)?;
+    let flags_getter = vm.new_native_function("get flags", regexp_flags_get, 0)?;
+    let has_indices_getter = vm.new_native_function("get hasIndices", regexp_has_indices_get, 0)?;
     let global_getter = vm.new_native_function("get global", regexp_global_get, 0)?;
     let ignore_case_getter = vm.new_native_function("get ignoreCase", regexp_ignore_case_get, 0)?;
     let multiline_getter = vm.new_native_function("get multiline", regexp_multiline_get, 0)?;
+    let dot_all_getter = vm.new_native_function("get dotAll", regexp_dot_all_get, 0)?;
+    let unicode_getter = vm.new_native_function("get unicode", regexp_unicode_get, 0)?;
+    let unicode_sets_getter =
+        vm.new_native_function("get unicodeSets", regexp_unicode_sets_get, 0)?;
+    let sticky_getter = vm.new_native_function("get sticky", regexp_sticky_get, 0)?;
     vm.heap.with_obj(regex_proto.0, |o| {
         if let HeapObj::Object(obj) = o {
             let mut props = obj.props.lock();
@@ -2880,6 +2887,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                 accessor_get_prop(Value::Object(source_getter)),
             );
             props.insert(
+                PropertyKey::from("flags"),
+                accessor_get_prop(Value::Object(flags_getter)),
+            );
+            props.insert(
+                PropertyKey::from("hasIndices"),
+                accessor_get_prop(Value::Object(has_indices_getter)),
+            );
+            props.insert(
                 PropertyKey::from("global"),
                 accessor_get_prop(Value::Object(global_getter)),
             );
@@ -2890,6 +2905,22 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             props.insert(
                 PropertyKey::from("multiline"),
                 accessor_get_prop(Value::Object(multiline_getter)),
+            );
+            props.insert(
+                PropertyKey::from("dotAll"),
+                accessor_get_prop(Value::Object(dot_all_getter)),
+            );
+            props.insert(
+                PropertyKey::from("unicode"),
+                accessor_get_prop(Value::Object(unicode_getter)),
+            );
+            props.insert(
+                PropertyKey::from("unicodeSets"),
+                accessor_get_prop(Value::Object(unicode_sets_getter)),
+            );
+            props.insert(
+                PropertyKey::from("sticky"),
+                accessor_get_prop(Value::Object(sticky_getter)),
             );
         }
     });

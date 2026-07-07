@@ -164,6 +164,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   validation now uses the same normalized compile path as execution. The
   focused `built-ins/RegExp/regexp-modifiers` run improves to **57 pass / 13
   fail / 0 skip**.
+- **RegExp prototype accessors** —
+  `RegExp.prototype.source` and `RegExp.prototype.flags` are now accessor
+  properties with spec-shaped getter functions. RegExp instances keep their
+  raw source and flags in internal storage, while the public `source` getter
+  escapes empty patterns, slashes, and line terminators for literal
+  reconstruction and the `flags` getter reads boolean flag accessors in
+  `dgimsuvy` order. The focused `built-ins/RegExp/prototype/flags
+  built-ins/RegExp/prototype/source` run improves to **16 pass / 2 fail / 10
+  skip**, with remaining failures isolated to cross-realm RegExp intrinsics
+  and Unicode surrogate escape handling in the regex backend.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect** —
   RuJa's internal `[[HasProperty]]` helper now invokes Proxy `has` traps,
   including revoked-proxy failures and basic invariant checks for

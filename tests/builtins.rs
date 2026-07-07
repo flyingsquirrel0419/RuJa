@@ -2759,6 +2759,34 @@ fn regex_exec_no_match() {
 fn regex_source_flags() {
     assert_eq!(run("/abc/gi.source;"), Value::String(Arc::from("abc")));
     assert_eq!(run("/abc/gi.flags;"), Value::String(Arc::from("gi")));
+    assert_eq!(
+        run("new RegExp('', 'yusmigd').flags;"),
+        Value::String(Arc::from("dgimsuy"))
+    );
+    assert_eq!(
+        run("Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags').get.name;"),
+        Value::String(Arc::from("get flags"))
+    );
+    assert_eq!(
+        run("Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags').get.length;"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        run("Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get.call(RegExp.prototype);"),
+        Value::String(Arc::from("(?:)"))
+    );
+    assert_eq!(
+        run("new RegExp('').source;"),
+        Value::String(Arc::from("(?:)"))
+    );
+    assert_eq!(
+        run("new RegExp('/').source;"),
+        Value::String(Arc::from("\\/"))
+    );
+    assert_eq!(
+        run("new RegExp('\\n').source;"),
+        Value::String(Arc::from("\\n"))
+    );
 }
 
 #[test]

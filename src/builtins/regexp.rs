@@ -8,6 +8,9 @@ fn regexp_last_index_prop(value: Value) -> PropertyDescriptor {
     desc
 }
 
+const REGEXP_SOURCE_SLOT: &str = "__regexp_source__";
+const REGEXP_FLAGS_SLOT: &str = "__regexp_flags__";
+
 pub(crate) fn regexp_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -60,12 +63,16 @@ pub(crate) fn regexp_constructor(
     }))?;
     let mut props = IndexMap::new();
     props.insert(
-        PropertyKey::from("source"),
+        PropertyKey::from(REGEXP_SOURCE_SLOT),
         data_prop(Value::String(Arc::from(pattern.as_str()))),
     );
     props.insert(
-        PropertyKey::from("flags"),
+        PropertyKey::from(REGEXP_FLAGS_SLOT),
         data_prop(Value::String(Arc::from(flags.as_str()))),
+    );
+    props.insert(
+        PropertyKey::from("hasIndices"),
+        data_prop(Value::Bool(flags.contains('d'))),
     );
     props.insert(
         PropertyKey::from("global"),
@@ -78,6 +85,22 @@ pub(crate) fn regexp_constructor(
     props.insert(
         PropertyKey::from("multiline"),
         data_prop(Value::Bool(flags.contains('m'))),
+    );
+    props.insert(
+        PropertyKey::from("dotAll"),
+        data_prop(Value::Bool(flags.contains('s'))),
+    );
+    props.insert(
+        PropertyKey::from("unicode"),
+        data_prop(Value::Bool(flags.contains('u'))),
+    );
+    props.insert(
+        PropertyKey::from("unicodeSets"),
+        data_prop(Value::Bool(flags.contains('v'))),
+    );
+    props.insert(
+        PropertyKey::from("sticky"),
+        data_prop(Value::Bool(flags.contains('y'))),
     );
     props.insert(
         PropertyKey::from("lastIndex"),
@@ -107,7 +130,7 @@ pub(crate) fn regexp_to_string(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let source = read_regexp_source(vm, &this)?;
+    let source = escape_regexp_source_for_accessor(&read_regexp_source(vm, &this)?);
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
     Ok(Value::String(Arc::from(
         format!("/{source}/{flags}").as_str(),
@@ -119,9 +142,47 @@ pub(crate) fn regexp_source_get(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    let Some(Value::Object(this_idx)) = this else {
+        return Err(Error::type_err(
+            "RegExp getter called on incompatible receiver",
+        ));
+    };
+    if is_current_realm_regexp_prototype(vm, this_idx) {
+        return Ok(Value::String(Arc::from("(?:)")));
+    }
+    let raw_source = read_regexp_source(vm, &Some(Value::Object(this_idx)))?;
     Ok(Value::String(Arc::from(
-        read_regexp_source(vm, &this)?.as_str(),
+        escape_regexp_source_for_accessor(&raw_source).as_str(),
     )))
+}
+
+pub(crate) fn regexp_flags_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(this_value @ Value::Object(_)) = this else {
+        return Err(Error::type_err(
+            "RegExp getter called on incompatible receiver",
+        ));
+    };
+    let mut flags = String::new();
+    for (field, flag) in [
+        ("hasIndices", 'd'),
+        ("global", 'g'),
+        ("ignoreCase", 'i'),
+        ("multiline", 'm'),
+        ("dotAll", 's'),
+        ("unicode", 'u'),
+        ("unicodeSets", 'v'),
+        ("sticky", 'y'),
+    ] {
+        let value = vm.get_property(&this_value, field)?;
+        if vm.to_boolean(&value) {
+            flags.push(flag);
+        }
+    }
+    Ok(Value::String(Arc::from(flags.as_str())))
 }
 
 fn regexp_bool_field_get(vm: &mut Vm, this: Option<Value>, field: &str) -> error::Result<Value> {
@@ -166,6 +227,46 @@ pub(crate) fn regexp_multiline_get(
     this: Option<Value>,
 ) -> error::Result<Value> {
     regexp_bool_field_get(vm, this, "multiline")
+}
+
+pub(crate) fn regexp_has_indices_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "hasIndices")
+}
+
+pub(crate) fn regexp_dot_all_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "dotAll")
+}
+
+pub(crate) fn regexp_unicode_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "unicode")
+}
+
+pub(crate) fn regexp_unicode_sets_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "unicodeSets")
+}
+
+pub(crate) fn regexp_sticky_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    regexp_bool_field_get(vm, this, "sticky")
 }
 
 pub(crate) fn regexp_exec(
@@ -285,12 +386,17 @@ pub(crate) fn read_regexp_field(
     this: &Option<Value>,
     field: &str,
 ) -> error::Result<String> {
+    let storage_field = match field {
+        "source" => REGEXP_SOURCE_SLOT,
+        "flags" => REGEXP_FLAGS_SLOT,
+        other => other,
+    };
     match this {
         Some(Value::Object(idx)) => {
             let s = vm.heap.with_obj(idx.0, |o| {
                 o.props()
                     .lock()
-                    .get(&crate::value::PropertyKey::from(field))
+                    .get(&crate::value::PropertyKey::from(storage_field))
                     .map(|d| d.value.clone())
             });
             match s {
@@ -306,6 +412,39 @@ pub(crate) fn read_regexp_field(
         }
         _ => Err(Error::type_err("not a RegExp".to_string())),
     }
+}
+
+fn escape_regexp_source_for_accessor(source: &str) -> String {
+    if source.is_empty() {
+        return "(?:)".to_string();
+    }
+    let mut out = String::with_capacity(source.len());
+    for ch in source.chars() {
+        match ch {
+            '/' => out.push_str("\\/"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn is_current_realm_regexp_prototype(vm: &mut Vm, value: GcIdx) -> bool {
+    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
+    let Some(Value::Object(regexp_ctor)) = crate::environment::get(&vm.heap, realm_env, "RegExp")
+    else {
+        return false;
+    };
+    let proto = vm.heap.with_obj(regexp_ctor.0, |o| {
+        o.props()
+            .lock()
+            .get(&PropertyKey::from("prototype"))
+            .map(|desc| desc.value.clone())
+    });
+    matches!(proto, Some(Value::Object(proto_idx)) if proto_idx == value)
 }
 
 pub(crate) fn generator_next(

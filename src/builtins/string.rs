@@ -333,21 +333,14 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     };
     // If the separator is a RegExp, split on regex matches.
     if let Some(Value::Object(idx)) = args.first() {
-        let (source, flags) = vm.heap.with_obj(idx.0, |o| {
-            let p = o.props().lock();
-            let src = p
-                .get(&crate::value::PropertyKey::from("source"))
-                .map(|d| d.value.clone());
-            let flg = p
-                .get(&crate::value::PropertyKey::from("flags"))
-                .map(|d| d.value.clone());
-            (src, flg)
-        });
-        if let (Some(Value::String(source)), flags_val) = (source, flags) {
-            let flags_str = match flags_val {
-                Some(Value::String(f)) => f.to_string(),
-                _ => String::new(),
-            };
+        let is_regexp_obj = vm.heap.with_obj(
+            idx.0,
+            |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
+        );
+        if is_regexp_obj {
+            let regexp = Some(Value::Object(*idx));
+            let source = read_regexp_source(vm, &regexp)?;
+            let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
             let re = compile_regex(&source, &flags_str)
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
             let mut parts: Vec<String> = Vec::new();
@@ -410,21 +403,14 @@ pub(crate) fn str_replace(
     };
     // If the search value is a RegExp, use regex replacement.
     if let Some(Value::Object(idx)) = args.first() {
-        let (source, flags) = vm.heap.with_obj(idx.0, |o| {
-            let p = o.props().lock();
-            let src = p
-                .get(&crate::value::PropertyKey::from("source"))
-                .map(|d| d.value.clone());
-            let flg = p
-                .get(&crate::value::PropertyKey::from("flags"))
-                .map(|d| d.value.clone());
-            (src, flg)
-        });
-        if let (Some(Value::String(source)), flags_val) = (source, flags) {
-            let flags_str = match flags_val {
-                Some(Value::String(f)) => f.to_string(),
-                _ => String::new(),
-            };
+        let is_regexp_obj = vm.heap.with_obj(
+            idx.0,
+            |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
+        );
+        if is_regexp_obj {
+            let regexp = Some(Value::Object(*idx));
+            let source = read_regexp_source(vm, &regexp)?;
+            let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
             let global = flags_str.contains('g');
             let re = compile_regex(&source, &flags_str)
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
@@ -577,20 +563,14 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     let s = str_val(vm, &this)?;
     match args.first() {
         Some(Value::Object(idx)) => {
-            let (source, flags) = vm.heap.with_obj(idx.0, |o| {
-                let p = o.props().lock();
-                let src = p.get(&PropertyKey::from("source")).map(|d| d.value.clone());
-                let flg = p
-                    .get(&PropertyKey::from("flags"))
-                    .map(|d| d.value.clone())
-                    .unwrap_or(Value::Undefined);
-                (src, flg)
-            });
-            if let Some(Value::String(source)) = source {
-                let flags_str = match &flags {
-                    Value::String(f) => f.to_string(),
-                    _ => String::new(),
-                };
+            let is_regexp_obj = vm.heap.with_obj(
+                idx.0,
+                |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
+            );
+            if is_regexp_obj {
+                let regexp = Some(Value::Object(*idx));
+                let source = read_regexp_source(vm, &regexp)?;
+                let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
                 let re = compile_regex(&source, &flags_str)
                     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
                 let global = flags_str.contains('g');
