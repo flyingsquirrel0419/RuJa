@@ -24,6 +24,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Map prototype size accessor**: `Map.prototype.size` is now installed as
+  the spec accessor property instead of a data method. The getter has the
+  expected `"get size"` name/zero length, validates that the receiver is a
+  real Map, and Map instance reads now go through the ordinary prototype
+  lookup path so overriding or deleting `Map.prototype.size` is observable.
+  The focused `built-ins/Map/prototype/size` cluster now runs at **6 pass / 0
+  fail / 5 skip**.
 - **RegExp literal line-terminator early errors**: regular-expression
   literals now reject CR, LF, LS, and PS immediately after a backslash instead
   of treating the line terminator as an escaped pattern character. This makes

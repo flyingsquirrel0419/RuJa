@@ -139,6 +139,13 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Map prototype size accessor** —
+  `Map.prototype.size` is now an accessor property with a spec-shaped
+  `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,
+  and Map instance `size` reads now use ordinary prototype lookup rather than
+  a VM fast path, so prototype overrides and deletion are observable. The
+  focused `built-ins/Map/prototype/size` cluster now runs at **6 pass / 0
+  fail / 5 skip**.
 - **RegExp literal line-terminator early errors** —
   Regular-expression literal scanning now rejects CR, LF, LS, and PS
   immediately after a backslash. This matches the grammar rule that

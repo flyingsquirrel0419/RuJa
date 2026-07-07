@@ -1210,11 +1210,6 @@ impl Vm {
                             return Ok(Value::Undefined);
                         }
                     }
-                    if let HeapObj::Map(m) = o {
-                        if key == "size" {
-                            return Ok(Value::Number(m.entries.lock().len() as f64));
-                        }
-                    }
                     if let HeapObj::Set(s) = o {
                         if key == "size" {
                             return Ok(Value::Number(s.items.lock().len() as f64));

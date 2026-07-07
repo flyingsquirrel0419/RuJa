@@ -614,6 +614,38 @@ fn map_basic() {
         Value::Number(2.0)
     );
     assert_eq!(
+        run("let d = Object.getOwnPropertyDescriptor(Map.prototype, 'size'); let m = new Map([[1, 2], [3, 4]]); [m.size, d.get.call(m), d.get.name, d.get.length, d.enumerable, d.configurable, typeof d.set].join('|');"),
+        Value::String(Arc::from("2|2|get size|0|false|true|undefined"))
+    );
+    assert_eq!(
+        run("let d = Object.getOwnPropertyDescriptor(Map.prototype, 'size'); [typeof d.value, typeof d.writable].join('|');"),
+        Value::String(Arc::from("undefined|undefined"))
+    );
+    assert_eq!(
+        run("Object.defineProperty(Map.prototype, 'size', { get: function(){ return 99; }, configurable: true }); new Map([[1, 2]]).size;"),
+        Value::Number(99.0)
+    );
+    assert_eq!(
+        run("delete Map.prototype.size; new Map([[1, 2]]).size;"),
+        Value::Undefined
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call({});")
+            .contains("TypeError")
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call(1);")
+            .contains("TypeError")
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call(new Set());")
+            .contains("TypeError")
+    );
+    assert!(run_err(
+        "Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call(new WeakMap());"
+    )
+    .contains("TypeError"));
+    assert_eq!(
         run("let m = new Map(); m.set('a', 1); m.has('a');"),
         Value::Bool(true)
     );

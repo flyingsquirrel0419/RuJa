@@ -642,7 +642,6 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("has", map_has, 1),
             ("delete", map_delete, 1),
             ("clear", map_clear, 0),
-            ("size", map_size, 0),
             ("entries", map_entries, 0),
             ("keys", map_keys, 0),
             ("values", map_values, 0),
@@ -651,6 +650,13 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     )?;
     vm.map_proto = Value::Object(map_proto);
     define_global(vm, "Map", Value::Object(map_ctor));
+    let map_size_getter = vm.new_native_function("get size", map_size, 0)?;
+    vm.heap.with_obj(map_proto.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("size"),
+            accessor_get_prop(Value::Object(map_size_getter)),
+        );
+    });
     let map_species_getter =
         vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
     vm.heap.with_obj(map_ctor.0, |obj| {

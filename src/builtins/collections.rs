@@ -290,16 +290,20 @@ pub(crate) fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
     Ok(Value::Undefined)
 }
 pub(crate) fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().len()
-            } else {
-                0
-            }
-        }) as f64));
-    }
-    Ok(Value::Number(0.0))
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err(
+            "Map.prototype.size getter called on non-Map".to_string(),
+        ));
+    };
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            Ok(Value::Number(m.entries.lock().len() as f64))
+        } else {
+            Err(Error::type_err(
+                "Map.prototype.size getter called on non-Map".to_string(),
+            ))
+        }
+    })
 }
 /// Collect Map entries as [key, value] arrays.
 pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> error::Result<Vec<Value>> {
