@@ -99,8 +99,8 @@ pub(crate) fn proxy_revocable(
     Ok(obj)
 }
 
-fn proxy_revoke(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
+fn proxy_revoke(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    if let Some(Value::Object(idx)) = vm.current_native_callee.clone() {
         let proxy_idx = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
                 f.props

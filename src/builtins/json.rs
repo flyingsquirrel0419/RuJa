@@ -936,13 +936,21 @@ pub(crate) fn reflect_delete_property(
     _: Option<Value>,
 ) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.deleteProperty target must be an object",
+        ));
+    }
     let key = match args.get(1) {
-        Some(v) => vm.to_property_key(v)?,
+        Some(v) => vm.to_property_key_value(v)?,
         None => return Ok(Value::Bool(false)),
     };
-    vm.delete_property(&target, &key)
-        .map(|_| Value::Bool(true))
-        .or(Ok(Value::Bool(false)))
+    let pkey = match key {
+        Value::String(s) => PropertyKey::from_rc(s),
+        Value::Symbol(id) => PropertyKey::Symbol(id),
+        _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+    };
+    vm.delete_property_key(&target, &pkey).map(Value::Bool)
 }
 fn reflect_define_property(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);

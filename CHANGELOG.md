@@ -49,6 +49,19 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   built-ins/Reflect/defineProperty
   built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at
   **49 pass / 0 fail / 15 skip**.
+- **Proxy-aware `[[Delete]]` for delete/Reflect**:
+  property deletion now routes through Proxy `deleteProperty` traps with the
+  handler as `this`, preserves string and Symbol property keys, falls through
+  to nested proxy targets when the trap is null or missing, and enforces the
+  non-configurable/non-extensible target invariants for truthy trap results.
+  `Reflect.deleteProperty` now rejects primitive targets and returns the
+  actual internal `[[Delete]]` boolean instead of always returning `true`.
+  `Proxy.revocable()` now revokes through the native callee rather than the
+  call receiver, so revoked proxy deletes throw. With `Proxy`, `Reflect`, and
+  `proxy-missing-checks` skips temporarily lifted, focused
+  `built-ins/Reflect/deleteProperty built-ins/Proxy/deleteProperty` now runs
+  at **24 pass / 1 fail / 3 skip**, with the remaining failure isolated to
+  cross-realm Proxy constructor behavior.
 - **Array search array-like access**: `Array.prototype.indexOf`,
   `lastIndexOf`, and `includes` now use `LengthOfArrayLike` plus per-index
   property access instead of scanning only RuJa's dense array storage.

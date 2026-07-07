@@ -1813,37 +1813,11 @@ impl Vm {
                         _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
                     };
                     let result = if let Value::Object(idx) = &obj {
-                        if let crate::value::PropertyKey::Str(ref s) = &pkey {
-                            let deleted = self.delete_property(&obj, s.as_ref())?;
-                            if !deleted && self.current_strict() {
-                                return Err(Error::type_err(
-                                    "Cannot delete non-configurable property",
-                                ));
-                            }
-                            Value::Bool(deleted)
-                        } else {
-                            let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
-                                o.props()
-                                    .lock()
-                                    .get(&pkey)
-                                    .map_or((false, true), |d| (true, d.configurable))
-                            });
-                            if exists && !configurable {
-                                if self.current_strict() {
-                                    return Err(Error::type_err(
-                                        "Cannot delete non-configurable property",
-                                    ));
-                                }
-                                Value::Bool(false)
-                            } else if exists {
-                                self.heap.with_obj(idx.0, |o| {
-                                    o.props().lock().shift_remove(&pkey);
-                                });
-                                Value::Bool(true)
-                            } else {
-                                Value::Bool(true)
-                            }
+                        let deleted = self.delete_property_key(&obj, &pkey)?;
+                        if !deleted && self.current_strict() {
+                            return Err(Error::type_err("Cannot delete non-configurable property"));
                         }
+                        Value::Bool(deleted)
                     } else {
                         // null/undefined receiver: ToObject throws TypeError.
                         if matches!(obj, Value::Null | Value::Undefined) {

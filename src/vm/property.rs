@@ -222,31 +222,85 @@ impl Vm {
 
     /// Delete an own property. Returns true if removed (or didn't exist).
     pub fn delete_property(&mut self, obj: &Value, key: &str) -> error::Result<bool> {
+        self.delete_property_key(obj, &crate::value::PropertyKey::from(key))
+    }
+
+    /// Delete an own string or Symbol property via the object's internal
+    /// [[Delete]] operation, including Proxy `deleteProperty` traps.
+    pub(crate) fn delete_property_key(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> error::Result<bool> {
         if let Value::Object(idx) = obj {
-            let pkey = crate::value::PropertyKey::from(key);
+            if let Some(proxy_result) = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Proxy(proxy) = o {
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'deleteProperty' on a proxy that has been revoked",
+                        )));
+                    }
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                } else {
+                    None
+                }
+            }) {
+                let (target, handler) = proxy_result?;
+                let trap = self.get_property(&handler, "deleteProperty")?;
+                if trap.is_undefined() || trap.is_null() {
+                    return self.delete_property_key(&target, key);
+                }
+                let key_value = Self::property_key_to_value(key);
+                let trap_result =
+                    self.call_function(&trap, &[target.clone(), key_value], Some(handler))?;
+                let boolean_trap_result = self.to_boolean(&trap_result);
+                if !boolean_trap_result {
+                    return Ok(false);
+                }
+                if let Some(desc) = self.own_property_descriptor_for_proxy_invariant(&target, key) {
+                    if !desc.configurable {
+                        return Err(Error::type_err(
+                            "Proxy deleteProperty trap cannot delete non-configurable property",
+                        ));
+                    }
+                    let target_extensible = match &target {
+                        Value::Object(target_idx) => {
+                            self.heap.with_obj(target_idx.0, |o| o.is_extensible())
+                        }
+                        _ => true,
+                    };
+                    if !target_extensible {
+                        return Err(Error::type_err(
+                            "Proxy deleteProperty trap cannot delete non-extensible target property",
+                        ));
+                    }
+                }
+                return Ok(true);
+            }
+
             let array_delete = self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
-                    if key == "length" {
+                    if key.as_str().is_some_and(|name| name == "length") {
                         if a.is_arguments.load(std::sync::atomic::Ordering::Relaxed) {
                             let (exists, configurable) = a
                                 .props
                                 .lock()
-                                .get(&pkey)
+                                .get(key)
                                 .map_or((false, true), |d| (true, d.configurable));
                             if exists && !configurable {
                                 return Some(false);
                             }
                             if exists {
-                                a.props.lock().shift_remove(&pkey);
+                                a.props.lock().shift_remove(key);
                             }
                             return Some(true);
                         }
                         return Some(false);
                     }
-                    if let Some(i) = crate::value::parse_array_index(key) {
+                    if let Some(i) = key.as_str().and_then(crate::value::parse_array_index) {
                         let (exists, configurable) = {
                             let props = a.props.lock();
-                            if let Some(desc) = props.get(&pkey) {
+                            if let Some(desc) = props.get(key) {
                                 (true, desc.configurable)
                             } else {
                                 (a.is_dense_present(i), true)
@@ -261,7 +315,7 @@ impl Vm {
                                     *slot = None;
                                 }
                             }
-                            a.props.lock().shift_remove(&pkey);
+                            a.props.lock().shift_remove(key);
                             let mut items = a.items.lock();
                             if i < items.len() {
                                 items[i] = Value::Undefined;
@@ -278,18 +332,35 @@ impl Vm {
             if let Some(result) = array_delete {
                 return Ok(result);
             }
+            let string_exotic_nonconfigurable = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        return key.as_str().is_some_and(|name| {
+                            let len = crate::value::utf16_len(&s);
+                            name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+                        });
+                    }
+                }
+                false
+            });
+            if string_exotic_nonconfigurable {
+                return Ok(false);
+            }
             let (exists, configurable) = self.heap.with_obj(idx.0, |o| {
                 o.props()
                     .lock()
-                    .get(&pkey)
+                    .get(key)
                     .map_or((false, true), |d| (true, d.configurable))
             });
             if exists && !configurable {
                 return Ok(false);
             }
             self.heap.with_obj(idx.0, |o| {
-                o.props().lock().shift_remove(&pkey);
+                o.props().lock().shift_remove(key);
             });
+            if let Some(name) = key.as_str() {
+                self.ic_invalidate(idx.0, name);
+            }
         }
         Ok(true)
     }

@@ -1798,6 +1798,48 @@ fn object_statics() {
         .contains("gopd boom"),
         "Reflect.getOwnPropertyDescriptor should propagate Proxy trap errors"
     );
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var target = { a: 1 };
+            var handler = {
+              deleteProperty: function(t, key) {
+                calls.push(this === handler);
+                calls.push(t === target);
+                calls.push(key);
+                return delete t[key];
+              }
+            };
+            var proxy = new Proxy(target, handler);
+            [delete proxy.a, "a" in target, calls.join("|")].join(",");
+        "#),
+        Value::String(Arc::from("true,false,true|true|a"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = {};
+            Object.defineProperty(target, "fixed", { value: 1, configurable: false });
+            var proxy = new Proxy(target, { deleteProperty: function() { return false; } });
+            [Reflect.deleteProperty(proxy, "fixed"), target.fixed].join(",");
+        "#),
+        Value::String(Arc::from("false,1"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var target = {};
+            Object.defineProperty(target, "fixed", { value: 1, configurable: false });
+            var proxy = new Proxy(target, { deleteProperty: function() { return true; } });
+            Reflect.deleteProperty(proxy, "fixed");
+        "#
+        )
+        .contains("TypeError"),
+        "Proxy deleteProperty cannot report non-configurable properties as deleted"
+    );
+    assert!(
+        run_err("Reflect.deleteProperty(1, 'x');").contains("TypeError"),
+        "Reflect.deleteProperty must reject primitive targets"
+    );
     assert!(
         run_err("Object.keys(null);").contains("TypeError"),
         "Object.keys(null) should throw"

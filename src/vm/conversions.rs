@@ -540,7 +540,7 @@ impl Vm {
         Ok(Value::Undefined)
     }
 
-    fn property_key_to_value(key: &crate::value::PropertyKey) -> Value {
+    pub(crate) fn property_key_to_value(key: &crate::value::PropertyKey) -> Value {
         match key {
             crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
             crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
@@ -576,7 +576,7 @@ impl Vm {
         })
     }
 
-    fn own_property_descriptor_for_proxy_invariant(
+    pub(crate) fn own_property_descriptor_for_proxy_invariant(
         &self,
         obj: &Value,
         key: &crate::value::PropertyKey,
@@ -596,6 +596,23 @@ impl Vm {
             });
             if is_array_length {
                 let mut desc = crate::value::PropertyDescriptor::data(Value::Undefined);
+                desc.configurable = false;
+                return Some(desc);
+            }
+        }
+        let string_exotic = self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Object(od) = o {
+                return od.primitive.lock().clone();
+            }
+            None
+        });
+        if let Some(Value::String(s)) = string_exotic {
+            if key.as_str().is_some_and(|name| {
+                let len = crate::value::utf16_len(&s);
+                name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+            }) {
+                let mut desc = crate::value::PropertyDescriptor::data(Value::Undefined);
+                desc.writable = false;
                 desc.configurable = false;
                 return Some(desc);
             }
