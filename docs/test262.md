@@ -408,10 +408,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   raw source and flags in internal storage, while the public `source` getter
   escapes empty patterns, slashes, and line terminators for literal
   reconstruction and the `flags` getter reads boolean flag accessors in
-  `dgimsuvy` order. The focused `built-ins/RegExp/prototype/flags
-  built-ins/RegExp/prototype/source` run improves to **16 pass / 2 fail / 10
-  skip**, with remaining failures isolated to cross-realm RegExp intrinsics
-  and Unicode surrogate escape handling in the regex backend.
+  `dgimsuvy` order. `$262.createRealm()` now exposes a realm-local `RegExp`
+  intrinsic with accessor getters bound to that realm, so
+  `%RegExp.prototype.source%` accepts only its own realm prototype. The
+  focused `built-ins/RegExp/prototype/flags
+  built-ins/RegExp/prototype/source` run now closes at **18 pass / 0 fail / 10
+  skip**.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect** —
   RuJa's internal `[[HasProperty]]` helper now invokes Proxy `has` traps,
   including revoked-proxy failures and basic invariant checks for

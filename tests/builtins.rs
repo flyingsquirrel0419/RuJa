@@ -3283,6 +3283,21 @@ fn regex_source_flags() {
         run("new RegExp('\\n').source;"),
         Value::String(Arc::from("\\n"))
     );
+    assert_eq!(
+        run(r#"
+            var get = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get;
+            var other = $262.createRealm().global;
+            var otherRegExpProto = other.RegExp.prototype;
+            var otherGet = Object.getOwnPropertyDescriptor(otherRegExpProto, 'source').get;
+            var ok = [];
+            try { get.call(otherRegExpProto); ok.push(false); }
+            catch (e) { ok.push(e.constructor === TypeError); }
+            try { otherGet.call(RegExp.prototype); ok.push(false); }
+            catch (e) { ok.push(e.constructor === other.TypeError); }
+            ok.join(',');
+            "#),
+        Value::String(Arc::from("true,true"))
+    );
 }
 
 #[test]

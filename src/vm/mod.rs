@@ -1218,8 +1218,9 @@ impl Vm {
             crate::error::ErrorKind::Uri => "URIError",
             _ => "Error",
         };
-        // Look up the constructor (e.g. TypeError) and its prototype.
-        let proto = match crate::environment::get(&self.heap, self.global, ctor_name) {
+        // Native errors come from the active function's realm.
+        let error_env = self.native_callee_closure().unwrap_or(self.global);
+        let proto = match crate::environment::get(&self.heap, error_env, ctor_name) {
             Some(Value::Object(ci)) => self.heap.with_obj(ci.0, |o| {
                 o.props()
                     .lock()
@@ -1228,7 +1229,7 @@ impl Vm {
             }),
             _ => None,
         }
-        .or_else(|| crate::environment::get(&self.heap, self.global, "Error"))
+        .or_else(|| crate::environment::get(&self.heap, error_env, "Error"))
         .unwrap_or(self.error_proto.clone());
         let mut props = IndexMap::new();
         props.insert(

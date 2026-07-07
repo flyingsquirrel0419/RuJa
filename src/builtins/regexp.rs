@@ -917,9 +917,20 @@ pub(crate) fn make_builtin_constructor_with(
     ctor: NativeFn,
     methods: &[(&str, NativeFn, usize)],
 ) -> error::Result<(GcIdx, GcIdx)> {
+    make_builtin_constructor_with_in_env(vm, name, length, ctor, methods, vm.global)
+}
+
+pub(crate) fn make_builtin_constructor_with_in_env(
+    vm: &mut Vm,
+    name: &str,
+    length: usize,
+    ctor: NativeFn,
+    methods: &[(&str, NativeFn, usize)],
+    env: GcIdx,
+) -> error::Result<(GcIdx, GcIdx)> {
     let mut method_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
-        let func_idx = vm.new_native_function(n, *f, *len)?;
+        let func_idx = vm.new_native_function_in_env(n, *f, *len, env)?;
         method_props.insert(PropertyKey::from(*n), data_prop(Value::Object(func_idx)));
     }
     let proto_obj = HeapObj::Object(ObjectData {
@@ -934,7 +945,7 @@ pub(crate) fn make_builtin_constructor_with(
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
         kind: FunctionKind::Native { func: ctor, length },
-        closure: vm.global,
+        closure: env,
         lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),

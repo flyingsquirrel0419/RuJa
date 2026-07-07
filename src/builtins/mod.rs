@@ -1261,6 +1261,100 @@ fn define_realm_global(vm: &mut Vm, env: GcIdx, global: &Value, name: &str, valu
     }
 }
 
+fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcIdx, GcIdx)> {
+    let (regex_ctor, regex_proto) = make_builtin_constructor_with_in_env(
+        vm,
+        "RegExp",
+        2,
+        regexp_constructor,
+        &[
+            ("test", regexp_test, 1),
+            ("exec", regexp_exec, 1),
+            ("toString", regexp_to_string, 0),
+        ],
+        env,
+    )?;
+    let source_getter = vm.new_native_function_in_env("get source", regexp_source_get, 0, env)?;
+    let flags_getter = vm.new_native_function_in_env("get flags", regexp_flags_get, 0, env)?;
+    let has_indices_getter =
+        vm.new_native_function_in_env("get hasIndices", regexp_has_indices_get, 0, env)?;
+    let global_getter = vm.new_native_function_in_env("get global", regexp_global_get, 0, env)?;
+    let ignore_case_getter =
+        vm.new_native_function_in_env("get ignoreCase", regexp_ignore_case_get, 0, env)?;
+    let multiline_getter =
+        vm.new_native_function_in_env("get multiline", regexp_multiline_get, 0, env)?;
+    let dot_all_getter = vm.new_native_function_in_env("get dotAll", regexp_dot_all_get, 0, env)?;
+    let unicode_getter =
+        vm.new_native_function_in_env("get unicode", regexp_unicode_get, 0, env)?;
+    let unicode_sets_getter =
+        vm.new_native_function_in_env("get unicodeSets", regexp_unicode_sets_get, 0, env)?;
+    let sticky_getter = vm.new_native_function_in_env("get sticky", regexp_sticky_get, 0, env)?;
+    vm.heap.with_obj(regex_proto.0, |o| {
+        if let HeapObj::Object(obj) = o {
+            let mut props = obj.props.lock();
+            props.insert(
+                PropertyKey::from("__regex_proto__"),
+                data_prop(Value::Bool(true)),
+            );
+            props.insert(
+                PropertyKey::from("source"),
+                accessor_get_prop(Value::Object(source_getter)),
+            );
+            props.insert(
+                PropertyKey::from("flags"),
+                accessor_get_prop(Value::Object(flags_getter)),
+            );
+            props.insert(
+                PropertyKey::from("hasIndices"),
+                accessor_get_prop(Value::Object(has_indices_getter)),
+            );
+            props.insert(
+                PropertyKey::from("global"),
+                accessor_get_prop(Value::Object(global_getter)),
+            );
+            props.insert(
+                PropertyKey::from("ignoreCase"),
+                accessor_get_prop(Value::Object(ignore_case_getter)),
+            );
+            props.insert(
+                PropertyKey::from("multiline"),
+                accessor_get_prop(Value::Object(multiline_getter)),
+            );
+            props.insert(
+                PropertyKey::from("dotAll"),
+                accessor_get_prop(Value::Object(dot_all_getter)),
+            );
+            props.insert(
+                PropertyKey::from("unicode"),
+                accessor_get_prop(Value::Object(unicode_getter)),
+            );
+            props.insert(
+                PropertyKey::from("unicodeSets"),
+                accessor_get_prop(Value::Object(unicode_sets_getter)),
+            );
+            props.insert(
+                PropertyKey::from("sticky"),
+                accessor_get_prop(Value::Object(sticky_getter)),
+            );
+        }
+    });
+    let regexp_species_getter =
+        vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, env)?;
+    vm.heap.with_obj(regex_ctor.0, |o| {
+        if let HeapObj::Function(f) = o {
+            f.props.lock().insert(
+                PropertyKey::from("__proto__"),
+                data_prop(Value::Object(regex_proto)),
+            );
+            f.props.lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.species),
+                accessor_get_prop(Value::Object(regexp_species_getter)),
+            );
+        }
+    });
+    Ok((regex_ctor, regex_proto))
+}
+
 fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     let realm_env = crate::environment::new_env(&vm.heap, None, true)?;
     let global_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
@@ -1306,6 +1400,14 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(proxy) = crate::environment::get(&vm.heap, vm.global, "Proxy") {
         define_realm_global(vm, realm_env, &global, "Proxy", proxy);
     }
+    if let Some(error) = crate::environment::get(&vm.heap, vm.global, "Error") {
+        define_realm_global(vm, realm_env, &global, "Error", error);
+    }
+    if let Some(type_error) = crate::environment::get(&vm.heap, vm.global, "TypeError") {
+        define_realm_global(vm, realm_env, &global, "TypeError", type_error);
+    }
+    let (regexp_ctor, _) = make_regexp_constructor_in_env(vm, realm_env)?;
+    define_realm_global(vm, realm_env, &global, "RegExp", Value::Object(regexp_ctor));
     let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
     let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
     let symbol_key_for_idx =
@@ -4003,92 +4105,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "Promise", Value::Object(promise_ctor));
     // RegExp
-    let (regex_ctor, regex_proto) = make_builtin_constructor_with(
-        vm,
-        "RegExp",
-        2,
-        regexp_constructor,
-        &[
-            ("test", regexp_test, 1),
-            ("exec", regexp_exec, 1),
-            ("toString", regexp_to_string, 0),
-        ],
-    )?;
-    let source_getter = vm.new_native_function("get source", regexp_source_get, 0)?;
-    let flags_getter = vm.new_native_function("get flags", regexp_flags_get, 0)?;
-    let has_indices_getter = vm.new_native_function("get hasIndices", regexp_has_indices_get, 0)?;
-    let global_getter = vm.new_native_function("get global", regexp_global_get, 0)?;
-    let ignore_case_getter = vm.new_native_function("get ignoreCase", regexp_ignore_case_get, 0)?;
-    let multiline_getter = vm.new_native_function("get multiline", regexp_multiline_get, 0)?;
-    let dot_all_getter = vm.new_native_function("get dotAll", regexp_dot_all_get, 0)?;
-    let unicode_getter = vm.new_native_function("get unicode", regexp_unicode_get, 0)?;
-    let unicode_sets_getter =
-        vm.new_native_function("get unicodeSets", regexp_unicode_sets_get, 0)?;
-    let sticky_getter = vm.new_native_function("get sticky", regexp_sticky_get, 0)?;
-    vm.heap.with_obj(regex_proto.0, |o| {
-        if let HeapObj::Object(obj) = o {
-            let mut props = obj.props.lock();
-            props.insert(
-                PropertyKey::from("__regex_proto__"),
-                data_prop(Value::Bool(true)),
-            );
-            props.insert(
-                PropertyKey::from("source"),
-                accessor_get_prop(Value::Object(source_getter)),
-            );
-            props.insert(
-                PropertyKey::from("flags"),
-                accessor_get_prop(Value::Object(flags_getter)),
-            );
-            props.insert(
-                PropertyKey::from("hasIndices"),
-                accessor_get_prop(Value::Object(has_indices_getter)),
-            );
-            props.insert(
-                PropertyKey::from("global"),
-                accessor_get_prop(Value::Object(global_getter)),
-            );
-            props.insert(
-                PropertyKey::from("ignoreCase"),
-                accessor_get_prop(Value::Object(ignore_case_getter)),
-            );
-            props.insert(
-                PropertyKey::from("multiline"),
-                accessor_get_prop(Value::Object(multiline_getter)),
-            );
-            props.insert(
-                PropertyKey::from("dotAll"),
-                accessor_get_prop(Value::Object(dot_all_getter)),
-            );
-            props.insert(
-                PropertyKey::from("unicode"),
-                accessor_get_prop(Value::Object(unicode_getter)),
-            );
-            props.insert(
-                PropertyKey::from("unicodeSets"),
-                accessor_get_prop(Value::Object(unicode_sets_getter)),
-            );
-            props.insert(
-                PropertyKey::from("sticky"),
-                accessor_get_prop(Value::Object(sticky_getter)),
-            );
-        }
-    });
-    // Store regex_proto on the constructor so regexp_constructor can use it.
-    let regexp_species_getter =
-        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
-    vm.heap.with_obj(regex_ctor.0, |o| {
-        if let HeapObj::Function(f) = o {
-            f.props.lock().insert(
-                PropertyKey::from("__proto__"),
-                data_prop(Value::Object(regex_proto)),
-            );
-            f.props.lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.species),
-                accessor_get_prop(Value::Object(regexp_species_getter)),
-            );
-        }
-    });
+    let (regex_ctor, _) = make_regexp_constructor_in_env(vm, vm.global)?;
     define_global(vm, "RegExp", Value::Object(regex_ctor));
     // Generator prototype with next(). Generator instances inherit this proto.
     let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
