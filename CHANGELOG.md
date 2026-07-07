@@ -231,6 +231,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   language/statements/for-in language/statements/for-of` improves from
   **1009 pass / 220 fail / 122 skip** to
   **1022 pass / 207 fail / 122 skip**.
+- **Object prototype receiver coercion**: `Object.prototype.valueOf` now
+  applies `ToObject(this)` and rejects nullish receivers, so primitive
+  receivers produce wrapper objects while detached calls throw `TypeError`.
+  `Object.prototype.toLocaleString` now performs the observable
+  `Invoke(this, "toString")` path instead of aliasing
+  `Object.prototype.toString`, preserving primitive receivers for strict
+  user-defined `toString` methods and propagating accessor/call failures.
+  The focused `built-ins/Object/prototype/valueOf
+  built-ins/Object/prototype/toLocaleString` cluster now runs at
+  **30 pass / 0 fail / 2 skip**, closing 10 full-suite failures.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,

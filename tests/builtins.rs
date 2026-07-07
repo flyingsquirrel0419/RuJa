@@ -1355,6 +1355,41 @@ fn object_prototype_to_string_uses_receiver_brand() {
 }
 
 #[test]
+fn object_prototype_value_of_and_to_locale_string_coerce_receiver() {
+    assert!(run_err("Object.prototype.valueOf.call(undefined);").contains("TypeError"));
+    assert!(run_err("Object.prototype.valueOf.call(null);").contains("TypeError"));
+    assert!(run_err("(1, Object.prototype.valueOf)();").contains("TypeError"));
+    assert_eq!(
+        run("typeof Object.prototype.valueOf.call(true) + ':' + typeof Object.prototype.valueOf.call(false);"),
+        Value::String(Arc::from("object:object"))
+    );
+
+    assert!(run_err("Object.prototype.toLocaleString.call(undefined);").contains("TypeError"));
+    assert!(run_err("Object.prototype.toLocaleString.call(null);").contains("TypeError"));
+    assert_eq!(
+        run(r#"
+            "use strict";
+            Boolean.prototype.toString = function() { return typeof this; };
+            true.toLocaleString();
+        "#),
+        Value::String(Arc::from("boolean"))
+    );
+    assert_eq!(
+        run(r#"
+            "use strict";
+            Object.defineProperty(Boolean.prototype, "toString", {
+              get: function() {
+                var v = typeof this;
+                return function() { return v + ":" + typeof this; };
+              }
+            });
+            true.toLocaleString();
+        "#),
+        Value::String(Arc::from("boolean:boolean"))
+    );
+}
+
+#[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
     assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));

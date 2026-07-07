@@ -371,6 +371,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/statements/for-in language/statements/for-of` improves from
   **1009 pass / 220 fail / 122 skip** to
   **1022 pass / 207 fail / 122 skip**.
+- **Object prototype receiver coercion** —
+  `Object.prototype.valueOf` now applies `ToObject(this)` and rejects nullish
+  receivers, while `Object.prototype.toLocaleString` invokes the receiver's
+  observable `toString` property instead of sharing
+  `Object.prototype.toString` directly. This preserves primitive receivers for
+  strict user-defined `toString` methods, propagates getter/call failures, and
+  keeps nullish receivers on the `TypeError` path. The focused
+  `built-ins/Object/prototype/valueOf
+  built-ins/Object/prototype/toLocaleString` cluster now runs at
+  **30 pass / 0 fail / 2 skip**, closing 10 full-suite failures.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`

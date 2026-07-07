@@ -675,6 +675,24 @@ fn object_to_string_native(
     object_to_string(vm, this, None)
 }
 
+fn object_to_locale_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let to_string = vm.get_property(&this, "toString")?;
+    if !is_callable(&to_string, &vm.heap) {
+        return Err(Error::type_err("toString is not a function".to_string()));
+    }
+    vm.call_function(&to_string, &[], Some(this))
+}
+
 fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
     if let Value::Object(idx) = obj {
         if let Some(target) = vm.heap.with_obj(idx.0, |heap_obj| {
@@ -821,11 +839,14 @@ fn object_property_is_enumerable(
     }
 }
 
-fn object_value_of(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(v) = this {
-        return Ok(v);
+fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
     }
-    Ok(Value::Undefined)
+    vm.to_object(&this)
 }
 
 fn global_uri_identity(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -2188,7 +2209,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         "Object",
         &[
             ("toString", object_to_string_native, 0),
-            ("toLocaleString", object_to_string_native, 0),
+            ("toLocaleString", object_to_locale_string, 0),
             ("hasOwnProperty", object_has_own_property, 1),
             ("isPrototypeOf", object_is_prototype_of, 1),
             ("propertyIsEnumerable", object_property_is_enumerable, 1),
