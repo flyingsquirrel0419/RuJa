@@ -95,15 +95,15 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28863921214 on `d22907d`.
+`test262-full` 28864314864 on `b081d9f`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 48,465 |
-| Actually run | 24,132 |
-| Pass | 15,656 |
+| Actually run | 24,133 |
+| Pass | 15,657 |
 | Fail | 8,476 |
-| Timeout | 12 |
+| Timeout | 11 |
 | Skip | 24,321 |
 | **Pass rate (of run)** | **64.9%** |
 | **Pass rate (of total)** | **32.3%** |
