@@ -381,6 +381,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Object/prototype/valueOf
   built-ins/Object/prototype/toLocaleString` cluster now runs at
   **30 pass / 0 fail / 2 skip**, closing 10 full-suite failures.
+- **Object legacy accessor methods** —
+  `Object.prototype.__defineGetter__`, `__defineSetter__`,
+  `__lookupGetter__`, and `__lookupSetter__` are now installed with the
+  expected builtin `name`/`length` descriptors. The define methods use the
+  spec `ToObject`/callable/key-coercion order and ordinary
+  `DefinePropertyOrThrow`, while lookup walks ordinary prototype chains and
+  returns accessor functions or `undefined` for data/missing properties. The
+  focused legacy accessor cluster now runs at
+  **42 pass / 0 fail / 12 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`

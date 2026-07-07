@@ -241,6 +241,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   The focused `built-ins/Object/prototype/valueOf
   built-ins/Object/prototype/toLocaleString` cluster now runs at
   **30 pass / 0 fail / 2 skip**, closing 10 full-suite failures.
+- **Object legacy accessor methods**: `Object.prototype.__defineGetter__`,
+  `__defineSetter__`, `__lookupGetter__`, and `__lookupSetter__` are now
+  installed with spec-shaped `name`/`length` descriptors. The define methods
+  apply the required `ToObject`/callable/key-coercion order, define enumerable
+  configurable accessors through the ordinary `DefinePropertyOrThrow` path,
+  and preserve an existing complementary getter or setter. The lookup methods
+  walk ordinary prototype chains and return the first accessor getter/setter,
+  or `undefined` for data properties and missing accessors. The focused
+  legacy accessor cluster now runs at **42 pass / 0 fail / 12 skip**.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,

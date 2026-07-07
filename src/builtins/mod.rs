@@ -849,6 +849,101 @@ fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::
     vm.to_object(&this)
 }
 
+fn legacy_accessor_descriptor(vm: &mut Vm, slot: &str, accessor: Value) -> error::Result<Value> {
+    let idx = vm.new_object()?;
+    vm.heap.with_obj(idx.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(PropertyKey::from(slot), data_prop(accessor));
+        props.insert(
+            PropertyKey::from("enumerable"),
+            data_prop(Value::Bool(true)),
+        );
+        props.insert(
+            PropertyKey::from("configurable"),
+            data_prop(Value::Bool(true)),
+        );
+    });
+    Ok(Value::Object(idx))
+}
+
+fn object_define_legacy_accessor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    slot: &str,
+) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let object = vm.to_object(&this)?;
+    let accessor = get_arg(args, 1);
+    if !is_callable(&accessor, &vm.heap) {
+        return Err(Error::type_err("Accessor must be a function".to_string()));
+    }
+    let key = get_arg(args, 0);
+    let desc = legacy_accessor_descriptor(vm, slot, accessor)?;
+    let define_args = [object, key, desc];
+    object_define_property_result(vm, &define_args, true)?;
+    Ok(Value::Undefined)
+}
+
+fn object_define_getter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    object_define_legacy_accessor(vm, args, this, "get")
+}
+
+fn object_define_setter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    object_define_legacy_accessor(vm, args, this, "set")
+}
+
+fn object_lookup_legacy_accessor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    slot: &str,
+) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let mut object = vm.to_object(&this)?;
+    let key = to_property_key_descriptor(vm, &get_arg(args, 0))?;
+    for _ in 0..1024 {
+        if let Some(desc) = own_property_descriptor_for_key(vm, &object, &key) {
+            if desc.is_accessor {
+                return Ok(match slot {
+                    "get" => desc.get.unwrap_or(Value::Undefined),
+                    "set" => desc.set.unwrap_or(Value::Undefined),
+                    _ => Value::Undefined,
+                });
+            }
+            return Ok(Value::Undefined);
+        }
+        let next = match object {
+            Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| obj.proto().lock().clone()),
+            _ => None,
+        };
+        match next {
+            Some(next @ Value::Object(_)) => object = next,
+            _ => return Ok(Value::Undefined),
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn object_lookup_getter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    object_lookup_legacy_accessor(vm, args, this, "get")
+}
+
+fn object_lookup_setter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    object_lookup_legacy_accessor(vm, args, this, "set")
+}
+
 fn global_uri_identity(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     Ok(Value::String(
         vm.to_string(args.first().unwrap_or(&Value::Undefined))?,
@@ -2214,6 +2309,10 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
             ("isPrototypeOf", object_is_prototype_of, 1),
             ("propertyIsEnumerable", object_property_is_enumerable, 1),
             ("valueOf", object_value_of, 0),
+            ("__defineGetter__", object_define_getter, 2),
+            ("__defineSetter__", object_define_setter, 2),
+            ("__lookupGetter__", object_lookup_getter, 1),
+            ("__lookupSetter__", object_lookup_setter, 1),
         ],
     )?;
     // Object static methods

@@ -1349,7 +1349,7 @@ fn object_prototype_to_string_uses_receiver_brand() {
             ].join(",");
         "#),
         Value::String(Arc::from(
-            "[object Array],[object Null],[object Undefined],[object String],[object Number],[object Boolean],[object Function],[object Date],[object Error],[object Error],[object Arguments],toString|toLocaleString|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|valueOf|constructor,X: Y"
+            "[object Array],[object Null],[object Undefined],[object String],[object Number],[object Boolean],[object Function],[object Date],[object Error],[object Error],[object Arguments],toString|toLocaleString|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|valueOf|__defineGetter__|__defineSetter__|__lookupGetter__|__lookupSetter__|constructor,X: Y"
         ))
     );
 }
@@ -1387,6 +1387,46 @@ fn object_prototype_value_of_and_to_locale_string_coerce_receiver() {
         "#),
         Value::String(Arc::from("boolean:boolean"))
     );
+}
+
+#[test]
+fn object_prototype_legacy_accessor_methods() {
+    assert_eq!(
+        run(r#"
+            var o = {};
+            function getX() { return 7; }
+            function setX(v) { this.seen = v; }
+            o.__defineGetter__("x", getX);
+            o.__defineSetter__("x", setX);
+            var d = Object.getOwnPropertyDescriptor(o, "x");
+            o.x = 9;
+            [
+              o.x,
+              o.seen,
+              d.get === getX,
+              d.set === setX,
+              d.enumerable,
+              d.configurable,
+              o.__lookupGetter__("x") === getX,
+              o.__lookupSetter__("x") === setX,
+              Object.prototype.propertyIsEnumerable.call(Object.prototype, "__defineGetter__"),
+              Object.prototype.__defineGetter__.length,
+              Object.prototype.__lookupSetter__.name
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "7,9,true,true,true,true,true,true,false,2,__lookupSetter__"
+        ))
+    );
+    assert!(
+        run_err("Object.prototype.__defineGetter__.call(null, 'x', function(){});")
+            .contains("TypeError")
+    );
+    assert!(run_err("({}).__defineGetter__('x', 1);").contains("TypeError"));
+    assert!(run_err(
+        r#"({}).__defineGetter__({ toString: function(){ throw new Error("key"); } }, function(){});"#
+    )
+    .contains("key"));
 }
 
 #[test]
