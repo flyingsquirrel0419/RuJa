@@ -723,6 +723,8 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("keys", map_keys, 0),
             ("values", map_values, 0),
             ("forEach", map_for_each, 1),
+            ("getOrInsert", map_get_or_insert, 2),
+            ("getOrInsertComputed", map_get_or_insert_computed, 2),
         ],
     )?;
     vm.map_proto = Value::Object(map_proto);

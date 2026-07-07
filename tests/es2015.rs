@@ -688,6 +688,34 @@ fn map_basic() {
         run("let m = new Map([['foo', 0], ['bar', 1]]); let out = []; m.forEach(function(v, k){ if (k === 'foo') { m.delete('foo'); m.set('foo', 2); } out.push(k + ':' + v); }); out.join('|');"),
         Value::String(Arc::from("foo:0|bar:1|foo:2"))
     );
+    assert!(run_err("Map();").contains("TypeError"));
+    assert!(run_err("Map([]);").contains("TypeError"));
+    assert_eq!(
+        run("let mapSet = Map.prototype.set; let calls = 0; Map.prototype.set = function(k, v){ calls++; return mapSet.call(this, k, v); }; let m = new Map([[1,2],[3,4]]); calls + '|' + m.get(3);"),
+        Value::String(Arc::from("2|4"))
+    );
+    assert!(run_err("Map.prototype.set = null; new Map([[1,2]]);").contains("TypeError"));
+    assert_eq!(
+        run("let calls = 0; Object.defineProperty(Map.prototype, 'set', { get(){ calls++; throw new Error('no'); }, configurable: true }); try { new Map(); } catch (e) {} calls;"),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        run("let closed = 0; let iterable = {}; iterable[Symbol.iterator] = function(){ return { next(){ return { value: 1, done: false }; }, return(){ closed++; return {}; } }; }; try { new Map(iterable); } catch (e) {} closed;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("let m = new Map([[1, 'one']]); [m.getOrInsert(1, 'x'), m.getOrInsert(2, 'two'), m.get(2), m.size].join('|');"),
+        Value::String(Arc::from("one|two|two|2"))
+    );
+    assert_eq!(
+        run("let m = new Map([[+0, 42]]); let seen; let out = m.getOrInsertComputed(-0, function(k){ seen = k; return 1; }); [out, Object.is(seen, undefined), m.get(0)].join('|');"),
+        Value::String(Arc::from("42|true|42"))
+    );
+    assert_eq!(
+        run("let m = new Map(); let seen; let out = m.getOrInsertComputed(-0, function(k){ seen = k; m.set(k, 'mutated'); return 'final'; }); [out, m.get(0), Object.is(seen, -0), Object.is(seen, +0)].join('|');"),
+        Value::String(Arc::from("final|final|false|true"))
+    );
+    assert!(run_err("new Map().getOrInsertComputed(1, 1);").contains("TypeError"));
 }
 
 #[test]

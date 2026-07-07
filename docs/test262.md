@@ -194,6 +194,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Set composition cluster now runs at **179 pass / 0 fail / 7 skip**,
   `built-ins/Set` now closes at **340 pass / 0 fail / 43 skip**, and
   `built-ins/Map built-ins/Set` improves to **432 pass / 17 fail / 138 skip**.
+- **Map constructor iterable compliance and upsert methods** —
+  `new Map(iterable)` now requires construction with `new`, observes the
+  instance `set` method once before iterator creation, calls it for each entry
+  pair, accepts array-like pair objects through ordinary property access, and
+  closes the source iterator when pair access or `set` fails.
+  `Map.prototype.getOrInsert` and `Map.prototype.getOrInsertComputed` are now
+  exposed with SameValueZero key canonicalization and computed-callback
+  overwrite semantics. The focused `built-ins/Map built-ins/Set` run now
+  closes at **449 pass / 0 fail / 138 skip**.
 - **String literal escape conformance** —
   String literal scanning now decodes UTF-8 `NonEscapeCharacter` escapes as
   source code points, permits literal U+2028/U+2029 in strings per

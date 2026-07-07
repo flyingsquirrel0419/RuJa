@@ -465,6 +465,68 @@ pub(crate) fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     })))
 }
 
+fn canonicalize_keyed_collection_key(value: Value) -> Value {
+    MapKey::new(value).0
+}
+
+fn map_get_direct(vm: &Vm, idx: GcIdx, key: &Value) -> Option<Value> {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().get(&MapKey::new(key.clone())).cloned()
+        } else {
+            None
+        }
+    })
+}
+
+fn map_set_direct(vm: &mut Vm, idx: GcIdx, key: Value, value: Value) {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().insert(MapKey::new(key), value);
+        }
+    });
+}
+
+pub(crate) fn map_get_or_insert(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_map_receiver(vm, this, "Map.prototype.getOrInsert")?;
+    let key = canonicalize_keyed_collection_key(args.first().cloned().unwrap_or(Value::Undefined));
+    if let Some(value) = map_get_direct(vm, idx, &key) {
+        return Ok(value);
+    }
+    let value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    map_set_direct(vm, idx, key, value.clone());
+    Ok(value)
+}
+
+pub(crate) fn map_get_or_insert_computed(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = require_map_receiver(vm, this, "Map.prototype.getOrInsertComputed")?;
+    let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err(
+            "Map.prototype.getOrInsertComputed callback is not callable",
+        ));
+    }
+    let key = canonicalize_keyed_collection_key(args.first().cloned().unwrap_or(Value::Undefined));
+    if let Some(value) = map_get_direct(vm, idx, &key) {
+        return Ok(value);
+    }
+    let value = vm.call_function(
+        &callback,
+        std::slice::from_ref(&key),
+        Some(Value::Undefined),
+    )?;
+    map_set_direct(vm, idx, key, value.clone());
+    Ok(value)
+}
+
 // --- WeakMap / WeakSet (true weak-reference semantics) ---
 
 pub(crate) fn weakmap_constructor(
@@ -807,44 +869,55 @@ pub(crate) fn map_constructor(
     _args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err("Map constructor must be called with new"));
+    }
+    let proto = native_constructor_prototype(vm, vm.map_proto.clone())?;
     let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.map_proto.clone())),
+        proto: Mutex::new(Some(proto)),
     }))?;
+    let map = Value::Object(GcIdx(obj_idx));
     // Initialize from an optional iterable of [key, value] pairs.
     if let Some(iterable) = _args.first() {
         if !iterable.is_undefined() && !iterable.is_null() {
+            let set = vm.get_property(&map, "set")?;
+            if !is_callable(&set, &vm.heap) {
+                return Err(Error::type_err("Map set is not callable"));
+            }
             let it = vm.make_iterator(iterable)?;
             loop {
                 let (pair, done) = vm.iterator_next(&it)?;
                 if done {
                     break;
                 }
-                let (k, v) = if let Value::Object(pi) = &pair {
-                    vm.heap.with_obj(pi.0, |o| {
-                        if let HeapObj::Array(a) = o {
-                            let it2 = a.items.lock();
-                            (
-                                it2.first().cloned().unwrap_or(Value::Undefined),
-                                it2.get(1).cloned().unwrap_or(Value::Undefined),
-                            )
-                        } else {
-                            (Value::Undefined, Value::Undefined)
-                        }
-                    })
-                } else {
-                    (Value::Undefined, Value::Undefined)
-                };
-                vm.heap.with_obj(obj_idx, |o| {
-                    if let HeapObj::Map(m) = o {
-                        m.entries.lock().insert(MapKey::new(k), v);
+                if !matches!(pair, Value::Object(_)) {
+                    vm.iterator_close(&it)?;
+                    return Err(Error::type_err("Iterator value is not an object"));
+                }
+                let k = match vm.get_property(&pair, "0") {
+                    Ok(value) => value,
+                    Err(err) => {
+                        vm.iterator_close(&it)?;
+                        return Err(err);
                     }
-                });
+                };
+                let v = match vm.get_property(&pair, "1") {
+                    Ok(value) => value,
+                    Err(err) => {
+                        vm.iterator_close(&it)?;
+                        return Err(err);
+                    }
+                };
+                if let Err(err) = vm.call_function(&set, &[k, v], Some(map.clone())) {
+                    vm.iterator_close(&it)?;
+                    return Err(err);
+                }
             }
         }
     }
-    Ok(Value::Object(GcIdx(obj_idx)))
+    Ok(map)
 }
 
 // =========================================================================
