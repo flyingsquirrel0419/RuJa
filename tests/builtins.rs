@@ -129,6 +129,44 @@ fn string_search_methods_follow_regexp_and_position_semantics() {
         run("var s = Symbol.match; var o = {}; Object.defineProperty(o, s, { get: function(){ return true; } }); o[s];"),
         Value::Bool(true)
     );
+    assert_eq!(run(r#""__undefined__".indexOf()"#), Value::Number(2.0));
+    assert_eq!(run(r#""__undefined__".lastIndexOf()"#), Value::Number(2.0));
+    assert_eq!(run(r#""".lastIndexOf()"#), Value::Number(-1.0));
+    assert_eq!(
+        run(r#"var o = { toString: function(){ return "AB"; } }; "ABBABABAB".indexOf(o, true)"#),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run(r#"var o = { toString: function(){ return "AB"; } }; "ABBABABAB".lastIndexOf(o, NaN)"#),
+        Value::Number(7.0)
+    );
+    assert_eq!(run(r#""abcabc".indexOf("a", -1)"#), Value::Number(0.0));
+    assert_eq!(run(r#""abcabc".lastIndexOf("a", -1)"#), Value::Number(0.0));
+    assert_eq!(run(r#""abcabc".lastIndexOf("b", -1)"#), Value::Number(-1.0));
+    assert_eq!(
+        run(r#""abcabc".lastIndexOf("a", -Infinity)"#),
+        Value::Number(0.0)
+    );
+    assert_eq!(
+        run(r#""aaaa".indexOf("aa", Infinity)"#),
+        Value::Number(-1.0)
+    );
+    assert_eq!(
+        run(r#""abc".lastIndexOf("abcd", Infinity)"#),
+        Value::Number(-1.0)
+    );
+    assert_eq!(
+        run(
+            r#"var a = { toString: function(){ throw "search"; } }; var b = { valueOf: function(){ throw "position"; } }; (function(){ try { return "abc".indexOf(a, b); } catch (e) { return e; } })()"#
+        ),
+        Value::String(Arc::from("search"))
+    );
+    assert_eq!(
+        run(
+            r#"var a = { toString: function(){ throw "search"; } }; var b = { valueOf: function(){ throw "position"; } }; (function(){ try { return "abc".lastIndexOf(a, b); } catch (e) { return e; } })()"#
+        ),
+        Value::String(Arc::from("search"))
+    );
 }
 
 #[test]

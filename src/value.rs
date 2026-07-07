@@ -1117,6 +1117,9 @@ pub fn utf16_last_index_of(s: &str, needle: &str, end: usize) -> Option<usize> {
     if nee.is_empty() {
         return Some(end.min(hay.len()));
     }
+    if nee.len() > hay.len() {
+        return None;
+    }
     let max_start = hay.len().saturating_sub(nee.len()).min(end);
     for i in (0..=max_start).rev() {
         if hay[i..i + nee.len()] == nee[..] {

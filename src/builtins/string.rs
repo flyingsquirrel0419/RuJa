@@ -214,12 +214,11 @@ pub(crate) fn str_index_of(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let n = args
-        .first()
-        .map(crate::value::value_to_debug_string)
-        .unwrap_or_default();
+    let n = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
     let len = crate::value::utf16_len(&s);
-    let start = from_index_arg(vm, args, 1, len)?;
+    let start = string_search_position(vm, args, len, 0.0)?;
     Ok(crate::value::utf16_index_of(&s, &n, start)
         .map(|i| Value::Number(i as f64))
         .unwrap_or(Value::Number(-1.0)))
@@ -477,22 +476,20 @@ pub(crate) fn str_last_index_of(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let n = args
-        .first()
-        .map(crate::value::value_to_debug_string)
-        .unwrap_or_default();
+    let n = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
     let len = crate::value::utf16_len(&s);
     let raw = match args.get(1) {
         Some(v) => vm.to_number(v)?,
         None => f64::INFINITY,
     };
-    let end = if raw.is_nan() {
+    let end = if raw.is_nan() || (raw.is_infinite() && raw > 0.0) {
         len
-    } else if raw.is_infinite() && raw < 0.0 {
-        return Ok(Value::Number(-1.0));
+    } else if raw <= 0.0 || (raw.is_infinite() && raw < 0.0) {
+        0
     } else {
-        let n_int = raw as i64;
-        (if n_int < 0 { len as i64 + n_int } else { n_int }).max(0) as usize
+        (raw.trunc() as usize).min(len)
     };
     Ok(crate::value::utf16_last_index_of(&s, &n, end)
         .map(|i| Value::Number(i as f64))

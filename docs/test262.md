@@ -139,6 +139,18 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **String search argument coercion** —
+  `String.prototype.indexOf` and `lastIndexOf` now coerce `searchString`
+  through `ToString` before reading the position argument. Missing arguments
+  therefore search for `"undefined"` instead of `""`, object search values
+  invoke observable `toString`, and abrupt completions happen in spec order.
+  `indexOf` positions now clamp negative values to 0 rather than using
+  Array-style from-index wrapping, and `lastIndexOf` clamps finite negative
+  values to 0 while preserving the `NaN`/`+Infinity` search-from-end path.
+  The focused
+  `built-ins/String/prototype/indexOf
+  built-ins/String/prototype/lastIndexOf` cluster runs at **62 pass / 0 fail
+  / 10 skip**.
 - **String index position coercion** —
   `String.prototype.charAt`, `charCodeAt`, and `codePointAt` now route their
   position arguments through the shared integer-position coercion path before

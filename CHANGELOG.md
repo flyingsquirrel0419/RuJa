@@ -24,6 +24,18 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **String search argument coercion**: `String.prototype.indexOf` and
+  `lastIndexOf` now coerce `searchString` through `ToString` before reading
+  the position argument, so missing arguments search for `"undefined"`, object
+  search values run observable `toString` first, and abrupt completions occur
+  in spec order. `indexOf` positions now clamp negative values to 0 instead
+  of using Array-style from-index wrapping, and `lastIndexOf` clamps finite
+  negative values to 0 while preserving the `NaN`/`+Infinity` search-from-end
+  path. The UTF-16 last-index helper also handles needles longer than the
+  haystack without panicking. The focused
+  `built-ins/String/prototype/indexOf
+  built-ins/String/prototype/lastIndexOf` cluster now runs at
+  **62 pass / 0 fail / 10 skip**.
 - **String index position coercion**: `String.prototype.charAt`,
   `charCodeAt`, and `codePointAt` now coerce explicit `undefined`, `NaN`,
   non-numeric strings, fractional values, and infinities through the shared
