@@ -2795,6 +2795,11 @@ impl Parser {
                 Ok(Expr::BigInt(n))
             }
             TokenKind::String(s) => {
+                if self.is_strict_context && self.peek_at_tok(0).string_had_legacy_escape {
+                    return Err(error::Error::syntax(
+                        "Legacy string escapes are not allowed in strict mode",
+                    ));
+                }
                 self.advance();
                 Ok(Expr::String(Arc::from(s.as_str())))
             }

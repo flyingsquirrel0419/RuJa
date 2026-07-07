@@ -150,6 +150,9 @@ pub struct Token {
     /// True when a string literal contained an escape sequence or line
     /// continuation. Such literals do not form `"use strict"` directives.
     pub string_had_escape: bool,
+    /// True when a string literal contained a legacy octal or non-octal
+    /// decimal escape. Strict mode code must reject these escapes.
+    pub string_had_legacy_escape: bool,
 }
 
 impl Token {
@@ -161,6 +164,7 @@ impl Token {
             preceded_by_newline: false,
             had_escape: false,
             string_had_escape: false,
+            string_had_legacy_escape: false,
         }
     }
 }

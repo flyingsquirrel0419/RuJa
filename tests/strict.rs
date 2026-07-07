@@ -107,6 +107,29 @@ fn strict_function_directive_rejects_duplicate_params() {
     assert!(r.is_err(), "expected duplicate param error");
 }
 
+#[test]
+fn strict_rejects_legacy_string_escapes() {
+    for src in [
+        r#""use strict"; "\1";"#,
+        r#"function f() { "\052"; "use strict"; }"#,
+        r#""use strict"; "\8";"#,
+    ] {
+        let err = common::run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError for {src:?}, got {err}"
+        );
+    }
+}
+
+#[test]
+fn sloppy_legacy_string_escapes_decode() {
+    assert_eq!(
+        run(r#"["\1", "\40", "\377", "\8"].join("|");"#),
+        Value::String("\u{1}| |\u{ff}|8".into())
+    );
+}
+
 // ---- classes are always strict ----
 
 #[test]

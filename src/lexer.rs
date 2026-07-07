@@ -142,6 +142,9 @@ pub struct Lexer<'a> {
     /// Whether the last string literal token contained an escape sequence or
     /// line continuation.
     last_string_had_escape: bool,
+    /// Whether the last string literal token contained a legacy octal or
+    /// non-octal decimal escape.
+    last_string_had_legacy_escape: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -161,6 +164,7 @@ impl<'a> Lexer<'a> {
             template_stack: Vec::new(),
             last_ident_had_escape: false,
             last_string_had_escape: false,
+            last_string_had_legacy_escape: false,
         }
     }
 
@@ -497,6 +501,7 @@ impl<'a> Lexer<'a> {
 
     fn read_string(&mut self, quote: u8) -> TokenKind {
         self.last_string_had_escape = false;
+        self.last_string_had_legacy_escape = false;
         self.advance(); // opening quote
         let mut s = String::new();
         let mut closed = false;
@@ -506,7 +511,7 @@ impl<'a> Lexer<'a> {
                 closed = true;
                 break;
             }
-            if self.is_line_terminator_start() {
+            if matches!(c, b'\n' | b'\r') {
                 return TokenKind::LexError("unterminated string literal".to_string());
             }
             if c == b'\\' {
@@ -524,7 +529,22 @@ impl<'a> Lexer<'a> {
                     Some(b'\'') => s.push('\''),
                     Some(b'"') => s.push('"'),
                     Some(b'`') => s.push('`'),
-                    Some(b'0') => s.push('\0'),
+                    Some(b'0') => {
+                        if self.peek().is_some_and(|b| b.is_ascii_digit()) {
+                            self.last_string_had_legacy_escape = true;
+                            s.push(self.read_legacy_octal_escape(b'0'));
+                        } else {
+                            s.push('\0');
+                        }
+                    }
+                    Some(c @ b'1'..=b'7') => {
+                        self.last_string_had_legacy_escape = true;
+                        s.push(self.read_legacy_octal_escape(c));
+                    }
+                    Some(c @ b'8'..=b'9') => {
+                        self.last_string_had_legacy_escape = true;
+                        s.push(c as char);
+                    }
                     Some(b'b') => s.push('\u{0008}'),
                     Some(b'f') => s.push('\u{000C}'),
                     Some(b'v') => s.push('\u{000B}'),
@@ -575,7 +595,14 @@ impl<'a> Lexer<'a> {
                             );
                         }
                     },
-                    Some(c) => s.push(c as char),
+                    Some(c) => match self.read_char_from_first_byte(c) {
+                        Some(ch) => s.push(ch),
+                        None => {
+                            return TokenKind::LexError(
+                                "invalid utf-8 in string literal".to_string(),
+                            );
+                        }
+                    },
                     None => break,
                 }
             } else {
@@ -583,26 +610,10 @@ impl<'a> Lexer<'a> {
                 // source is UTF-8; pushing each byte as a Latin-1 char would
                 // corrupt supplementary characters (emoji etc.).
                 self.advance();
-                if c < 0x80 {
-                    s.push(c as char);
-                } else {
-                    // Read the remaining bytes of the UTF-8 sequence.
-                    let need = if c >= 0xF0 {
-                        3
-                    } else if c >= 0xE0 {
-                        2
-                    } else {
-                        1
-                    };
-                    let mut buf = vec![c];
-                    for _ in 0..need {
-                        if let Some(b) = self.peek() {
-                            self.advance();
-                            buf.push(b);
-                        }
-                    }
-                    if let Ok(st) = std::str::from_utf8(&buf) {
-                        s.push_str(st);
+                match self.read_char_from_first_byte(c) {
+                    Some(ch) => s.push(ch),
+                    None => {
+                        return TokenKind::LexError("invalid utf-8 in string literal".to_string());
                     }
                 }
             }
@@ -611,6 +622,41 @@ impl<'a> Lexer<'a> {
             return TokenKind::LexError("unterminated string literal".to_string());
         }
         TokenKind::String(s)
+    }
+
+    fn read_char_from_first_byte(&mut self, first: u8) -> Option<char> {
+        if first < 0x80 {
+            return Some(first as char);
+        }
+        let need = if first >= 0xF0 {
+            3
+        } else if first >= 0xE0 {
+            2
+        } else if first >= 0xC0 {
+            1
+        } else {
+            return None;
+        };
+        let mut buf = vec![first];
+        for _ in 0..need {
+            buf.push(self.advance()?);
+        }
+        std::str::from_utf8(&buf).ok()?.chars().next()
+    }
+
+    fn read_legacy_octal_escape(&mut self, first: u8) -> char {
+        let mut value = (first - b'0') as u32;
+        let mut count = 1;
+        let max_digits = if first <= b'3' { 3 } else { 2 };
+        while count < max_digits {
+            let Some(next @ b'0'..=b'7') = self.peek() else {
+                break;
+            };
+            value = value * 8 + (next - b'0') as u32;
+            self.advance();
+            count += 1;
+        }
+        char::from_u32(value).unwrap_or('\u{FFFD}')
     }
 
     /// Read exactly `n` hex digits and return the parsed value, or None if
@@ -1051,6 +1097,7 @@ impl<'a> Lexer<'a> {
         self.saw_newline = false;
         self.last_ident_had_escape = false;
         self.last_string_had_escape = false;
+        self.last_string_had_legacy_escape = false;
 
         // Template-literal state machine.
         match self.template_state {
@@ -1234,6 +1281,7 @@ impl<'a> Lexer<'a> {
         tok.preceded_by_newline = preceded_by_newline;
         tok.had_escape = self.last_ident_had_escape;
         tok.string_had_escape = self.last_string_had_escape;
+        tok.string_had_legacy_escape = self.last_string_had_legacy_escape;
         tok
     }
 
@@ -1766,6 +1814,13 @@ mod tests {
     fn strings() {
         assert_eq!(kinds("\"hi\""), vec![String("hi".into()), Eof]);
         assert_eq!(kinds("'a\\nb'"), vec![String("a\nb".into()), Eof]);
+        assert_eq!(kinds("'\\А'"), vec![String("А".into()), Eof]);
+        assert_eq!(
+            kinds("'\\1\\40\\377'"),
+            vec![String("\u{1} \u{ff}".into()), Eof]
+        );
+        assert_eq!(kinds("\" \""), vec![String("\u{2028}".into()), Eof]);
+        assert_eq!(kinds("\" \""), vec![String("\u{2029}".into()), Eof]);
         assert_eq!(
             kinds(concat!("'line\\", "\n", "Continuation'")),
             vec![String("lineContinuation".into()), Eof]
@@ -1789,6 +1844,15 @@ mod tests {
         let continued = Lexer::new(concat!("'use\\", "\n", " strict'")).tokens();
         assert_eq!(continued[0].kind, String("use strict".into()));
         assert!(continued[0].string_had_escape);
+
+        let legacy = Lexer::new("'\\1'").tokens();
+        assert_eq!(legacy[0].kind, String("\u{1}".into()));
+        assert!(legacy[0].string_had_escape);
+        assert!(legacy[0].string_had_legacy_escape);
+
+        let non_octal_decimal = Lexer::new("'\\8'").tokens();
+        assert_eq!(non_octal_decimal[0].kind, String("8".into()));
+        assert!(non_octal_decimal[0].string_had_legacy_escape);
     }
 
     #[test]

@@ -56,6 +56,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   delete-then-readded values in insertion order. The focused
   `built-ins/{Map,Set}/prototype` iterator/forEach/Symbol.iterator cluster now
   runs at **104 pass / 0 fail / 38 skip**.
+- **String literal escape conformance**: string literals now decode UTF-8
+  `NonEscapeCharacter` escapes such as `\А` as source code points instead of
+  corrupting the UTF-8 tail byte, allow literal U+2028/U+2029 in strings per
+  JSON-superset source text, decode sloppy legacy octal escapes, and reject
+  legacy octal/non-octal decimal escapes in strict-mode strings. The focused
+  `language/literals/string` run now closes at **71 pass / 0 fail / 2 skip**,
+  and broader `language/literals` improves to **434 pass / 40 fail / 60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
