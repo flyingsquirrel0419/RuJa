@@ -1787,23 +1787,38 @@ fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::R
     Ok(this.unwrap_or(Value::Undefined))
 }
 
-/// `Boolean.prototype.toString`: return "true" or "false".
-fn boolean_to_string(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let val = match &this {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Object(idx)) => _vm
-            .heap
-            .with_obj(idx.0, |o| {
+fn this_boolean_value(vm: &Vm, this: Option<Value>) -> error::Result<bool> {
+    match this {
+        Some(Value::Bool(b)) => Ok(b),
+        Some(Value::Object(idx)) => {
+            let prim = vm.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Object(od) = o {
                     od.primitive.lock().clone()
                 } else {
                     None
                 }
-            })
-            .map(|v| v.is_truthy())
-            .unwrap_or(false),
-        _ => false,
-    };
+            });
+            if let Some(Value::Bool(b)) = prim {
+                Ok(b)
+            } else {
+                Err(Error::type_err(
+                    "Boolean method called on incompatible receiver",
+                ))
+            }
+        }
+        _ => Err(Error::type_err(
+            "Boolean method called on incompatible receiver",
+        )),
+    }
+}
+
+fn boolean_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(this_boolean_value(vm, this)?))
+}
+
+/// `Boolean.prototype.toString`: return "true" or "false".
+fn boolean_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let val = this_boolean_value(vm, this)?;
     Ok(Value::String(Arc::from(if val { "true" } else { "false" })))
 }
 
@@ -3819,11 +3834,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         1,
         boolean_constructor,
         &[
-            ("valueOf", boxed_value_of, 0),
+            ("valueOf", boolean_value_of, 0),
             ("toString", boolean_to_string, 0),
         ],
     )?;
     vm.boolean_proto = Value::Object(bool_proto);
+    vm.set_primitive(&vm.boolean_proto.clone(), Value::Bool(false));
     define_global(vm, "Boolean", Value::Object(bool_ctor));
     // globals
     let idx = vm.new_native_function("parseInt", global_parse_int, 2)?;

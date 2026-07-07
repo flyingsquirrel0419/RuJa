@@ -95,6 +95,11 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   remain non-writable and non-configurable. The focused
   `built-ins/Number/{isFinite,isInteger,isNaN,isSafeInteger}` run now closes
   at **26 pass / 0 fail / 8 skip**.
+- **Boolean prototype receiver checks**: `Boolean.prototype` now carries the
+  wrapped `false` primitive value, `Boolean.prototype.valueOf` returns Boolean
+  primitives from primitive/boxed Boolean receivers, and `valueOf`/`toString`
+  reject non-Boolean receivers with `TypeError`. The focused
+  `built-ins/Boolean` run now closes at **46 pass / 0 fail / 5 skip**.
 - **parseInt radix and large-prefix conformance**: global `parseInt` now
   applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
   infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no

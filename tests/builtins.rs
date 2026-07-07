@@ -3771,6 +3771,19 @@ fn boxed_number_valueof() {
 #[test]
 fn boxed_boolean_valueof() {
     assert_eq!(run("new Boolean(true).valueOf();"), Value::Bool(true));
+    assert_eq!(run("Boolean.prototype.valueOf();"), Value::Bool(false));
+    assert_eq!(
+        run(
+            r#"Boolean.prototype == false && Object.prototype.toString.call(Boolean.prototype) === "[object Boolean]""#
+        ),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("Boolean.prototype.toString.call(true) + ':' + Boolean.prototype.toString.call(Object(false));"),
+        Value::String(Arc::from("true:false"))
+    );
+    assert!(run_err("Boolean.prototype.valueOf.call({});").contains("TypeError"));
+    assert!(run_err("Boolean.prototype.toString.call(new String(''));").contains("TypeError"));
 }
 
 #[test]
