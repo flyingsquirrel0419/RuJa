@@ -204,6 +204,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   exposed with SameValueZero key canonicalization and computed-callback
   overwrite semantics. The focused `built-ins/Map built-ins/Set` run now
   closes at **449 pass / 0 fail / 138 skip**.
+- **Reflect.construct `newTarget` semantics** —
+  `Reflect.construct` now validates constructor-ness in spec order, creates
+  its argument list through ordinary array-like `length` and indexed property
+  access, forwards the optional `newTarget` to allocation, and falls back to
+  `%Object.prototype%` when the observed `newTarget.prototype` is not an
+  object. Bound constructor forwarding now preserves the caller's `newTarget`
+  rather than substituting the bound target. With `Reflect`/
+  `Reflect.construct` skips temporarily lifted, the focused
+  `built-ins/Reflect/construct` diagnostic runs at **10 pass / 0 fail**.
 - **String literal escape conformance** —
   String literal scanning now decodes UTF-8 `NonEscapeCharacter` escapes as
   source code points, permits literal U+2028/U+2029 in strings per

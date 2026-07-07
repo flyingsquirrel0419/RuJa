@@ -1615,6 +1615,18 @@ impl Vm {
         if let Some(v) = &self.pending_new_target {
             Self::push_value_roots(&mut roots, v);
         }
+        if let Some(v) = &self.pending_new_target_prototype {
+            Self::push_value_roots(&mut roots, v);
+        }
+        if let Some(v) = &self.current_native_callee {
+            Self::push_value_roots(&mut roots, v);
+        }
+        if let Some(v) = &self.current_native_new_target {
+            Self::push_value_roots(&mut roots, v);
+        }
+        if let Some(v) = &self.current_native_new_target_prototype {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in &self.stack {
             Self::push_value_roots(&mut roots, v);
         }

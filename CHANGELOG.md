@@ -80,6 +80,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   SameValueZero key canonicalization and computed-callback overwrite
   semantics. The focused `built-ins/Map built-ins/Set` run now closes at
   **449 pass / 0 fail / 138 skip**.
+- **Reflect.construct `newTarget` semantics**: `Reflect.construct` now
+  validates constructor-ness in spec order, builds its argument list through
+  ordinary array-like property access, forwards the optional `newTarget` into
+  allocation, and uses `newTarget.prototype` with `%Object.prototype%`
+  fallback when it is not an object. Bound constructors preserve the caller's
+  `newTarget` instead of resetting it to the bound target. With
+  `Reflect`/`Reflect.construct` skips temporarily lifted, the focused
+  `built-ins/Reflect/construct` diagnostic now runs at **10 pass / 0 fail**.
 - **String literal escape conformance**: string literals now decode UTF-8
   `NonEscapeCharacter` escapes such as `\А` as source code points instead of
   corrupting the UTF-8 tail byte, allow literal U+2028/U+2029 in strings per

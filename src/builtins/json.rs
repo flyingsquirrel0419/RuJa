@@ -1022,21 +1022,52 @@ fn reflect_apply(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
     };
     vm.call_function(&target, &call_args, Some(this_arg))
 }
+
+fn reflect_to_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    const MAX_SAFE_LENGTH: f64 = 9_007_199_254_740_991.0;
+    const MAX_MATERIALIZED_ARGS: usize = 1 << 20;
+
+    let n = vm.to_number(value)?;
+    if n.is_nan() || n <= 0.0 {
+        return Ok(0);
+    }
+    if n.is_infinite() || n > MAX_MATERIALIZED_ARGS as f64 {
+        return Err(Error::range("Reflect.construct argumentsList too large"));
+    }
+    Ok(n.trunc().min(MAX_SAFE_LENGTH) as usize)
+}
+
+fn reflect_create_list_from_array_like(vm: &mut Vm, value: &Value) -> error::Result<Vec<Value>> {
+    if !matches!(value, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.construct argumentsList must be an object",
+        ));
+    }
+    let length = vm.get_property(value, "length")?;
+    let len = reflect_to_length(vm, &length)?;
+    let mut list = Vec::with_capacity(len);
+    for index in 0..len {
+        list.push(vm.get_property(value, &index.to_string())?);
+    }
+    Ok(list)
+}
+
 fn reflect_construct(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let args_arr = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let call_args = if let Value::Object(idx) = &args_arr {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Array(a) = o {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        })
+    if !vm.is_constructor_value(&target) {
+        return Err(Error::type_err("target is not a constructor"));
+    }
+    let new_target = if let Some(value) = args.get(2) {
+        if !vm.is_constructor_value(value) {
+            return Err(Error::type_err("newTarget is not a constructor"));
+        }
+        value.clone()
     } else {
-        Vec::new()
+        target.clone()
     };
-    vm.construct(&target, &call_args)
+    let call_args = reflect_create_list_from_array_like(vm, &args_arr)?;
+    vm.construct_with_new_target(&target, &call_args, &new_target)
 }
 
 pub(crate) fn build_reflect(vm: &mut Vm) -> error::Result<Value> {

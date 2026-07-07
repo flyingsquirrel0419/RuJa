@@ -2190,6 +2190,82 @@ fn reflect_own_keys_includes_symbols_and_non_enumerables_in_spec_order() {
 }
 
 #[test]
+fn reflect_construct_uses_array_like_args_and_new_target() {
+    assert_eq!(
+        run(r#"
+            var seenProto;
+            function Target(a, b) {
+              this.sum = a + b;
+              seenProto = Object.getPrototypeOf(this);
+            }
+            function NewTarget() {}
+            NewTarget.prototype = { marker: 1 };
+            var args = {0: 2, 1: 3, length: 2};
+            var result = Reflect.construct(Target, args, NewTarget);
+            [
+              result.sum,
+              Object.getPrototypeOf(result) === NewTarget.prototype,
+              seenProto === NewTarget.prototype
+            ].join("|");
+            "#),
+        Value::String(Arc::from("5|true|true"))
+    );
+    assert!(run_err("Reflect.construct(function(){}, 1);").contains("TypeError"));
+    assert!(run_err("var o = {}; Object.defineProperty(o, 'length', { get(){ throw new Error('boom'); } }); Reflect.construct(function(){}, o);").contains("boom"));
+    assert!(run_err("Reflect.construct(function(){}, [], Date.now);").contains("TypeError"));
+    assert!(run_err("new Reflect.construct(Function, [], Function);").contains("TypeError"));
+    assert_eq!(
+        run("function isConstructor(f){ try { Reflect.construct(function(){}, [], f); } catch(e) { return false; } return true; } isConstructor(Reflect.construct);"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("function C(){} C.prototype = null; Object.getPrototypeOf(new C()) === Object.prototype;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            function Target() {}
+            var NewTarget = function() {}.bind();
+            Object.defineProperty(Function.prototype, "prototype", {
+              get: function() { calls++; throw new Error("proto boom"); },
+              configurable: true
+            });
+            var out;
+            try {
+              Reflect.construct(Target, [], NewTarget);
+              out = "ok";
+            } catch (e) {
+              out = e.message;
+            }
+            delete Function.prototype.prototype;
+            out + "|" + calls;
+            "#),
+        Value::String(Arc::from("proto boom|1"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var proto = {};
+            var NewTarget = function() {}.bind();
+            Object.defineProperty(Function.prototype, "prototype", {
+              get: function() { calls++; return proto; },
+              configurable: true
+            });
+            var arr = Reflect.construct(Array, [], NewTarget);
+            var fn = Reflect.construct(Function, ["return 1;"], NewTarget);
+            delete Function.prototype.prototype;
+            [
+              calls,
+              Object.getPrototypeOf(arr) === proto,
+              Object.getPrototypeOf(fn) === proto
+            ].join("|");
+            "#),
+        Value::String(Arc::from("2|true|true"))
+    );
+}
+
+#[test]
 fn math_expanded() {
     assert_eq!(run("Math.hypot(3,4);"), Value::Number(5.0));
     assert_eq!(

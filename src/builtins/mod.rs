@@ -999,7 +999,11 @@ pub(crate) fn install_symbol_static_properties(
 }
 
 pub(crate) fn native_constructor_prototype(vm: &mut Vm, fallback: Value) -> error::Result<Value> {
-    if let Some(new_target) = vm.current_native_new_target.clone() {
+    if let Some(proto) = vm.current_native_new_target_prototype.clone() {
+        if matches!(proto, Value::Object(_)) {
+            return Ok(proto);
+        }
+    } else if let Some(new_target) = vm.current_native_new_target.clone() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);

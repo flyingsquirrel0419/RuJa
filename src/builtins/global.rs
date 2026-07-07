@@ -451,7 +451,14 @@ fn dynamic_function_constructor(
         } else {
             vm.function_proto.clone()
         };
-    let function_object_proto = if let Some(new_target) = vm.current_native_new_target.clone() {
+    let function_object_proto = if let Some(proto) = vm.current_native_new_target_prototype.clone()
+    {
+        if matches!(proto, Value::Object(_)) {
+            proto
+        } else {
+            fallback_function_proto.clone()
+        }
+    } else if let Some(new_target) = vm.current_native_new_target.clone() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
         if matches!(proto, Value::Object(_)) {
             proto

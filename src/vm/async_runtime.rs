@@ -438,10 +438,14 @@ impl Vm {
             Some(FuncCallInfo::Native(f)) => {
                 let saved_native_callee = self.current_native_callee.replace(Value::Object(idx));
                 let saved_native_new_target = self.current_native_new_target.take();
+                let saved_native_new_target_prototype =
+                    self.current_native_new_target_prototype.take();
                 self.current_native_new_target = self.pending_new_target.take();
+                self.current_native_new_target_prototype = self.pending_new_target_prototype.take();
                 let result = f(self, args, this);
                 self.current_native_callee = saved_native_callee;
                 self.current_native_new_target = saved_native_new_target;
+                self.current_native_new_target_prototype = saved_native_new_target_prototype;
                 result
             }
             Some(FuncCallInfo::Interpreted {
@@ -698,6 +702,7 @@ impl Vm {
                     let frame_new_target = if is_arrow {
                         lexical_new_target
                     } else {
+                        self.pending_new_target_prototype.take();
                         self.pending_new_target.take().unwrap_or(Value::Undefined)
                     };
                     let mut result = self.execute_chunk_func(
@@ -804,6 +809,15 @@ impl Vm {
     }
 
     pub fn construct(&mut self, constructor: &Value, args: &[Value]) -> error::Result<Value> {
+        self.construct_with_new_target(constructor, args, constructor)
+    }
+
+    pub fn construct_with_new_target(
+        &mut self,
+        constructor: &Value,
+        args: &[Value],
+        new_target: &Value,
+    ) -> error::Result<Value> {
         let idx = match constructor {
             Value::Object(idx) => *idx,
             _ => return Err(Error::type_err("not a constructor".to_string())),
@@ -822,31 +836,31 @@ impl Vm {
         if let Some((target, bound_args)) = bound_construct {
             let mut all = bound_args;
             all.extend_from_slice(args);
-            return self.construct(&Value::Object(target), &all);
+            let forwarded_new_target = if constructor == new_target {
+                Value::Object(target)
+            } else {
+                new_target.clone()
+            };
+            return self.construct_with_new_target(
+                &Value::Object(target),
+                &all,
+                &forwarded_new_target,
+            );
         }
         if !self.is_constructor_value(constructor) {
             return Err(Error::type_err("not a constructor".to_string()));
         }
-        // Read prototype from the function's own properties first (it may
-        // have been reassigned via `fn.prototype = newProto`), falling back
-        // to the internal FunctionData.prototype field.
-        let proto = self
-            .get_property_by_key(constructor, &crate::value::PropertyKey::from("prototype"))
-            .unwrap_or(Value::Undefined);
-        let proto = if matches!(proto, Value::Object(_) | Value::Null) {
+        if !self.is_constructor_value(new_target) {
+            return Err(Error::type_err("newTarget is not a constructor"));
+        }
+        // GetPrototypeFromConstructor reads the observable `.prototype`;
+        // non-object values, including explicit null, use %Object.prototype%.
+        let observed_proto = self.get_property(new_target, "prototype")?;
+        let proto = observed_proto.clone();
+        let proto = if matches!(proto, Value::Object(_)) {
             proto
         } else {
-            // Fall back to internal field or default object proto.
-            self.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Function(f) = obj {
-                    f.prototype
-                        .lock()
-                        .clone()
-                        .unwrap_or(self.object_proto.clone())
-                } else {
-                    self.object_proto.clone()
-                }
-            })
+            self.object_proto.clone()
         };
         let class_name = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {
@@ -875,7 +889,8 @@ impl Vm {
             primitive: Mutex::new(None),
         });
         let this_obj = Value::Object(GcIdx(self.heap.allocate(new_obj)?));
-        self.pending_new_target = Some(constructor.clone());
+        self.pending_new_target = Some(new_target.clone());
+        self.pending_new_target_prototype = Some(observed_proto);
         let result = self.call_function(constructor, args, Some(this_obj.clone()))?;
         if matches!(result, Value::Object(_)) {
             Ok(result)
