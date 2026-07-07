@@ -419,6 +419,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `{ a: "b" }`, while primitive string entries throw `TypeError`. This closes
   the focused `built-ins/Object/fromEntries` run at
   **11 pass / 0 fail / 14 skip**.
+- **Native Error constructor shape** —
+  Native Error constructors now inherit from `%Error%` instead of directly
+  from `%Function.prototype%`, expose own non-enumerable `name`/`length`
+  properties, and keep their prototype objects as ordinary objects rather than
+  Error-branded instances. This closes the focused
+  `built-ins/Object/getPrototypeOf built-ins/NativeErrors` run at
+  **118 pass / 0 fail / 15 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`

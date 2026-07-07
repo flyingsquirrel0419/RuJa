@@ -1251,6 +1251,30 @@ fn error_subclass_plain_call_uses_active_constructor_prototype() {
 }
 
 #[test]
+fn native_error_constructors_inherit_from_error_constructor() {
+    assert_eq!(
+        run(r#"[
+                Object.getPrototypeOf(Error) === Function.prototype,
+                Object.getPrototypeOf(EvalError) === Error,
+                Object.getPrototypeOf(RangeError) === Error,
+                Object.getPrototypeOf(ReferenceError) === Error,
+                Object.getPrototypeOf(SyntaxError) === Error,
+                Object.getPrototypeOf(TypeError) === Error,
+                Object.getPrototypeOf(URIError) === Error,
+                Object.getPrototypeOf(AggregateError) === Error,
+                EvalError.hasOwnProperty("name"),
+                EvalError.hasOwnProperty("length"),
+                EvalError.name,
+                EvalError.length,
+                Object.prototype.toString.call(EvalError.prototype)
+            ].join(",");"#),
+        Value::String(Arc::from(
+            "true,true,true,true,true,true,true,true,true,true,EvalError,1,[object Object]"
+        ))
+    );
+}
+
+#[test]
 fn native_error_subclass_inherits_name_and_message() {
     assert_eq!(
         run(r#"

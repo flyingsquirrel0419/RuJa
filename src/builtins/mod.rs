@@ -370,10 +370,10 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
         vm.object_proto.clone()
     };
     let proto_obj = HeapObj::Object(ObjectData {
-        props: Mutex::new(builtin_function_own_props(name, 1)),
+        props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(proto_parent)),
         extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from(name)),
+        class_name: None,
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
@@ -393,7 +393,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             Value::Object(_) => Some(vm.function_proto.clone()),
             _ => None,
         }),
-        props: Mutex::new(IndexMap::new()),
+        props: Mutex::new(builtin_function_own_props(name, 1)),
         extensible: AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
@@ -2518,6 +2518,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
     let (error_ctor, error_proto) = make_error_constructor(vm, "Error")?;
     vm.error_proto = Value::Object(error_proto);
     define_global(vm, "Error", Value::Object(error_ctor));
+    let native_error_ctor_parent = Value::Object(error_ctor);
     for name in [
         "TypeError",
         "RangeError",
@@ -2528,6 +2529,11 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         "AggregateError",
     ] {
         let (ctor, _) = make_error_constructor(vm, name)?;
+        vm.heap.with_obj(ctor.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                *f.proto.lock() = Some(native_error_ctor_parent.clone());
+            }
+        });
         define_global(vm, name, Value::Object(ctor));
     }
     Ok(())

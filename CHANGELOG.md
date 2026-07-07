@@ -279,6 +279,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `{ a: "b" }`, while primitive string entries throw `TypeError`. The focused
   `built-ins/Object/fromEntries` run now closes at
   **11 pass / 0 fail / 14 skip**.
+- **Native Error constructor shape**: Native Error constructors now inherit
+  from `%Error%` instead of directly from `%Function.prototype%`, expose own
+  non-enumerable `name`/`length` properties, and keep their prototype objects
+  as ordinary objects rather than Error-branded instances. The focused
+  `built-ins/Object/getPrototypeOf built-ins/NativeErrors` run now closes at
+  **118 pass / 0 fail / 15 skip**.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,
