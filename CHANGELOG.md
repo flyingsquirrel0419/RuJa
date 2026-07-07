@@ -101,6 +101,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   behavior through the host libm operations. The focused
   `built-ins/Math/acosh built-ins/Math/asinh built-ins/Math/atanh` run now
   closes at **14 pass / 0 fail / 3 skip**.
+- **Math integer conversion and signed-zero edges**: `Math.clz32` and
+  `Math.imul` now use the engine's spec-shaped `ToUint32`/`ToInt32` helpers
+  instead of Rust casts, so infinities, `NaN`, modulo-2^32 values, and signed
+  multiplication results match ECMAScript. `Math.sign` now preserves `NaN` and
+  `-0`. The focused
+  `built-ins/Math/{cbrt,clz32,cosh,expm1,fround,imul,log10,log1p,log2,sign,sinh,tanh,trunc}`
+  run now closes at **68 pass / 0 fail / 13 skip**.
 - **String literal escape conformance**: string literals now decode UTF-8
   `NonEscapeCharacter` escapes such as `\А` as source code points instead of
   corrupting the UTF-8 tail byte, allow literal U+2028/U+2029 in strings per

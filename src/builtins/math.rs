@@ -45,7 +45,7 @@ fn math_sign(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
     } else if n < 0.0 {
         -1.0
     } else {
-        0.0
+        n
     }))
 }
 fn math_sqrt(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -123,13 +123,13 @@ fn math_log1p(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Va
     math_unary(f64::ln_1p, vm, args)
 }
 fn math_clz32(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))? as u32;
+    let n = crate::vm::to_uint32(vm.to_number(args.first().unwrap_or(&Value::Undefined))?);
     Ok(Value::Number(n.leading_zeros() as f64))
 }
 fn math_imul(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let a = vm.to_number(args.first().unwrap_or(&Value::Undefined))? as i32;
-    let b = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))? as i32;
-    Ok(Value::Number((a.wrapping_mul(b)) as f64))
+    let a = crate::vm::to_int32(vm.to_number(args.first().unwrap_or(&Value::Undefined))?);
+    let b = crate::vm::to_int32(vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?);
+    Ok(Value::Number(a.wrapping_mul(b) as f64))
 }
 fn math_fround(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let n = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;

@@ -2328,7 +2328,12 @@ fn math_expanded() {
         Value::Number(std::f64::consts::FRAC_PI_2)
     );
     assert_eq!(run("Math.clz32(1);"), Value::Number(31.0));
+    assert_eq!(run("Math.clz32(Infinity);"), Value::Number(32.0));
+    assert_eq!(run("Math.clz32(4294967296);"), Value::Number(32.0));
+    assert_eq!(run("Math.imul(0xffffffff, 5);"), Value::Number(-5.0));
     assert_eq!(run("Math.sign(-5);"), Value::Number(-1.0));
+    assert!(matches!(run("Math.sign(NaN);"), Value::Number(n) if n.is_nan()));
+    assert_eq!(run("Object.is(Math.sign(-0), -0);"), Value::Bool(true));
     assert_eq!(run("Math.sinh(0);"), Value::Number(0.0));
     assert_eq!(run("Math.acosh(1);"), Value::Number(0.0));
     assert_eq!(run("Math.asinh(-0);"), Value::Number(-0.0));
