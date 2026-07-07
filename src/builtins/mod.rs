@@ -1669,6 +1669,37 @@ fn object_get_own_property_descriptor(
     }
     let obj = vm.to_object(object)?;
     let key = to_property_key_descriptor(vm, args.get(1).unwrap_or(&Value::Undefined))?;
+    if let Value::Object(idx) = &obj {
+        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'getOwnPropertyDescriptor' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        }) {
+            let (target, handler) = proxy_result?;
+            let key_value = property_key_to_value(&key);
+            let trap = vm.get_property(&handler, "getOwnPropertyDescriptor")?;
+            if trap.is_undefined() {
+                return object_get_own_property_descriptor(vm, &[target, key_value], None);
+            }
+            let result = vm.call_function(&trap, &[target, key_value], Some(handler))?;
+            if result.is_undefined() {
+                return Ok(Value::Undefined);
+            }
+            if !matches!(result, Value::Object(_)) {
+                return Err(Error::type_err(
+                    "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
+                ));
+            }
+            return Ok(result);
+        }
+    }
     match own_property_descriptor_for_key(vm, &obj, &key) {
         Some(desc) => from_property_descriptor(vm, desc),
         None => Ok(Value::Undefined),
@@ -1696,6 +1727,16 @@ fn object_define_property(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    object_define_property_result(vm, args, true)?;
+    Ok(target)
+}
+
+pub(crate) fn object_define_property_result(
+    vm: &mut Vm,
+    args: &[Value],
+    throw_on_failure: bool,
+) -> error::Result<bool> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let key = args
         .get(1)
@@ -1745,8 +1786,11 @@ fn object_define_property(
             let trap = vm.get_property(&proxy_handler, "defineProperty")?;
             let key_value = property_key_to_value(&key);
             if trap.is_undefined() {
-                object_define_property(vm, &[proxy_target, key_value, desc.clone()], None)?;
-                return Ok(target);
+                return object_define_property_result(
+                    vm,
+                    &[proxy_target, key_value, desc.clone()],
+                    throw_on_failure,
+                );
             }
 
             let trap_result = vm.call_function(
@@ -1755,9 +1799,12 @@ fn object_define_property(
                 Some(proxy_handler),
             )?;
             if !trap_result.is_truthy() {
-                return Err(Error::type_err("Proxy defineProperty trap returned false"));
+                if throw_on_failure {
+                    return Err(Error::type_err("Proxy defineProperty trap returned false"));
+                }
+                return Ok(false);
             }
-            return Ok(target);
+            return Ok(true);
         }
 
         if let Value::Object(_) = desc {
@@ -1768,46 +1815,36 @@ fn object_define_property(
             // an accessor (get/set absent but `get_property` returns
             // `Ok(undefined)`).
             if vm.has_own(&desc, "value") {
-                if let Ok(v) = vm.get_property(&desc, "value") {
-                    value = v;
-                    has_value = true;
-                }
+                value = vm.get_property(&desc, "value")?;
+                has_value = true;
             }
             if vm.has_own(&desc, "writable") {
-                if let Ok(v) = vm.get_property(&desc, "writable") {
-                    writable = v.is_truthy();
-                    has_writable = true;
-                }
+                writable = vm.get_property(&desc, "writable")?.is_truthy();
+                has_writable = true;
             }
             if vm.has_own(&desc, "get") {
-                if let Ok(v) = vm.get_property(&desc, "get") {
-                    if !v.is_undefined() && !is_callable(&v, &vm.heap) {
-                        return Err(Error::type_err("Getter must be a function"));
-                    }
-                    get = if v.is_undefined() { None } else { Some(v) };
-                    has_get = true;
+                let v = vm.get_property(&desc, "get")?;
+                if !v.is_undefined() && !is_callable(&v, &vm.heap) {
+                    return Err(Error::type_err("Getter must be a function"));
                 }
+                get = if v.is_undefined() { None } else { Some(v) };
+                has_get = true;
             }
             if vm.has_own(&desc, "set") {
-                if let Ok(v) = vm.get_property(&desc, "set") {
-                    if !v.is_undefined() && !is_callable(&v, &vm.heap) {
-                        return Err(Error::type_err("Setter must be a function"));
-                    }
-                    set = if v.is_undefined() { None } else { Some(v) };
-                    has_set = true;
+                let v = vm.get_property(&desc, "set")?;
+                if !v.is_undefined() && !is_callable(&v, &vm.heap) {
+                    return Err(Error::type_err("Setter must be a function"));
                 }
+                set = if v.is_undefined() { None } else { Some(v) };
+                has_set = true;
             }
             if vm.has_own(&desc, "enumerable") {
-                if let Ok(v) = vm.get_property(&desc, "enumerable") {
-                    enumerable = v.is_truthy();
-                    has_enumerable = true;
-                }
+                enumerable = vm.get_property(&desc, "enumerable")?.is_truthy();
+                has_enumerable = true;
             }
             if vm.has_own(&desc, "configurable") {
-                if let Ok(v) = vm.get_property(&desc, "configurable") {
-                    configurable = v.is_truthy();
-                    has_configurable = true;
-                }
+                configurable = vm.get_property(&desc, "configurable")?.is_truthy();
+                has_configurable = true;
             }
         }
         // A descriptor is an accessor descriptor if it has get/set, and a
@@ -1831,37 +1868,69 @@ fn object_define_property(
         if current.is_none() {
             let extensible = vm.heap.with_obj(idx.0, |obj| obj.is_extensible());
             if !extensible {
-                return Err(Error::type_err(format!(
-                    "Cannot define property '{}', object is not extensible",
-                    key.as_str().unwrap_or("Symbol")
-                )));
+                if throw_on_failure {
+                    return Err(Error::type_err(format!(
+                        "Cannot define property '{}', object is not extensible",
+                        key.as_str().unwrap_or("Symbol")
+                    )));
+                }
+                return Ok(false);
             }
         }
         let map_value = value.clone();
         let descriptor = if let Some(mut current) = current {
             if !current.configurable {
                 if has_configurable && configurable {
-                    return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    if throw_on_failure {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                    return Ok(false);
                 }
                 if has_enumerable && enumerable != current.enumerable {
-                    return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    if throw_on_failure {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                    return Ok(false);
                 }
                 if is_accessor != current.is_accessor && (is_accessor || is_data) {
-                    return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    if throw_on_failure {
+                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                    }
+                    return Ok(false);
                 }
                 if current.is_accessor {
                     if has_get && get != current.get {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                        if throw_on_failure {
+                            return Err(Error::type_err(
+                                "Cannot redefine non-configurable property",
+                            ));
+                        }
+                        return Ok(false);
                     }
                     if has_set && set != current.set {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                        if throw_on_failure {
+                            return Err(Error::type_err(
+                                "Cannot redefine non-configurable property",
+                            ));
+                        }
+                        return Ok(false);
                     }
                 } else if is_data && !current.writable {
                     if has_writable && writable {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                        if throw_on_failure {
+                            return Err(Error::type_err(
+                                "Cannot redefine non-configurable property",
+                            ));
+                        }
+                        return Ok(false);
                     }
                     if has_value && value != current.value {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
+                        if throw_on_failure {
+                            return Err(Error::type_err(
+                                "Cannot redefine non-configurable property",
+                            ));
+                        }
+                        return Ok(false);
                     }
                 }
             }
@@ -1962,7 +2031,7 @@ fn object_define_property(
             vm.ic_invalidate(idx.0, key);
         }
     }
-    Ok(target)
+    Ok(true)
 }
 
 // Minimal stubs to keep the crate compiling while parser/lexer work is in progress.

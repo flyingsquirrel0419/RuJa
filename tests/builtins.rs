@@ -1759,6 +1759,45 @@ fn object_statics() {
         .contains("boom"),
         "Reflect.set should propagate abrupt completions from Proxy set traps"
     );
+    assert_eq!(
+        run(r#"
+            var obj = {};
+            Object.defineProperty(obj, "p", { value: 1 });
+            Object.freeze(obj);
+            [
+              Reflect.defineProperty(obj, "p", { value: 2 }),
+              obj.p,
+              Reflect.defineProperty(obj, "q", { value: 3 }),
+              Object.prototype.hasOwnProperty.call(obj, "q")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("false,1,false,false"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var attrs = {};
+            Object.defineProperty(attrs, "enumerable", {
+              get: function() { throw new Error("attrs boom"); }
+            });
+            Reflect.defineProperty({}, "p", attrs);
+        "#
+        )
+        .contains("attrs boom"),
+        "Reflect.defineProperty should propagate descriptor getter errors"
+    );
+    assert!(
+        run_err(
+            r#"
+            var proxy = new Proxy({}, {
+              getOwnPropertyDescriptor: function() { throw new Error("gopd boom"); }
+            });
+            Reflect.getOwnPropertyDescriptor(proxy, "p");
+        "#
+        )
+        .contains("gopd boom"),
+        "Reflect.getOwnPropertyDescriptor should propagate Proxy trap errors"
+    );
     assert!(
         run_err("Object.keys(null);").contains("TypeError"),
         "Object.keys(null) should throw"

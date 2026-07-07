@@ -951,7 +951,7 @@ fn reflect_define_property(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
             "Reflect.defineProperty target must be an object",
         ));
     }
-    object_define_property(vm, args, None).map(|_| Value::Bool(true))
+    object_define_property_result(vm, args, false).map(Value::Bool)
 }
 fn reflect_get_own_property_descriptor(
     vm: &mut Vm,

@@ -37,14 +37,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   writes, returns `false` instead of `true` for receiver/target
   non-writable failures, and propagates abrupt completions from Proxy `set`
   traps. `Reflect.defineProperty` and `Reflect.getOwnPropertyDescriptor` are
-  exposed for this path. With the
+  exposed for this path; `Reflect.defineProperty` now returns `false` for
+  failed ordinary definitions instead of throwing, propagates abrupt
+  completions while reading descriptor fields, and
+  `Reflect.getOwnPropertyDescriptor` now observes Proxy
+  `getOwnPropertyDescriptor` trap completions. With the
   `Proxy`/`Reflect` skips temporarily lifted, focused
   `language/statements/with built-ins/Reflect/has` now runs at
   **183 pass / 0 fail / 8 skip**, and the focused
   `built-ins/Reflect/get built-ins/Reflect/set built-ins/Reflect/has
   built-ins/Reflect/defineProperty
   built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at
-  **46 pass / 3 fail / 15 skip**.
+  **49 pass / 0 fail / 15 skip**.
 - **Array search array-like access**: `Array.prototype.indexOf`,
   `lastIndexOf`, and `includes` now use `LengthOfArrayLike` plus per-index
   property access instead of scanning only RuJa's dense array storage.

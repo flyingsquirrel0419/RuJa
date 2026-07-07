@@ -151,14 +151,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   receivers observe `getOwnPropertyDescriptor` and `defineProperty`, returns
   `false` for non-writable receiver/target failures, and propagates Proxy
   `set` trap abrupt completions; the corresponding Reflect wrappers are
-  exposed. With the `Proxy`/`Reflect`
+  exposed. `Reflect.defineProperty` now returns `false` for failed ordinary
+  definitions instead of throwing, propagates abrupt completions while reading
+  descriptor fields, and `Reflect.getOwnPropertyDescriptor` observes Proxy
+  `getOwnPropertyDescriptor` trap completions. With the `Proxy`/`Reflect`
   skips temporarily lifted, focused
   `language/statements/with built-ins/Reflect/has` runs at **183 pass / 0
   fail / 8 skip**. The focused
   `built-ins/Reflect/get built-ins/Reflect/set built-ins/Reflect/has
   built-ins/Reflect/defineProperty
-  built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at **46
-  pass / 3 fail / 15 skip**.
+  built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at **49
+  pass / 0 fail / 15 skip**.
 - **Array search array-like access** —
   `Array.prototype.indexOf`, `lastIndexOf`, and `includes` now read
   `length` through `LengthOfArrayLike` and visit indices through
