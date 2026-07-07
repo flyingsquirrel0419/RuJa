@@ -379,3 +379,27 @@ fn private_accessors_and_non_extensible_private_slots() {
         Value::Bool(true)
     );
 }
+
+#[test]
+fn private_names_follow_identifier_name_grammar() {
+    assert_eq!(
+        run(
+            "class C { get #\\u{6F}() { return 1; } value() { return this.#o; } } new C().value();"
+        ),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("class C { #℘ = 2; get() { return this.#℘; } } new C().get();"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run(
+            "class C { #ZW_\\u200C_NJ = 3; get() { return this.#ZW_\u{200C}_NJ; } } new C().get();"
+        ),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("class C { static #ZW_\\u200D_J = 4; static get() { return this.#ZW_\u{200D}_J; } } C.get();"),
+        Value::Number(4.0)
+    );
+}

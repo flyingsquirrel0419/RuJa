@@ -823,6 +823,80 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn read_private_name(&mut self) -> TokenKind {
+        let mut buf = String::new();
+        let mut first = true;
+        loop {
+            if self.peek() == Some(b'\\') && self.peek_at(1) == Some(b'u') {
+                let (ch, len) = match read_ident_escape(&self.src[self.pos..]) {
+                    Some(v) => v,
+                    None => {
+                        if buf.is_empty() {
+                            self.advance();
+                            self.advance();
+                        }
+                        break;
+                    }
+                };
+                let ok = if first {
+                    is_id_start(ch)
+                } else {
+                    is_id_continue(ch)
+                };
+                if !ok {
+                    for _ in 0..len {
+                        self.advance();
+                    }
+                    if first {
+                        return TokenKind::LexError("invalid private name start".to_string());
+                    }
+                    return TokenKind::LexError("invalid private name continue".to_string());
+                }
+                buf.push(ch);
+                for _ in 0..len {
+                    self.advance();
+                }
+                first = false;
+                continue;
+            }
+
+            let c = match self.peek() {
+                Some(c) => c,
+                None => break,
+            };
+            let ascii_ok =
+                c.is_ascii_alphabetic() || c == b'_' || c == b'$' || (!first && c.is_ascii_digit());
+            if ascii_ok {
+                buf.push(c as char);
+                self.advance();
+            } else if c >= 0x80 {
+                let (ch, len) = decode_utf8_at(&self.src[self.pos..]);
+                let ok = len > 0
+                    && if first {
+                        is_id_start(ch)
+                    } else {
+                        is_id_continue(ch)
+                    };
+                if !ok {
+                    break;
+                }
+                buf.push(ch);
+                for _ in 0..len {
+                    self.advance();
+                }
+            } else {
+                break;
+            }
+            first = false;
+        }
+
+        if buf.is_empty() {
+            TokenKind::LexError("invalid private name start".to_string())
+        } else {
+            TokenKind::PrivateName(buf)
+        }
+    }
+
     fn read_operator(&mut self) -> Option<TokenKind> {
         let c = self.peek()?;
         match c {
@@ -1035,16 +1109,7 @@ impl<'a> Lexer<'a> {
             }
             b'#' => {
                 self.advance();
-                let start = self.pos;
-                while let Some(c) = self.peek() {
-                    if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-                let name = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("");
-                Some(TokenKind::PrivateName(name.to_string()))
+                Some(self.read_private_name())
             }
             b'(' => {
                 self.advance();
@@ -2835,6 +2900,32 @@ mod tests {
         assert!(matches!(
             kinds("var a\\u2E2F;")[1],
             LexError(ref msg) if msg.contains("invalid identifier continue")
+        ));
+    }
+
+    #[test]
+    fn private_names_follow_identifier_name_grammar() {
+        assert_eq!(
+            kinds("class C { #\\u{6F}; #℘; #ZW_\u{200C}_NJ; #ZW_\u{200D}_J; }"),
+            vec![
+                Class,
+                Ident("C".into()),
+                LBrace,
+                PrivateName("o".into()),
+                Semicolon,
+                PrivateName("℘".into()),
+                Semicolon,
+                PrivateName("ZW_\u{200C}_NJ".into()),
+                Semicolon,
+                PrivateName("ZW_\u{200D}_J".into()),
+                Semicolon,
+                RBrace,
+                Eof,
+            ]
+        );
+        assert!(matches!(
+            kinds("class C { #0; }")[3],
+            LexError(ref msg) if msg.contains("invalid private name start")
         ));
     }
 

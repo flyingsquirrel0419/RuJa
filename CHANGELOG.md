@@ -100,6 +100,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   primitives from primitive/boxed Boolean receivers, and `valueOf`/`toString`
   reject non-Boolean receivers with `TypeError`. The focused
   `built-ins/Boolean` run now closes at **46 pass / 0 fail / 5 skip**.
+- **PrivateName lexical grammar**: private class names now use the same
+  `IdentifierName` Unicode escape and raw Unicode scanning rules as ordinary
+  identifiers, including `Other_ID_Start`, ZWNJ, and ZWJ handling. This fixes
+  private fields, methods, and accessors whose names are spelled with
+  `\uXXXX`/`\u{...}` escapes or non-ASCII source text. The focused
+  private-name diagnostic now closes at **50 pass / 0 fail**.
 - **parseInt radix and large-prefix conformance**: global `parseInt` now
   applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
   infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no

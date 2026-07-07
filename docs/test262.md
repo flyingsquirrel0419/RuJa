@@ -226,6 +226,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Boolean receivers, and `valueOf`/`toString` reject non-Boolean receivers
   with `TypeError`. The focused `built-ins/Boolean` run now closes at **46
   pass / 0 fail / 5 skip**.
+- **PrivateName lexical grammar** —
+  Private class names now follow the same `IdentifierName` scanner rules as
+  ordinary identifiers, including Unicode escapes, raw Unicode source text,
+  `Other_ID_Start`, ZWNJ, and ZWJ. Private fields, methods, and accessors now
+  accept names spelled with `\uXXXX`/`\u{...}` escapes and non-ASCII source
+  text. The focused private-name diagnostic now closes at **50 pass / 0
+  fail**.
 - **parseInt radix and large-prefix conformance** —
   Global `parseInt` now converts its radix argument through `ToNumber` and
   `ToInt32`, so string, boxed primitive, ordinary object, infinite, and
