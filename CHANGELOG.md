@@ -24,6 +24,16 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **String index position coercion**: `String.prototype.charAt`,
+  `charCodeAt`, and `codePointAt` now coerce explicit `undefined`, `NaN`,
+  non-numeric strings, fractional values, and infinities through the shared
+  integer-position path before range checking. This preserves index-0 access
+  for `undefined`/`NaN` while keeping negative, infinite, and out-of-range
+  positions on the empty/`NaN`/`undefined` result paths. The focused
+  `built-ins/String/prototype/charAt
+  built-ins/String/prototype/charCodeAt
+  built-ins/String/prototype/codePointAt` cluster now runs at
+  **66 pass / 0 fail / 5 skip**.
 - **Symbol intrinsic surface completion**: `Symbol.length` now has the spec
   value/descriptor, `Symbol.prototype.valueOf` is exposed with Symbol wrapper
   validation, `Object.getPrototypeOf(Symbol())` returns `Symbol.prototype`,

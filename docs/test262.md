@@ -139,6 +139,16 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **String index position coercion** —
+  `String.prototype.charAt`, `charCodeAt`, and `codePointAt` now route their
+  position arguments through the shared integer-position coercion path before
+  range checks. Explicit `undefined`, `NaN`, and other non-numeric values now
+  select index 0, while negative, infinite, and out-of-range positions still
+  return the method-specific empty string, `NaN`, or `undefined`. The focused
+  `built-ins/String/prototype/charAt
+  built-ins/String/prototype/charCodeAt
+  built-ins/String/prototype/codePointAt` cluster runs at **66 pass / 0 fail
+  / 5 skip**.
 - **Symbol intrinsic surface completion** —
   `Symbol.length`, well-known Symbol constructor property descriptors,
   missing well-known Symbols (`isConcatSpreadable`, `matchAll`, `replace`,

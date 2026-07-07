@@ -81,18 +81,11 @@ pub(crate) fn str_char_at(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    // ES: position is ToInteger; negatives and out-of-range yield "".
-    // Rust's `as usize` saturates negatives to 0, so "abc".charAt(-1)
-    // returned "a" instead of "".
     let pos = match args.first() {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
+        Some(v) => to_integer_or_zero(vm, v)?,
         None => 0.0,
     };
-    if pos.is_nan() {
-        return Ok(Value::String(Arc::from("")));
-    }
-    let i = pos.trunc() as i64;
+    let i = pos as i64;
     if i < 0 || (i as usize) >= crate::value::utf16_len(&s) {
         return Ok(Value::String(Arc::from("")));
     }
@@ -109,18 +102,11 @@ pub(crate) fn str_char_code_at(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    // ES: position is ToInteger(position); NaN -> 0, but a negative or
-    // out-of-range index yields NaN. Rust's `as usize` saturates negatives
-    // to 0, which made "abc".charCodeAt(-1) wrongly return 97.
     let pos = match args.first() {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
+        Some(v) => to_integer_or_zero(vm, v)?,
         None => 0.0,
     };
-    if pos.is_nan() {
-        return Ok(Value::Number(f64::NAN));
-    }
-    let i = pos.trunc() as i64;
+    let i = pos as i64;
     if i < 0 || (i as usize) >= crate::value::utf16_len(&s) {
         return Ok(Value::Number(f64::NAN));
     }
@@ -135,14 +121,10 @@ pub(crate) fn str_code_point_at(
 ) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
     let pos = match args.first() {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
+        Some(v) => to_integer_or_zero(vm, v)?,
         None => 0.0,
     };
-    if pos.is_nan() {
-        return Ok(Value::Undefined);
-    }
-    let i = pos.trunc() as i64;
+    let i = pos as i64;
     let len = crate::value::utf16_len(&s) as i64;
     if i < 0 || i >= len {
         return Ok(Value::Undefined);
