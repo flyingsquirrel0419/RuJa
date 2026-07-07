@@ -533,21 +533,17 @@ pub(crate) fn str_ends_with(
     Ok(Value::Bool(head.ends_with(search.as_str())))
 }
 pub(crate) fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    // ES String.prototype.repeat: count must be a non-negative integer; a
-    // negative, non-integer, Infinity, or too-large count throws RangeError.
+    // ES String.prototype.repeat applies ToIntegerOrInfinity to count.
+    // Negative values, Infinity, or too-large results throw RangeError.
     // Without this guard, `"x".repeat(Infinity)` panicked the engine with a
     // capacity overflow, and `"x".repeat(-1)` silently produced "" instead of
     // throwing. Cap the result length to keep untrusted code from OOM-allocating.
     let s = str_val(vm, &this)?;
     let count = match args.first() {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
+        Some(value) => to_integer_or_zero(vm, value)?,
         None => 0.0,
     };
-    if count.is_nan() || count < 0.0 || count.is_infinite() {
-        return Err(Error::range("Invalid count value"));
-    }
-    if count.fract() != 0.0 {
+    if count < 0.0 || count.is_infinite() {
         return Err(Error::range("Invalid count value"));
     }
     const MAX_REPEAT_LEN: usize = 1 << 28; // 256 MiB

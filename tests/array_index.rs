@@ -131,15 +131,18 @@ fn repeat_negative_throws() {
     );
 }
 
-/// Fractional repeat count must throw.
+/// Fractional repeat count is truncated by ToIntegerOrInfinity.
 #[test]
-fn repeat_fractional_throws() {
-    let res = common::run_err(r#"try { "x".repeat(2.5); } catch(e){ throw e; }"#);
-    assert!(
-        res.contains("Invalid count value"),
-        "expected RangeError, got: {}",
-        res
-    );
+fn repeat_fractional_truncates() {
+    let v = run(r#""x".repeat(2.5)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("xx")));
+}
+
+/// Counts coerced to +0 return the empty string.
+#[test]
+fn repeat_count_coerced_to_zero_returns_empty_string() {
+    let v = run(r#""x".repeat(NaN) + "x".repeat(undefined) + "x".repeat(false) + "x".repeat(0.9)"#);
+    assert_eq!(v, Value::String(std::sync::Arc::from("")));
 }
 
 /// Sanity that normal repeat still works.

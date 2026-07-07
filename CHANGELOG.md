@@ -36,6 +36,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/String/prototype/indexOf
   built-ins/String/prototype/lastIndexOf` cluster now runs at
   **62 pass / 0 fail / 10 skip**.
+- **String repeat count coercion**: `String.prototype.repeat` now applies
+  `ToIntegerOrInfinity`-style truncation to its count before range checking,
+  so `NaN`, `undefined`, `false`, `"0"`, and `0.9` produce the empty string
+  instead of throwing, while negative counts and infinities still throw
+  `RangeError`. The focused `built-ins/String/prototype/repeat` cluster now
+  runs at **13 pass / 0 fail / 3 skip**.
 - **String index position coercion**: `String.prototype.charAt`,
   `charCodeAt`, and `codePointAt` now coerce explicit `undefined`, `NaN`,
   non-numeric strings, fractional values, and infinities through the shared
