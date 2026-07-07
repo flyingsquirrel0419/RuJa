@@ -1210,11 +1210,6 @@ impl Vm {
                             return Ok(Value::Undefined);
                         }
                     }
-                    if let HeapObj::Set(s) = o {
-                        if key == "size" {
-                            return Ok(Value::Number(s.items.lock().len() as f64));
-                        }
-                    }
                     // Boxed String: `new String("abc").length` returns the
                     // string length, and integer indices return characters.
                     if let HeapObj::Object(od) = o {

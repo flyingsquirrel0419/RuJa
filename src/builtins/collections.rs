@@ -445,78 +445,95 @@ pub(crate) fn map_constructor(
 // =========================================================================
 // Set
 // =========================================================================
+fn require_set_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Result<GcIdx> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err(format!("{name} called on non-Set")));
+    };
+    if vm
+        .heap
+        .with_obj(idx.0, |obj| matches!(obj, HeapObj::Set(_)))
+    {
+        Ok(idx)
+    } else {
+        Err(Error::type_err(format!("{name} called on non-Set")))
+    }
+}
+
 pub(crate) fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let val = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(s) = obj {
-                s.items.lock().insert(MapKey::new(val));
-            }
-        });
-    }
+    let idx = require_set_receiver(vm, this.clone(), "Set.prototype.add")?;
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(s) = obj {
+            s.items.lock().insert(MapKey::new(val));
+        }
+    });
     Ok(this.unwrap_or(Value::Undefined))
 }
 pub(crate) fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let val = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(s) = obj {
-                s.items.lock().contains(&MapKey::new(val))
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    let idx = require_set_receiver(vm, this, "Set.prototype.has")?;
+    Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(s) = obj {
+            s.items.lock().contains(&MapKey::new(val))
+        } else {
+            false
+        }
+    })))
 }
 pub(crate) fn set_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let val = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(s) = obj {
-                s.items.lock().shift_remove(&MapKey::new(val))
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    let idx = require_set_receiver(vm, this, "Set.prototype.delete")?;
+    Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(s) = obj {
+            s.items.lock().shift_remove(&MapKey::new(val))
+        } else {
+            false
+        }
+    })))
 }
 pub(crate) fn set_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(s) = obj {
-                s.items.lock().len()
-            } else {
-                0
-            }
-        }) as f64));
-    }
-    Ok(Value::Number(0.0))
+    let idx = require_set_receiver(vm, this, "Set.prototype.size getter")?;
+    Ok(Value::Number(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(s) = obj {
+            s.items.lock().len()
+        } else {
+            0
+        }
+    }) as f64))
 }
-pub(crate) fn set_values_list(vm: &mut Vm, this: &Option<Value>) -> Vec<Value> {
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Set(s) = obj {
-                s.items
-                    .lock()
-                    .iter()
-                    .map(|k| k.0.clone())
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    }
+pub(crate) fn set_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let idx = require_set_receiver(vm, this, "Set.prototype.clear")?;
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(s) = obj {
+            s.items.lock().clear();
+        }
+    });
+    Ok(Value::Undefined)
+}
+pub(crate) fn set_values_list(
+    vm: &mut Vm,
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Vec<Value>> {
+    let idx = require_set_receiver(vm, this, name)?;
+    Ok(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(s) = obj {
+            s.items
+                .lock()
+                .iter()
+                .map(|k| k.0.clone())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    }))
 }
 pub(crate) fn set_entries(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let vals = set_values_list(vm, &this);
+    let vals = set_values_list(vm, this, "Set.prototype.entries")?;
     let mut pairs: Vec<Value> = Vec::new();
     for v in vals {
         pairs.push(make_value_array(vm, vec![v.clone(), v])?);
@@ -524,7 +541,7 @@ pub(crate) fn set_entries(
     make_value_array(vm, pairs)
 }
 pub(crate) fn set_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let vals = set_values_list(vm, &this);
+    let vals = set_values_list(vm, this, "Set.prototype.keys")?;
     make_value_array(vm, vals)
 }
 pub(crate) fn set_values(
@@ -532,7 +549,7 @@ pub(crate) fn set_values(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let vals = set_values_list(vm, &this);
+    let vals = set_values_list(vm, this, "Set.prototype.values")?;
     make_value_array(vm, vals)
 }
 pub(crate) fn set_for_each(
@@ -542,7 +559,12 @@ pub(crate) fn set_for_each(
 ) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned();
-    let vals = set_values_list(vm, &this);
+    let vals = set_values_list(vm, this.clone(), "Set.prototype.forEach")?;
+    if !is_callable(&cb, &vm.heap) {
+        return Err(Error::type_err(
+            "Set.prototype.forEach callback is not callable",
+        ));
+    }
     for v in &vals {
         vm.call_function(
             &cb,

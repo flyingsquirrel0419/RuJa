@@ -685,7 +685,7 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             ("add", set_add, 1),
             ("has", set_has, 1),
             ("delete", set_delete, 1),
-            ("size", set_size, 0),
+            ("clear", set_clear, 0),
             ("entries", set_entries, 0),
             ("keys", set_keys, 0),
             ("values", set_values, 0),
@@ -694,6 +694,13 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     )?;
     vm.set_proto = Value::Object(set_proto);
     define_global(vm, "Set", Value::Object(set_ctor));
+    let set_size_getter = vm.new_native_function("get size", set_size, 0)?;
+    vm.heap.with_obj(set_proto.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::from("size"),
+            accessor_get_prop(Value::Object(set_size_getter)),
+        );
+    });
     let set_species_getter =
         vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
     vm.heap.with_obj(set_ctor.0, |obj| {

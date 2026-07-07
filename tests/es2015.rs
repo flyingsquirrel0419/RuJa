@@ -685,9 +685,56 @@ fn set_basic() {
         Value::Number(2.0)
     );
     assert_eq!(
+        run("let d = Object.getOwnPropertyDescriptor(Set.prototype, 'size'); let s = new Set([1, 2]); [s.size, d.get.call(s), d.get.name, d.get.length, d.enumerable, d.configurable, typeof d.set].join('|');"),
+        Value::String(Arc::from("2|2|get size|0|false|true|undefined"))
+    );
+    assert_eq!(
+        run("let d = Object.getOwnPropertyDescriptor(Set.prototype, 'size'); [typeof d.value, typeof d.writable].join('|');"),
+        Value::String(Arc::from("undefined|undefined"))
+    );
+    assert_eq!(
+        run("Object.defineProperty(Set.prototype, 'size', { get: function(){ return 99; }, configurable: true }); new Set([1, 2]).size;"),
+        Value::Number(99.0)
+    );
+    assert_eq!(
+        run("delete Set.prototype.size; new Set([1, 2]).size;"),
+        Value::Undefined
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Set.prototype, 'size').get.call({});")
+            .contains("TypeError")
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Set.prototype, 'size').get.call(1);")
+            .contains("TypeError")
+    );
+    assert!(
+        run_err("Object.getOwnPropertyDescriptor(Set.prototype, 'size').get.call(new Map());")
+            .contains("TypeError")
+    );
+    for src in [
+        "Set.prototype.add.call({}, 1);",
+        "Set.prototype.has.call({}, 1);",
+        "Set.prototype.delete.call({}, 1);",
+        "Set.prototype.clear.call({});",
+        "Set.prototype.entries.call({});",
+        "Set.prototype.keys.call({});",
+        "Set.prototype.values.call({});",
+        "Set.prototype.forEach.call({}, function(){});",
+        "Set.prototype.add.call(1, 1);",
+        "Set.prototype.has.call(new Map(), 1);",
+    ] {
+        assert!(run_err(src).contains("TypeError"), "{src}");
+    }
+    assert_eq!(
         run("let s = new Set(); s.add(1); s.has(1);"),
         Value::Bool(true)
     );
+    assert_eq!(
+        run("let s = new Set([1, 2]); s.clear(); [s.size, s.has(1)].join('|');"),
+        Value::String(Arc::from("0|false"))
+    );
+    assert!(run_err("new Set().forEach(1);").contains("TypeError"));
     assert_eq!(
         run("let s = new Set([-0]); s.add(-0); s.add(+0); [s.size, Object.is(s.values()[0], -0)].join('|');"),
         Value::String(Arc::from("1|false"))

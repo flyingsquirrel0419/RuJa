@@ -37,6 +37,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   entries,keys,values,forEach,size}` cluster now runs at **60 pass / 11 fail /
   47 skip**, with remaining failures isolated to true MapIterator and live
   iteration semantics.
+- **Set prototype size accessor and receiver brand checks**:
+  `Set.prototype.size` is now a spec-shaped `"get size"` accessor instead of
+  a data method, Set instance `size` reads now use ordinary prototype lookup,
+  and Set prototype methods now reject receivers without `[[SetData]]` with
+  `TypeError`. `Set.prototype.clear` is exposed with the same receiver
+  validation. The focused `built-ins/Set/prototype/{size,add,has,delete,clear,
+  entries,keys,values,forEach}` cluster now runs at **130 pass / 9 fail / 26
+  skip**, with remaining failures isolated to true SetIterator and live
+  iteration semantics.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
