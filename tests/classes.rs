@@ -146,6 +146,10 @@ fn class_element_early_errors_follow_static_semantics() {
         "class C { static #x; #x() {} }",
         "class C { get #x() {} get #x() {} }",
         "class C { set #x(v) {} set #x(v) {} }",
+        "class C { m() { this.#missing; } }",
+        "class C { m() { (() => this)().#missing; } }",
+        "class Parent { #x; } class C extends Parent { m() { this.#x; } }",
+        "class C extends B { #x() {} m() { super.#x(); } }",
     ] {
         let err = run_err(src);
         assert!(
@@ -163,6 +167,8 @@ fn class_element_early_errors_follow_static_semantics() {
 
     run("class C { get #x() { return 1; } set #x(v) {} value() { return this.#x; } } new C().value();");
     run("class C { m() { class B { #x() {} } } #x() {} }");
+    run("class C { #x = 2; m() { function f(o) { return o.#x; } return f(this); } } new C().m();");
+    run("class C { #x = 3; m() { class Inner { read(o) { return o.#x; } } return new Inner().read(this); } } new C().m();");
 }
 
 #[test]

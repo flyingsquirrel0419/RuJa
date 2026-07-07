@@ -576,6 +576,7 @@ impl Parser {
             self.is_strict_context,
             StatementListScope::Script,
         )?;
+        Self::validate_private_names_statement_list(&body, &[])?;
         Ok(Program {
             body,
             is_strict: self.is_strict_context,
@@ -4346,6 +4347,341 @@ impl Parser {
                 name
             ))),
         }
+    }
+
+    fn validate_private_names_statement_list(
+        body: &[Stmt],
+        names: &[Arc<str>],
+    ) -> error::Result<()> {
+        for stmt in body {
+            Self::validate_private_names_stmt(stmt, names)?;
+        }
+        Ok(())
+    }
+
+    fn validate_private_names_stmt(stmt: &Stmt, names: &[Arc<str>]) -> error::Result<()> {
+        match &stmt.node {
+            StmtNode::VarDecl { decls, .. } => {
+                for (_, init) in decls {
+                    if let Some(init) = init {
+                        Self::validate_private_names_expr(init, names)?;
+                    }
+                }
+                Ok(())
+            }
+            StmtNode::ExprStmt(expr) | StmtNode::Throw(expr) => {
+                Self::validate_private_names_expr(expr, names)
+            }
+            StmtNode::Block(body) => Self::validate_private_names_statement_list(body, names),
+            StmtNode::If { cond, then, else_ } => {
+                Self::validate_private_names_expr(cond, names)?;
+                Self::validate_private_names_stmt(then, names)?;
+                if let Some(else_) = else_ {
+                    Self::validate_private_names_stmt(else_, names)?;
+                }
+                Ok(())
+            }
+            StmtNode::While { cond, body } | StmtNode::DoWhile { body, cond } => {
+                Self::validate_private_names_expr(cond, names)?;
+                Self::validate_private_names_stmt(body, names)
+            }
+            StmtNode::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
+                    Self::validate_private_names_stmt(init, names)?;
+                }
+                if let Some(cond) = cond {
+                    Self::validate_private_names_expr(cond, names)?;
+                }
+                if let Some(update) = update {
+                    Self::validate_private_names_expr(update, names)?;
+                }
+                Self::validate_private_names_stmt(body, names)
+            }
+            StmtNode::ForIn { left, right, body } => {
+                Self::validate_private_names_stmt(left, names)?;
+                Self::validate_private_names_expr(right, names)?;
+                Self::validate_private_names_stmt(body, names)
+            }
+            StmtNode::ForOf {
+                left, right, body, ..
+            } => {
+                Self::validate_private_names_stmt(left, names)?;
+                Self::validate_private_names_expr(right, names)?;
+                Self::validate_private_names_stmt(body, names)
+            }
+            StmtNode::With { object, body } => {
+                Self::validate_private_names_expr(object, names)?;
+                Self::validate_private_names_stmt(body, names)
+            }
+            StmtNode::Return(expr) => {
+                if let Some(expr) = expr {
+                    Self::validate_private_names_expr(expr, names)?;
+                }
+                Ok(())
+            }
+            StmtNode::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => {
+                Self::validate_private_names_stmt(try_body, names)?;
+                if let Some(catch_param) = catch_param {
+                    Self::validate_private_names_pattern(catch_param, names)?;
+                }
+                if let Some(catch_body) = catch_body {
+                    Self::validate_private_names_stmt(catch_body, names)?;
+                }
+                if let Some(finally_body) = finally_body {
+                    Self::validate_private_names_stmt(finally_body, names)?;
+                }
+                Ok(())
+            }
+            StmtNode::FunctionDecl(func) => Self::validate_private_names_function(func, names),
+            StmtNode::Labeled(_, body) => Self::validate_private_names_stmt(body, names),
+            StmtNode::Switch { disc, cases } => {
+                Self::validate_private_names_expr(disc, names)?;
+                for case in cases {
+                    if let Some(test) = &case.test {
+                        Self::validate_private_names_expr(test, names)?;
+                    }
+                    Self::validate_private_names_statement_list(&case.body, names)?;
+                }
+                Ok(())
+            }
+            StmtNode::Destructure { pattern, init, .. } => {
+                Self::validate_private_names_pattern(pattern, names)?;
+                if let Some(init) = init {
+                    Self::validate_private_names_expr(init, names)?;
+                }
+                Ok(())
+            }
+            StmtNode::Break(_) | StmtNode::Continue(_) | StmtNode::Empty => Ok(()),
+        }
+    }
+
+    fn validate_private_names_expr(expr: &Expr, names: &[Arc<str>]) -> error::Result<()> {
+        match expr {
+            Expr::TaggedTemplate { tag, exprs, .. } => {
+                Self::validate_private_names_expr(tag, names)?;
+                for expr in exprs {
+                    Self::validate_private_names_expr(expr, names)?;
+                }
+                Ok(())
+            }
+            Expr::TemplateInterp { exprs, .. } | Expr::Array(exprs) | Expr::Sequence(exprs) => {
+                for expr in exprs {
+                    Self::validate_private_names_expr(expr, names)?;
+                }
+                Ok(())
+            }
+            Expr::Object(props) => {
+                for prop in props {
+                    Self::validate_private_names_property_key(&prop.key, names)?;
+                    Self::validate_private_names_expr(&prop.value, names)?;
+                }
+                Ok(())
+            }
+            Expr::Function(func) | Expr::Arrow(func) => {
+                Self::validate_private_names_function(func, names)
+            }
+            Expr::Class(cls) => Self::validate_private_names_class(cls, names),
+            Expr::PrivateGet { object, name } => {
+                Self::validate_private_name_use(name, names)?;
+                if matches!(object.as_ref(), Expr::Super) {
+                    return Err(error::Error::syntax(
+                        "Private name cannot be accessed on super".to_string(),
+                    ));
+                }
+                Self::validate_private_names_expr(object, names)
+            }
+            Expr::PrivateSet {
+                object,
+                name,
+                value,
+            } => {
+                Self::validate_private_name_use(name, names)?;
+                if matches!(object.as_ref(), Expr::Super) {
+                    return Err(error::Error::syntax(
+                        "Private name cannot be accessed on super".to_string(),
+                    ));
+                }
+                Self::validate_private_names_expr(object, names)?;
+                Self::validate_private_names_expr(value, names)
+            }
+            Expr::PrivateDefineAccessor {
+                object,
+                name,
+                get,
+                set,
+            } => {
+                Self::validate_private_name_use(name, names)?;
+                Self::validate_private_names_expr(object, names)?;
+                if let Some(get) = get {
+                    Self::validate_private_names_expr(get, names)?;
+                }
+                if let Some(set) = set {
+                    Self::validate_private_names_expr(set, names)?;
+                }
+                Ok(())
+            }
+            Expr::PrivateFieldDecl {
+                name,
+                init: Some(init),
+            } => {
+                Self::validate_private_name_use(name, names)?;
+                Self::validate_private_names_expr(init, names)
+            }
+            Expr::PrivateFieldDecl { name, init: None } => {
+                Self::validate_private_name_use(name, names)
+            }
+            Expr::Unary(_, inner)
+            | Expr::Update(_, _, inner)
+            | Expr::Spread(inner)
+            | Expr::Await(inner)
+            | Expr::YieldDelegate(inner) => Self::validate_private_names_expr(inner, names),
+            Expr::Yield(Some(inner)) => Self::validate_private_names_expr(inner, names),
+            Expr::Binary(_, left, right)
+            | Expr::Logical(_, left, right)
+            | Expr::Assign(_, left, right) => {
+                Self::validate_private_names_expr(left, names)?;
+                Self::validate_private_names_expr(right, names)
+            }
+            Expr::Conditional(cond, then_expr, else_expr) => {
+                Self::validate_private_names_expr(cond, names)?;
+                Self::validate_private_names_expr(then_expr, names)?;
+                Self::validate_private_names_expr(else_expr, names)
+            }
+            Expr::Call { callee, args, .. } | Expr::New { callee, args } => {
+                Self::validate_private_names_expr(callee, names)?;
+                for arg in args {
+                    Self::validate_private_names_expr(arg, names)?;
+                }
+                Ok(())
+            }
+            Expr::Member {
+                object, property, ..
+            } => {
+                Self::validate_private_names_expr(object, names)?;
+                Self::validate_private_names_expr(property, names)
+            }
+            Expr::Number(_)
+            | Expr::BigInt(_)
+            | Expr::String(_)
+            | Expr::TemplateStr(_)
+            | Expr::Bool(_)
+            | Expr::Null
+            | Expr::Undefined
+            | Expr::Ident(_)
+            | Expr::This
+            | Expr::Super
+            | Expr::ArrayHole
+            | Expr::Regex(_, _)
+            | Expr::NewTarget
+            | Expr::Yield(None) => Ok(()),
+        }
+    }
+
+    fn validate_private_names_function(
+        func: &FunctionExpr,
+        names: &[Arc<str>],
+    ) -> error::Result<()> {
+        for default in func.param_defaults.iter().flatten() {
+            Self::validate_private_names_expr(default, names)?;
+        }
+        for pattern in &func.param_decls {
+            Self::validate_private_names_pattern(pattern, names)?;
+        }
+        Self::validate_private_names_statement_list(&func.body, names)
+    }
+
+    fn validate_private_names_class(cls: &ClassExpr, names: &[Arc<str>]) -> error::Result<()> {
+        if let Some(superclass) = &cls.superclass {
+            Self::validate_private_names_expr(superclass, names)?;
+        }
+
+        let mut class_names = names.to_vec();
+        for field in &cls.private_fields {
+            class_names.push(field.name.clone());
+        }
+        for method in &cls.methods {
+            if method.is_private {
+                class_names.push(method.name.clone());
+            }
+        }
+
+        for method in &cls.methods {
+            if let Some(computed_name) = &method.computed_name {
+                Self::validate_private_names_expr(computed_name, &class_names)?;
+            }
+            for default in method.param_defaults.iter().flatten() {
+                Self::validate_private_names_expr(default, &class_names)?;
+            }
+            Self::validate_private_names_statement_list(&method.body, &class_names)?;
+        }
+        for block in &cls.static_blocks {
+            Self::validate_private_names_statement_list(block, &class_names)?;
+        }
+        for field in &cls.private_fields {
+            if let Some(init) = &field.init {
+                Self::validate_private_names_expr(init, &class_names)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_private_names_pattern(pattern: &Pattern, names: &[Arc<str>]) -> error::Result<()> {
+        match pattern {
+            Pattern::Ident(_) | Pattern::Hole => Ok(()),
+            Pattern::Array(elements) => {
+                for element in elements {
+                    Self::validate_private_names_pattern(element, names)?;
+                }
+                Ok(())
+            }
+            Pattern::Object(props, rest) => {
+                for (key, pattern) in props {
+                    Self::validate_private_names_property_key(key, names)?;
+                    Self::validate_private_names_pattern(pattern, names)?;
+                }
+                if let Some(rest) = rest {
+                    Self::validate_private_names_pattern(rest, names)?;
+                }
+                Ok(())
+            }
+            Pattern::Assign(pattern, default) => {
+                Self::validate_private_names_pattern(pattern, names)?;
+                Self::validate_private_names_expr(default, names)
+            }
+            Pattern::Rest(pattern) => Self::validate_private_names_pattern(pattern, names),
+        }
+    }
+
+    fn validate_private_names_property_key(
+        key: &PropertyKey,
+        names: &[Arc<str>],
+    ) -> error::Result<()> {
+        match key {
+            PropertyKey::Computed(expr) | PropertyKey::Spread(expr) => {
+                Self::validate_private_names_expr(expr, names)
+            }
+            PropertyKey::Ident(_) | PropertyKey::String(_) | PropertyKey::Number(_) => Ok(()),
+        }
+    }
+
+    fn validate_private_name_use(name: &Arc<str>, names: &[Arc<str>]) -> error::Result<()> {
+        if names.iter().any(|candidate| candidate == name) {
+            return Ok(());
+        }
+        Err(error::Error::syntax(format!(
+            "Private name #{} is not declared in this scope",
+            name
+        )))
     }
 
     fn parse_class_body(&mut self, is_declaration: bool) -> error::Result<ClassExpr> {

@@ -473,6 +473,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   diagnostic improves from **136 pass / 60 fail / 248 skip** to **162 pass / 34
   fail / 248 skip**. The default supported-subset count is unchanged because
   those private-feature tests remain skipped.
+- **Private-name reference early errors** —
+  The parser now applies `AllPrivateNamesValid` after building the AST, so
+  class methods, nested functions, nested classes, static blocks, computed
+  names, and initializers reject undeclared private-name references while
+  preserving lexical access to outer class private names. `super.#x` is
+  rejected as a syntax error. With private class feature skips temporarily
+  lifted, the broader private class early-error diagnostic improves from
+  **162 pass / 34 fail / 248 skip** to **196 pass / 0 fail / 248 skip**. The
+  default supported-subset count is unchanged because those private-feature
+  tests remain skipped.
 - **Class static block feature lift** —
   Static initialization blocks now have their own parse context instead of
   being parsed as function bodies: `return` is rejected, `super.prop` is

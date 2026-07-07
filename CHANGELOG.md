@@ -417,6 +417,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   **136 pass / 60 fail / 248 skip** to **162 pass / 34 fail / 248 skip**. The
   default supported-subset count is unchanged because those private-feature
   tests remain skipped.
+- **Private-name reference early errors**: the parser now applies
+  `AllPrivateNamesValid` after building the AST, so class methods, nested
+  functions, nested classes, static blocks, computed names, and initializers
+  reject undeclared private-name references while preserving lexical access to
+  outer class private names. `super.#x` is rejected as a syntax error. With
+  private class feature skips temporarily lifted, the broader private class
+  early-error diagnostic improves from **162 pass / 34 fail / 248 skip** to
+  **196 pass / 0 fail / 248 skip**. The default supported-subset count is
+  unchanged because those private-feature tests remain skipped.
 - **Class static block feature lift**: class static blocks now parse as
   dedicated static initialization blocks instead of ordinary function bodies,
   so `return` is rejected, `super.prop` is accepted, and static-block early
