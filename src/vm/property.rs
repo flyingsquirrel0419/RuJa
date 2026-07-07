@@ -499,51 +499,6 @@ impl Vm {
                         }
                     }
                 }
-                // __proto__ assignment sets the object's [[Prototype]].
-                if key == "__proto__" {
-                    match &value {
-                        Value::Object(_) | Value::Null => {
-                            // Reject prototype cycles: setting __proto__ to
-                            // an object whose chain already contains this
-                            // object would create a cycle, which later made
-                            // property reads overflow the native stack and
-                            // abort the process. ES throws TypeError here.
-                            let proto = if value.is_null() {
-                                None
-                            } else {
-                                Some(value.clone())
-                            };
-                            let (extensible, current_proto) = self
-                                .heap
-                                .with_obj(idx.0, |o| (o.is_extensible(), o.proto().lock().clone()));
-                            if !extensible && current_proto != proto {
-                                if self.current_strict() {
-                                    return Err(Error::type_err(
-                                        "Cannot mutate prototype of non-extensible object"
-                                            .to_string(),
-                                    ));
-                                }
-                                return Ok(());
-                            }
-                            if let Value::Object(target) = &value {
-                                if self.proto_chain_contains(target.0, idx.0) {
-                                    if self.current_strict() {
-                                        return Err(Error::type_err(
-                                            "Cyclic __proto__ value".to_string(),
-                                        ));
-                                    }
-                                    return Ok(());
-                                }
-                            }
-                            self.heap.with_obj(idx.0, |o| {
-                                *o.proto().lock() = proto;
-                            });
-                            return Ok(());
-                        }
-                        // non-object, non-null: ignore (spec: no-op in sloppy mode)
-                        _ => return Ok(()),
-                    }
-                }
                 let typed_array_index = self.heap.with_obj(idx.0, |o| {
                     if matches!(o, HeapObj::TypedArray(_)) {
                         crate::value::parse_array_index(key)
@@ -1054,6 +1009,45 @@ impl Vm {
         Ok(true)
     }
 
+    /// Ordinary `[[SetPrototypeOf]]` for non-Proxy objects. Returns the spec
+    /// boolean status instead of throwing; callers choose whether false is a
+    /// silent failure, a returned boolean, or a TypeError.
+    pub(crate) fn set_prototype_of(
+        &mut self,
+        object: &Value,
+        proto: Option<Value>,
+    ) -> error::Result<bool> {
+        let Value::Object(idx) = object else {
+            return Err(Error::type_err(
+                "Object prototype target must be an object".to_string(),
+            ));
+        };
+
+        let current_proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
+        if current_proto == proto {
+            return Ok(true);
+        }
+
+        if matches!(self.object_proto, Value::Object(object_proto) if object_proto == *idx) {
+            return Ok(false);
+        }
+
+        if !self.heap.with_obj(idx.0, |o| o.is_extensible()) {
+            return Ok(false);
+        }
+
+        if let Some(Value::Object(proto_idx)) = &proto {
+            if self.proto_chain_contains(proto_idx.0, idx.0) {
+                return Ok(false);
+            }
+        }
+
+        self.heap.with_obj(idx.0, |o| {
+            *o.proto().lock() = proto;
+        });
+        Ok(true)
+    }
+
     /// Strictness of the currently-executing frame, used by ordinary
     /// [[Set]]/[[DefineOwnProperty]] to decide whether a failed assignment
     /// throws a TypeError or is silently ignored. The top-level program has
@@ -1306,6 +1300,9 @@ impl Vm {
         for _ in 0..4096 {
             if cur == target {
                 return true;
+            }
+            if self.heap.with_obj(cur, |o| matches!(o, HeapObj::Proxy(_))) {
+                return false;
             }
             let next = self.heap.with_obj(cur, |o| o.proto().lock().clone());
             match next {

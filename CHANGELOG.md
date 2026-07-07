@@ -250,6 +250,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   walk ordinary prototype chains and return the first accessor getter/setter,
   or `undefined` for data properties and missing accessors. The focused
   legacy accessor cluster now runs at **42 pass / 0 fail / 12 skip**.
+- **Object prototype `__proto__` accessor and prototype mutation**:
+  `Object.prototype` now has a null `[[Prototype]]` and the Annex B
+  `__proto__` accessor with named getter/setter functions. Ordinary
+  `__proto__` access now flows through the inherited accessor instead of a
+  VM-wide shortcut, so null-prototype objects and own data properties shadow
+  it correctly. `Object.setPrototypeOf`, `Reflect.setPrototypeOf`, and the
+  legacy setter share the same prototype mutation status path, rejecting
+  immutable `Object.prototype`, non-extensible targets, and ordinary cycles
+  while allowing the Proxy-shadowed cycle case required by test262.
+  `Object.prototype.isPrototypeOf` now follows the specified nullish receiver
+  order. The focused `built-ins/Object/prototype` run now closes at
+  **191 pass / 0 fail / 57 skip**.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,

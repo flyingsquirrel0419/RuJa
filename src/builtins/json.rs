@@ -990,10 +990,10 @@ pub(crate) fn reflect_own_keys(
     make_value_array(vm, keys)
 }
 fn reflect_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    object_get_prototype_of(vm, args, None)
+    reflect_get_prototype_of_strict(vm, args)
 }
 fn reflect_set_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    object_set_prototype_of(vm, args, None)
+    reflect_set_prototype_of_result(vm, args).map(Value::Bool)
 }
 fn reflect_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     object_is_extensible(vm, args, None)

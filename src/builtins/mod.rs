@@ -181,6 +181,18 @@ fn accessor_get_prop(get: Value) -> PropertyDescriptor {
     }
 }
 
+fn accessor_prop(get: Value, set: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value: Value::Undefined,
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        get: Some(get),
+        set: Some(set),
+        is_accessor: true,
+    }
+}
+
 pub(crate) fn install_symbol_static_properties(
     vm: &Vm,
     props: &mut IndexMap<PropertyKey, PropertyDescriptor>,
@@ -1521,24 +1533,94 @@ fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
     Ok(Value::Null)
 }
 
-fn object_set_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+pub(crate) fn object_set_prototype_of(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     let proto = args.get(1).cloned().unwrap_or(Value::Undefined);
-    if let Value::Object(idx) = &obj {
-        let p = if proto.is_null() {
-            None
-        } else if matches!(proto, Value::Object(_)) {
-            Some(proto.clone())
-        } else {
-            return Err(Error::type_err(
-                "Object prototype may only be an Object or null",
-            ));
-        };
-        vm.heap.with_obj(idx.0, |o| {
-            *o.proto().lock() = p;
-        });
+    if obj.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let p = prototype_arg(proto)?;
+    if matches!(obj, Value::Object(_)) && !vm.set_prototype_of(&obj, p)? {
+        return Err(Error::type_err("Cannot mutate object prototype"));
     }
     Ok(obj)
+}
+
+pub(crate) fn reflect_set_prototype_of_result(vm: &mut Vm, args: &[Value]) -> error::Result<bool> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(obj, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.setPrototypeOf target must be an object",
+        ));
+    }
+    let proto = args.get(1).cloned().unwrap_or(Value::Undefined);
+    vm.set_prototype_of(&obj, prototype_arg(proto)?)
+}
+
+fn prototype_arg(proto: Value) -> error::Result<Option<Value>> {
+    if proto.is_null() {
+        Ok(None)
+    } else if matches!(proto, Value::Object(_)) {
+        Ok(Some(proto))
+    } else {
+        Err(Error::type_err(
+            "Object prototype may only be an Object or null",
+        ))
+    }
+}
+
+fn object_proto_get(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let object = vm.to_object(&this)?;
+    if let Value::Object(idx) = object {
+        return Ok(vm
+            .heap
+            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
+    }
+    Ok(Value::Undefined)
+}
+
+fn object_proto_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let proto = args.first().cloned().unwrap_or(Value::Undefined);
+    let p = match proto {
+        Value::Object(_) => Some(proto),
+        Value::Null => None,
+        _ => return Ok(Value::Undefined),
+    };
+    if !matches!(this, Value::Object(_)) {
+        return Ok(Value::Undefined);
+    }
+    if !vm.set_prototype_of(&this, p)? {
+        return Err(Error::type_err("Cannot mutate object prototype"));
+    }
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn reflect_get_prototype_of_strict(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(obj, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.getPrototypeOf target must be an object",
+        ));
+    }
+    object_get_prototype_of(vm, args, None)
 }
 
 fn object_prevent_extensions(
@@ -2369,6 +2451,15 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
     }
     define_global(vm, "Object", Value::Object(object_ctor));
     vm.object_proto = Value::Object(object_proto);
+    let proto_get = vm.new_native_function("get __proto__", object_proto_get, 0)?;
+    let proto_set = vm.new_native_function("set __proto__", object_proto_set, 1)?;
+    vm.heap.with_obj(object_proto.0, |obj| {
+        *obj.proto().lock() = None;
+        obj.props().lock().insert(
+            PropertyKey::from("__proto__"),
+            accessor_prop(Value::Object(proto_get), Value::Object(proto_set)),
+        );
+    });
 
     let (error_ctor, error_proto) = make_error_constructor(vm, "Error")?;
     vm.error_proto = Value::Object(error_proto);
@@ -3188,24 +3279,37 @@ fn object_is_prototype_of(
 ) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
     let arg = args.first().cloned().unwrap_or(Value::Undefined);
-    // Walk the prototype chain of `arg` looking for `this`.
-    let mut cur = arg;
-    let this_idx = match &this {
-        Value::Object(idx) => Some(*idx),
-        _ => return Ok(Value::Bool(false)),
+    if !matches!(arg, Value::Object(_)) {
+        return Ok(Value::Bool(false));
+    }
+    if this.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let this_obj = vm.to_object(&this)?;
+    let Value::Object(this_idx) = this_obj else {
+        return Ok(Value::Bool(false));
     };
+    let Value::Object(arg_idx) = arg else {
+        return Ok(Value::Bool(false));
+    };
+    let mut cur = vm
+        .heap
+        .with_obj(arg_idx.0, |o| o.proto().lock().clone())
+        .unwrap_or(Value::Null);
     let mut depth = 0;
     while let Value::Object(idx) = &cur {
         if depth > 1024 {
             break;
         }
         depth += 1;
-        if *idx == this_idx.unwrap_or(GcIdx(0)) {
+        if *idx == this_idx {
             return Ok(Value::Bool(true));
         }
         let proto = vm.heap.with_obj(idx.0, |o| o.proto().lock().clone());
-        cur = proto.unwrap_or(Value::Undefined);
-        if cur.is_undefined() {
+        cur = proto.unwrap_or(Value::Null);
+        if cur.is_null() {
             break;
         }
     }

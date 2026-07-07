@@ -390,6 +390,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   returns accessor functions or `undefined` for data/missing properties. The
   focused legacy accessor cluster now runs at
   **42 pass / 0 fail / 12 skip**.
+- **Object prototype `__proto__` accessor and prototype mutation** —
+  `Object.prototype` now has a null `[[Prototype]]` and exposes the Annex B
+  `__proto__` accessor with `get __proto__` / `set __proto__` function
+  descriptors. Ordinary property lookup and assignment now handle
+  `__proto__`, so null-prototype objects and own data properties shadow the
+  accessor correctly. `Object.setPrototypeOf`, `Reflect.setPrototypeOf`, and
+  the legacy setter share the same prototype-mutation status path for
+  immutable `Object.prototype`, non-extensible targets, ordinary cycles, and
+  the Proxy-shadowed cycle exception. `Object.prototype.isPrototypeOf` also
+  follows the specified nullish receiver order. The focused
+  `built-ins/Object/prototype` run now closes at
+  **191 pass / 0 fail / 57 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`

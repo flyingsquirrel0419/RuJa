@@ -1349,7 +1349,7 @@ fn object_prototype_to_string_uses_receiver_brand() {
             ].join(",");
         "#),
         Value::String(Arc::from(
-            "[object Array],[object Null],[object Undefined],[object String],[object Number],[object Boolean],[object Function],[object Date],[object Error],[object Error],[object Arguments],toString|toLocaleString|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|valueOf|__defineGetter__|__defineSetter__|__lookupGetter__|__lookupSetter__|constructor,X: Y"
+            "[object Array],[object Null],[object Undefined],[object String],[object Number],[object Boolean],[object Function],[object Date],[object Error],[object Error],[object Arguments],toString|toLocaleString|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|valueOf|__defineGetter__|__defineSetter__|__lookupGetter__|__lookupSetter__|constructor|__proto__,X: Y"
         ))
     );
 }
@@ -1427,6 +1427,68 @@ fn object_prototype_legacy_accessor_methods() {
         r#"({}).__defineGetter__({ toString: function(){ throw new Error("key"); } }, function(){});"#
     )
     .contains("key"));
+}
+
+#[test]
+fn object_prototype_proto_accessor_and_mutation_status() {
+    assert_eq!(
+        run(r#"
+            var desc = Object.getOwnPropertyDescriptor(Object.prototype, "__proto__");
+            var o = {};
+            var p = { x: 7 };
+            desc.set.call(o, p);
+            var nullProto = Object.create(null);
+            nullProto.__proto__ = "own";
+            var shadow = {};
+            Object.defineProperty(shadow, "__proto__", {
+              value: "before",
+              writable: true,
+              configurable: true
+            });
+            shadow.__proto__ = p;
+            var sameNull = Object.setPrototypeOf(Object.prototype, null) === Object.prototype;
+            var reflectSameNull = Reflect.setPrototypeOf(Object.prototype, null);
+            var reflectImmutable = Reflect.setPrototypeOf(Object.prototype, {});
+            var root = {};
+            var leaf = Object.create(root);
+            var reflectCycle = Reflect.setPrototypeOf(root, leaf);
+            [
+              Object.getPrototypeOf(Object.prototype) === null,
+              typeof desc.get,
+              desc.get.name,
+              desc.get.length,
+              typeof desc.set,
+              desc.set.name,
+              desc.set.length,
+              desc.enumerable,
+              desc.configurable,
+              desc.get.call(o) === p,
+              o.x,
+              desc.set.call(1, p),
+              desc.set.call(o, 1),
+              nullProto.__proto__,
+              Object.prototype.hasOwnProperty.call(nullProto, "__proto__"),
+              shadow.__proto__ === p,
+              Object.getPrototypeOf(shadow) === Object.prototype,
+              sameNull,
+              reflectSameNull,
+              reflectImmutable,
+              reflectCycle
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "true,function,get __proto__,0,function,set __proto__,1,false,true,true,7,,,own,true,true,true,true,true,false,false"
+        ))
+    );
+    assert!(run_err("Object.setPrototypeOf(Object.prototype, {});").contains("TypeError"));
+    assert!(run_err(
+        "var root = {}; var leaf = Object.create(root); Object.getOwnPropertyDescriptor(Object.prototype, '__proto__').set.call(root, leaf);"
+    )
+    .contains("TypeError"));
+    assert_eq!(
+        run("var o = Object.preventExtensions({}); try { Object.getOwnPropertyDescriptor(Object.prototype, '__proto__').set.call(o, {}); } catch (e) { e instanceof TypeError; }"),
+        Value::Bool(true)
+    );
 }
 
 #[test]

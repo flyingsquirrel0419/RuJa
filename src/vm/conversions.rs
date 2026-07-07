@@ -1067,25 +1067,6 @@ impl Vm {
                     }
                     return Ok(Value::Undefined);
                 }
-                if key == "__proto__" {
-                    if let Some(value) = self.heap.with_obj(idx.0, |o| {
-                        o.props().lock().get(&pkey).and_then(|d| {
-                            if d.is_accessor {
-                                None
-                            } else {
-                                Some(d.value.clone())
-                            }
-                        })
-                    }) {
-                        return Ok(value);
-                    }
-                }
-                // __proto__ getter returns the object's [[Prototype]].
-                if key == "__proto__" {
-                    return Ok(self
-                        .heap
-                        .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
-                }
                 if let Some(i) = crate::value::parse_array_index(key) {
                     if let Some((env, name)) = self.arguments_mapped_binding_for_index(idx.0, i) {
                         if let Some(v) = crate::environment::get(&self.heap, env, &name) {

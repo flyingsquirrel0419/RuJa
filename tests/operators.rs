@@ -890,17 +890,20 @@ fn proto_cycle_strict_throws() {
     // (was a stack-overflow crash before the fix).
     let res = common::run_err("\"use strict\"; var a={}; var b=Object.create(a); a.__proto__=b;");
     assert!(
-        res.contains("Cyclic __proto__"),
+        res.contains("Cannot mutate object prototype"),
         "expected TypeError, got: {}",
         res
     );
 }
 
 #[test]
-fn proto_cycle_sloppy_is_noop_and_safe() {
-    // In sloppy mode it is silently ignored; subsequent reads must not crash.
-    let v = run("var a={}; var b=Object.create(a); a.__proto__=b; a.x");
-    assert_eq!(v, Value::Undefined);
+fn proto_cycle_sloppy_throws_and_is_safe() {
+    let res = common::run_err("var a={}; var b=Object.create(a); a.__proto__=b;");
+    assert!(
+        res.contains("Cannot mutate object prototype"),
+        "expected TypeError, got: {}",
+        res
+    );
 }
 
 #[test]
@@ -912,13 +915,13 @@ fn normal_proto_set_still_works() {
 #[test]
 fn non_extensible_object_proto_set_is_rejected() {
     assert_eq!(
-        run("var a = Object.preventExtensions({}); var p = {}; a.__proto__ = p; Object.getPrototypeOf(a) === Object.prototype;"),
+        run("var a = Object.preventExtensions({}); var p = {}; try { a.__proto__ = p; } catch (e) {} Object.getPrototypeOf(a) === Object.prototype;"),
         Value::Bool(true)
     );
     assert!(common::run_err(
         "\"use strict\"; var a = Object.preventExtensions({}); a.__proto__ = {};"
     )
-    .contains("non-extensible"));
+    .contains("Cannot mutate object prototype"));
 }
 
 // --- Object.defineProperty descriptor validation ---
