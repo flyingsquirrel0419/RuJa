@@ -203,6 +203,69 @@ fn symbol_description_and_key_for_follow_registry_semantics() {
 }
 
 #[test]
+fn symbol_intrinsic_surface_descriptors_and_value_of() {
+    assert_eq!(
+        run(r#"
+            [
+              Object.getOwnPropertyDescriptor(Symbol, "length").value,
+              Object.getOwnPropertyDescriptor(Symbol, "length").writable,
+              Object.getOwnPropertyDescriptor(Symbol, "match").writable,
+              Object.getOwnPropertyDescriptor(Symbol, "match").configurable,
+              Object.getOwnPropertyDescriptor(Symbol, "isConcatSpreadable").writable,
+              Object.getOwnPropertyDescriptor(Symbol, "replace").configurable,
+              Object.getOwnPropertyDescriptor(Symbol, "search").configurable,
+              Object.getOwnPropertyDescriptor(Symbol, "split").configurable,
+              typeof Symbol.matchAll,
+              typeof Symbol.isConcatSpreadable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "0|false|false|false|false|false|false|false|symbol|symbol"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var sym = Symbol("surface");
+            [
+              Object.getPrototypeOf(sym) === Symbol.prototype,
+              Object.getPrototypeOf(Object(sym)).constructor === Symbol,
+              Symbol.prototype.valueOf.call(sym) === sym,
+              Symbol.prototype.valueOf.call(Object(sym)) === sym,
+              Object.prototype.propertyIsEnumerable.call(Symbol.prototype, "valueOf")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true|false"))
+    );
+    assert!(
+        run_err("Symbol.prototype.valueOf.call({});").contains("TypeError"),
+        "Symbol.prototype.valueOf must reject non-symbol objects"
+    );
+    assert!(
+        run_err("Object.getPrototypeOf(null);").contains("TypeError"),
+        "Object.getPrototypeOf(null) must throw"
+    );
+    assert_eq!(
+        run(r#"
+            function getterName(C) {
+              return Object.getOwnPropertyDescriptor(C, Symbol.species).get.name;
+            }
+            class MyRegExp extends RegExp {}
+            [
+              getterName(Array),
+              getterName(Map),
+              getterName(Promise),
+              getterName(RegExp),
+              getterName(Set),
+              MyRegExp[Symbol.species] === MyRegExp
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "get [Symbol.species]|get [Symbol.species]|get [Symbol.species]|get [Symbol.species]|get [Symbol.species]|true"
+        ))
+    );
+}
+
+#[test]
 fn array_subclass_instances_use_new_target_prototype() {
     assert_eq!(
         run(r#"

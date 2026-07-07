@@ -125,6 +125,30 @@ fn accessor_get_prop(get: Value) -> PropertyDescriptor {
     }
 }
 
+pub(crate) fn install_symbol_static_properties(
+    vm: &Vm,
+    props: &mut IndexMap<PropertyKey, PropertyDescriptor>,
+) {
+    let symbols = &vm.well_known_symbols;
+    for (name, id) in [
+        ("asyncIterator", symbols.async_iterator),
+        ("hasInstance", symbols.has_instance),
+        ("isConcatSpreadable", symbols.is_concat_spreadable),
+        ("iterator", symbols.iterator),
+        ("match", symbols.r#match),
+        ("matchAll", symbols.match_all),
+        ("replace", symbols.replace),
+        ("search", symbols.search),
+        ("species", symbols.species),
+        ("split", symbols.split),
+        ("toPrimitive", symbols.to_primitive),
+        ("toStringTag", symbols.to_string_tag),
+        ("unscopables", symbols.unscopables),
+    ] {
+        props.insert(PropertyKey::from(name), const_prop(Value::Symbol(id)));
+    }
+}
+
 pub(crate) fn native_constructor_prototype(vm: &mut Vm, fallback: Value) -> error::Result<Value> {
     if let Some(new_target) = vm.current_native_new_target.clone() {
         let proto = vm.get_property_by_key(&new_target, &PropertyKey::from("prototype"))?;
@@ -426,7 +450,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
         define_realm_global(vm, realm_env, &global, "BigInt", bigint);
     }
-    let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 1, realm_env)?;
+    let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
     let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
     let symbol_key_for_idx =
         vm.new_native_function_in_env("keyFor", symbol_key_for, 1, realm_env)?;
@@ -440,38 +464,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             PropertyKey::from("keyFor"),
             data_prop(Value::Object(symbol_key_for_idx)),
         );
-        props.insert(
-            PropertyKey::from("iterator"),
-            data_prop(Value::Symbol(vm.well_known_symbols.iterator)),
-        );
-        props.insert(
-            PropertyKey::from("asyncIterator"),
-            data_prop(Value::Symbol(vm.well_known_symbols.async_iterator)),
-        );
-        props.insert(
-            PropertyKey::from("toPrimitive"),
-            data_prop(Value::Symbol(vm.well_known_symbols.to_primitive)),
-        );
-        props.insert(
-            PropertyKey::from("hasInstance"),
-            data_prop(Value::Symbol(vm.well_known_symbols.has_instance)),
-        );
-        props.insert(
-            PropertyKey::from("toStringTag"),
-            data_prop(Value::Symbol(vm.well_known_symbols.to_string_tag)),
-        );
-        props.insert(
-            PropertyKey::from("match"),
-            data_prop(Value::Symbol(vm.well_known_symbols.r#match)),
-        );
-        props.insert(
-            PropertyKey::from("unscopables"),
-            data_prop(Value::Symbol(vm.well_known_symbols.unscopables)),
-        );
-        props.insert(
-            PropertyKey::from("species"),
-            data_prop(Value::Symbol(vm.well_known_symbols.species)),
-        );
+        install_symbol_static_properties(vm, &mut props);
         props.insert(
             PropertyKey::from("prototype"),
             const_prop(vm.symbol_proto.clone()),
@@ -1339,7 +1332,13 @@ fn object_get_own_property_symbols(
 
 fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Value::Object(idx) = &obj {
+    if obj.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let object = vm.to_object(&obj)?;
+    if let Value::Object(idx) = &object {
         return Ok(vm
             .heap
             .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
@@ -2416,6 +2415,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                 .insert(PropertyKey::from(n), data_prop(Value::Object(m)));
         });
     }
+    let array_species_getter =
+        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
+    vm.heap.with_obj(array_ctor.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(array_species_getter)),
+        );
+    });
     // String
     let (str_ctor, str_proto) = make_builtin_constructor_with(
         vm,
@@ -2759,11 +2766,17 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         }
     });
     // Store regex_proto on the constructor so regexp_constructor can use it.
+    let regexp_species_getter =
+        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
     vm.heap.with_obj(regex_ctor.0, |o| {
         if let HeapObj::Function(f) = o {
             f.props.lock().insert(
                 PropertyKey::from("__proto__"),
                 data_prop(Value::Object(regex_proto)),
+            );
+            f.props.lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.species),
+                accessor_get_prop(Value::Object(regexp_species_getter)),
             );
         }
     });

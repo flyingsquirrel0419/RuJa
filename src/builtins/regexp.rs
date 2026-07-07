@@ -504,6 +504,14 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     )?;
     vm.map_proto = Value::Object(map_proto);
     define_global(vm, "Map", Value::Object(map_ctor));
+    let map_species_getter =
+        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
+    vm.heap.with_obj(map_ctor.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(map_species_getter)),
+        );
+    });
     // Map.prototype[Symbol.iterator] === Map.prototype.entries
     let map_entries_fn = vm.new_native_function("entries", map_entries, 0)?;
     if let Value::Object(mp) = vm.map_proto.clone() {
@@ -533,6 +541,14 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     )?;
     vm.set_proto = Value::Object(set_proto);
     define_global(vm, "Set", Value::Object(set_ctor));
+    let set_species_getter =
+        vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
+    vm.heap.with_obj(set_ctor.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(set_species_getter)),
+        );
+    });
     // Set.prototype[Symbol.iterator] === Set.prototype.values
     let set_values_fn = vm.new_native_function("values", set_values, 0)?;
     if let Value::Object(sp) = vm.set_proto.clone() {
@@ -574,64 +590,39 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     let _ = weakset_proto;
 
     // Symbol
-    let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 1)?;
+    let sym_idx = vm.new_native_function("Symbol", symbol_constructor, 0)?;
     define_global(vm, "Symbol", Value::Object(sym_idx));
     let sym_for_idx = vm.new_native_function("for", symbol_for, 1)?;
     let sym_key_for_idx = vm.new_native_function("keyFor", symbol_key_for, 1)?;
     if let Value::Object(idx) = Value::Object(sym_idx) {
         vm.heap.with_obj(idx.0, |obj| {
-            obj.props().lock().insert(
+            let mut props = obj.props().lock();
+            props.insert(
                 PropertyKey::from("for"),
                 data_prop(Value::Object(sym_for_idx)),
             );
-            obj.props().lock().insert(
+            props.insert(
                 PropertyKey::from("keyFor"),
                 data_prop(Value::Object(sym_key_for_idx)),
             );
-            obj.props().lock().insert(
-                PropertyKey::from("iterator"),
-                data_prop(Value::Symbol(vm.well_known_symbols.iterator)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("asyncIterator"),
-                data_prop(Value::Symbol(vm.well_known_symbols.async_iterator)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("toPrimitive"),
-                data_prop(Value::Symbol(vm.well_known_symbols.to_primitive)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("hasInstance"),
-                data_prop(Value::Symbol(vm.well_known_symbols.has_instance)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("toStringTag"),
-                data_prop(Value::Symbol(vm.well_known_symbols.to_string_tag)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("match"),
-                data_prop(Value::Symbol(vm.well_known_symbols.r#match)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("unscopables"),
-                data_prop(Value::Symbol(vm.well_known_symbols.unscopables)),
-            );
-            obj.props().lock().insert(
-                PropertyKey::from("species"),
-                data_prop(Value::Symbol(vm.well_known_symbols.species)),
-            );
+            install_symbol_static_properties(vm, &mut props);
         });
     }
     // Symbol.prototype: a plain Object with a toString method. Symbol is a
     // value type (not a constructor), so build the proto manually rather than
     // going through make_builtin_constructor.
     let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0)?;
+    let sym_valueof_idx = vm.new_native_function("valueOf", symbol_value_of, 0)?;
     let sym_description_getter =
         vm.new_native_function("get description", symbol_description_get, 0)?;
     let mut sym_proto_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     sym_proto_props.insert(
         PropertyKey::from("toString"),
         data_prop(Value::Object(sym_tostring_idx)),
+    );
+    sym_proto_props.insert(
+        PropertyKey::from("valueOf"),
+        data_prop(Value::Object(sym_valueof_idx)),
     );
     sym_proto_props.insert(
         PropertyKey::from("description"),

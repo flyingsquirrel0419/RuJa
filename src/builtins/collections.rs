@@ -665,6 +665,14 @@ pub(crate) fn symbol_description_get(
         .unwrap_or(Value::Undefined))
 }
 
+pub(crate) fn symbol_value_of(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::Symbol(this_symbol_value(vm, this)?))
+}
+
 pub(crate) fn symbol_to_string(
     vm: &mut Vm,
     _args: &[Value],

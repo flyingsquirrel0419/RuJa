@@ -24,6 +24,19 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Symbol intrinsic surface completion**: `Symbol.length` now has the spec
+  value/descriptor, `Symbol.prototype.valueOf` is exposed with Symbol wrapper
+  validation, `Object.getPrototypeOf(Symbol())` returns `Symbol.prototype`,
+  and nullish `Object.getPrototypeOf` inputs throw `TypeError`. The remaining
+  well-known Symbol constructor properties
+  (`isConcatSpreadable`, `matchAll`, `replace`, `search`, `split`, plus the
+  existing well-known properties) are now installed as non-writable,
+  non-enumerable, non-configurable data properties with stored descriptions.
+  Array, Map, Promise, RegExp, and Set now expose named
+  `get [Symbol.species]` accessors that return the receiver, so subclass
+  species lookup follows the inherited accessor path. With the `Symbol`
+  feature skip temporarily lifted, the whole `built-ins/Symbol` diagnostic now
+  runs at **67 pass / 0 fail / 31 skip**.
 - **Symbol description/keyFor registry semantics**: Symbols now retain
   optional descriptions, well-known Symbols expose spec-style descriptions,
   `Symbol.prototype.description` and `Symbol.keyFor` are implemented with
@@ -37,9 +50,7 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/Symbol/for built-ins/Symbol/keyFor
   built-ins/Symbol/prototype/description built-ins/Symbol/prototype/toString`
   with the `Symbol` feature skip temporarily lifted runs at **28 pass / 0
-  fail / 4 skip**. The broader `built-ins/Symbol` diagnostic now runs at
-  **50 pass / 17 fail / 31 skip**, so the remaining Symbol surface is still
-  intentionally outside this narrow fix.
+  fail / 4 skip**.
 - **`Reflect.ownKeys` Symbol key coverage**: `Reflect.ownKeys` now rejects
   primitive targets with `TypeError` and returns the full
   `[[OwnPropertyKeys]]` list by preserving non-enumerable string keys and

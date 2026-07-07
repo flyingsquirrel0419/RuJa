@@ -139,6 +139,15 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Symbol intrinsic surface completion** —
+  `Symbol.length`, well-known Symbol constructor property descriptors,
+  missing well-known Symbols (`isConcatSpreadable`, `matchAll`, `replace`,
+  `search`, `split`), `Symbol.prototype.valueOf`, and primitive
+  `Object.getPrototypeOf(Symbol())` now follow the spec surface. Array, Map,
+  Promise, RegExp, and Set expose named `get [Symbol.species]` accessors that
+  return the receiver, preserving subclass species lookup. With the `Symbol`
+  skip temporarily lifted, the full `built-ins/Symbol` diagnostic runs at
+  **67 pass / 0 fail / 31 skip**.
 - **Symbol description/keyFor registry semantics** —
   Symbols now retain optional descriptions, `Symbol.prototype.description`
   and `Symbol.keyFor` are exposed with spec receiver checks, and
@@ -151,9 +160,7 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   temporarily lifted, the focused
   `built-ins/Symbol/for built-ins/Symbol/keyFor
   built-ins/Symbol/prototype/description built-ins/Symbol/prototype/toString`
-  cluster runs at **28 pass / 0 fail / 4 skip**. The broader
-  `built-ins/Symbol` diagnostic remains **50 pass / 17 fail / 31 skip**, so
-  the rest of Symbol remains a future narrow-fix target.
+  cluster runs at **28 pass / 0 fail / 4 skip**.
 - **`Reflect.ownKeys` Symbol key coverage** —
   `Reflect.ownKeys` now uses RuJa's full own-property-key helper instead of
   the string-only enumerable-key path, so it returns array-index strings,

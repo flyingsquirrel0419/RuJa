@@ -94,7 +94,12 @@ pub struct WellKnownSymbols {
     pub has_instance: u32,
     pub to_string_tag: u32,
     pub async_iterator: u32,
+    pub is_concat_spreadable: u32,
     pub r#match: u32,
+    pub match_all: u32,
+    pub replace: u32,
+    pub search: u32,
+    pub split: u32,
     pub unscopables: u32,
     pub species: u32,
 }
@@ -318,7 +323,7 @@ impl Vm {
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
-            next_symbol_id: 9,
+            next_symbol_id: 14,
             symbol_registry: HashMap::new(),
             symbol_descriptions: HashMap::new(),
             well_known_symbols: WellKnownSymbols {
@@ -327,9 +332,14 @@ impl Vm {
                 has_instance: 3,
                 to_string_tag: 4,
                 async_iterator: 5,
-                r#match: 6,
-                unscopables: 7,
-                species: 8,
+                is_concat_spreadable: 6,
+                r#match: 7,
+                match_all: 8,
+                replace: 9,
+                search: 10,
+                split: 11,
+                unscopables: 12,
+                species: 13,
             },
             global_names: HashMap::new(),
             global_constants: Vec::new(),
@@ -360,9 +370,27 @@ impl Vm {
             Some(Arc::from("Symbol.asyncIterator")),
         );
         vm.symbol_descriptions.insert(
+            vm.well_known_symbols.is_concat_spreadable,
+            Some(Arc::from("Symbol.isConcatSpreadable")),
+        );
+        vm.symbol_descriptions.insert(
             vm.well_known_symbols.r#match,
             Some(Arc::from("Symbol.match")),
         );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.match_all,
+            Some(Arc::from("Symbol.matchAll")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.replace,
+            Some(Arc::from("Symbol.replace")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.search,
+            Some(Arc::from("Symbol.search")),
+        );
+        vm.symbol_descriptions
+            .insert(vm.well_known_symbols.split, Some(Arc::from("Symbol.split")));
         vm.symbol_descriptions.insert(
             vm.well_known_symbols.unscopables,
             Some(Arc::from("Symbol.unscopables")),
