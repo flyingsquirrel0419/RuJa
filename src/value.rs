@@ -285,6 +285,19 @@ impl Value {
 #[derive(Clone)]
 pub struct MapKey(pub Value);
 
+impl MapKey {
+    pub fn new(value: Value) -> Self {
+        if let Value::Number(n) = value {
+            if n == 0.0 {
+                return MapKey(Value::Number(0.0));
+            }
+            MapKey(Value::Number(n))
+        } else {
+            MapKey(value)
+        }
+    }
+}
+
 impl std::hash::Hash for MapKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match &self.0 {
@@ -296,7 +309,7 @@ impl std::hash::Hash for MapKey {
             }
             Value::Number(n) => {
                 3u8.hash(state);
-                if n.is_nan() {
+                if n.is_nan() || *n == 0.0 {
                     0u64.hash(state);
                 } else {
                     n.to_bits().hash(state);

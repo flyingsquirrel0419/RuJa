@@ -8,7 +8,7 @@ pub(crate) fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().insert(MapKey(key), val);
+                m.entries.lock().insert(MapKey::new(key), val);
             }
         });
     }
@@ -21,7 +21,7 @@ pub(crate) fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
             if let HeapObj::Map(m) = obj {
                 m.entries
                     .lock()
-                    .get(&MapKey(key))
+                    .get(&MapKey::new(key))
                     .cloned()
                     .unwrap_or(Value::Undefined)
             } else {
@@ -36,7 +36,7 @@ pub(crate) fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().contains_key(&MapKey(key))
+                m.entries.lock().contains_key(&MapKey::new(key))
             } else {
                 false
             }
@@ -49,7 +49,7 @@ pub(crate) fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Map(m) = obj {
-                m.entries.lock().shift_remove(&MapKey(key)).is_some()
+                m.entries.lock().shift_remove(&MapKey::new(key)).is_some()
             } else {
                 false
             }
@@ -437,7 +437,7 @@ pub(crate) fn map_constructor(
                 };
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Map(m) = o {
-                        m.entries.lock().insert(MapKey(k), v);
+                        m.entries.lock().insert(MapKey::new(k), v);
                     }
                 });
             }
@@ -454,7 +454,7 @@ pub(crate) fn set_add(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                s.items.lock().insert(MapKey(val));
+                s.items.lock().insert(MapKey::new(val));
             }
         });
     }
@@ -465,7 +465,7 @@ pub(crate) fn set_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                s.items.lock().contains(&MapKey(val))
+                s.items.lock().contains(&MapKey::new(val))
             } else {
                 false
             }
@@ -478,7 +478,7 @@ pub(crate) fn set_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     if let Some(Value::Object(idx)) = this {
         return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Set(s) = obj {
-                s.items.lock().shift_remove(&MapKey(val))
+                s.items.lock().shift_remove(&MapKey::new(val))
             } else {
                 false
             }
@@ -581,7 +581,7 @@ pub(crate) fn set_constructor(
                 }
                 vm.heap.with_obj(obj_idx, |o| {
                     if let HeapObj::Set(s) = o {
-                        s.items.lock().insert(MapKey(v));
+                        s.items.lock().insert(MapKey::new(v));
                     }
                 });
             }

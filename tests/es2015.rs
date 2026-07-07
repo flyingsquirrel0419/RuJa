@@ -614,6 +614,14 @@ fn map_basic() {
         Value::Number(2.0)
     );
     assert_eq!(
+        run("let m = new Map([[+0, 1]]); m.set(-0, 42); [m.get(+0), m.get(-0), m.size].join('|');"),
+        Value::String(Arc::from("42|42|1"))
+    );
+    assert_eq!(
+        run("let m = new Map([[-0, 1]]); m.set(+0, 42); [m.get(+0), m.get(-0), m.size, Object.is(m.keys()[0], -0)].join('|');"),
+        Value::String(Arc::from("42|42|1|false"))
+    );
+    assert_eq!(
         run("let d = Object.getOwnPropertyDescriptor(Map.prototype, 'size'); let m = new Map([[1, 2], [3, 4]]); [m.size, d.get.call(m), d.get.name, d.get.length, d.enumerable, d.configurable, typeof d.set].join('|');"),
         Value::String(Arc::from("2|2|get size|0|false|true|undefined"))
     );
@@ -665,6 +673,16 @@ fn set_basic() {
         run("let s = new Set(); s.add(1); s.has(1);"),
         Value::Bool(true)
     );
+    assert_eq!(
+        run("let s = new Set([-0]); s.add(-0); s.add(+0); [s.size, Object.is(s.values()[0], -0)].join('|');"),
+        Value::String(Arc::from("1|false"))
+    );
+    assert_eq!(
+        run("let s = new Set([+0]); s.add(-0); s.size;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(run("new Set([NaN, Number('x')]).size;"), Value::Number(1.0));
+    assert_eq!(run("new Set([0, 0n]).size;"), Value::Number(2.0));
 }
 
 #[test]

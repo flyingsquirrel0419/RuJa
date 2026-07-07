@@ -139,6 +139,14 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Map/Set zero-key canonicalization** —
+  Internal `MapKey` creation now canonicalizes numeric `-0` to `+0`, and its
+  hash implementation now agrees with SameValueZero equality for both zero
+  signs. Map replacement, Set de-duplication, and key iteration now share the
+  same keyed-collection semantics. The focused zero-key test262 probe
+  `built-ins/Map/prototype/set/replaces-a-value-normalizes-zero-key.js
+  built-ins/Set/prototype/add/will-not-add-duplicate-entry-normalizes-zero.js`
+  now runs at **2 pass / 0 fail**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

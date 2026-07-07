@@ -24,6 +24,12 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Map/Set zero-key canonicalization**: keyed collections now normalize
+  numeric `-0` to `+0` when creating internal `MapKey`s, and the `MapKey`
+  hash implementation now matches SameValueZero equality for both zero signs.
+  This preserves O(1) lookups while making Map replacement, Set de-duplication,
+  and key iteration agree with `CanonicalizeKeyedCollectionKey`. The focused
+  zero-key test262 probe now runs at **2 pass / 0 fail**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
