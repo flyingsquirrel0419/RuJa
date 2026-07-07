@@ -2314,6 +2314,30 @@ fn seal_and_freeze_update_integrity_for_arrays_arguments_functions_and_proxies()
         run_err("Object.freeze(new Proxy({}, { preventExtensions(){ return false; } }));")
             .contains("TypeError")
     );
+    assert_eq!(
+        run("var target={x:1}; var p=new Proxy(target,{}); Object.seal(p); var d=Object.getOwnPropertyDescriptor(target,'x'); Object.isSealed(p)+':' + d.configurable;"),
+        Value::String(Arc::from("true:false"))
+    );
+    assert_eq!(
+        run("var target={x:1}; var p=new Proxy(target,{}); Object.freeze(p); var d=Object.getOwnPropertyDescriptor(target,'x'); Object.isFrozen(p)+':' + d.writable + ':' + d.configurable;"),
+        Value::String(Arc::from("true:false:false"))
+    );
+    assert_eq!(
+        run("var target={x:1}; Object.seal(target); var p=new Proxy(target,{}); Object.isSealed(p);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var target={x:1}; Object.freeze(target); var p=new Proxy(target,{}); Object.isFrozen(p);"),
+        Value::Bool(true)
+    );
+    assert!(
+        run_err("Object.seal(new Proxy({x:1}, { ownKeys(){ throw new Error('boom'); } }));")
+            .contains("boom")
+    );
+    assert!(
+        run_err("Object.freeze(new Proxy({x:1}, { defineProperty(){ return false; } }));")
+            .contains("TypeError")
+    );
 }
 
 #[test]

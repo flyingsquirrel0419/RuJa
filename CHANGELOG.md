@@ -36,6 +36,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at **208
   pass / 10 fail / 21 skip**, with the remaining failures isolated to missing
   TypedArray constructors.
+- **Proxy SetIntegrityLevel/TestIntegrityLevel**: transparent Proxy receivers
+  for `Object.seal`/`Object.freeze` now tighten the target's own descriptors
+  through the Proxy-aware `[[DefineOwnProperty]]` path, and
+  `Object.isSealed`/`Object.isFrozen` now use Proxy `ownKeys` and
+  `getOwnPropertyDescriptor` semantics instead of treating Proxy objects as
+  ordinary empty exotics. With `Proxy`/`Reflect`/`Symbol` skips temporarily
+  lifted, the focused Object integrity proxy diagnostic runs at **6 pass / 0
+  fail**.
 - **Map/Set zero-key canonicalization**: keyed collections now normalize
   numeric `-0` to `+0` when creating internal `MapKey`s, and the `MapKey`
   hash implementation now matches SameValueZero equality for both zero signs.

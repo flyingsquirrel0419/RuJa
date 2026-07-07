@@ -150,6 +150,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at
   **208 pass / 10 fail / 21 skip**, with remaining failures isolated to missing
   TypedArray constructors.
+- **Proxy SetIntegrityLevel/TestIntegrityLevel** —
+  Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
+  integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,
+  so target descriptors are actually sealed/frozen. `Object.isSealed` and
+  `Object.isFrozen` now use Proxy `ownKeys` and `getOwnPropertyDescriptor`
+  semantics instead of treating Proxy objects as ordinary empty exotics. With
+  `Proxy`/`Reflect`/`Symbol` skips temporarily lifted, the focused Object
+  integrity proxy diagnostic runs at **6 pass / 0 fail**.
 - **Map/Set zero-key canonicalization** —
   Internal `MapKey` creation now canonicalizes numeric `-0` to `+0`, and its
   hash implementation now agrees with SameValueZero equality for both zero
