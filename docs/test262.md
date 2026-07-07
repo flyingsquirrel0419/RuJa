@@ -185,6 +185,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused `language/literals/string` run now closes at **71 pass / 0 fail / 2
   skip**, and broader `language/literals` improves to **434 pass / 40 fail /
   60 skip**.
+- **RegExp quantifier early errors** —
+  RegExp literal validation now rejects quantifiers that appear before any
+  atom, including `/?/`, `/{2}/`, `/{2,}/`, and `/{2,3}/`, while preserving
+  escaped quantifier characters, character classes, and ordinary atom
+  quantifiers such as `/a?/` and `/a{2}/`. The `RegExp` constructor uses the
+  same validation, so `new RegExp('?')` and braced-quantifier-only patterns
+  also throw `SyntaxError`. The focused `language/literals/regexp` diagnostic
+  now runs at **144 pass / 36 fail / 58 skip**, and broader
+  `language/literals` improves to **438 pass / 36 fail / 60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

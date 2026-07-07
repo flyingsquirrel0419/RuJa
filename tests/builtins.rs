@@ -3102,6 +3102,44 @@ fn regexp_modifiers_empty_remove_list_compiles() {
 }
 
 #[test]
+fn regexp_quantifier_without_atom_reports_early_error() {
+    for source in ["/?/;", "/{2}/;", "/{2,}/;", "/{2,3}/;"] {
+        assert!(
+            run_err(source).contains("regular expression quantifier"),
+            "expected early error for {source}"
+        );
+    }
+    for source in [
+        "eval('{}/{2}/;');",
+        "eval('{}/{2,}/;');",
+        "eval('{}/{2,3}/;');",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression quantifier"),
+            "expected parser fallback error for {source}"
+        );
+    }
+    for source in [
+        "new RegExp('?');",
+        "new RegExp('{2}');",
+        "new RegExp('{2,}');",
+        "new RegExp('{2,3}');",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression quantifier"),
+            "expected constructor error for {source}"
+        );
+    }
+
+    assert_eq!(run("/a?/.test('');"), Value::Bool(true));
+    assert_eq!(run("/a{2}/.test('aa');"), Value::Bool(true));
+    assert_eq!(run("/\\?/.test('?');"), Value::Bool(true));
+    assert_eq!(run("/[?{]/.test('{');"), Value::Bool(true));
+    assert_eq!(run("/(?:a)?/.test('');"), Value::Bool(true));
+    assert_eq!(run("new RegExp('a{2}').test('aa');"), Value::Bool(true));
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

@@ -1690,6 +1690,7 @@ impl<'a> Lexer<'a> {
 
 pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
     validate_regex_flags(flags)?;
+    validate_regex_quantifier_positions(pattern)?;
     validate_regex_modifier_groups(pattern)
 }
 
@@ -1705,6 +1706,104 @@ fn validate_regex_flags(flags: &str) -> Result<(), String> {
         seen.push(ch);
     }
     Ok(())
+}
+
+fn validate_regex_quantifier_positions(pattern: &str) -> Result<(), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut needs_atom = true;
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        if escaped {
+            escaped = false;
+            needs_atom = false;
+            i += 1;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+                needs_atom = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '[' {
+            in_class = true;
+            i += 1;
+            continue;
+        }
+
+        if matches!(ch, '*' | '+' | '?') {
+            if needs_atom {
+                return Err("invalid regular expression quantifier".to_string());
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '{' {
+            if let Some(end) = braced_quantifier_end(&chars, i) {
+                if needs_atom {
+                    return Err("invalid regular expression quantifier".to_string());
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+
+        if ch == '|' {
+            needs_atom = true;
+            i += 1;
+            continue;
+        }
+
+        needs_atom = false;
+        i += 1;
+    }
+
+    Ok(())
+}
+
+fn braced_quantifier_end(chars: &[char], start: usize) -> Option<usize> {
+    debug_assert_eq!(chars.get(start), Some(&'{'));
+    let mut idx = start + 1;
+    let first_digits_start = idx;
+
+    while chars.get(idx).is_some_and(|ch| ch.is_ascii_digit()) {
+        idx += 1;
+    }
+    if idx == first_digits_start {
+        return None;
+    }
+
+    match chars.get(idx).copied() {
+        Some('}') => Some(idx),
+        Some(',') => {
+            idx += 1;
+            while chars.get(idx).is_some_and(|ch| ch.is_ascii_digit()) {
+                idx += 1;
+            }
+            if chars.get(idx) == Some(&'}') {
+                Some(idx)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn validate_regex_modifier_groups(pattern: &str) -> Result<(), String> {
@@ -1963,8 +2062,14 @@ mod tests {
             Lexer::new("/(?i)/").tokens()[0].kind,
             LexError(ref msg) if msg.contains("regular expression modifiers")
         ));
+        for source in ["/?/", "/+/", "/{2}/", "/{2,}/", "/{2,3}/"] {
+            assert!(matches!(
+                Lexer::new(source).tokens()[0].kind,
+                LexError(ref msg) if msg.contains("regular expression quantifier")
+            ));
+        }
         assert_eq!(
-            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/;"),
+            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/; /a?/; /a{2}/; /\\?/; /\\{2\\}/; /[?]/;"),
             vec![
                 Regex("(?i:a)".into(), "".into()),
                 Semicolon,
@@ -1975,6 +2080,16 @@ mod tests {
                 Regex("(?=a)".into(), "".into()),
                 Semicolon,
                 Regex("(?!a)".into(), "".into()),
+                Semicolon,
+                Regex("a?".into(), "".into()),
+                Semicolon,
+                Regex("a{2}".into(), "".into()),
+                Semicolon,
+                Regex("\\?".into(), "".into()),
+                Semicolon,
+                Regex("\\{2\\}".into(), "".into()),
+                Semicolon,
+                Regex("[?]".into(), "".into()),
                 Semicolon,
                 Eof,
             ]

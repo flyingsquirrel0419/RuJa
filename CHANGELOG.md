@@ -63,6 +63,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   legacy octal/non-octal decimal escapes in strict-mode strings. The focused
   `language/literals/string` run now closes at **71 pass / 0 fail / 2 skip**,
   and broader `language/literals` improves to **434 pass / 40 fail / 60 skip**.
+- **RegExp quantifier early errors**: RegExp literal validation now rejects
+  quantifiers that appear before any atom, including `/?/`, `/{2}/`,
+  `/{2,}/`, and `/{2,3}/`, and the same validation is shared by
+  `new RegExp(pattern)`. Escaped quantifier characters, character classes, and
+  normal atom quantifiers such as `/a?/` and `/a{2}/` remain accepted. The
+  focused `language/literals/regexp` diagnostic now runs at **144 pass / 36
+  fail / 58 skip**, and broader `language/literals` improves to **438 pass /
+  36 fail / 60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
