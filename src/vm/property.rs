@@ -446,6 +446,62 @@ impl Vm {
         }
     }
 
+    pub(crate) fn prevent_extensions(&mut self, obj: &Value) -> error::Result<bool> {
+        let Value::Object(idx) = obj else {
+            return Ok(true);
+        };
+        let proxy_info = self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'preventExtensions' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(result) = proxy_info {
+            let (target, handler) = result?;
+            let trap = self.get_property(&handler, "preventExtensions")?;
+            if trap.is_undefined() || trap.is_null() {
+                return self.prevent_extensions(&target);
+            }
+            let trap_result =
+                self.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
+            let boolean_trap_result = self.to_boolean(&trap_result);
+            if !boolean_trap_result {
+                return Ok(false);
+            }
+            let target_extensible = match &target {
+                Value::Object(target_idx) => {
+                    self.heap.with_obj(target_idx.0, |o| o.is_extensible())
+                }
+                _ => true,
+            };
+            if target_extensible {
+                return Err(Error::type_err(
+                    "Proxy preventExtensions trap cannot report success for extensible target",
+                ));
+            }
+            return Ok(true);
+        }
+        self.heap.with_obj(idx.0, |o| match o {
+            HeapObj::Object(od) => od
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::Array(a) => a
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::Function(f) => f
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
+            _ => {}
+        });
+        Ok(true)
+    }
+
     fn set_property_impl(
         &mut self,
         obj: &Value,
@@ -601,7 +657,7 @@ impl Vm {
                     }
                     let dense_own_index = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Array(a) = o {
-                            i < a.items.lock().len()
+                            a.is_dense_present(i)
                         } else {
                             false
                         }
@@ -631,6 +687,16 @@ impl Vm {
                             if self.current_strict() {
                                 return Err(Error::type_err(format!(
                                     "Cannot assign to read only property '{}' of object",
+                                    key
+                                )));
+                            }
+                            return Ok(());
+                        }
+                        let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
+                        if !is_extensible {
+                            if self.current_strict() {
+                                return Err(Error::type_err(format!(
+                                    "Cannot add property '{}', object is not extensible",
                                     key
                                 )));
                             }
@@ -751,13 +817,7 @@ impl Vm {
                 // 4. Define a new own writable data property.
                 // Check extensibility: adding a new property to a
                 // non-extensible object throws TypeError in strict mode.
-                let is_extensible = self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Object(od) = o {
-                        od.extensible.load(std::sync::atomic::Ordering::Relaxed)
-                    } else {
-                        true // arrays, functions, etc. are extensible by default
-                    }
-                });
+                let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
                 let has_own = self
                     .heap
                     .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey));
@@ -1053,7 +1113,8 @@ impl Vm {
                     if let HeapObj::Array(a) = o {
                         let present = crate::value::parse_array_index(name)
                             .is_some_and(|i| a.is_dense_present(i));
-                        return Some((present, true));
+                        let extensible = a.extensible.load(std::sync::atomic::Ordering::Relaxed);
+                        return Some((present, extensible));
                     }
                     None
                 });
@@ -1071,13 +1132,7 @@ impl Vm {
                     }
                 }
             }
-            let is_extensible = self.heap.with_obj(receiver_idx.0, |o| {
-                if let HeapObj::Object(od) = o {
-                    od.extensible.load(std::sync::atomic::Ordering::Relaxed)
-                } else {
-                    true
-                }
-            });
+            let is_extensible = self.heap.with_obj(receiver_idx.0, |o| o.is_extensible());
             if !is_extensible {
                 return Ok(false);
             }

@@ -1003,7 +1003,13 @@ fn reflect_prevent_extensions(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    object_prevent_extensions(vm, args, None)
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.preventExtensions target must be an object",
+        ));
+    }
+    vm.prevent_extensions(&target).map(Value::Bool)
 }
 fn reflect_apply(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);

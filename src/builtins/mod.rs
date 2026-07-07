@@ -2655,12 +2655,10 @@ fn object_prevent_extensions(
     _: Option<Value>,
 ) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Value::Object(idx) = &obj {
-        vm.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(od) => od.extensible.store(false, Ordering::Relaxed),
-            HeapObj::Function(f) => f.extensible.store(false, Ordering::Relaxed),
-            _ => {}
-        });
+    if matches!(obj, Value::Object(_)) && !vm.prevent_extensions(&obj)? {
+        return Err(Error::type_err(
+            "Object.preventExtensions failed to prevent extensions",
+        ));
     }
     Ok(obj)
 }

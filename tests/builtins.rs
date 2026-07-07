@@ -2226,6 +2226,34 @@ fn object_statics() {
 }
 
 #[test]
+fn prevent_extensions_blocks_array_arguments_function_and_proxy_edges() {
+    assert_eq!(
+        run("var a=[]; Object.preventExtensions(a); a[0]=1; a.x=2; Object.isExtensible(a)+':' + a.hasOwnProperty('0') + ':' + a.hasOwnProperty('x');"),
+        Value::String(Arc::from("false:false:false"))
+    );
+    assert_eq!(
+        run("(function(){ Object.preventExtensions(arguments); arguments[0]=1; arguments.x=2; return Object.isExtensible(arguments)+':' + arguments.hasOwnProperty('0') + ':' + arguments.hasOwnProperty('x'); })();"),
+        Value::String(Arc::from("false:false:false"))
+    );
+    assert_eq!(
+        run("function f(){} Object.preventExtensions(f); f[0]=1; f.x=2; Object.isExtensible(f)+':' + f.hasOwnProperty('0') + ':' + f.hasOwnProperty('x');"),
+        Value::String(Arc::from("false:false:false"))
+    );
+    assert!(run_err(
+        "Object.preventExtensions(new Proxy({}, { preventExtensions(){ return false; } }));"
+    )
+    .contains("TypeError"));
+    assert_eq!(
+        run("var target={}; var p=new Proxy(target,{preventExtensions(t){ Object.preventExtensions(t); return true; }}); Reflect.preventExtensions(p)+':' + Object.isExtensible(target);"),
+        Value::String(Arc::from("true:false"))
+    );
+    assert_eq!(
+        run("Reflect.preventExtensions(new Proxy({}, { preventExtensions(){ return false; } }));"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
 fn reflect_own_keys_includes_symbols_and_non_enumerables_in_spec_order() {
     assert_eq!(
         run(r#"

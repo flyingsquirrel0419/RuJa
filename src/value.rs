@@ -496,6 +496,7 @@ pub struct ArrayData {
     pub present: Mutex<Vec<bool>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
     /// Largest array index currently stored as a named property rather
     /// than in the dense `items` backing store (see `MAX_DENSE_ARRAY_LEN`).
     /// `None` when no such out-of-band index exists, so `length` equals
@@ -531,6 +532,7 @@ impl ArrayData {
             present: Mutex::new(present),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(proto),
+            extensible: AtomicBool::new(true),
             sparse_max: Mutex::new(None),
             arguments_map: Mutex::new(None),
             is_arguments: AtomicBool::new(false),
@@ -913,6 +915,7 @@ impl HeapObj {
     pub fn is_extensible(&self) -> bool {
         match self {
             HeapObj::Object(o) => o.extensible.load(Ordering::Relaxed),
+            HeapObj::Array(a) => a.extensible.load(Ordering::Relaxed),
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
             _ => true,
         }

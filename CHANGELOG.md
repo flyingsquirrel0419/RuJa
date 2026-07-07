@@ -114,6 +114,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   With private method skips temporarily lifted, the focused
   `language/{statements,expressions}/class/elements/private-methods`
   diagnostic now closes at **2 pass / 0 fail / 8 skip**.
+- **Object/Reflect preventExtensions semantics**: Array and arguments objects
+  now store their own `[[Extensible]]` state, assignment/receiver-set paths
+  reject new indexed or named properties on non-extensible arrays, arguments,
+  and functions, and `Object.preventExtensions`/`Reflect.preventExtensions`
+  now route through Proxy `preventExtensions` traps with the correct
+  throw-vs-boolean behavior. The focused `built-ins/Object/preventExtensions`
+  run now closes at **36 pass / 0 fail / 4 skip**, and the adjacent
+  `built-ins/{Reflect,Proxy}/preventExtensions` probe closes at **19 pass / 0
+  fail / 3 skip** with skips temporarily lifted.
 - **parseInt radix and large-prefix conformance**: global `parseInt` now
   applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
   infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no

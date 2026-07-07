@@ -242,6 +242,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   temporarily lifted, the focused
   `language/{statements,expressions}/class/elements/private-methods`
   diagnostic now closes at **2 pass / 0 fail / 8 skip**.
+- **Object/Reflect preventExtensions semantics** —
+  Array and arguments objects now carry their own `[[Extensible]]` state,
+  assignment and receiver-set paths reject new indexed or named properties on
+  non-extensible arrays, arguments, and functions, and
+  `Object.preventExtensions`/`Reflect.preventExtensions` now route through
+  Proxy `preventExtensions` traps with the correct throw-vs-boolean behavior.
+  The focused `built-ins/Object/preventExtensions` run now closes at **36 pass
+  / 0 fail / 4 skip**, and the adjacent
+  `built-ins/{Reflect,Proxy}/preventExtensions` probe closes at **19 pass / 0
+  fail / 3 skip** with skips temporarily lifted.
 - **parseInt radix and large-prefix conformance** —
   Global `parseInt` now converts its radix argument through `ToNumber` and
   `ToInt32`, so string, boxed primitive, ordinary object, infinite, and
