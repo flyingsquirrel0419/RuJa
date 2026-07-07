@@ -704,6 +704,10 @@ fn map_basic() {
         Value::Number(1.0)
     );
     assert_eq!(
+        run("let oldSet = Map.prototype.set; let iterable = {}; iterable[Symbol.iterator] = function(){ return { next(){ return { value: [1, 2], done: false }; }, return(){ throw new Error('close-error'); } }; }; Map.prototype.set = function(){ throw new Error('set-error'); }; let message; try { new Map(iterable); } catch (e) { message = e.message; } Map.prototype.set = oldSet; message;"),
+        Value::String(Arc::from("set-error"))
+    );
+    assert_eq!(
         run("let m = new Map([[1, 'one']]); [m.getOrInsert(1, 'x'), m.getOrInsert(2, 'two'), m.get(2), m.size].join('|');"),
         Value::String(Arc::from("one|two|two|2"))
     );

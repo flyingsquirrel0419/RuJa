@@ -74,7 +74,8 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   Map(iterable)` now requires construction with `new`, observes the instance
   `set` method once before iterator creation, calls it for each entry pair,
   accepts array-like pair objects through ordinary property access, and closes
-  the source iterator when pair access or `set` fails. `Map.prototype`
+  the source iterator when pair access or `set` fails while preserving the
+  original abrupt completion if iterator closing also throws. `Map.prototype`
   additionally exposes `getOrInsert` and `getOrInsertComputed` with
   SameValueZero key canonicalization and computed-callback overwrite
   semantics. The focused `built-ins/Map built-ins/Set` run now closes at

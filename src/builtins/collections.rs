@@ -487,6 +487,10 @@ fn map_set_direct(vm: &mut Vm, idx: GcIdx, key: Value, value: Value) {
     });
 }
 
+fn close_iterator_preserving_completion(vm: &mut Vm, it: &Value) {
+    let _ = vm.iterator_close(it);
+}
+
 pub(crate) fn map_get_or_insert(
     vm: &mut Vm,
     args: &[Value],
@@ -893,25 +897,25 @@ pub(crate) fn map_constructor(
                     break;
                 }
                 if !matches!(pair, Value::Object(_)) {
-                    vm.iterator_close(&it)?;
+                    close_iterator_preserving_completion(vm, &it);
                     return Err(Error::type_err("Iterator value is not an object"));
                 }
                 let k = match vm.get_property(&pair, "0") {
                     Ok(value) => value,
                     Err(err) => {
-                        vm.iterator_close(&it)?;
+                        close_iterator_preserving_completion(vm, &it);
                         return Err(err);
                     }
                 };
                 let v = match vm.get_property(&pair, "1") {
                     Ok(value) => value,
                     Err(err) => {
-                        vm.iterator_close(&it)?;
+                        close_iterator_preserving_completion(vm, &it);
                         return Err(err);
                     }
                 };
                 if let Err(err) = vm.call_function(&set, &[k, v], Some(map.clone())) {
-                    vm.iterator_close(&it)?;
+                    close_iterator_preserving_completion(vm, &it);
                     return Err(err);
                 }
             }

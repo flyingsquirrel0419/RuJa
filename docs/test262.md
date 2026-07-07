@@ -198,7 +198,8 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `new Map(iterable)` now requires construction with `new`, observes the
   instance `set` method once before iterator creation, calls it for each entry
   pair, accepts array-like pair objects through ordinary property access, and
-  closes the source iterator when pair access or `set` fails.
+  closes the source iterator when pair access or `set` fails while preserving
+  the original abrupt completion if iterator closing also throws.
   `Map.prototype.getOrInsert` and `Map.prototype.getOrInsertComputed` are now
   exposed with SameValueZero key canonicalization and computed-callback
   overwrite semantics. The focused `built-ins/Map built-ins/Set` run now
