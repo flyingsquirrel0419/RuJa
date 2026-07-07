@@ -450,6 +450,9 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
         define_realm_global(vm, realm_env, &global, "BigInt", bigint);
     }
+    if let Some(proxy) = crate::environment::get(&vm.heap, vm.global, "Proxy") {
+        define_realm_global(vm, realm_env, &global, "Proxy", proxy);
+    }
     let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
     let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
     let symbol_key_for_idx =

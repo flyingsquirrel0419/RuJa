@@ -309,6 +309,19 @@ fn test262_create_realm_has_distinct_template_registry() {
 }
 
 #[test]
+fn test262_create_realm_exposes_constructable_proxy() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        var target = {};
+        var proxy = new other.Proxy(target, {
+            deleteProperty: function() { return true; }
+        });
+        delete proxy.x;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
+#[test]
 fn cross_realm_non_constructor_native_throws_current_realm_type_error() {
     let src = r#"
         var otherParseInt = $262.createRealm().global.parseInt;

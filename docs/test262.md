@@ -170,11 +170,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   trap results. `Reflect.deleteProperty` now rejects primitive targets and
   returns the actual internal `[[Delete]]` boolean instead of always returning
   `true`. `Proxy.revocable()` now revokes through the native callee rather
-  than the call receiver, so revoked proxy deletes throw. With `Proxy`,
-  `Reflect`, and `proxy-missing-checks` skips temporarily lifted, focused
+  than the call receiver, so revoked proxy deletes throw. The test262
+  `$262.createRealm()` host now also exposes the constructable `Proxy`
+  constructor on the created global. With `Proxy`, `Reflect`, and
+  `proxy-missing-checks` skips temporarily lifted, focused
   `built-ins/Reflect/deleteProperty built-ins/Proxy/deleteProperty` runs at
-  **24 pass / 1 fail / 3 skip**, with the remaining failure isolated to
-  cross-realm Proxy constructor behavior.
+  **25 pass / 0 fail / 3 skip**.
 - **Array search array-like access** —
   `Array.prototype.indexOf`, `lastIndexOf`, and `includes` now read
   `length` through `LengthOfArrayLike` and visit indices through
