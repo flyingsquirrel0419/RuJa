@@ -139,6 +139,14 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **RegExp literal line-terminator early errors** —
+  Regular-expression literal scanning now rejects CR, LF, LS, and PS
+  immediately after a backslash. This matches the grammar rule that
+  `RegularExpressionBackslashSequence` cannot contain a line terminator,
+  so parse-negative sources such as `/\\\n/` throw `SyntaxError` before
+  executing `$DONOTEVALUATE()`. The focused `language/literals/regexp`
+  diagnostic now runs at **55 pass / 125 fail / 58 skip**, and broader
+  `language/literals` improves to **324 pass / 150 fail / 60 skip**.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect** —
   RuJa's internal `[[HasProperty]]` helper now invokes Proxy `has` traps,
   including revoked-proxy failures and basic invariant checks for

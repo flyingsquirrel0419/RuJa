@@ -24,6 +24,14 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **RegExp literal line-terminator early errors**: regular-expression
+  literals now reject CR, LF, LS, and PS immediately after a backslash instead
+  of treating the line terminator as an escaped pattern character. This makes
+  parse-negative literals such as `/\\\n/` stop before executing test code and
+  also routes `eval()` of those literals through `SyntaxError`. The focused
+  `language/literals/regexp` diagnostic now runs at
+  **55 pass / 125 fail / 58 skip**, and broader `language/literals` improves
+  to **324 pass / 150 fail / 60 skip**.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect**:
   internal property-existence checks now route through Proxy `has` traps,
   including revoked-proxy errors and basic non-configurable/non-extensible

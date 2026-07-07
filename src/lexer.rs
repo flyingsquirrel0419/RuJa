@@ -1250,6 +1250,11 @@ impl<'a> Lexer<'a> {
             if c == b'\\' {
                 // Escaped char: keep the backslash and the following char.
                 self.advance(); // consume backslash
+                if self.is_line_terminator_start() {
+                    return TokenKind::LexError(
+                        "unterminated regular expression literal".to_string(),
+                    );
+                }
                 pattern.push('\\');
                 if let Some(n) = self.peek() {
                     pattern.push(n as char);
@@ -1807,6 +1812,22 @@ mod tests {
         ));
         assert!(matches!(
             kinds("x*/")[2],
+            LexError(ref msg) if msg.contains("unterminated regular expression")
+        ));
+        assert!(matches!(
+            Lexer::new(concat!("/\\", "\n", "/")).tokens()[0].kind,
+            LexError(ref msg) if msg.contains("unterminated regular expression")
+        ));
+        assert!(matches!(
+            Lexer::new(concat!("/a\\", "\r", "/")).tokens()[0].kind,
+            LexError(ref msg) if msg.contains("unterminated regular expression")
+        ));
+        assert!(matches!(
+            Lexer::new("/\\\u{2028}/").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("unterminated regular expression")
+        ));
+        assert!(matches!(
+            Lexer::new("/a\\\u{2029}/").tokens()[0].kind,
             LexError(ref msg) if msg.contains("unterminated regular expression")
         ));
 
