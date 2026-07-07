@@ -2254,6 +2254,28 @@ fn prevent_extensions_blocks_array_arguments_function_and_proxy_edges() {
 }
 
 #[test]
+fn is_extensible_uses_proxy_traps_and_reflect_rejects_primitives() {
+    assert_eq!(run("Object.isExtensible(1);"), Value::Bool(false));
+    assert!(run_err("Reflect.isExtensible(1);").contains("TypeError"));
+    assert_eq!(
+        run("var seenThis, seenTarget; var target={}; var handler={isExtensible(t){seenThis=this;seenTarget=t;return Object.isExtensible(t);}}; var p=new Proxy(target, handler); Object.isExtensible(p)+':' + (seenThis===handler) + ':' + (seenTarget===target);"),
+        Value::String(Arc::from("true:true:true"))
+    );
+    assert!(
+        run_err("Object.isExtensible(new Proxy({}, {isExtensible(){return false;}}));")
+            .contains("TypeError")
+    );
+    assert_eq!(
+        run("var target={}; var p=new Proxy(target,{isExtensible(t){return Object.isExtensible(t);}}); var a=Object.isExtensible(p); Object.preventExtensions(target); a + ':' + Object.isExtensible(p);"),
+        Value::String(Arc::from("true:false"))
+    );
+    assert!(run_err(
+        "Reflect.isExtensible(new Proxy({}, {isExtensible(){throw new Error('boom');}}));"
+    )
+    .contains("boom"));
+}
+
+#[test]
 fn reflect_own_keys_includes_symbols_and_non_enumerables_in_spec_order() {
     assert_eq!(
         run(r#"

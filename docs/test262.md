@@ -252,6 +252,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   / 0 fail / 4 skip**, and the adjacent
   `built-ins/{Reflect,Proxy}/preventExtensions` probe closes at **19 pass / 0
   fail / 3 skip** with skips temporarily lifted.
+- **Object/Reflect isExtensible Proxy semantics** —
+  `Object.isExtensible` now routes object receivers through the Proxy-aware
+  `[[IsExtensible]]` helper, returns `false` for primitive receivers, and
+  enforces Proxy trap result invariants against the target's actual
+  extensibility. `Reflect.isExtensible` now rejects primitive targets with
+  `TypeError` and shares the same Proxy trap path. With `Proxy`/`Reflect`
+  skips temporarily lifted, the focused
+  `built-ins/{Object,Reflect,Proxy}/isExtensible` probe now closes at **55
+  pass / 0 fail / 3 skip**.
 - **parseInt radix and large-prefix conformance** —
   Global `parseInt` now converts its radix argument through `ToNumber` and
   `ToInt32`, so string, boxed primitive, ordinary object, infinite, and

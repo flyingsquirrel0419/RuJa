@@ -502,6 +502,42 @@ impl Vm {
         Ok(true)
     }
 
+    pub(crate) fn is_extensible(&mut self, obj: &Value) -> error::Result<bool> {
+        let Value::Object(idx) = obj else {
+            return Ok(false);
+        };
+        let proxy_info = self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'isExtensible' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(result) = proxy_info {
+            let (target, handler) = result?;
+            let trap = self.get_property(&handler, "isExtensible")?;
+            if trap.is_undefined() || trap.is_null() {
+                return self.is_extensible(&target);
+            }
+            let trap_result =
+                self.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
+            let boolean_trap_result = self.to_boolean(&trap_result);
+            let target_result = self.is_extensible(&target)?;
+            if boolean_trap_result != target_result {
+                return Err(Error::type_err(
+                    "Proxy isExtensible trap result must match target extensibility",
+                ));
+            }
+            return Ok(boolean_trap_result);
+        }
+        Ok(self.heap.with_obj(idx.0, |o| o.is_extensible()))
+    }
+
     fn set_property_impl(
         &mut self,
         obj: &Value,

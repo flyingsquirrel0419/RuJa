@@ -996,7 +996,13 @@ fn reflect_set_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
     reflect_set_prototype_of_result(vm, args).map(Value::Bool)
 }
 fn reflect_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    object_is_extensible(vm, args, None)
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.isExtensible target must be an object",
+        ));
+    }
+    vm.is_extensible(&target).map(Value::Bool)
 }
 fn reflect_prevent_extensions(
     vm: &mut Vm,

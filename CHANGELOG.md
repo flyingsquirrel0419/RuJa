@@ -123,6 +123,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   run now closes at **36 pass / 0 fail / 4 skip**, and the adjacent
   `built-ins/{Reflect,Proxy}/preventExtensions` probe closes at **19 pass / 0
   fail / 3 skip** with skips temporarily lifted.
+- **Object/Reflect isExtensible Proxy semantics**: `Object.isExtensible` now
+  routes object receivers through the Proxy-aware `[[IsExtensible]]` helper,
+  returns `false` for primitive receivers, and enforces Proxy trap result
+  invariants against the target's actual extensibility. `Reflect.isExtensible`
+  now rejects primitive targets with `TypeError` and shares the same Proxy
+  trap path. With `Proxy`/`Reflect` skips temporarily lifted, the focused
+  `built-ins/{Object,Reflect,Proxy}/isExtensible` probe now closes at **55
+  pass / 0 fail / 3 skip**.
 - **parseInt radix and large-prefix conformance**: global `parseInt` now
   applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
   infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no
