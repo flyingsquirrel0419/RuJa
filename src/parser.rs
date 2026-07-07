@@ -1639,6 +1639,9 @@ impl Parser {
                         "Invalid left-hand side in for-in".to_string(),
                     ));
                 }
+                if self.is_strict_context {
+                    Self::reject_strict_eval_arguments_assignment_target(&e)?;
+                }
                 self.advance();
                 let right = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
@@ -1657,6 +1660,9 @@ impl Parser {
                     return Err(error::Error::syntax(
                         "Invalid left-hand side in for-of".to_string(),
                     ));
+                }
+                if self.is_strict_context {
+                    Self::reject_strict_eval_arguments_assignment_target(&e)?;
                 }
                 self.advance();
                 let right = self.parse_assign()?;
@@ -1998,14 +2004,7 @@ impl Parser {
         }
         // Strict mode: assignment to `eval` or `arguments` is a SyntaxError.
         if self.is_strict_context {
-            if let Expr::Ident(ref id) = left {
-                if matches!(&**id, "eval" | "arguments") {
-                    return Err(error::Error::syntax(format!(
-                        "Assignment to '{}' is not allowed in strict mode",
-                        id
-                    )));
-                }
-            }
+            Self::reject_strict_eval_arguments_assignment_target(&left)?;
         }
         // SetFunctionName for assignment applies only when the left side is a
         // bare IdentifierRef. Logical assignment has the same NamedEvaluation
@@ -2034,6 +2033,41 @@ impl Parser {
             Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
             Expr::Array(_) | Expr::Object(_) => Self::is_assignment_pattern(target),
             _ => false,
+        }
+    }
+
+    fn reject_strict_eval_arguments_assignment_target(target: &Expr) -> error::Result<()> {
+        match target {
+            Expr::Ident(id) if matches!(&**id, "eval" | "arguments") => Err(error::Error::syntax(
+                format!("Assignment to '{}' is not allowed in strict mode", id),
+            )),
+            Expr::Array(elements) => {
+                for element in elements {
+                    match element {
+                        Expr::ArrayHole => {}
+                        Expr::Spread(inner) => {
+                            Self::reject_strict_eval_arguments_assignment_target(inner)?
+                        }
+                        Expr::Assign(AssignOp::Assign, left, _) => {
+                            Self::reject_strict_eval_arguments_assignment_target(left)?
+                        }
+                        other => Self::reject_strict_eval_arguments_assignment_target(other)?,
+                    }
+                }
+                Ok(())
+            }
+            Expr::Object(props) => {
+                for prop in props {
+                    Self::reject_strict_eval_arguments_assignment_target(&prop.value)?;
+                }
+                Ok(())
+            }
+            Expr::Assign(AssignOp::Assign, left, _) => {
+                Self::reject_strict_eval_arguments_assignment_target(left)
+            }
+            Expr::Spread(inner) => Self::reject_strict_eval_arguments_assignment_target(inner),
+            Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => Ok(()),
+            _ => Ok(()),
         }
     }
 

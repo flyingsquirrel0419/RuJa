@@ -500,6 +500,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   improves from **936 pass / 168 fail / 7322 skip** to **948 pass / 156 fail /
   7322 skip**. The default supported-subset count is unchanged because those
   private-feature tests remain skipped.
+- **Strict destructuring assignment targets** —
+  Strict-mode destructuring assignment patterns now reject `eval` and
+  `arguments` targets recursively, including non-declaration `for-in`/`for-of`
+  heads. With the `destructuring-binding` diagnostic temporarily lifted over
+  `language/expressions/assignment language/statements/for-in
+  language/statements/for-of`, the result improves from **1003 pass / 226 fail /
+  122 skip** to **1009 pass / 220 fail / 122 skip**. The default
+  supported-subset count is unchanged because destructuring-binding tests remain
+  skipped.
 - **Class static block feature lift** —
   Static initialization blocks now have their own parse context instead of
   being parsed as function bodies: `return` is rejected, `super.prop` is

@@ -450,6 +450,19 @@ fn strict_parenthesized_eval_arguments_assignment_is_syntax_error() {
 }
 
 #[test]
+fn strict_destructuring_eval_arguments_assignment_targets_are_syntax_errors() {
+    for src in [
+        r#""use strict"; 0, [arguments] = [];"#,
+        r#""use strict"; 0, { eval } = {};"#,
+        r#""use strict"; 0, [{ x: arguments }] = [{}];"#,
+        r#""use strict"; for ([arguments] in [[]]) ;"#,
+        r#""use strict"; for ({ eval } of [{}]) ;"#,
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+}
+
+#[test]
 fn assign_element() {
     assert_eq!(run("var a = [0,0,0]; a[1] = 9; a[1];"), Value::Number(9.0));
 }
