@@ -133,6 +133,19 @@ fn class_element_early_errors_follow_static_semantics() {
         "class C { #x; m() { delete (this.#x); } }",
         "class C { #x; m() { var g = this.f; delete g().#x; } f() { return this; } }",
         "class C { #x; m() { var g = this.f; delete (g().#x); } f() { return this; } }",
+        "class C { #constructor; }",
+        "class C { static #constructor; }",
+        "class C { #constructor() {} }",
+        "class C { static #constructor() {} }",
+        "class C { get #constructor() {} }",
+        "class C { set #constructor(v) {} }",
+        "class C { #x; #x; }",
+        "class C { #x; #x() {} }",
+        "class C { get #x() {} #x; }",
+        "class C { #x() {} set #x(v) {} }",
+        "class C { static #x; #x() {} }",
+        "class C { get #x() {} get #x() {} }",
+        "class C { set #x(v) {} set #x(v) {} }",
     ] {
         let err = run_err(src);
         assert!(
@@ -147,6 +160,9 @@ fn class_element_early_errors_follow_static_semantics() {
     ] {
         assert_eq!(run(src), Value::Bool(true));
     }
+
+    run("class C { get #x() { return 1; } set #x(v) {} value() { return this.#x; } } new C().value();");
+    run("class C { m() { class B { #x() {} } } #x() {} }");
 }
 
 #[test]

@@ -90,6 +90,14 @@ type ParsedParams = (
     Vec<(Pattern, String, Option<Expr>)>,
 );
 
+#[derive(Debug)]
+struct PrivateBoundName {
+    name: Arc<str>,
+    getter: bool,
+    setter: bool,
+    other: bool,
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
@@ -4296,6 +4304,50 @@ impl Parser {
         Ok(self.stmt(StmtNode::ExprStmt(Expr::Class(cls))))
     }
 
+    fn record_private_bound_name(
+        private_bound_names: &mut Vec<PrivateBoundName>,
+        name: &str,
+        kind: crate::ast::PropKind,
+    ) -> error::Result<()> {
+        if name == "constructor" {
+            return Err(error::Error::syntax(
+                "Private name cannot be constructor".to_string(),
+            ));
+        }
+        let Some(entry) = private_bound_names
+            .iter_mut()
+            .find(|entry| entry.name.as_ref() == name)
+        else {
+            let (getter, setter, other) = match kind {
+                crate::ast::PropKind::Get => (true, false, false),
+                crate::ast::PropKind::Set => (false, true, false),
+                _ => (false, false, true),
+            };
+            private_bound_names.push(PrivateBoundName {
+                name: Arc::from(name),
+                getter,
+                setter,
+                other,
+            });
+            return Ok(());
+        };
+
+        match kind {
+            crate::ast::PropKind::Get if !entry.getter && entry.setter && !entry.other => {
+                entry.getter = true;
+                Ok(())
+            }
+            crate::ast::PropKind::Set if entry.getter && !entry.setter && !entry.other => {
+                entry.setter = true;
+                Ok(())
+            }
+            _ => Err(error::Error::syntax(format!(
+                "Duplicate private name #{} in class body",
+                name
+            ))),
+        }
+    }
+
     fn parse_class_body(&mut self, is_declaration: bool) -> error::Result<ClassExpr> {
         self.advance(); // 'class'
         let name = match self.peek().clone() {
@@ -4353,6 +4405,7 @@ impl Parser {
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
         let mut seen_constructor = false;
+        let mut private_bound_names = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             if self.eat(&TokenKind::Semicolon) {
                 continue;
@@ -4392,6 +4445,7 @@ impl Parser {
                 } else {
                     unreachable!()
                 };
+                Self::record_private_bound_name(&mut private_bound_names, &name, kind)?;
                 let (params, param_defaults, rest_param, dstr_decls) =
                     self.parse_params_scoped(false, false, true)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
@@ -4430,6 +4484,11 @@ impl Parser {
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
                     self.advance(); // consume #name
+                    Self::record_private_bound_name(
+                        &mut private_bound_names,
+                        &name,
+                        crate::ast::PropKind::Method,
+                    )?;
                     let (params, param_defaults, rest_param, dstr_decls) =
                         self.parse_params_scoped(false, false, true)?;
                     Self::reject_duplicate_formal_params(
@@ -4468,6 +4527,11 @@ impl Parser {
                     continue;
                 }
                 self.advance();
+                Self::record_private_bound_name(
+                    &mut private_bound_names,
+                    &name,
+                    crate::ast::PropKind::Normal,
+                )?;
                 let init = if self.eat(&TokenKind::Assign) {
                     Some(Box::new(self.parse_assign()?))
                 } else {

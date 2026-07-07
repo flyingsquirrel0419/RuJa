@@ -465,6 +465,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   skip**, and the broader private class early-error diagnostic is now
   **136 pass / 60 fail / 248 skip**. The default supported-subset count is
   unchanged because those private-feature tests remain skipped.
+- **Private-bound-name early errors** —
+  Class parsing now rejects private names named `#constructor` and duplicate
+  private bound names across static and instance elements, while still allowing
+  the spec's one private getter plus one private setter exception. With private
+  class feature skips temporarily lifted, the broader private class early-error
+  diagnostic improves from **136 pass / 60 fail / 248 skip** to **162 pass / 34
+  fail / 248 skip**. The default supported-subset count is unchanged because
+  those private-feature tests remain skipped.
 - **Class static block feature lift** —
   Static initialization blocks now have their own parse context instead of
   being parsed as function bodies: `return` is rejected, `super.prop` is
