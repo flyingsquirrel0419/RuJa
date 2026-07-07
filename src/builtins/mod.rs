@@ -3773,31 +3773,38 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         ("parseInt", number_parse_int, 2),
         ("parseFloat", number_parse_float, 1),
     ];
-    let mut static_props: Vec<(Arc<str>, Value)> = Vec::new();
+    let mut static_methods: Vec<(Arc<str>, Value)> = Vec::new();
     for (name, fnp, len) in statics {
         let idx = vm.new_native_function(name, *fnp, *len)?;
-        static_props.push((Arc::from(*name), Value::Object(idx)));
+        static_methods.push((Arc::from(*name), Value::Object(idx)));
     }
-    static_props.push((
-        Arc::from("MAX_SAFE_INTEGER"),
-        Value::Number(9007199254740991.0),
-    ));
-    static_props.push((
-        Arc::from("MIN_SAFE_INTEGER"),
-        Value::Number(-9007199254740991.0),
-    ));
-    static_props.push((Arc::from("EPSILON"), Value::Number(f64::EPSILON)));
-    static_props.push((Arc::from("MAX_VALUE"), Value::Number(f64::MAX)));
-    static_props.push((Arc::from("MIN_VALUE"), Value::Number(5e-324f64)));
-    static_props.push((Arc::from("POSITIVE_INFINITY"), Value::Number(f64::INFINITY)));
-    static_props.push((
-        Arc::from("NEGATIVE_INFINITY"),
-        Value::Number(f64::NEG_INFINITY),
-    ));
-    static_props.push((Arc::from("NaN"), Value::Number(f64::NAN)));
+    let static_constants: Vec<(Arc<str>, Value)> = vec![
+        (
+            Arc::from("MAX_SAFE_INTEGER"),
+            Value::Number(9007199254740991.0),
+        ),
+        (
+            Arc::from("MIN_SAFE_INTEGER"),
+            Value::Number(-9007199254740991.0),
+        ),
+        (Arc::from("EPSILON"), Value::Number(f64::EPSILON)),
+        (Arc::from("MAX_VALUE"), Value::Number(f64::MAX)),
+        (Arc::from("MIN_VALUE"), Value::Number(5e-324f64)),
+        (Arc::from("POSITIVE_INFINITY"), Value::Number(f64::INFINITY)),
+        (
+            Arc::from("NEGATIVE_INFINITY"),
+            Value::Number(f64::NEG_INFINITY),
+        ),
+        (Arc::from("NaN"), Value::Number(f64::NAN)),
+    ];
     vm.heap.with_obj(num_ctor.0, |o| {
         if let HeapObj::Function(f) = o {
-            for (name, val) in &static_props {
+            for (name, val) in &static_methods {
+                f.props
+                    .lock()
+                    .insert(PropertyKey::from(name.clone()), data_prop(val.clone()));
+            }
+            for (name, val) in &static_constants {
                 f.props
                     .lock()
                     .insert(PropertyKey::from(name.clone()), const_prop(val.clone()));

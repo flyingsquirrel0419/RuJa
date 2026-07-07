@@ -1772,6 +1772,14 @@ fn number_static_methods() {
     assert_eq!(run("Number.isNaN(NaN);"), Value::Bool(true));
     assert_eq!(run("Number.isNaN('NaN');"), Value::Bool(false));
     assert_eq!(run("Number.isSafeInteger(2**53);"), Value::Bool(false));
+    assert_eq!(
+        run("var d = Object.getOwnPropertyDescriptor(Number, 'isFinite'); [d.writable, d.enumerable, d.configurable].join(',');"),
+        Value::String(Arc::from("true,false,true"))
+    );
+    assert_eq!(
+        run("var d = Object.getOwnPropertyDescriptor(Number, 'MAX_VALUE'); [d.writable, d.enumerable, d.configurable].join(',');"),
+        Value::String(Arc::from("false,false,false"))
+    );
 }
 
 #[test]

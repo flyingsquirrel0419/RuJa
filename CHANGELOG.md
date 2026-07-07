@@ -88,6 +88,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `newTarget` instead of resetting it to the bound target. With
   `Reflect`/`Reflect.construct` skips temporarily lifted, the focused
   `built-ins/Reflect/construct` diagnostic now runs at **10 pass / 0 fail**.
+- **Number static method descriptors**: `Number.isFinite`,
+  `Number.isInteger`, `Number.isNaN`, `Number.isSafeInteger`,
+  `Number.parseInt`, and `Number.parseFloat` are now installed as writable,
+  non-enumerable, configurable constructor properties, while numeric constants
+  remain non-writable and non-configurable. The focused
+  `built-ins/Number/{isFinite,isInteger,isNaN,isSafeInteger}` run now closes
+  at **26 pass / 0 fail / 8 skip**.
 - **parseInt radix and large-prefix conformance**: global `parseInt` now
   applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
   infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no
