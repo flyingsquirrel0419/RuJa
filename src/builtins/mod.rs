@@ -1451,6 +1451,11 @@ fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
 }
 fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let entries = args.first().cloned().unwrap_or(Value::Undefined);
+    if entries.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(vm.object_proto.clone())),
@@ -1469,41 +1474,32 @@ fn object_from_entries(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
             }
         });
         for pair in &pairs {
-            // Each pair is an array [key, value].
-            if let Value::Object(pi) = pair {
-                let (k, v) = vm.heap.with_obj(pi.0, |o| {
-                    if let HeapObj::Array(a) = o {
-                        let it = a.items.lock();
-                        (
-                            it.first().cloned().unwrap_or(Value::Undefined),
-                            it.get(1).cloned().unwrap_or(Value::Undefined),
-                        )
-                    } else {
-                        (Value::Undefined, Value::Undefined)
-                    }
-                });
-                let _key_str = vm.to_string(&k)?.to_string();
-                let key_str = vm.to_string(&k)?.to_string();
-                vm.heap.with_obj(obj_idx, |o| {
-                    if let HeapObj::Object(obj) = o {
-                        // Own enumerable data property (data_prop is
-                        // non-enumerable, which would hide it from
-                        // Object.keys / JSON.stringify).
-                        obj.props.lock().insert(
-                            PropertyKey::from(key_str.as_str()),
-                            PropertyDescriptor {
-                                value: v,
-                                writable: true,
-                                enumerable: true,
-                                configurable: true,
-                                get: None,
-                                set: None,
-                                is_accessor: false,
-                            },
-                        );
-                    }
-                });
+            // Each entry object is read through Get(entry, "0") / Get(entry, "1").
+            if !matches!(pair, Value::Object(_)) {
+                return Err(Error::type_err("Iterator value is not an entry object"));
             }
+            let key = vm.get_property_by_key(pair, &PropertyKey::from("0"))?;
+            let value = vm.get_property_by_key(pair, &PropertyKey::from("1"))?;
+            let key = to_property_key_descriptor(vm, &key)?;
+            vm.heap.with_obj(obj_idx, |o| {
+                if let HeapObj::Object(obj) = o {
+                    // Own enumerable data property (data_prop is
+                    // non-enumerable, which would hide it from
+                    // Object.keys / JSON.stringify).
+                    obj.props.lock().insert(
+                        key,
+                        PropertyDescriptor {
+                            value,
+                            writable: true,
+                            enumerable: true,
+                            configurable: true,
+                            get: None,
+                            set: None,
+                            is_accessor: false,
+                        },
+                    );
+                }
+            });
         }
     }
     Ok(Value::Object(GcIdx(obj_idx)))

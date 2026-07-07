@@ -2064,6 +2064,24 @@ fn object_statics() {
         Value::Number(3.0)
     );
     assert_eq!(
+        run(r#"
+            var a = Object.fromEntries([Object("ab")]);
+            var b = Object.fromEntries([new String("cd")]);
+            [a.a, b.c].join("|");
+        "#),
+        Value::String(Arc::from("b|d"))
+    );
+    assert_eq!(
+        run(r#"
+            var s = Symbol("k");
+            var o = Object.fromEntries([[s, 3]]);
+            [o[s], Object.getOwnPropertySymbols(o).length].join("|");
+        "#),
+        Value::String(Arc::from("3|1"))
+    );
+    assert!(run_err("Object.fromEntries();").contains("TypeError"));
+    assert!(run_err(r#"Object.fromEntries(["ab"]);"#).contains("TypeError"));
+    assert_eq!(
         run("typeof Object.create(null);"),
         Value::String(Arc::from("object"))
     );

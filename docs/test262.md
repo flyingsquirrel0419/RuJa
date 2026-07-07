@@ -411,6 +411,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   index/length writes, while Proxy `ownKeys` trap order is preserved for
   normal array key-list results. This closes the focused
   `built-ins/Object/assign` run at **25 pass / 0 fail / 13 skip**.
+- **`Object.fromEntries` entry coercion** —
+  `Object.fromEntries` now rejects nullish iterables, requires each entry
+  value to be an object, reads `entry[0]`/`entry[1]` through ordinary property
+  access instead of only unpacking array storage, and preserves Symbol keys via
+  `ToPropertyKey`. Boxed string entries such as `Object("ab")` now create
+  `{ a: "b" }`, while primitive string entries throw `TypeError`. This closes
+  the focused `built-ins/Object/fromEntries` run at
+  **11 pass / 0 fail / 14 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`

@@ -271,6 +271,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `ownKeys` trap order is preserved for normal array key-list results. The
   focused `built-ins/Object/assign` run now closes at
   **25 pass / 0 fail / 13 skip**.
+- **`Object.fromEntries` entry coercion**: `Object.fromEntries` now rejects
+  nullish iterables, requires each entry value to be an object, reads
+  `entry[0]`/`entry[1]` through ordinary property access instead of only
+  unpacking array storage, and preserves Symbol property keys via
+  `ToPropertyKey`. Boxed string entries such as `Object("ab")` now create
+  `{ a: "b" }`, while primitive string entries throw `TypeError`. The focused
+  `built-ins/Object/fromEntries` run now closes at
+  **11 pass / 0 fail / 14 skip**.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,
