@@ -158,11 +158,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   before `end`, and treats explicit `undefined` end as the string length.
   `substring` now truncates fractional positions and treats missing or
   explicit `undefined` end as the string length before clamping and swapping.
+  The Math intrinsic object is now extensible like an ordinary ECMAScript
+  object, so borrowed string methods assigned onto `Math` are callable.
   The focused
   `built-ins/String/prototype/slice
-  built-ins/String/prototype/substring` cluster runs at **79 pass / 1 fail /
-  4 skip**; the remaining failure is a broader Math object property/surface
-  gap.
+  built-ins/String/prototype/substring` cluster runs at **80 pass / 0 fail /
+  4 skip**.
 - **String trim whitespace set** —
   `String.prototype.trim`, `trimStart`, and `trimEnd` now trim exactly the
   ECMAScript `WhiteSpace` plus `LineTerminator` set instead of Rust's host

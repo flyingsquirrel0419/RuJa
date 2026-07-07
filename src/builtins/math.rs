@@ -249,7 +249,7 @@ pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(props),
         proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(false),
+        extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Math")),
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
