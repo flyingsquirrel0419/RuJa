@@ -148,11 +148,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   path. Symbol-key Proxy `get` is also used for `Symbol.unscopables`, and
   `Reflect.get`/`set`/`has` preserve Symbol keys. `Reflect.set` now passes
   through its receiver argument for ordinary data-property writes, so Proxy
-  receivers observe `getOwnPropertyDescriptor` and `defineProperty`; the
-  corresponding Reflect wrappers are exposed. With the `Proxy`/`Reflect`
+  receivers observe `getOwnPropertyDescriptor` and `defineProperty`, returns
+  `false` for non-writable receiver/target failures, and propagates Proxy
+  `set` trap abrupt completions; the corresponding Reflect wrappers are
+  exposed. With the `Proxy`/`Reflect`
   skips temporarily lifted, focused
   `language/statements/with built-ins/Reflect/has` runs at **183 pass / 0
-  fail / 8 skip**.
+  fail / 8 skip**. The focused
+  `built-ins/Reflect/get built-ins/Reflect/set built-ins/Reflect/has
+  built-ins/Reflect/defineProperty
+  built-ins/Reflect/getOwnPropertyDescriptor` diagnostic now runs at **46
+  pass / 3 fail / 15 skip**.
 - **Array search array-like access** —
   `Array.prototype.indexOf`, `lastIndexOf`, and `includes` now read
   `length` through `LengthOfArrayLike` and visit indices through

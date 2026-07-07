@@ -901,20 +901,17 @@ pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     let value = args.get(2).cloned().unwrap_or(Value::Undefined);
     let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
     let result = match &key {
-        Value::String(s) => vm.set_property_with_receiver(&target, s, value, &receiver),
+        Value::String(s) => vm.try_set_property_with_receiver(&target, s, value, &receiver),
         Value::Symbol(_) => {
             if receiver == target {
-                vm.set_property_key(&target, &key, value)
+                vm.set_property_key(&target, &key, value).map(|_| true)
             } else {
-                vm.set_property_key(&receiver, &key, value)
+                vm.set_property_key(&receiver, &key, value).map(|_| true)
             }
         }
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     };
-    match result {
-        Ok(()) => Ok(Value::Bool(true)),
-        Err(_) => Ok(Value::Bool(false)),
-    }
+    result.map(Value::Bool)
 }
 pub(crate) fn reflect_has(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);

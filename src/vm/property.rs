@@ -503,7 +503,15 @@ impl Vm {
                 if let Some(is_arguments) = array_length_kind {
                     if is_arguments {
                         let pkey = crate::value::PropertyKey::from(key);
-                        return self.ordinary_set_with_receiver(*idx, &pkey, key, value, &obj);
+                        let success =
+                            self.ordinary_set_with_receiver(*idx, &pkey, key, value, &obj)?;
+                        if !success && self.current_strict() {
+                            return Err(Error::type_err(format!(
+                                "Cannot assign to read only property '{}' of object",
+                                key
+                            )));
+                        }
+                        return Ok(());
                     }
                     return self.set_array_length(idx.0, value);
                 }
@@ -792,11 +800,57 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> error::Result<()> {
+        let success = self.try_set_property_with_receiver(base, key, value, receiver)?;
+        if !success && self.current_strict() {
+            return Err(Error::type_err(format!(
+                "Cannot assign to read only property '{}' of object",
+                key
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn try_set_property_with_receiver(
+        &mut self,
+        base: &Value,
+        key: &str,
+        value: Value,
+        receiver: &Value,
+    ) -> error::Result<bool> {
         let Value::Object(base_idx) = base else {
             return Err(Error::type_err(
                 "Cannot set property of primitive".to_string(),
             ));
         };
+        if let Some(proxy_result) = self.heap.with_obj(base_idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'set' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        }) {
+            let (target, handler) = proxy_result?;
+            let trap = self.get_property(&handler, "set")?;
+            if !trap.is_undefined() {
+                let trap_result = self.call_function(
+                    &trap,
+                    &[
+                        target,
+                        Value::String(Arc::from(key)),
+                        value,
+                        receiver.clone(),
+                    ],
+                    Some(handler),
+                )?;
+                return Ok(self.to_boolean(&trap_result));
+            }
+            return self.try_set_property_with_receiver(&target, key, value, receiver);
+        }
         let pkey = crate::value::PropertyKey::from(key);
         self.ordinary_set_with_receiver(*base_idx, &pkey, key, value, receiver)
     }
@@ -808,7 +862,7 @@ impl Vm {
         key: &str,
         value: Value,
         receiver: &Value,
-    ) -> error::Result<()> {
+    ) -> error::Result<bool> {
         for _ in 0..1024 {
             let (desc, proto) = self.heap.with_obj(base_idx.0, |o| {
                 (
@@ -824,30 +878,18 @@ impl Vm {
                             std::slice::from_ref(&value),
                             Some(receiver.clone()),
                         )?;
-                        return Ok(());
+                        return Ok(true);
                     }
-                    if self.current_strict() {
-                        return Err(Error::type_err(format!(
-                            "Cannot set property '{}' which has only a getter",
-                            key
-                        )));
-                    }
-                    return Ok(());
+                    return Ok(false);
                 }
                 if !desc.writable {
-                    if self.current_strict() {
-                        return Err(Error::type_err(format!(
-                            "Cannot assign to read only property '{}' of object",
-                            key
-                        )));
-                    }
-                    return Ok(());
+                    return Ok(false);
                 }
-                return self.set_receiver_data_property(receiver, pkey.clone(), key, value);
+                return self.set_receiver_data_property(receiver, pkey.clone(), value);
             }
             match proto {
                 Some(Value::Object(proto_idx)) => base_idx = proto_idx,
-                _ => return self.set_receiver_data_property(receiver, pkey.clone(), key, value),
+                _ => return self.set_receiver_data_property(receiver, pkey.clone(), value),
             }
         }
         Err(Error::type_err("Prototype chain too deep".to_string()))
@@ -857,16 +899,10 @@ impl Vm {
         &mut self,
         receiver: &Value,
         pkey: crate::value::PropertyKey,
-        key: &str,
         value: Value,
-    ) -> error::Result<()> {
+    ) -> error::Result<bool> {
         let Value::Object(receiver_idx) = receiver else {
-            if receiver.is_nullish() || self.current_strict() {
-                return Err(Error::type_err(
-                    "Cannot set property of primitive".to_string(),
-                ));
-            }
-            return Ok(());
+            return Ok(false);
         };
         let receiver_proxy = self.heap.with_obj(receiver_idx.0, |o| {
             if let HeapObj::Proxy(proxy) = o {
@@ -908,25 +944,16 @@ impl Vm {
             if !define.is_undefined() {
                 let trap_result =
                     self.call_function(&define, &[target, key_value, desc_obj], Some(handler))?;
-                if !self.to_boolean(&trap_result) && self.current_strict() {
-                    return Err(Error::type_err("Proxy defineProperty trap returned false"));
-                }
-                return Ok(());
+                return Ok(self.to_boolean(&trap_result));
             }
-            return self.set_receiver_data_property(&target, pkey, key, value);
+            return self.set_receiver_data_property(&target, pkey, value);
         }
         let existing = self
             .heap
             .with_obj(receiver_idx.0, |o| o.props().lock().get(&pkey).cloned());
         if let Some(desc) = existing {
             if desc.is_accessor || !desc.writable {
-                if self.current_strict() {
-                    return Err(Error::type_err(format!(
-                        "Cannot assign to read only property '{}' of object",
-                        key
-                    )));
-                }
-                return Ok(());
+                return Ok(false);
             }
         } else {
             let is_extensible = self.heap.with_obj(receiver_idx.0, |o| {
@@ -937,13 +964,7 @@ impl Vm {
                 }
             });
             if !is_extensible {
-                if self.current_strict() {
-                    return Err(Error::type_err(format!(
-                        "Cannot add property '{}', object is not extensible",
-                        key
-                    )));
-                }
-                return Ok(());
+                return Ok(false);
             }
         }
         let cache_key = pkey.as_str().map(|s| s.to_string());
@@ -959,7 +980,7 @@ impl Vm {
         if let Some(key) = cache_key {
             self.ic_invalidate(receiver_idx.0, &key);
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Strictness of the currently-executing frame, used by ordinary

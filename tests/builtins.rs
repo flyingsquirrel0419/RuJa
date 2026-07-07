@@ -1722,6 +1722,43 @@ fn object_statics() {
             "true,false,true,false,has:present|has:missing|has:present|has:missing"
         ))
     );
+    assert_eq!(
+        run(r#"
+            var target = {};
+            var receiver = {};
+            Object.defineProperty(receiver, "p", { value: 1, writable: false });
+            [
+              Reflect.set(target, "p", 2, receiver),
+              receiver.p,
+              Object.prototype.hasOwnProperty.call(target, "p")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("false,1,false"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = {};
+            var receiver = {};
+            Object.defineProperty(receiver, "p", { set: function(v) {} });
+            [
+              Reflect.set(target, "p", 2, receiver),
+              Object.prototype.hasOwnProperty.call(target, "p")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("false,false"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var proxy = new Proxy({}, {
+              set: function() { throw new Error("boom"); }
+            });
+            Reflect.set(proxy, "p", 1);
+        "#
+        )
+        .contains("boom"),
+        "Reflect.set should propagate abrupt completions from Proxy set traps"
+    );
     assert!(
         run_err("Object.keys(null);").contains("TypeError"),
         "Object.keys(null) should throw"
