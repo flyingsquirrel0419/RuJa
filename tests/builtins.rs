@@ -3294,6 +3294,24 @@ fn regexp_unicode_surrogate_pair_escapes_match_scalar() {
 }
 
 #[test]
+fn regexp_backreferences_and_legacy_decimal_escapes_compile() {
+    assert_eq!(
+        run("eval('/\\\\1/').source;"),
+        Value::String(Arc::from("\\1"))
+    );
+    assert_eq!(
+        run("eval('/a\\\\1/').source;"),
+        Value::String(Arc::from("a\\1"))
+    );
+    assert_eq!(run("/(a)\\1/.test('aa');"), Value::Bool(true));
+    assert_eq!(run("/(a)\\1/.test('ab');"), Value::Bool(false));
+    assert_eq!(
+        run("/(.+).*\\1/u.test('\\ud800\\udc00\\ud800');"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

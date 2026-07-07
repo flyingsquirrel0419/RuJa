@@ -248,6 +248,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   skip**, and broader `language/literals` improves to **471 pass / 3 fail /
   60 skip**, with the remaining RegExp literal failures isolated to
   backreference support.
+- **RegExp backreferences and identity escapes** —
+  RegExp compilation now keeps ordinary patterns on the existing Rust regex
+  fast path, uses a backtracking-capable backend only for true numeric
+  backreferences, and lowers non-Unicode legacy decimal escapes plus backend-
+  unsupported identity escapes to equivalent literal backend patterns while
+  preserving public `source`. The focused `language/literals/regexp`
+  diagnostic now closes at **180 pass / 0 fail / 58 skip**, and broader
+  `language/literals` closes at **474 pass / 0 fail / 60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

@@ -183,9 +183,9 @@ pub(crate) fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
         let re = compile_regex(&source, &flags)
             .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
         let matched = if flags.contains('y') {
-            re.find_at(&s, 0).filter(|m| m.start() == 0)
+            re.find_at(&s, 0)?.filter(|m| m.start() == 0)
         } else {
-            re.find(&s)
+            re.find(&s)?
         };
         return Ok(matched
             .map(|m| Value::Number(crate::value::utf16_len(&s[..m.start()]) as f64))
@@ -360,7 +360,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
             let mut parts: Vec<String> = Vec::new();
             let mut last_end = 0;
-            for m in re.find_iter(&s) {
+            for m in re.find_iter(&s)? {
                 if parts.len() >= limit {
                     break;
                 }
@@ -432,7 +432,7 @@ pub(crate) fn str_replace(
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
-                for caps in re.captures_iter(&s) {
+                for caps in re.captures_iter(&s)? {
                     let m = caps.get(0).unwrap();
                     result.push_str(&s[last_end..m.start()]);
                     let mut cap_args = vec![Value::String(Arc::from(m.as_str()))];
@@ -456,9 +456,9 @@ pub(crate) fn str_replace(
                 return Ok(Value::String(Arc::from(result.as_str())));
             }
             let replaced = if global {
-                re.replace_all(&s, to_str.as_str())
+                re.replace_all(&s, to_str.as_str())?
             } else {
-                re.replace(&s, to_str.as_str())
+                re.replace(&s, to_str.as_str())?
             };
             return Ok(Value::String(Arc::from(replaced.as_ref())));
         }
@@ -592,7 +592,8 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 if global {
                     // Collect all matches (full-match substrings).
                     let items: Vec<Value> = re
-                        .find_iter(&s)
+                        .find_iter(&s)?
+                        .into_iter()
                         .map(|m| Value::String(Arc::from(m.as_str())))
                         .collect();
                     if items.is_empty() {
@@ -601,7 +602,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                         make_value_array(vm, items)
                     }
                 } else {
-                    match re.captures(&s) {
+                    match re.captures(&s)? {
                         Some(caps) => {
                             let items: Vec<Value> = caps
                                 .iter()

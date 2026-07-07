@@ -48,21 +48,266 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_rational::Ratio;
 use num_traits::{Signed, ToPrimitive, Zero};
-use regex::{Regex, RegexBuilder};
+use regex::{Regex as RustRegex, RegexBuilder as RustRegexBuilder};
+use std::borrow::Cow;
+
+#[derive(Clone, Copy)]
+struct CompiledMatch<'t> {
+    text: &'t str,
+    start: usize,
+    end: usize,
+}
+
+impl<'t> CompiledMatch<'t> {
+    fn as_str(self) -> &'t str {
+        self.text
+    }
+
+    fn start(self) -> usize {
+        self.start
+    }
+
+    fn end(self) -> usize {
+        self.end
+    }
+}
+
+struct CompiledCaptures<'t> {
+    groups: Vec<Option<CompiledMatch<'t>>>,
+}
+
+impl<'t> CompiledCaptures<'t> {
+    fn get(&self, index: usize) -> Option<CompiledMatch<'t>> {
+        self.groups.get(index).copied().flatten()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = Option<CompiledMatch<'t>>> + '_ {
+        self.groups.iter().copied()
+    }
+
+    fn len(&self) -> usize {
+        self.groups.len()
+    }
+}
+
+enum CompiledRegex {
+    Rust(RustRegex),
+    Fancy(fancy_regex::Regex),
+}
 
 /// Compile a regex pattern applying ES flags: `i` (case-insensitive),
 /// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
 /// the regex engine here and are handled by the caller.
-fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
-    let backend_source = normalize_regex_for_backend(source, flags);
-    let mut b = RegexBuilder::new(&backend_source);
+fn compile_regex(source: &str, flags: &str) -> Result<CompiledRegex, String> {
+    let capture_count = regex_capture_count(source);
+    let backend_source = normalize_regex_for_backend(source, flags, capture_count);
+    if regex_uses_backreference(source, capture_count) {
+        let mut b = fancy_regex::RegexBuilder::new(&backend_source);
+        b.case_insensitive(flags.contains('i'));
+        b.multi_line(flags.contains('m'));
+        b.dot_matches_new_line(flags.contains('s'));
+        return b
+            .build()
+            .map(CompiledRegex::Fancy)
+            .map_err(|e| e.to_string());
+    }
+
+    let mut b = RustRegexBuilder::new(&backend_source);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
     b.dot_matches_new_line(flags.contains('s'));
     b.build()
+        .map(CompiledRegex::Rust)
+        .map_err(|e| e.to_string())
 }
 
-fn normalize_regex_for_backend(source: &str, flags: &str) -> String {
+impl CompiledRegex {
+    fn find<'t>(&self, input: &'t str) -> error::Result<Option<CompiledMatch<'t>>> {
+        self.find_at(input, 0)
+    }
+
+    fn find_at<'t>(
+        &self,
+        input: &'t str,
+        start: usize,
+    ) -> error::Result<Option<CompiledMatch<'t>>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re.find_at(input, start).map(CompiledMatch::from)),
+            CompiledRegex::Fancy(re) => re
+                .find_from_pos(input, start)
+                .map(|m| m.map(CompiledMatch::from))
+                .map_err(regex_runtime_error),
+        }
+    }
+
+    fn find_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledMatch<'t>>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re.find_iter(input).map(CompiledMatch::from).collect()),
+            CompiledRegex::Fancy(re) => {
+                let mut matches = Vec::new();
+                let mut pos = 0;
+                while pos <= input.len() {
+                    let Some(m) = re.find_from_pos(input, pos).map_err(regex_runtime_error)? else {
+                        break;
+                    };
+                    let start = m.start();
+                    let end = m.end();
+                    matches.push(CompiledMatch::from(m));
+                    if end == pos {
+                        match input[end..].chars().next() {
+                            Some(ch) => pos = end + ch.len_utf8(),
+                            None => break,
+                        }
+                    } else {
+                        pos = end.max(start + 1);
+                    }
+                }
+                Ok(matches)
+            }
+        }
+    }
+
+    fn captures<'t>(&self, input: &'t str) -> error::Result<Option<CompiledCaptures<'t>>> {
+        self.captures_at(input, 0)
+    }
+
+    fn captures_at<'t>(
+        &self,
+        input: &'t str,
+        start: usize,
+    ) -> error::Result<Option<CompiledCaptures<'t>>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re.captures_at(input, start).map(CompiledCaptures::from)),
+            CompiledRegex::Fancy(re) => re
+                .captures_from_pos(input, start)
+                .map(|caps| caps.map(CompiledCaptures::from))
+                .map_err(regex_runtime_error),
+        }
+    }
+
+    fn captures_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledCaptures<'t>>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re
+                .captures_iter(input)
+                .map(CompiledCaptures::from)
+                .collect()),
+            CompiledRegex::Fancy(re) => {
+                let mut captures = Vec::new();
+                let mut pos = 0;
+                while pos <= input.len() {
+                    let Some(caps) = re
+                        .captures_from_pos(input, pos)
+                        .map_err(regex_runtime_error)?
+                    else {
+                        break;
+                    };
+                    let Some(m) = caps.get(0) else {
+                        break;
+                    };
+                    let end = m.end();
+                    captures.push(CompiledCaptures::from(caps));
+                    if end == pos {
+                        match input[end..].chars().next() {
+                            Some(ch) => pos = end + ch.len_utf8(),
+                            None => break,
+                        }
+                    } else {
+                        pos = end;
+                    }
+                }
+                Ok(captures)
+            }
+        }
+    }
+
+    fn replace<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re.replace(input, replacement)),
+            CompiledRegex::Fancy(_) => self.replace_fancy(input, replacement, false),
+        }
+    }
+
+    fn replace_all<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
+        match self {
+            CompiledRegex::Rust(re) => Ok(re.replace_all(input, replacement)),
+            CompiledRegex::Fancy(_) => self.replace_fancy(input, replacement, true),
+        }
+    }
+
+    fn replace_fancy<'t>(
+        &self,
+        input: &'t str,
+        replacement: &str,
+        global: bool,
+    ) -> error::Result<Cow<'t, str>> {
+        let mut result = String::new();
+        let mut last_end = 0;
+        let mut replaced = false;
+        for caps in self.captures_iter(input)? {
+            let Some(m) = caps.get(0) else {
+                continue;
+            };
+            result.push_str(&input[last_end..m.start()]);
+            result.push_str(replacement);
+            last_end = m.end();
+            replaced = true;
+            if !global {
+                break;
+            }
+        }
+        if !replaced {
+            return Ok(Cow::Borrowed(input));
+        }
+        result.push_str(&input[last_end..]);
+        Ok(Cow::Owned(result))
+    }
+}
+
+impl<'t> From<regex::Match<'t>> for CompiledMatch<'t> {
+    fn from(value: regex::Match<'t>) -> Self {
+        Self {
+            text: value.as_str(),
+            start: value.start(),
+            end: value.end(),
+        }
+    }
+}
+
+impl<'t> From<fancy_regex::Match<'t>> for CompiledMatch<'t> {
+    fn from(value: fancy_regex::Match<'t>) -> Self {
+        Self {
+            text: value.as_str(),
+            start: value.start(),
+            end: value.end(),
+        }
+    }
+}
+
+impl<'t> From<regex::Captures<'t>> for CompiledCaptures<'t> {
+    fn from(value: regex::Captures<'t>) -> Self {
+        Self {
+            groups: (0..value.len())
+                .map(|index| value.get(index).map(CompiledMatch::from))
+                .collect(),
+        }
+    }
+}
+
+impl<'t> From<fancy_regex::Captures<'t>> for CompiledCaptures<'t> {
+    fn from(value: fancy_regex::Captures<'t>) -> Self {
+        Self {
+            groups: (0..value.len())
+                .map(|index| value.get(index).map(CompiledMatch::from))
+                .collect(),
+        }
+    }
+}
+
+fn regex_runtime_error(error: fancy_regex::Error) -> Arc<Error> {
+    Error::syntax(format!("Invalid regex match: {error}"))
+}
+
+fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) -> String {
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
     let mut in_class = false;
@@ -71,7 +316,19 @@ fn normalize_regex_for_backend(source: &str, flags: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if escaped {
-            if flags.contains('u') && ch == 'u' {
+            if ch.is_ascii_digit() && ch != '0' {
+                let mut digits = String::from(ch);
+                while matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
+                    digits.push(chars.next().unwrap());
+                }
+                let value = digits.parse::<usize>().unwrap_or(usize::MAX);
+                if flags.contains('u') || (!in_class && value > 0 && value <= capture_count) {
+                    out.push_str(&digits);
+                } else {
+                    out.pop();
+                    push_legacy_decimal_escape_for_backend(&mut out, &digits);
+                }
+            } else if flags.contains('u') && ch == 'u' {
                 let mut lead_hex = String::new();
                 for _ in 0..4 {
                     match chars.peek().copied() {
@@ -168,6 +425,9 @@ fn normalize_regex_for_backend(source: &str, flags: &str) -> String {
                     out.push(ch);
                     out.push_str(&hex);
                 }
+            } else if !flags.contains('u') && !regex_backend_escape_passthrough(ch, chars.peek()) {
+                out.pop();
+                push_regex_literal_for_backend(&mut out, ch);
             } else {
                 out.push(ch);
             }
@@ -221,6 +481,126 @@ fn normalize_regex_for_backend(source: &str, flags: &str) -> String {
     }
 
     out
+}
+
+fn regex_capture_count(source: &str) -> usize {
+    let mut count = 0;
+    let mut chars = source.chars().peekable();
+    let mut in_class = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            '(' if !in_class => {
+                if chars.peek() != Some(&'?') {
+                    count += 1;
+                    continue;
+                }
+                let mut lookahead = chars.clone();
+                lookahead.next();
+                if lookahead.next() == Some('<') && !matches!(lookahead.peek(), Some('=' | '!')) {
+                    count += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+fn regex_uses_backreference(source: &str, capture_count: usize) -> bool {
+    if capture_count == 0 {
+        return false;
+    }
+    let mut chars = source.chars().peekable();
+    let mut in_class = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            if !in_class && ch.is_ascii_digit() && ch != '0' {
+                let mut digits = String::from(ch);
+                while matches!(chars.peek(), Some(next) if next.is_ascii_digit()) {
+                    digits.push(chars.next().unwrap());
+                }
+                if digits
+                    .parse::<usize>()
+                    .is_ok_and(|value| value <= capture_count)
+                {
+                    return true;
+                }
+            }
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn push_legacy_decimal_escape_for_backend(out: &mut String, digits: &str) {
+    let mut chars = digits.chars();
+    let Some(first) = chars.next() else {
+        return;
+    };
+    if !matches!(first, '1'..='7') {
+        out.push(first);
+        out.extend(chars);
+        return;
+    }
+
+    let mut value = first.to_digit(8).unwrap();
+    let mut used = first.len_utf8();
+    for ch in digits[first.len_utf8()..].chars() {
+        let Some(digit) = ch.to_digit(8) else {
+            break;
+        };
+        let next = value * 8 + digit;
+        if next > 0xff {
+            break;
+        }
+        value = next;
+        used += ch.len_utf8();
+    }
+    out.push_str("\\x");
+    out.push_str(&format!("{value:02x}"));
+    out.push_str(&digits[used..]);
+}
+
+fn regex_backend_escape_passthrough(ch: char, next: Option<&char>) -> bool {
+    matches!(
+        ch,
+        '0' | 'b'
+            | 'B'
+            | 'd'
+            | 'D'
+            | 'f'
+            | 'n'
+            | 'r'
+            | 's'
+            | 'S'
+            | 't'
+            | 'u'
+            | 'v'
+            | 'w'
+            | 'W'
+            | 'x'
+    ) || (ch == 'c' && next.is_some_and(|next| next.is_ascii_alphabetic()))
+}
+
+fn push_regex_literal_for_backend(out: &mut String, ch: char) {
+    let literal = ch.to_string();
+    out.push_str(&regex::escape(&literal));
 }
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

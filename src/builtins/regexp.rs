@@ -337,7 +337,7 @@ pub(crate) fn regexp_exec(
     // Run against the whole input so `^` still observes the real input start
     // and multiline line starts; sticky only requires the match to begin at
     // lastIndex.
-    let m = re.captures_at(&input, start_byte).filter(|c| {
+    let m = re.captures_at(&input, start_byte)?.filter(|c| {
         !sticky
             || c.get(0)
                 .map(|mch| mch.start() == start_byte)
