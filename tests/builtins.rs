@@ -3180,6 +3180,41 @@ fn regexp_assertion_quantifier_reports_early_error() {
 }
 
 #[test]
+fn regexp_unicode_mode_syntax_reports_early_error() {
+    for source in [
+        "/\\c0/u;",
+        "/{/u;",
+        "/\\M/u;",
+        "/\\1/u;",
+        "/[\\d-a]/u;",
+        "/[\\s-\\d]/u;",
+        "/[%-\\d]/u;",
+        "/[--\\d]/u;",
+        "/\\8/u;",
+        "/\\u{110000}/u;",
+        "/\\u{1,}/u;",
+        "/\\u{1F_639}/u;",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression"),
+            "expected unicode-mode syntax error for {source}"
+        );
+    }
+    for source in [
+        "new RegExp('{', 'u');",
+        "new RegExp('\\\\M', 'u');",
+        "new RegExp('\\\\8', 'u');",
+        "new RegExp('\\\\u{110000}', 'u');",
+        "new RegExp('\\\\u{1,}', 'u');",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression"),
+            "expected constructor unicode-mode syntax error for {source}"
+        );
+    }
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

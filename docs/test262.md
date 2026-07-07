@@ -202,6 +202,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   validation. The focused `language/literals/regexp` diagnostic now runs at
   **156 pass / 24 fail / 58 skip**, and broader `language/literals` improves
   to **450 pass / 24 fail / 60 skip**.
+- **RegExp Unicode-mode syntax early errors** —
+  RegExp literal and constructor validation now reject malformed or
+  out-of-range `\u{...}` escapes, invalid Unicode-mode identity, control, and
+  decimal escapes, bare `{` pattern characters, and character-class ranges
+  whose endpoints are multi-character class escapes such as `\d` or `\s`.
+  This closes the remaining RegExp literal parse-negative bucket. The focused
+  `language/literals/regexp` diagnostic now runs at **168 pass / 12 fail / 58
+  skip**, and broader `language/literals` improves to **462 pass / 12 fail /
+  60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

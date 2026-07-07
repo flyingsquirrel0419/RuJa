@@ -1690,6 +1690,7 @@ impl<'a> Lexer<'a> {
 
 pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
     validate_regex_flags(flags)?;
+    validate_regex_unicode_mode_syntax(pattern, flags)?;
     validate_regex_quantifier_positions(pattern)?;
     validate_regex_assertion_quantifiers(pattern, flags)?;
     validate_regex_modifier_groups(pattern)
@@ -1707,6 +1708,276 @@ fn validate_regex_flags(flags: &str) -> Result<(), String> {
         seen.push(ch);
     }
     Ok(())
+}
+
+fn validate_regex_unicode_mode_syntax(pattern: &str, flags: &str) -> Result<(), String> {
+    if !(flags.contains('u') || flags.contains('v')) {
+        return Ok(());
+    }
+
+    let chars: Vec<char> = pattern.chars().collect();
+    let capture_count = count_regex_captures(&chars);
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+
+        if ch == '\\' {
+            let Some(next) = chars.get(i + 1).copied() else {
+                return Err("invalid regular expression escape".to_string());
+            };
+            match next {
+                'u' => {
+                    i = validate_regex_unicode_escape_at(&chars, i + 1)?;
+                    continue;
+                }
+                'c' => {
+                    if !chars.get(i + 2).is_some_and(|ch| ch.is_ascii_alphabetic()) {
+                        return Err("invalid regular expression escape".to_string());
+                    }
+                    i += 3;
+                    continue;
+                }
+                '0' => {
+                    if chars.get(i + 2).is_some_and(|ch| ch.is_ascii_digit()) {
+                        return Err("invalid regular expression decimal escape".to_string());
+                    }
+                    i += 2;
+                    continue;
+                }
+                '1'..='9' => {
+                    let (value, end) = read_regex_decimal_escape(&chars, i + 1);
+                    if value == 0 || value > capture_count {
+                        return Err("invalid regular expression decimal escape".to_string());
+                    }
+                    i = end;
+                    continue;
+                }
+                'f' | 'n' | 'r' | 't' | 'v' | 'b' | 'B' | 'd' | 'D' | 's' | 'S' | 'w' | 'W' => {
+                    i += 2;
+                    continue;
+                }
+                '^' | '$' | '\\' | '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
+                | '|' | '/' => {
+                    i += 2;
+                    continue;
+                }
+                '-' if in_class => {
+                    i += 2;
+                    continue;
+                }
+                _ => return Err("invalid regular expression identity escape".to_string()),
+            }
+        }
+
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match ch {
+            '[' => in_class = true,
+            '{' if braced_quantifier_end(&chars, i).is_none() => {
+                return Err("invalid regular expression pattern character".to_string());
+            }
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    validate_regex_unicode_class_ranges(&chars)
+}
+
+fn count_regex_captures(chars: &[char]) -> u32 {
+    let mut count = 0u32;
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match ch {
+            '[' => in_class = true,
+            '(' if regex_group_is_capturing(chars, i) => count += 1,
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    count
+}
+
+fn regex_group_is_capturing(chars: &[char], idx: usize) -> bool {
+    if chars.get(idx + 1) != Some(&'?') {
+        return true;
+    }
+    match chars.get(idx + 2).copied() {
+        Some(':') | Some('=') | Some('!') => false,
+        Some('<') if matches!(chars.get(idx + 3), Some('=') | Some('!')) => false,
+        _ => true,
+    }
+}
+
+fn read_regex_decimal_escape(chars: &[char], start: usize) -> (u32, usize) {
+    let mut idx = start;
+    let mut value = 0u32;
+    while let Some(ch) = chars.get(idx).copied() {
+        let Some(digit) = ch.to_digit(10) else {
+            break;
+        };
+        value = value.saturating_mul(10).saturating_add(digit);
+        idx += 1;
+    }
+    (value, idx)
+}
+
+fn validate_regex_unicode_escape_at(chars: &[char], idx: usize) -> Result<usize, String> {
+    debug_assert_eq!(chars.get(idx), Some(&'u'));
+    if chars.get(idx + 1) == Some(&'{') {
+        let mut scan = idx + 2;
+        let mut value = 0u32;
+        let mut saw_digit = false;
+        while let Some(ch) = chars.get(scan).copied() {
+            if ch == '}' {
+                if !saw_digit || value > 0x10FFFF {
+                    return Err("invalid regular expression unicode escape".to_string());
+                }
+                return Ok(scan + 1);
+            }
+            let Some(digit) = ch.to_digit(16) else {
+                return Err("invalid regular expression unicode escape".to_string());
+            };
+            saw_digit = true;
+            value = value.saturating_mul(16).saturating_add(digit);
+            if value > 0x10FFFF {
+                return Err("invalid regular expression unicode escape".to_string());
+            }
+            scan += 1;
+        }
+        return Err("invalid regular expression unicode escape".to_string());
+    }
+
+    for offset in 1..=4 {
+        if !chars
+            .get(idx + offset)
+            .is_some_and(|ch| ch.is_ascii_hexdigit())
+        {
+            return Err("invalid regular expression unicode escape".to_string());
+        }
+    }
+    Ok(idx + 5)
+}
+
+#[derive(Clone, Copy)]
+struct RegexClassAtom {
+    end: usize,
+    is_character_set: bool,
+}
+
+fn validate_regex_unicode_class_ranges(chars: &[char]) -> Result<(), String> {
+    let mut i = 0usize;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if ch != '[' {
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+        let class_start = i;
+        while i < chars.len() && chars[i] != ']' {
+            let Some(left) = regex_class_atom_at(chars, i) else {
+                break;
+            };
+            if chars.get(left.end) == Some(&'-')
+                && chars.get(left.end + 1).is_some()
+                && chars.get(left.end + 1) != Some(&']')
+            {
+                if let Some(right) = regex_class_atom_at(chars, left.end + 1) {
+                    if left.is_character_set || right.is_character_set {
+                        return Err("invalid regular expression character class range".to_string());
+                    }
+                }
+            }
+            i = left.end.max(i + 1);
+        }
+
+        if i == class_start {
+            continue;
+        }
+    }
+
+    Ok(())
+}
+
+fn regex_class_atom_at(chars: &[char], idx: usize) -> Option<RegexClassAtom> {
+    match chars.get(idx).copied()? {
+        '\\' => {
+            let escaped = chars.get(idx + 1).copied()?;
+            let end = if escaped == 'u' {
+                validate_regex_unicode_escape_at(chars, idx + 1).unwrap_or(idx + 2)
+            } else if escaped == 'c' && chars.get(idx + 2).is_some() {
+                idx + 3
+            } else {
+                idx + 2
+            };
+            Some(RegexClassAtom {
+                end,
+                is_character_set: matches!(escaped, 'd' | 'D' | 's' | 'S' | 'w' | 'W'),
+            })
+        }
+        ']' => None,
+        _ => Some(RegexClassAtom {
+            end: idx + 1,
+            is_character_set: false,
+        }),
+    }
 }
 
 fn validate_regex_quantifier_positions(pattern: &str) -> Result<(), String> {
@@ -2208,8 +2479,27 @@ mod tests {
                 LexError(ref msg) if msg.contains("regular expression quantifier")
             ));
         }
+        for source in [
+            "/\\c0/u",
+            "/{/u",
+            "/\\M/u",
+            "/\\1/u",
+            "/[\\d-a]/u",
+            "/[\\s-\\d]/u",
+            "/[%-\\d]/u",
+            "/[--\\d]/u",
+            "/\\8/u",
+            "/\\u{110000}/u",
+            "/\\u{1,}/u",
+            "/\\u{1F_639}/u",
+        ] {
+            assert!(matches!(
+                Lexer::new(source).tokens()[0].kind,
+                LexError(ref msg) if msg.contains("regular expression")
+            ));
+        }
         assert_eq!(
-            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/; /(?=a)?/; /a?/; /a{2}/; /\\?/; /\\{2\\}/; /[?]/;"),
+            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/; /(?=a)?/; /a?/; /a{2}/; /\\?/; /\\{2\\}/; /[?]/; /\\u{41}/u; /(a)\\1/u; /[a-\\-]/u;"),
             vec![
                 Regex("(?i:a)".into(), "".into()),
                 Semicolon,
@@ -2232,6 +2522,12 @@ mod tests {
                 Regex("\\{2\\}".into(), "".into()),
                 Semicolon,
                 Regex("[?]".into(), "".into()),
+                Semicolon,
+                Regex("\\u{41}".into(), "u".into()),
+                Semicolon,
+                Regex("(a)\\1".into(), "u".into()),
+                Semicolon,
+                Regex("[a-\\-]".into(), "u".into()),
                 Semicolon,
                 Eof,
             ]

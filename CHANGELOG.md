@@ -79,6 +79,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `language/literals/regexp` diagnostic now runs at **156 pass / 24 fail / 58
   skip**, and broader `language/literals` improves to **450 pass / 24 fail /
   60 skip**.
+- **RegExp Unicode-mode syntax early errors**: RegExp literal and constructor
+  validation now reject malformed/out-of-range `\u{...}` escapes, invalid
+  Unicode-mode identity/control/decimal escapes, bare `{` pattern characters,
+  and character-class ranges whose endpoints are multi-character class escapes
+  such as `\d` or `\s`. This closes the remaining RegExp literal
+  parse-negative bucket. The focused `language/literals/regexp` diagnostic now
+  runs at **168 pass / 12 fail / 58 skip**, and broader `language/literals`
+  improves to **462 pass / 12 fail / 60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
