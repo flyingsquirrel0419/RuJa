@@ -2663,6 +2663,106 @@ fn object_prevent_extensions(
     Ok(obj)
 }
 
+fn descriptor_is_frozen(desc: &PropertyDescriptor) -> bool {
+    !desc.configurable && (desc.is_accessor || !desc.writable)
+}
+
+fn array_length(array: &ArrayData) -> usize {
+    let dense_len = array.items.lock().len();
+    let sparse_len = array.sparse_max.lock().unwrap_or(0);
+    dense_len.max(sparse_len)
+}
+
+fn materialize_array_index_descriptors(array: &ArrayData, freeze: bool) {
+    let items = array.items.lock();
+    let present = array.present.lock();
+    let mut props = array.props.lock();
+    let is_arguments = array.is_arguments.load(Ordering::Relaxed);
+    for (index, value) in items.iter().enumerate() {
+        if !present.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let key = PropertyKey::from_string(index.to_string());
+        let desc = props
+            .entry(key)
+            .or_insert_with(|| PropertyDescriptor::data(value.clone()));
+        if freeze && !desc.is_accessor {
+            desc.writable = false;
+            if is_arguments {
+                if let Some(map) = array.arguments_map.lock().as_mut() {
+                    if let Some(slot) = map.names.get_mut(index) {
+                        *slot = None;
+                    }
+                }
+            }
+        }
+        desc.configurable = false;
+    }
+    if !is_arguments {
+        let length_key = PropertyKey::from("length");
+        let sparse_len = array.sparse_max.lock().unwrap_or(0);
+        let length = Value::Number(items.len().max(sparse_len) as f64);
+        let desc = props.entry(length_key).or_insert_with(|| {
+            let mut desc = PropertyDescriptor::data(length);
+            desc.enumerable = false;
+            desc.configurable = false;
+            desc
+        });
+        if freeze && !desc.is_accessor {
+            desc.writable = false;
+        }
+        desc.configurable = false;
+    }
+}
+
+fn array_integrity(array: &ArrayData, frozen: bool) -> bool {
+    if array.extensible.load(Ordering::Relaxed) {
+        return false;
+    }
+    let length = array_length(array);
+    let items = array.items.lock();
+    let present = array.present.lock();
+    let props = array.props.lock();
+    for index in 0..items.len() {
+        if !present.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let key = PropertyKey::from_string(index.to_string());
+        let Some(desc) = props.get(&key) else {
+            return false;
+        };
+        if frozen {
+            if !descriptor_is_frozen(desc) {
+                return false;
+            }
+        } else if desc.configurable {
+            return false;
+        }
+    }
+    if !array.is_arguments.load(Ordering::Relaxed) {
+        let length_key = PropertyKey::from("length");
+        if let Some(desc) = props.get(&length_key) {
+            if desc.configurable {
+                return false;
+            }
+            if desc.value != Value::Number(length as f64) {
+                return false;
+            }
+        }
+    }
+    let is_arguments = array.is_arguments.load(Ordering::Relaxed);
+    props.iter().all(|(key, desc)| {
+        if !is_arguments && key.as_str() == Some("length") {
+            return true;
+        }
+        if frozen {
+            descriptor_is_frozen(desc)
+        } else {
+            !desc.configurable
+        }
+    })
+}
+
 fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     vm.is_extensible(&obj).map(Value::Bool)
@@ -2670,16 +2770,23 @@ fn object_is_extensible(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error:
 
 fn object_seal(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(obj, Value::Object(_)) && !vm.prevent_extensions(&obj)? {
+        return Err(Error::type_err("Object.seal failed to prevent extensions"));
+    }
     if let Value::Object(idx) = &obj {
         vm.heap.with_obj(idx.0, |o| match o {
             HeapObj::Object(od) => {
-                od.extensible.store(false, Ordering::Relaxed);
                 for d in od.props.lock().values_mut() {
                     d.configurable = false;
                 }
             }
+            HeapObj::Array(a) => {
+                materialize_array_index_descriptors(a, false);
+                for d in a.props.lock().values_mut() {
+                    d.configurable = false;
+                }
+            }
             HeapObj::Function(f) => {
-                f.extensible.store(false, Ordering::Relaxed);
                 for d in f.props.lock().values_mut() {
                     d.configurable = false;
                 }
@@ -2694,9 +2801,16 @@ fn object_is_sealed(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
     if let Value::Object(idx) = &obj {
         let sealed = vm.heap.with_obj(idx.0, |o| match o {
-            HeapObj::Object(od) => od.props.lock().values().all(|d| !d.configurable),
-            HeapObj::Array(_) => false,
-            _ => true,
+            HeapObj::Object(od) => {
+                !od.extensible.load(Ordering::Relaxed)
+                    && od.props.lock().values().all(|d| !d.configurable)
+            }
+            HeapObj::Array(a) => array_integrity(a, false),
+            HeapObj::Function(f) => {
+                !f.extensible.load(Ordering::Relaxed)
+                    && f.props.lock().values().all(|d| !d.configurable)
+            }
+            _ => !o.is_extensible(),
         });
         return Ok(Value::Bool(sealed));
     }
@@ -2709,15 +2823,15 @@ fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
         let frozen = vm.heap.with_obj(idx.0, |o| match o {
             HeapObj::Object(od) => {
                 let ext = od.extensible.load(Ordering::Relaxed);
-                let all_frozen = od
-                    .props
-                    .lock()
-                    .values()
-                    .all(|d| !d.configurable && !d.writable && !d.is_accessor);
+                let all_frozen = od.props.lock().values().all(descriptor_is_frozen);
                 !ext && all_frozen
             }
-            HeapObj::Array(_) => false,
-            _ => true,
+            HeapObj::Array(a) => array_integrity(a, true),
+            HeapObj::Function(f) => {
+                !f.extensible.load(Ordering::Relaxed)
+                    && f.props.lock().values().all(descriptor_is_frozen)
+            }
+            _ => !o.is_extensible(),
         });
         return Ok(Value::Bool(frozen));
     }
@@ -2985,15 +3099,39 @@ fn object_get_own_property_descriptor(
 
 fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Value::Object(idx) = target {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Object(o) = obj {
-                o.extensible.store(false, Ordering::Relaxed);
+    if matches!(target, Value::Object(_)) && !vm.prevent_extensions(&target)? {
+        return Err(Error::type_err(
+            "Object.freeze failed to prevent extensions",
+        ));
+    }
+    if let Value::Object(idx) = &target {
+        vm.heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Object(o) => {
                 for d in o.props.lock().values_mut() {
-                    d.writable = false;
+                    if !d.is_accessor {
+                        d.writable = false;
+                    }
                     d.configurable = false;
                 }
             }
+            HeapObj::Array(a) => {
+                materialize_array_index_descriptors(a, true);
+                for d in a.props.lock().values_mut() {
+                    if !d.is_accessor {
+                        d.writable = false;
+                    }
+                    d.configurable = false;
+                }
+            }
+            HeapObj::Function(f) => {
+                for d in f.props.lock().values_mut() {
+                    if !d.is_accessor {
+                        d.writable = false;
+                    }
+                    d.configurable = false;
+                }
+            }
+            _ => {}
         });
     }
     Ok(target)

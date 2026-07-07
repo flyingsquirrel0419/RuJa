@@ -139,6 +139,17 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Object integrity for arrays, arguments, functions, and Proxy traps** —
+  `Object.seal` and `Object.freeze` now use the Proxy-aware
+  `[[PreventExtensions]]` path so false Proxy traps throw for the `Object.*`
+  forms. Dense Array and arguments indexes are materialized as own descriptors
+  during seal/freeze, Array `length` is made non-writable by freeze and honored
+  by later length assignment, and `Object.isSealed`/`Object.isFrozen` now
+  require non-extensible ordinary objects/functions while checking
+  Array/arguments descriptors. The
+  focused `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at
+  **208 pass / 10 fail / 21 skip**, with remaining failures isolated to missing
+  TypedArray constructors.
 - **Map/Set zero-key canonicalization** —
   Internal `MapKey` creation now canonicalizes numeric `-0` to `+0`, and its
   hash implementation now agrees with SameValueZero equality for both zero

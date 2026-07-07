@@ -2254,6 +2254,69 @@ fn prevent_extensions_blocks_array_arguments_function_and_proxy_edges() {
 }
 
 #[test]
+fn seal_and_freeze_update_integrity_for_arrays_arguments_functions_and_proxies() {
+    assert_eq!(run("Object.isSealed(1);"), Value::Bool(true));
+    assert_eq!(run("Object.isFrozen(1);"), Value::Bool(true));
+    assert_eq!(run("Object.isSealed(Boolean);"), Value::Bool(false));
+    assert_eq!(run("Object.isFrozen(Boolean);"), Value::Bool(false));
+    assert_eq!(
+        run("var a=[0,1]; Object.seal(a); var d=Object.getOwnPropertyDescriptor(a,'0'); Object.isSealed(a)+':' + d.configurable;"),
+        Value::String(Arc::from("true:false"))
+    );
+    assert_eq!(
+        run("var a=[]; Object.seal(a); a.length=1; var d=Object.getOwnPropertyDescriptor(a,'length'); a.length + ':' + d.value + ':' + d.writable + ':' + d.configurable;"),
+        Value::String(Arc::from("1:1:true:false"))
+    );
+    assert_eq!(
+        run("var a=[]; Object.seal(a); Object.isFrozen(a);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var a=[]; a[2000000]=1; Object.freeze(a); a.length;"),
+        Value::Number(2000001.0)
+    );
+    assert_eq!(
+        run("var a=[0,1]; Object.freeze(a); var d=Object.getOwnPropertyDescriptor(a,'0'); Object.isFrozen(a)+':' + d.writable + ':' + d.configurable;"),
+        Value::String(Arc::from("true:false:false"))
+    );
+    assert_eq!(
+        run("var a=[0,1]; Object.freeze(a); a.length=1; a.length;"),
+        Value::Number(2.0)
+    );
+    assert!(
+        run_err("\"use strict\"; var a=[0,1]; Object.freeze(a); a.length=1;").contains("TypeError")
+    );
+    assert_eq!(
+        run("(function(){ Object.freeze(arguments); var d=Object.getOwnPropertyDescriptor(arguments,'0'); return Object.isFrozen(arguments)+':' + d.writable + ':' + d.configurable; })(1);"),
+        Value::String(Arc::from("true:false:false"))
+    );
+    assert_eq!(
+        run("(function(a){ Object.freeze(arguments); a=2; return arguments[0]; })(1);"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("(function(){ Object.seal(arguments); var d=Object.getOwnPropertyDescriptor(arguments,'0'); return Object.isSealed(arguments)+':' + Object.isFrozen(arguments)+':' + d.writable + ':' + d.configurable; })(1);"),
+        Value::String(Arc::from("true:false:true:false"))
+    );
+    assert_eq!(
+        run("function f(){} f.x=1; Object.seal(f); var d=Object.getOwnPropertyDescriptor(f,'x'); Object.isSealed(f)+':' + Object.isFrozen(f)+':' + d.writable + ':' + d.configurable;"),
+        Value::String(Arc::from("true:false:true:false"))
+    );
+    assert_eq!(
+        run("function f(){} f.x=1; Object.freeze(f); var d=Object.getOwnPropertyDescriptor(f,'x'); Object.isFrozen(f)+':' + d.writable + ':' + d.configurable;"),
+        Value::String(Arc::from("true:false:false"))
+    );
+    assert!(
+        run_err("Object.seal(new Proxy({}, { preventExtensions(){ return false; } }));")
+            .contains("TypeError")
+    );
+    assert!(
+        run_err("Object.freeze(new Proxy({}, { preventExtensions(){ return false; } }));")
+            .contains("TypeError")
+    );
+}
+
+#[test]
 fn is_extensible_uses_proxy_traps_and_reflect_rejects_primitives() {
     assert_eq!(run("Object.isExtensible(1);"), Value::Bool(false));
     assert!(run_err("Reflect.isExtensible(1);").contains("TypeError"));

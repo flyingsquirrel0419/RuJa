@@ -1622,6 +1622,22 @@ impl Vm {
     /// `ArraySetLength`: must be a non-negative integer in the 32-bit range,
     /// else a RangeError ("Invalid array length"); then truncate or extend.
     pub(crate) fn set_array_length(&mut self, idx: usize, value: Value) -> error::Result<()> {
+        let length_writable = self.heap.with_obj(idx, |o| {
+            if let HeapObj::Array(a) = o {
+                return a
+                    .props
+                    .lock()
+                    .get(&crate::value::PropertyKey::from("length"))
+                    .is_none_or(|desc| desc.writable);
+            }
+            true
+        });
+        if !length_writable {
+            if self.current_strict() {
+                return Err(Error::type_err("Cannot assign to read only array length"));
+            }
+            return Ok(());
+        }
         let new_len = match value {
             Value::Number(n) => {
                 // Must be a non-negative integer that fits in u32, and equal
@@ -1708,6 +1724,13 @@ impl Vm {
                     drop(present);
                     drop(items);
                     *a.sparse_max.lock() = Some(effective_len);
+                }
+                if let Some(desc) = a
+                    .props
+                    .lock()
+                    .get_mut(&crate::value::PropertyKey::from("length"))
+                {
+                    desc.value = Value::Number(effective_len as f64);
                 }
             }
         });

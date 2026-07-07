@@ -24,6 +24,18 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Object integrity for arrays, arguments, functions, and Proxy traps**:
+  `Object.seal`/`Object.freeze` now route through the Proxy-aware
+  `[[PreventExtensions]]` path so false Proxy traps throw for the `Object.*`
+  forms, materialize dense Array and arguments indexes so sealed/frozen
+  descriptors are observable, and freeze Array `length` by honoring its
+  non-writable descriptor during length assignment. `Object.isSealed`/
+  `Object.isFrozen` now require non-extensible ordinary objects/functions and
+  report Array/arguments integrity from their materialized descriptors while
+  preserving primitive receivers as already sealed/frozen. The focused
+  `built-ins/Object/{seal,freeze,isSealed,isFrozen}` run now closes at **208
+  pass / 10 fail / 21 skip**, with the remaining failures isolated to missing
+  TypedArray constructors.
 - **Map/Set zero-key canonicalization**: keyed collections now normalize
   numeric `-0` to `+0` when creating internal `MapKey`s, and the `MapKey`
   hash implementation now matches SameValueZero equality for both zero signs.
