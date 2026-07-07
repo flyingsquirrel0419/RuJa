@@ -284,13 +284,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   property access instead of scanning only RuJa's dense array storage.
   Generic calls on ordinary array-like objects, Boolean/Number primitives
   with prototype `length`/index properties, boxed strings, sparse arrays, and
-  holes now follow the expected `HasProperty`/`Get` behavior. The focused
+  holes now follow the expected `HasProperty`/`Get` behavior. Array
+  `length` shrinkage now preserves non-configurable indexed own properties,
+  so searches still observe those elements after accessor side effects try to
+  shorten the receiver. The focused
   `built-ins/Array/prototype/includes
   built-ins/Array/prototype/indexOf
   built-ins/Array/prototype/lastIndexOf` cluster now runs at
-  **405 pass / 4 fail / 20 skip**, with the remaining failures isolated to
-  Error prototype `length` modeling and non-configurable array-index
-  length-shrink semantics.
+  **409 pass / 0 fail / 20 skip**.
 - **String search argument coercion**: `String.prototype.indexOf` and
   `lastIndexOf` now coerce `searchString` through `ToString` before reading
   the position argument, so missing arguments search for `"undefined"`, object

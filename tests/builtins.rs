@@ -67,6 +67,36 @@ fn array_search_methods_use_array_like_property_access() {
     );
     assert_eq!(run("[0,,2].indexOf(undefined);"), Value::Number(-1.0));
     assert_eq!(run("[0,,2].includes(undefined);"), Value::Bool(true));
+    assert_eq!(
+        run(r#"
+            var arr = [0, 1, 2];
+            Object.defineProperty(arr, "2", {
+              get: function() { return "unconfigurable"; },
+              configurable: false
+            });
+            Object.defineProperty(arr, "1", {
+              get: function() { arr.length = 2; return 1; },
+              configurable: true
+            });
+            [arr.indexOf("unconfigurable"), arr.length, 2 in arr].join("|");
+            "#),
+        Value::String(Arc::from("2|3|true"))
+    );
+    assert_eq!(
+        run(r#"
+            var arr = [0, 1, 2, 3];
+            Object.defineProperty(arr, "2", {
+              get: function() { return "unconfigurable"; },
+              configurable: false
+            });
+            Object.defineProperty(arr, "3", {
+              get: function() { arr.length = 2; return 1; },
+              configurable: true
+            });
+            [arr.lastIndexOf("unconfigurable"), arr.length, 2 in arr, 3 in arr].join("|");
+            "#),
+        Value::String(Arc::from("2|3|true|false"))
+    );
 }
 
 #[test]

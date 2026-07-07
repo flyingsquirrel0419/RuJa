@@ -413,10 +413,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `HasProperty`/`Get` rather than cloning only dense Array storage. Generic
   calls on ordinary array-like objects, Boolean/Number primitives, boxed
   strings, sparse arrays, and holes now match the spec-observable search
-  behavior. The focused
+  behavior. Array `length` shrinkage now preserves non-configurable indexed
+  own properties, so accessor side effects that try to shorten the receiver do
+  not hide those elements from `indexOf`/`lastIndexOf`. The focused
   `built-ins/Array/prototype/includes
   built-ins/Array/prototype/indexOf
-  built-ins/Array/prototype/lastIndexOf` cluster runs at **405 pass / 4 fail
+  built-ins/Array/prototype/lastIndexOf` cluster runs at **409 pass / 0 fail
   / 20 skip**.
 - **String search argument coercion** —
   `String.prototype.indexOf` and `lastIndexOf` now coerce `searchString`

@@ -1559,31 +1559,43 @@ impl Vm {
                 let cap = crate::value::MAX_DENSE_ARRAY_LEN;
                 let mut items = a.items.lock();
                 let mut present = a.present.lock();
-                // Drop any sparse properties whose index is >= new_len, and
-                // recompute sparse_max so length stays consistent.
+                let mut effective_len = new_len;
+
+                // ArraySetLength deletes indexed own properties from the end
+                // down. If a non-configurable property cannot be deleted, the
+                // length rolls back to that index + 1.
                 {
                     let mut props = a.props.lock();
+                    for (key, desc) in props.iter() {
+                        let Some(index) = key.as_str().and_then(crate::value::parse_array_index)
+                        else {
+                            continue;
+                        };
+                        if index >= new_len && !desc.configurable {
+                            effective_len = effective_len.max(index + 1);
+                        }
+                    }
                     let mut to_remove = Vec::new();
-                    for k in props.keys() {
-                        if let crate::value::PropertyKey::Str(s) = k {
-                            if let Some(i) = crate::value::parse_array_index(s) {
-                                if i >= new_len {
-                                    to_remove.push(k.clone());
-                                }
-                            }
+                    for (key, desc) in props.iter() {
+                        let Some(index) = key.as_str().and_then(crate::value::parse_array_index)
+                        else {
+                            continue;
+                        };
+                        if index >= effective_len && desc.configurable {
+                            to_remove.push(key.clone());
                         }
                     }
                     for k in to_remove {
                         props.shift_remove(&k);
                     }
                 }
-                if new_len <= cap {
+                if effective_len <= cap {
                     // Fits in the dense backing store.
-                    if new_len < items.len() {
-                        items.truncate(new_len);
-                        present.truncate(new_len);
+                    if effective_len < items.len() {
+                        items.truncate(effective_len);
+                        present.truncate(effective_len);
                     } else {
-                        while items.len() < new_len {
+                        while items.len() < effective_len {
                             items.push(Value::Undefined);
                             present.push(false);
                         }
@@ -1601,7 +1613,7 @@ impl Vm {
                     }
                     drop(present);
                     drop(items);
-                    *a.sparse_max.lock() = Some(new_len);
+                    *a.sparse_max.lock() = Some(effective_len);
                 }
             }
         });
