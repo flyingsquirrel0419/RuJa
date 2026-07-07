@@ -2106,6 +2106,57 @@ fn object_statics() {
     assert!(run_err("Object.fromEntries();").contains("TypeError"));
     assert!(run_err(r#"Object.fromEntries(["ab"]);"#).contains("TypeError"));
     assert_eq!(
+        run(r#"
+            var o = Object.groupBy([1, 2, 3], function(v, i) {
+              return i + ":" + (v % 2 === 0 ? "even" : "odd");
+            });
+            [
+              Object.getPrototypeOf(o) === null,
+              Object.keys(o).join("|"),
+              o["0:odd"].join(","),
+              o["1:even"].join(","),
+              o["2:odd"].join(",")
+            ].join(";");
+        "#),
+        Value::String(Arc::from("true;0:odd|1:even|2:odd;1;2;3"))
+    );
+    assert_eq!(
+        run(r#"
+            var s = Symbol("group");
+            var o = Object.groupBy(["a", "b"], function(v) {
+              return v === "a" ? s : "plain";
+            });
+            [
+              o[s].join(","),
+              o.plain.join(","),
+              Object.getOwnPropertySymbols(o).length
+            ].join("|");
+        "#),
+        Value::String(Arc::from("a|b|1"))
+    );
+    assert_eq!(
+        run(r#"
+            var closed = false;
+            var it = {
+              i: 0,
+              next: function() { return { value: ++this.i, done: false }; },
+              return: function() { closed = true; return {}; }
+            };
+            var src = {};
+            src[Symbol.iterator] = function() { return it; };
+            try {
+              Object.groupBy(src, function(v) {
+                if (v === 2) throw new Error("stop");
+                return "k";
+              });
+            } catch (e) {}
+            closed;
+        "#),
+        Value::Bool(true)
+    );
+    assert!(run_err("Object.groupBy([], null);").contains("TypeError"));
+    assert!(run_err("Object.groupBy(null, function(){});").contains("TypeError"));
+    assert_eq!(
         run("typeof Object.create(null);"),
         Value::String(Arc::from("object"))
     );

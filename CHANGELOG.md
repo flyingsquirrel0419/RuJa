@@ -279,6 +279,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `{ a: "b" }`, while primitive string entries throw `TypeError`. The focused
   `built-ins/Object/fromEntries` run now closes at
   **11 pass / 0 fail / 14 skip**.
+- **`Object.groupBy` static grouping**: `Object.groupBy` is now exposed as a
+  static built-in, iterates arbitrary sync iterables, calls the grouping
+  callback with `(value, index)`, converts callback results with
+  `ToPropertyKey`, preserves Symbol group keys, returns a null-prototype
+  result object, and closes custom iterators when callback/key coercion
+  abruptly completes. The focused `built-ins/Object/groupBy` run now closes at
+  **13 pass / 0 fail / 1 skip**.
 - **Native Error constructor shape**: Native Error constructors now inherit
   from `%Error%` instead of directly from `%Function.prototype%`, expose own
   non-enumerable `name`/`length` properties, and keep their prototype objects

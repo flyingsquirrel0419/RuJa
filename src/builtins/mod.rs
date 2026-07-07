@@ -1404,6 +1404,76 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
     Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
 }
 
+fn object_group_by(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let items = args.first().cloned().unwrap_or(Value::Undefined);
+    if items.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err("Object.groupBy callback must be callable"));
+    }
+
+    let iterator = vm.make_iterator(&items)?;
+    let mut groups: IndexMap<PropertyKey, Vec<Value>> = IndexMap::new();
+    let mut k = 0usize;
+    loop {
+        let (value, done) = vm.iterator_next(&iterator)?;
+        if done {
+            break;
+        }
+        let key_value = match vm.call_function(
+            &callback,
+            &[value.clone(), Value::Number(k as f64)],
+            Some(Value::Undefined),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                vm.iterator_close(&iterator)?;
+                return Err(err);
+            }
+        };
+        let key = match to_property_key_descriptor(vm, &key_value) {
+            Ok(key) => key,
+            Err(err) => {
+                vm.iterator_close(&iterator)?;
+                return Err(err);
+            }
+        };
+        groups.entry(key).or_default().push(value);
+        k += 1;
+    }
+
+    let obj_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(None),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Object")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    for (key, values) in groups {
+        let array = make_value_array(vm, values)?;
+        vm.heap.with_obj(obj_idx, |o| {
+            o.props().lock().insert(
+                key,
+                PropertyDescriptor {
+                    value: array,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
+        });
+    }
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
 fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     if target.is_nullish() {
@@ -2460,6 +2530,7 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
         ("is", object_is as NativeFn, 2),
         ("hasOwn", object_has_own as NativeFn, 2),
         ("fromEntries", object_from_entries as NativeFn, 1),
+        ("groupBy", object_group_by as NativeFn, 2),
         ("create", object_create as NativeFn, 2),
         ("freeze", object_freeze as NativeFn, 1),
         (

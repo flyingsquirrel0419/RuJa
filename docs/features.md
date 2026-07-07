@@ -91,9 +91,11 @@
   conversions, `codePointAt`, `concat`, `search`; `replace` with function
   callback, `split` with regex
 - **Object**: `defineProperty`, `defineProperties`, `keys`, `values`,
-  `entries`, `assign`, `hasOwn`, `create`, `getPrototypeOf`/`setPrototypeOf`,
-  `preventExtensions`/`isExtensible`, `seal`/`isSealed`, `freeze`/`isFrozen`,
-  `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`, `getOwnPropertyNames`
+  `entries`, `assign`, `groupBy`, `hasOwn`, `create`,
+  `getPrototypeOf`/`setPrototypeOf`, `preventExtensions`/`isExtensible`,
+  `seal`/`isSealed`, `freeze`/`isFrozen`,
+  `getOwnPropertyDescriptor`/`getOwnPropertyDescriptors`,
+  `getOwnPropertyNames`
 - **Number**: `parseInt`/`parseFloat`, `isNaN`, `isFinite`; `Number` statics
   (`isInteger`, `isFinite`, `isNaN`, `isSafeInteger`, constants) and
   `toString(radix)`/`toFixed`/`toPrecision`/`toExponential`
