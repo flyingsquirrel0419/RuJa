@@ -32,7 +32,7 @@ pub(crate) fn regexp_constructor(
     };
     crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
     // Validate the pattern eagerly so bad regexes throw at construction time.
-    Regex::new(&pattern).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    compile_regex(&pattern, &flags).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     // Look up RegExp.prototype via the global RegExp constructor.
     let regex_proto_val = {
         let reg = crate::environment::get(&vm.heap, vm.global, "RegExp");

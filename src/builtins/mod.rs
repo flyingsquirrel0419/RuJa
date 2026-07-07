@@ -53,11 +53,67 @@ use regex::{Regex, RegexBuilder};
 /// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
 /// the regex engine here and are handled by the caller.
 fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
-    let mut b = RegexBuilder::new(source);
+    let backend_source = normalize_regex_for_backend(source);
+    let mut b = RegexBuilder::new(&backend_source);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
     b.dot_matches_new_line(flags.contains('s'));
     b.build()
+}
+
+fn normalize_regex_for_backend(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut in_class = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            out.push(ch);
+            escaped = true;
+            continue;
+        }
+        if ch == '[' {
+            in_class = true;
+            out.push(ch);
+            continue;
+        }
+        if ch == ']' && in_class {
+            in_class = false;
+            out.push(ch);
+            continue;
+        }
+
+        if !in_class && ch == '(' && chars.peek() == Some(&'?') {
+            out.push(ch);
+            out.push(chars.next().unwrap());
+            let mut modifiers = String::new();
+            while matches!(chars.peek(), Some('i' | 'm' | 's')) {
+                modifiers.push(chars.next().unwrap());
+            }
+            if !modifiers.is_empty() && chars.peek() == Some(&'-') {
+                chars.next();
+                if chars.peek() == Some(&':') {
+                    out.push_str(&modifiers);
+                    continue;
+                }
+                out.push_str(&modifiers);
+                out.push('-');
+                continue;
+            }
+            out.push_str(&modifiers);
+            continue;
+        }
+
+        out.push(ch);
+    }
+
+    out
 }
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

@@ -157,6 +157,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   skip**, broader `language/literals` improves to **409 pass / 65 fail / 60
   skip**, and `built-ins/RegExp/regexp-modifiers` runs at **37 pass / 33 fail
   / 0 skip** with remaining failures in runtime modifier semantics.
+- **RegExp modifiers backend normalization** —
+  The internal regex compiler now rewrites ES modifier groups with an empty
+  remove-list, such as `(?s-:...)`, to the Rust regex backend's equivalent
+  `(?s:...)` form while preserving the public `source` string. Constructor
+  validation now uses the same normalized compile path as execution. The
+  focused `built-ins/RegExp/regexp-modifiers` run improves to **57 pass / 13
+  fail / 0 skip**.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect** —
   RuJa's internal `[[HasProperty]]` helper now invokes Proxy `has` traps,
   including revoked-proxy failures and basic invariant checks for

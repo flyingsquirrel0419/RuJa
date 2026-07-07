@@ -2762,6 +2762,23 @@ fn regex_source_flags() {
 }
 
 #[test]
+fn regexp_modifiers_empty_remove_list_compiles() {
+    assert_eq!(run("/(?s-:^.$)/.test('\\n');"), Value::Bool(true));
+    assert_eq!(
+        run("new RegExp('(?s-:^.$)').test('\\n');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var r = /(?m-:^b$)/; r.source;"),
+        Value::String(Arc::from("(?m-:^b$)"))
+    );
+    assert_eq!(
+        run("/^a\\n(?m-:^b$)\\nc$/.test('a\\nb\\nc');"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

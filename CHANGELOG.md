@@ -44,6 +44,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   **140 pass / 40 fail / 58 skip**, broader `language/literals` improves to
   **409 pass / 65 fail / 60 skip**, and
   `built-ins/RegExp/regexp-modifiers` runs at **37 pass / 33 fail / 0 skip**.
+- **RegExp modifiers backend normalization**: the internal regex compiler now
+  lowers ES modifier groups with an empty remove-list, such as `(?s-:...)`,
+  to the Rust regex backend's equivalent `(?s:...)` form while preserving the
+  public `source` string. Constructor validation now uses the same normalized
+  compile path as execution. This closes the backend syntax failures for
+  add-only modifier groups without changing modifier properties on the
+  RegExp instance. The focused `built-ins/RegExp/regexp-modifiers` run now
+  improves to **57 pass / 13 fail / 0 skip**.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect**:
   internal property-existence checks now route through Proxy `has` traps,
   including revoked-proxy errors and basic non-configurable/non-extensible
