@@ -249,6 +249,22 @@ fn private_method_function_names_include_hash() {
 }
 
 #[test]
+fn private_method_functions_are_shared_across_instances() {
+    assert_eq!(
+        run("class C{#m(){return 42;}get ref(){return this.#m;}}let a=new C(),b=new C();a.ref===b.ref&&a.ref.name==='#m';"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn shared_private_methods_keep_super_home_object() {
+    assert_eq!(
+        run("class B{m(){return this.x;}}class C extends B{constructor(x){super();this.x=x;}#m(){return super.m();}call(){return this.#m;}value(){return this.#m();}}let a=new C(1),b=new C(2);a.call()===b.call()&&a.value()===1&&b.value()===2;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_async_and_generator_method_heads_parse() {
     assert_eq!(
         run("class C{async #m(){return 1;} get(){return this.#m;}}new C().get().name;"),

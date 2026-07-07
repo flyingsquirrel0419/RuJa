@@ -106,6 +106,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   private fields, methods, and accessors whose names are spelled with
   `\uXXXX`/`\u{...}` escapes or non-ASCII source text. The focused
   private-name diagnostic now closes at **50 pass / 0 fail**.
+- **Private method function identity**: instance private methods are now
+  created once during class evaluation and copied into each instance private
+  slot from a shared class-environment binding, instead of allocating a fresh
+  function object in every constructor call. This preserves private method
+  names, `super` HomeObject capture, and `this.#m` identity across instances.
+  With private method skips temporarily lifted, the focused
+  `language/{statements,expressions}/class/elements/private-methods`
+  diagnostic now closes at **2 pass / 0 fail / 8 skip**.
 - **parseInt radix and large-prefix conformance**: global `parseInt` now
   applies `ToNumber`/`ToInt32` to its radix argument, so string, boxed, object,
   infinite, and modulo-2^32 radix values follow the spec. Digit accumulation no

@@ -233,6 +233,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   accept names spelled with `\uXXXX`/`\u{...}` escapes and non-ASCII source
   text. The focused private-name diagnostic now closes at **50 pass / 0
   fail**.
+- **Private method function identity** —
+  Instance private methods are now created once during class evaluation and
+  copied into each instance private slot from a shared class-environment
+  binding, instead of allocating a fresh function object during every
+  constructor call. This preserves private method names, `super` HomeObject
+  capture, and `this.#m` identity across instances. With private method skips
+  temporarily lifted, the focused
+  `language/{statements,expressions}/class/elements/private-methods`
+  diagnostic now closes at **2 pass / 0 fail / 8 skip**.
 - **parseInt radix and large-prefix conformance** —
   Global `parseInt` now converts its radix argument through `ToNumber` and
   `ToInt32`, so string, boxed primitive, ordinary object, infinite, and

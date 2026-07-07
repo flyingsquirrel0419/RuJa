@@ -3445,6 +3445,22 @@ impl Compiler {
                 } else {
                     Vec::new()
                 };
+                let instance_private_method_bindings: Vec<(usize, Arc<str>)> = cls
+                    .methods
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| {
+                        m.is_private
+                            && !m.is_static
+                            && matches!(m.kind, crate::ast::PropKind::Method)
+                    })
+                    .map(|(idx, method)| {
+                        (
+                            idx,
+                            Arc::from(format!("#private_method_{}_{}", idx, method.name).as_str()),
+                        )
+                    })
+                    .collect();
                 let ctor_fn = FunctionExpr {
                     name: display_name.clone(),
                     params: cls
@@ -3511,26 +3527,25 @@ impl Compiler {
                         let pm_fields: Vec<crate::ast::PrivateFieldDecl> = cls
                             .methods
                             .iter()
-                            .filter(|m| m.is_private && !m.is_static)
-                            .filter(|m| matches!(m.kind, crate::ast::PropKind::Method))
-                            .map(|m| crate::ast::PrivateFieldDecl {
-                                name: m.name.clone(),
-                                init: Some(Box::new(Expr::Function(FunctionExpr {
-                                    name: Some(Self::private_method_function_name(&m.name, m.kind)),
-                                    params: m.params.clone(),
-                                    param_defaults: m.param_defaults.clone(),
-                                    rest_param: m.rest_param.clone(),
-                                    body: m.body.clone(),
-                                    is_arrow: false,
-                                    is_async: m.is_async,
-                                    is_generator: m.is_generator,
-                                    param_decls: Vec::new(),
-                                    is_strict: true,
-                                    is_method: false,
-                                    has_name_binding: false,
-                                }))),
-                                is_static: false,
-                                kind: crate::ast::PropKind::Method,
+                            .enumerate()
+                            .filter(|(_, m)| m.is_private && !m.is_static)
+                            .filter(|(_, m)| matches!(m.kind, crate::ast::PropKind::Method))
+                            .map(|(idx, m)| {
+                                let binding = instance_private_method_bindings
+                                    .iter()
+                                    .find(|(method_idx, _)| *method_idx == idx)
+                                    .map(|(_, binding)| binding.clone())
+                                    .unwrap_or_else(|| {
+                                        Arc::from(
+                                            format!("#private_method_{}_{}", idx, m.name).as_str(),
+                                        )
+                                    });
+                                crate::ast::PrivateFieldDecl {
+                                    name: m.name.clone(),
+                                    init: Some(Box::new(Expr::Ident(binding))),
+                                    is_static: false,
+                                    kind: crate::ast::PropKind::Method,
+                                }
                             })
                             .collect();
                         let private_accessors: Vec<Stmt> = cls
@@ -3727,6 +3742,55 @@ impl Compiler {
                     self.chunk.emit(Op::GetProp, self.current_line); // [ctor, childProto]
                     self.chunk
                         .emit(Op::DeclareEnv(super_name_idx), self.current_line);
+                }
+                for (method_idx, binding_name) in &instance_private_method_bindings {
+                    let method = &cls.methods[*method_idx];
+                    let m_fn = FunctionExpr {
+                        name: Some(Self::private_method_function_name(
+                            &method.name,
+                            method.kind,
+                        )),
+                        params: method.params.clone(),
+                        param_defaults: method.param_defaults.clone(),
+                        rest_param: method.rest_param.clone(),
+                        body: method.body.clone(),
+                        is_arrow: false,
+                        is_async: method.is_async,
+                        is_generator: method.is_generator,
+                        param_decls: Vec::new(),
+                        is_strict: true,
+                        is_method: true,
+                        has_name_binding: false,
+                    };
+                    let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
+                    let m_idx = self.funcs.len();
+                    let mdef = crate::function::FunctionDef {
+                        name: Some(Self::private_method_function_name(
+                            &method.name,
+                            method.kind,
+                        )),
+                        params: method.params.clone(),
+                        param_slots: m_slots,
+                        rest_param: method.rest_param.clone(),
+                        chunk: Arc::new(m_chunk),
+                        num_locals: method.params.len() + 16,
+                        is_arrow: false,
+                        is_async: method.is_async,
+                        is_generator: method.is_generator,
+                        has_parameter_expressions: Self::has_parameter_expressions(&m_fn),
+                        length: Self::fn_length(&m_fn),
+                        is_method: true,
+                        has_name_binding: false,
+                        is_derived: false,
+                    };
+                    self.funcs.push(Arc::new(mdef));
+                    let super_name_idx = self.intern("#super");
+                    self.chunk
+                        .emit(Op::LoadEnv(super_name_idx), self.current_line);
+                    self.emit_make_closure_capturing_super_from_stack(m_idx);
+                    let binding_idx = self.intern(binding_name);
+                    self.chunk
+                        .emit(Op::DeclareEnv(binding_idx), self.current_line);
                 }
                 // assign each non-constructor method to prototype (or constructor if static)
                 for method in &cls.methods {
