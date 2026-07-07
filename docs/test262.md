@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.4% of all matrix files; 67.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.5% of all matrix files; 67.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -95,18 +95,18 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28903663999 on `e4b0868`.
+`test262-full` 28905410608 on `21319b2`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 48,465 |
 | Actually run | 24,131-24,135 |
-| Pass | 16,188-16,201 |
-| Fail | 7,934-7,945 |
+| Pass | 16,240-16,255 |
+| Fail | 7,875-7,895 |
 | Timeout | 9-13 |
 | Skip | 24,321 |
-| **Pass rate (of run)** | **67.1%** |
-| **Pass rate (of total)** | **33.4%** |
+| **Pass rate (of run)** | **67.3%** |
+| **Pass rate (of total)** | **33.5%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
