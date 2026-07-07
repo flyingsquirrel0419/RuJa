@@ -2341,6 +2341,14 @@ impl Parser {
         if let Some(op) = op {
             self.advance();
             let e = self.parse_unary()?;
+            if self.is_strict_context
+                && matches!(op, UnOp::Delete)
+                && matches!(e, Expr::PrivateGet { .. })
+            {
+                return Err(error::Error::syntax(
+                    "Cannot delete private field".to_string(),
+                ));
+            }
             return Ok(Expr::Unary(op, Box::new(e)));
         }
         self.parse_postfix()

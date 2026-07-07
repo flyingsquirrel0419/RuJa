@@ -455,6 +455,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   **463 pass / 0 fail / 69 skip**. Private class feature tests are still
   skipped by the runner's unsupported-feature filters, so this edge is guarded
   by local class regression tests until those filters are lifted.
+- **Private-name delete early errors** —
+  Strict/class code now rejects `delete obj.#x` and covered forms such as
+  `delete (g().#x)` at parse time instead of compiling them and reaching
+  `$DONOTEVALUATE()`. With private class feature skips temporarily lifted, the
+  focused `language/statements/class/elements/syntax/early-errors/delete
+  language/expressions/class/elements/syntax/early-errors/delete` diagnostic
+  improves from **0 pass / 48 fail / 144 skip** to **48 pass / 0 fail / 144
+  skip**, and the broader private class early-error diagnostic is now
+  **136 pass / 60 fail / 248 skip**. The default supported-subset count is
+  unchanged because those private-feature tests remain skipped.
 - **Class static block feature lift** —
   Static initialization blocks now have their own parse context instead of
   being parsed as function bodies: `return` is rejected, `super.prop` is

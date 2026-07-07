@@ -399,6 +399,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   language/expressions/logical-assignment language/expressions/update` run is
   **463 pass / 0 fail / 69 skip**; private class feature tests remain skipped
   by the runner, so local class regression tests cover this edge.
+- **Private-name delete early errors**: strict/class code now rejects
+  `delete obj.#x` and covered forms such as `delete (g().#x)` at parse time
+  instead of compiling them and reaching `$DONOTEVALUATE()`. With private class
+  feature skips temporarily lifted, the focused
+  `language/statements/class/elements/syntax/early-errors/delete
+  language/expressions/class/elements/syntax/early-errors/delete` diagnostic
+  improves from **0 pass / 48 fail / 144 skip** to **48 pass / 0 fail / 144
+  skip**, and the broader private class early-error diagnostic is now
+  **136 pass / 60 fail / 248 skip**. The default supported-subset count is
+  unchanged because those private-feature tests remain skipped.
 - **Class static block feature lift**: class static blocks now parse as
   dedicated static initialization blocks instead of ordinary function bodies,
   so `return` is rejected, `super.prop` is accepted, and static-block early
