@@ -31,7 +31,7 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
             )
         }) || {
             let pkey = crate::value::PropertyKey::Symbol(vm.well_known_symbols.iterator);
-            vm.has_property_key(&src_val, &pkey)
+            vm.has_property_key(&src_val, &pkey)?
         };
         if has_iter {
             let iter = vm.make_iterator(&src_val)?;

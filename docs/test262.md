@@ -139,6 +139,20 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Proxy-aware `[[HasProperty]]` for `with`/Reflect** —
+  RuJa's internal `[[HasProperty]]` helper now invokes Proxy `has` traps,
+  including revoked-proxy failures and basic invariant checks for
+  non-configurable or non-extensible target properties. `with`
+  object-environment HasBinding, the `in` operator, iterable detection, async
+  iterable detection, and `Reflect.has` now share that observable existence
+  path. Symbol-key Proxy `get` is also used for `Symbol.unscopables`, and
+  `Reflect.get`/`set`/`has` preserve Symbol keys. `Reflect.set` now passes
+  through its receiver argument for ordinary data-property writes, so Proxy
+  receivers observe `getOwnPropertyDescriptor` and `defineProperty`; the
+  corresponding Reflect wrappers are exposed. With the `Proxy`/`Reflect`
+  skips temporarily lifted, focused
+  `language/statements/with built-ins/Reflect/has` runs at **183 pass / 0
+  fail / 8 skip**.
 - **Array search array-like access** —
   `Array.prototype.indexOf`, `lastIndexOf`, and `includes` now read
   `length` through `LengthOfArrayLike` and visit indices through

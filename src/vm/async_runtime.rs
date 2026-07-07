@@ -915,12 +915,12 @@ impl Vm {
         // not install, so the fast path applies).
         let arr_has_inherited_iterator = is_arr && {
             let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
-            self.has_property_key(iterable, &sym_key)
+            self.has_property_key(iterable, &sym_key)?
         };
         if !is_builtin_iterable || arr_has_inherited_iterator {
             if let Value::Object(_) = iterable {
                 let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
-                if self.has_property_key(iterable, &sym_key) {
+                if self.has_property_key(iterable, &sym_key)? {
                     let iter_method = self.get_property_by_key(iterable, &sym_key)?;
                     let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
                     return self.new_lazy_iterator(iter_obj);
@@ -1017,7 +1017,7 @@ impl Vm {
     pub fn make_async_iterator(&mut self, iterable: &Value) -> error::Result<Value> {
         if let Value::Object(_) = iterable {
             let akey = crate::value::PropertyKey::Symbol(self.well_known_symbols.async_iterator);
-            if self.has_property_key(iterable, &akey) {
+            if self.has_property_key(iterable, &akey)? {
                 let m = self.get_property_by_key(iterable, &akey)?;
                 let iter_obj = self.call_function(&m, &[], Some(iterable.clone()))?;
                 return self.new_lazy_iterator(iter_obj);

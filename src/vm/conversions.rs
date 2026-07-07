@@ -481,6 +481,31 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<Value> {
+        if let Value::Object(idx) = obj {
+            let proxy_info = self.heap.with_obj(idx.0, |o| {
+                if let crate::value::HeapObj::Proxy(p) = o {
+                    if *p.revoked.lock() {
+                        return Some(Err(crate::error::Error::type_err(
+                            "Cannot perform 'get' on a proxy that has been revoked".to_string(),
+                        )));
+                    }
+                    Some(Ok((p.target.clone(), p.handler.clone())))
+                } else {
+                    None
+                }
+            });
+            if let Some(result) = proxy_info {
+                let (target, handler) = result?;
+                let trap = self.get_property(&handler, "get")?;
+                if !trap.is_undefined() {
+                    let receiver = obj.clone();
+                    let key_val = Self::property_key_to_value(key);
+                    return self.call_function(&trap, &[target, key_val, receiver], Some(handler));
+                }
+                return self.get_property_by_key(&target, key);
+            }
+        }
+
         let mut cur = obj.clone();
         let mut depth = 0;
         while let Value::Object(idx) = &cur {
@@ -515,10 +540,75 @@ impl Vm {
         Ok(Value::Undefined)
     }
 
-    /// Does `obj` (or its prototype chain) have an own/inherited property for
-    /// the given `PropertyKey`? Used by the iterator protocol to detect a
-    /// user-defined `Symbol.iterator`.
-    pub fn has_property_key(&self, obj: &Value, key: &crate::value::PropertyKey) -> bool {
+    fn property_key_to_value(key: &crate::value::PropertyKey) -> Value {
+        match key {
+            crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
+            crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
+        }
+    }
+
+    fn has_own_property_key_raw(&self, obj: &Value, key: &crate::value::PropertyKey) -> bool {
+        let Value::Object(idx) = obj else {
+            return false;
+        };
+        self.heap.with_obj(idx.0, |o| {
+            if o.props().lock().contains_key(key) {
+                return true;
+            }
+            if let HeapObj::Array(a) = o {
+                if key.as_str().is_some_and(|s| s == "length") {
+                    return !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed);
+                }
+                return key
+                    .as_str()
+                    .and_then(crate::value::parse_array_index)
+                    .is_some_and(|i| a.is_dense_present(i));
+            }
+            if let HeapObj::Object(od) = o {
+                if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                    return key.as_str().is_some_and(|name| {
+                        let len = crate::value::utf16_len(&s);
+                        name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+                    });
+                }
+            }
+            false
+        })
+    }
+
+    fn own_property_descriptor_for_proxy_invariant(
+        &self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> Option<crate::value::PropertyDescriptor> {
+        let Value::Object(idx) = obj else {
+            return None;
+        };
+        let ordinary = self
+            .heap
+            .with_obj(idx.0, |o| o.props().lock().get(key).cloned());
+        if ordinary.is_some() {
+            return ordinary;
+        }
+        if key.as_str().is_some_and(|s| s == "length") {
+            let is_array_length = self.heap.with_obj(idx.0, |o| {
+                matches!(o, HeapObj::Array(a) if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+            });
+            if is_array_length {
+                let mut desc = crate::value::PropertyDescriptor::data(Value::Undefined);
+                desc.configurable = false;
+                return Some(desc);
+            }
+        }
+        let index = key.as_str().and_then(crate::value::parse_array_index)?;
+        self.array_index_own_property_descriptor(idx.0, index, key)
+    }
+
+    fn has_property_key_ordinary(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> error::Result<bool> {
         let mut cur = obj.clone();
         let mut depth = 0;
         while let Value::Object(idx) = &cur {
@@ -526,27 +616,75 @@ impl Vm {
                 break;
             }
             depth += 1;
-            let (has, proto) = self.heap.with_obj(idx.0, |o| {
-                let has = if o.props().lock().contains_key(key) {
-                    true
-                } else if let HeapObj::Array(a) = o {
-                    key.as_str()
-                        .and_then(crate::value::parse_array_index)
-                        .is_some_and(|i| a.is_dense_present(i))
-                } else {
-                    false
-                };
-                (has, o.proto().lock().clone())
-            });
-            if has {
-                return true;
+            if self.has_own_property_key_raw(&cur, key) {
+                return Ok(true);
             }
+            let proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
             cur = proto.unwrap_or(Value::Undefined);
             if cur.is_undefined() {
                 break;
             }
         }
-        false
+        Ok(false)
+    }
+
+    /// Does `obj` (or its prototype chain) have an own/inherited property for
+    /// the given `PropertyKey`? This is RuJa's internal `[[HasProperty]]`
+    /// operation, including Proxy `has` traps.
+    pub fn has_property_key(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> error::Result<bool> {
+        if let Value::Object(idx) = obj {
+            let proxy_info = self.heap.with_obj(idx.0, |o| {
+                if let crate::value::HeapObj::Proxy(p) = o {
+                    if *p.revoked.lock() {
+                        return Some(Err(crate::error::Error::type_err(
+                            "Cannot perform 'has' on a proxy that has been revoked".to_string(),
+                        )));
+                    }
+                    Some(Ok((p.target.clone(), p.handler.clone())))
+                } else {
+                    None
+                }
+            });
+            if let Some(result) = proxy_info {
+                let (target, handler) = result?;
+                let trap = self.get_property(&handler, "has")?;
+                if !trap.is_undefined() {
+                    let key_val = Self::property_key_to_value(key);
+                    let trap_result =
+                        self.call_function(&trap, &[target.clone(), key_val], Some(handler))?;
+                    let boolean_trap_result = self.to_boolean(&trap_result);
+                    if !boolean_trap_result {
+                        if let Some(desc) =
+                            self.own_property_descriptor_for_proxy_invariant(&target, key)
+                        {
+                            if !desc.configurable {
+                                return Err(Error::type_err(
+                                    "Proxy has trap cannot hide non-configurable property",
+                                ));
+                            }
+                        }
+                        let target_extensible = match &target {
+                            Value::Object(target_idx) => {
+                                self.heap.with_obj(target_idx.0, |o| o.is_extensible())
+                            }
+                            _ => true,
+                        };
+                        if !target_extensible && self.has_own_property_key_raw(&target, key) {
+                            return Err(Error::type_err(
+                                "Proxy has trap cannot hide non-extensible target property",
+                            ));
+                        }
+                    }
+                    return Ok(boolean_trap_result);
+                }
+                return self.has_property_key(&target, key);
+            }
+        }
+        self.has_property_key_ordinary(obj, key)
     }
 
     /// Does `obj` have an **own** property (not inherited)?
@@ -569,7 +707,7 @@ impl Vm {
     pub fn has_property(&mut self, obj: &Value, name: &str) -> error::Result<bool> {
         // Fast path: objects with a props map walk own + proto for the key.
         let pkey = crate::value::PropertyKey::from(name);
-        if self.has_property_key(obj, &pkey) {
+        if self.has_property_key(obj, &pkey)? {
             return Ok(true);
         }
         // Arrays expose indexed "properties" and `length`; strings expose

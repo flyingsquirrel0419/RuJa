@@ -875,11 +875,19 @@ pub(crate) fn date_utc(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
 
 pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err("Reflect.get target must be an object"));
+    }
     let key = match args.get(1) {
-        Some(v) => vm.to_property_key(v)?,
+        Some(v) => vm.to_property_key_value(v)?,
         None => return Ok(Value::Undefined),
     };
-    vm.get_property(&target, &key)
+    let receiver = args.get(2).cloned().unwrap_or_else(|| target.clone());
+    match &key {
+        Value::String(s) => vm.get_property_rx(&target, s, receiver, 0),
+        Value::Symbol(_) => vm.get_property_key(&target, &key),
+        _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+    }
 }
 pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
@@ -887,25 +895,42 @@ pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
         return Err(Error::type_err("Reflect.set target must be an object"));
     }
     let key = match args.get(1) {
-        Some(v) => vm.to_property_key(v)?,
+        Some(v) => vm.to_property_key_value(v)?,
         None => return Ok(Value::Bool(false)),
     };
     let value = args.get(2).cloned().unwrap_or(Value::Undefined);
-    match vm.set_property(&target, &key, value) {
+    let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
+    let result = match &key {
+        Value::String(s) => vm.set_property_with_receiver(&target, s, value, &receiver),
+        Value::Symbol(_) => {
+            if receiver == target {
+                vm.set_property_key(&target, &key, value)
+            } else {
+                vm.set_property_key(&receiver, &key, value)
+            }
+        }
+        _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+    };
+    match result {
         Ok(()) => Ok(Value::Bool(true)),
         Err(_) => Ok(Value::Bool(false)),
     }
 }
 pub(crate) fn reflect_has(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err("Reflect.has target must be an object"));
+    }
     let key = match args.get(1) {
-        Some(v) => vm.to_property_key(v)?,
+        Some(v) => vm.to_property_key_value(v)?,
         None => return Ok(Value::Bool(false)),
     };
-    let has = vm
-        .get_property(&target, &key)
-        .map(|v| !v.is_undefined())
-        .unwrap_or(false);
+    let pkey = match key {
+        Value::String(s) => PropertyKey::from(s.as_ref()),
+        Value::Symbol(id) => PropertyKey::Symbol(id),
+        _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+    };
+    let has = vm.has_property_key(&target, &pkey)?;
     Ok(Value::Bool(has))
 }
 pub(crate) fn reflect_delete_property(
@@ -921,6 +946,28 @@ pub(crate) fn reflect_delete_property(
     vm.delete_property(&target, &key)
         .map(|_| Value::Bool(true))
         .or(Ok(Value::Bool(false)))
+}
+fn reflect_define_property(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.defineProperty target must be an object",
+        ));
+    }
+    object_define_property(vm, args, None).map(|_| Value::Bool(true))
+}
+fn reflect_get_own_property_descriptor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(target, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Reflect.getOwnPropertyDescriptor target must be an object",
+        ));
+    }
+    object_get_own_property_descriptor(vm, args, None)
 }
 pub(crate) fn reflect_own_keys(
     vm: &mut Vm,
@@ -994,6 +1041,12 @@ pub(crate) fn build_reflect(vm: &mut Vm) -> error::Result<Value> {
         ("set", reflect_set as NativeFn, 3),
         ("has", reflect_has as NativeFn, 2),
         ("deleteProperty", reflect_delete_property as NativeFn, 2),
+        ("defineProperty", reflect_define_property as NativeFn, 3),
+        (
+            "getOwnPropertyDescriptor",
+            reflect_get_own_property_descriptor as NativeFn,
+            2,
+        ),
         ("ownKeys", reflect_own_keys as NativeFn, 1),
         ("getPrototypeOf", reflect_get_prototype_of as NativeFn, 1),
         ("setPrototypeOf", reflect_set_prototype_of as NativeFn, 2),

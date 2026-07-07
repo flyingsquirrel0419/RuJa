@@ -868,6 +868,53 @@ impl Vm {
             }
             return Ok(());
         };
+        let receiver_proxy = self.heap.with_obj(receiver_idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(proxy_result) = receiver_proxy {
+            let (target, handler) = proxy_result?;
+            let key_value = match &pkey {
+                crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
+                crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
+            };
+            let get_own = self.get_property(&handler, "getOwnPropertyDescriptor")?;
+            if !get_own.is_undefined() {
+                self.call_function(
+                    &get_own,
+                    &[target.clone(), key_value.clone()],
+                    Some(handler.clone()),
+                )?;
+            }
+
+            let desc_idx = self.new_object()?;
+            let desc_obj = Value::Object(desc_idx);
+            self.heap.with_obj(desc_idx.0, |o| {
+                o.props().lock().insert(
+                    crate::value::PropertyKey::from("value"),
+                    crate::value::PropertyDescriptor::data(value.clone()),
+                );
+            });
+
+            let define = self.get_property(&handler, "defineProperty")?;
+            if !define.is_undefined() {
+                let trap_result =
+                    self.call_function(&define, &[target, key_value, desc_obj], Some(handler))?;
+                if !self.to_boolean(&trap_result) && self.current_strict() {
+                    return Err(Error::type_err("Proxy defineProperty trap returned false"));
+                }
+                return Ok(());
+            }
+            return self.set_receiver_data_property(&target, pkey, key, value);
+        }
         let existing = self
             .heap
             .with_obj(receiver_idx.0, |o| o.props().lock().get(&pkey).cloned());

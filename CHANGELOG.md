@@ -24,6 +24,21 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Proxy-aware `[[HasProperty]]` for `with`/Reflect**:
+  internal property-existence checks now route through Proxy `has` traps,
+  including revoked-proxy errors and basic non-configurable/non-extensible
+  target invariants. `with` object-environment binding lookup, the `in`
+  operator, `Array.from` iterator detection, async iterator detection, and
+  `Reflect.has` now share the same observable `[[HasProperty]]` path.
+  Symbol-key Proxy `get` is used for `Symbol.unscopables`, and
+  `Reflect.get`/`set`/`has` now preserve Symbol property keys. `Reflect.set`
+  also honors its receiver argument enough for Proxy receivers to observe
+  `getOwnPropertyDescriptor`/`defineProperty` during ordinary data-property
+  writes, with `Reflect.defineProperty` and
+  `Reflect.getOwnPropertyDescriptor` exposed for this path. With the
+  `Proxy`/`Reflect` skips temporarily lifted, focused
+  `language/statements/with built-ins/Reflect/has` now runs at
+  **183 pass / 0 fail / 8 skip**.
 - **Array search array-like access**: `Array.prototype.indexOf`,
   `lastIndexOf`, and `includes` now use `LengthOfArrayLike` plus per-index
   property access instead of scanning only RuJa's dense array storage.

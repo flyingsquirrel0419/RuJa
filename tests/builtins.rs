@@ -1698,8 +1698,29 @@ fn object_statics() {
               Object.prototype.hasOwnProperty.call(target, "a"),
               Object.values(proxy).join("|")
             ].join(",");
-            "#),
+        "#),
         Value::String(Arc::from("true,true,true,1"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var proxy = new Proxy({ present: undefined }, {
+              has: function(t, k) {
+                calls.push("has:" + k);
+                return k === "present";
+              }
+            });
+            [
+              "present" in proxy,
+              "missing" in proxy,
+              Reflect.has(proxy, "present"),
+              Reflect.has(proxy, "missing"),
+              calls.join("|")
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "true,false,true,false,has:present|has:missing|has:present|has:missing"
+        ))
     );
     assert!(
         run_err("Object.keys(null);").contains("TypeError"),

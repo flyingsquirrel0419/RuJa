@@ -84,6 +84,70 @@ fn with_compound_assignment_uses_inherited_property_reference() {
 }
 
 #[test]
+fn with_proxy_has_trap_controls_identifier_resolution() {
+    let src = r#"
+        var outer = "outer";
+        var calls = [];
+        var target = {};
+        var proxy = new Proxy(target, {
+          has: function(t, k) {
+            calls.push("has:" + k);
+            return k === "outer";
+          },
+          get: function(t, k) {
+            calls.push(typeof k === "symbol" ? "get:symbol" : "get:" + k);
+            if (k === "outer") return "proxy";
+            return t[k];
+          }
+        });
+        var result = (function() {
+          with (proxy) {
+            return outer;
+          }
+        })();
+        result + ":" + calls.join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("proxy:has:outer|get:symbol|has:outer|get:outer"))
+    );
+}
+
+#[test]
+fn with_proxy_compound_assignment_preserves_reference() {
+    let src = r#"
+        var x = 10;
+        var calls = [];
+        var target = { x: 1 };
+        var proxy = new Proxy(target, {
+          has: function(t, k) {
+            calls.push("has:" + k);
+            return k === "x";
+          },
+          get: function(t, k) {
+            calls.push(typeof k === "symbol" ? "get:symbol" : "get:" + k);
+            return t[k];
+          },
+          set: function(t, k, v, r) {
+            calls.push("set:" + k + ":" + v + ":" + (r === proxy));
+            t[k] = v;
+            return true;
+          }
+        });
+        with (proxy) {
+          x += 2;
+        }
+        x + ":" + target.x + ":" + calls.join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "10:3:has:x|get:symbol|has:x|get:x|has:x|set:x:3:true"
+        ))
+    );
+}
+
+#[test]
 fn with_inherited_method_call_binds_this_to_with_object() {
     let src = r#"
         let proto = { f: function() { return this.tag; } };
