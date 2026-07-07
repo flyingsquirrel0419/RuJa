@@ -238,6 +238,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused `language/literals/regexp` diagnostic now runs at **175 pass / 5
   fail / 58 skip**, and broader `language/literals` improves to **469 pass /
   5 fail / 60 skip**.
+- **RegExp Unicode surrogate-pair escapes** —
+  The internal regex backend now combines adjacent Unicode-mode
+  surrogate-pair escapes, such as `\ud800\udc00`, into scalar `\u{...}`
+  escapes before compiling with Rust regex while preserving the public
+  `source` text. This makes character classes and normal atoms observe the
+  pair as one Unicode scalar instead of two surrogate code units. The focused
+  `language/literals/regexp` diagnostic now runs at **177 pass / 3 fail / 58
+  skip**, and broader `language/literals` improves to **471 pass / 3 fail /
+  60 skip**, with the remaining RegExp literal failures isolated to
+  backreference support.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

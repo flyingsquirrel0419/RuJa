@@ -111,6 +111,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   such as Kelvin sign `\u212a`. The focused `language/literals/regexp`
   diagnostic now runs at **175 pass / 5 fail / 58 skip**, and broader
   `language/literals` improves to **469 pass / 5 fail / 60 skip**.
+- **RegExp Unicode surrogate-pair escapes**: the internal regex backend now
+  lowers adjacent Unicode-mode surrogate-pair escapes such as
+  `\ud800\udc00` to scalar `\u{...}` backend escapes while preserving the
+  public `source` text. Character classes now treat those pairs as one
+  Unicode scalar instead of two independent surrogate atoms. The focused
+  `language/literals/regexp` diagnostic now runs at **177 pass / 3 fail / 58
+  skip**, and broader `language/literals` improves to **471 pass / 3 fail /
+  60 skip**, with the remaining RegExp literal failures isolated to
+  backreference support.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a

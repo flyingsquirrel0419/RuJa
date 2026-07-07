@@ -71,7 +71,52 @@ fn normalize_regex_for_backend(source: &str, flags: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if escaped {
-            if ch == '0' && !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
+            if flags.contains('u') && ch == 'u' {
+                let mut lead_hex = String::new();
+                for _ in 0..4 {
+                    match chars.peek().copied() {
+                        Some(next) if next.is_ascii_hexdigit() => {
+                            lead_hex.push(chars.next().unwrap());
+                        }
+                        _ => break,
+                    }
+                }
+                if lead_hex.len() == 4 {
+                    let lead = u32::from_str_radix(&lead_hex, 16).unwrap_or(0);
+                    let mut lookahead = chars.clone();
+                    let mut trail_hex = String::new();
+                    let has_trail_escape =
+                        lookahead.next() == Some('\\') && lookahead.next() == Some('u');
+                    if has_trail_escape {
+                        for _ in 0..4 {
+                            match lookahead.next() {
+                                Some(next) if next.is_ascii_hexdigit() => trail_hex.push(next),
+                                _ => break,
+                            }
+                        }
+                    }
+                    if (0xd800..=0xdbff).contains(&lead) && trail_hex.len() == 4 {
+                        let trail = u32::from_str_radix(&trail_hex, 16).unwrap_or(0);
+                        if (0xdc00..=0xdfff).contains(&trail) {
+                            chars = lookahead;
+                            let scalar = 0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00);
+                            out.pop();
+                            out.push_str("\\u{");
+                            out.push_str(&format!("{scalar:x}"));
+                            out.push('}');
+                        } else {
+                            out.push('u');
+                            out.push_str(&lead_hex);
+                        }
+                    } else {
+                        out.push('u');
+                        out.push_str(&lead_hex);
+                    }
+                } else {
+                    out.push(ch);
+                    out.push_str(&lead_hex);
+                }
+            } else if ch == '0' && !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
                 out.push_str("x00");
             } else if protect_non_unicode_case && !in_class && ch == 'u' {
                 let mut hex = String::new();

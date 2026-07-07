@@ -3274,6 +3274,26 @@ fn regexp_non_unicode_ignore_case_does_not_apply_unicode_folding() {
 }
 
 #[test]
+fn regexp_unicode_surrogate_pair_escapes_match_scalar() {
+    assert_eq!(
+        run("/^[\\ud800\\udc00]$/u.test('\\ud800\\udc00');"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("/[\\ud800\\udc00]/u.test('\\ud800');"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("/[\\ud800\\udc00]/u.test('\\udc00');"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var r = /^[\\ud834\\udf06]$/u; r.source;"),
+        Value::String(Arc::from("^[\\ud834\\udf06]$"))
+    );
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),
