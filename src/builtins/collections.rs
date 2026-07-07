@@ -2,60 +2,67 @@ use super::*;
 
 // Map
 // =========================================================================
+fn require_map_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Result<GcIdx> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err(format!("{name} called on non-Map")));
+    };
+    if vm
+        .heap
+        .with_obj(idx.0, |obj| matches!(obj, HeapObj::Map(_)))
+    {
+        Ok(idx)
+    } else {
+        Err(Error::type_err(format!("{name} called on non-Map")))
+    }
+}
+
 pub(crate) fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let val = args.get(1).cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().insert(MapKey::new(key), val);
-            }
-        });
-    }
+    let idx = require_map_receiver(vm, this.clone(), "Map.prototype.set")?;
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().insert(MapKey::new(key), val);
+        }
+    });
     Ok(this.unwrap_or(Value::Undefined))
 }
 pub(crate) fn map_get(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        return Ok(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries
-                    .lock()
-                    .get(&MapKey::new(key))
-                    .cloned()
-                    .unwrap_or(Value::Undefined)
-            } else {
-                Value::Undefined
-            }
-        }));
-    }
-    Ok(Value::Undefined)
+    let idx = require_map_receiver(vm, this, "Map.prototype.get")?;
+    Ok(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries
+                .lock()
+                .get(&MapKey::new(key))
+                .cloned()
+                .unwrap_or(Value::Undefined)
+        } else {
+            Value::Undefined
+        }
+    }))
 }
 pub(crate) fn map_has(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().contains_key(&MapKey::new(key))
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    let idx = require_map_receiver(vm, this, "Map.prototype.has")?;
+    Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().contains_key(&MapKey::new(key))
+        } else {
+            false
+        }
+    })))
 }
 pub(crate) fn map_delete(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        return Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().shift_remove(&MapKey::new(key)).is_some()
-            } else {
-                false
-            }
-        })));
-    }
-    Ok(Value::Bool(false))
+    let idx = require_map_receiver(vm, this, "Map.prototype.delete")?;
+    Ok(Value::Bool(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().shift_remove(&MapKey::new(key)).is_some()
+        } else {
+            false
+        }
+    })))
 }
 
 // --- WeakMap / WeakSet (true weak-reference semantics) ---
@@ -280,13 +287,12 @@ pub(crate) fn weakset_delete(
     Ok(Value::Bool(false))
 }
 pub(crate) fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().clear();
-            }
-        });
-    }
+    let idx = require_map_receiver(vm, this, "Map.prototype.clear")?;
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().clear();
+        }
+    });
     Ok(Value::Undefined)
 }
 pub(crate) fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -307,26 +313,23 @@ pub(crate) fn map_size(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
 }
 /// Collect Map entries as [key, value] arrays.
 pub(crate) fn map_entries_list(vm: &mut Vm, this: &Option<Value>) -> error::Result<Vec<Value>> {
-    if let Some(Value::Object(idx)) = this {
-        let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries
-                    .lock()
-                    .iter()
-                    .map(|(k, v)| (k.0.clone(), v.clone()))
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            }
-        });
-        let mut out = Vec::with_capacity(pairs.len());
-        for (k, v) in pairs {
-            out.push(make_value_array(vm, vec![k, v])?);
+    let idx = require_map_receiver(vm, this.clone(), "Map.prototype.entries")?;
+    let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries
+                .lock()
+                .iter()
+                .map(|(k, v)| (k.0.clone(), v.clone()))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
         }
-        Ok(out)
-    } else {
-        Ok(Vec::new())
+    });
+    let mut out = Vec::with_capacity(pairs.len());
+    for (k, v) in pairs {
+        out.push(make_value_array(vm, vec![k, v])?);
     }
+    Ok(out)
 }
 pub(crate) fn map_entries(
     vm: &mut Vm,
@@ -337,17 +340,14 @@ pub(crate) fn map_entries(
     make_value_array(vm, pairs)
 }
 pub(crate) fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let keys: Vec<Value> = if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().iter().map(|(k, _)| k.0.clone()).collect()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    };
+    let idx = require_map_receiver(vm, this, "Map.prototype.keys")?;
+    let keys: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().iter().map(|(k, _)| k.0.clone()).collect()
+        } else {
+            Vec::new()
+        }
+    });
     make_value_array(vm, keys)
 }
 pub(crate) fn map_values(
@@ -355,17 +355,14 @@ pub(crate) fn map_values(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let vals: Vec<Value> = if let Some(Value::Object(idx)) = this {
-        vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries.lock().values().cloned().collect()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    };
+    let idx = require_map_receiver(vm, this, "Map.prototype.values")?;
+    let vals: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries.lock().values().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    });
     make_value_array(vm, vals)
 }
 pub(crate) fn map_for_each(
@@ -375,29 +372,28 @@ pub(crate) fn map_for_each(
 ) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned();
-    if let Some(Value::Object(idx)) = this {
-        let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Map(m) = obj {
-                m.entries
-                    .lock()
-                    .iter()
-                    .map(|(k, v)| (k.0.clone(), v.clone()))
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            }
-        });
-        for (k, v) in &pairs {
-            vm.call_function(
-                &cb,
-                &[
-                    v.clone(),
-                    k.clone(),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                this_arg.clone(),
-            )?;
+    let idx = require_map_receiver(vm, this.clone(), "Map.prototype.forEach")?;
+    let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(m) = obj {
+            m.entries
+                .lock()
+                .iter()
+                .map(|(k, v)| (k.0.clone(), v.clone()))
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
         }
+    });
+    for (k, v) in &pairs {
+        vm.call_function(
+            &cb,
+            &[
+                v.clone(),
+                k.clone(),
+                this.clone().unwrap_or(Value::Undefined),
+            ],
+            this_arg.clone(),
+        )?;
     }
     Ok(Value::Undefined)
 }

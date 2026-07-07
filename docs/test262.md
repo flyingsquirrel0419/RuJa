@@ -147,6 +147,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Map/prototype/set/replaces-a-value-normalizes-zero-key.js
   built-ins/Set/prototype/add/will-not-add-duplicate-entry-normalizes-zero.js`
   now runs at **2 pass / 0 fail**.
+- **Map prototype receiver brand checks** —
+  `Map.prototype` methods now require a receiver with a `[[MapData]]` internal
+  slot before doing any keyed-collection work. Non-Map receivers now throw
+  `TypeError` consistently across `get`, `set`, `has`, `delete`, `clear`,
+  `entries`, `keys`, `values`, and `forEach` instead of silently returning
+  empty or falsey fallback values. The focused
+  `built-ins/Map/prototype/{get,set,has,delete,clear,entries,keys,values,
+  forEach,size}` cluster now runs at **60 pass / 11 fail / 47 skip**, with
+  remaining failures isolated to true MapIterator and live iteration semantics.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

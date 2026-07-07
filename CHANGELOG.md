@@ -30,6 +30,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   This preserves O(1) lookups while making Map replacement, Set de-duplication,
   and key iteration agree with `CanonicalizeKeyedCollectionKey`. The focused
   zero-key test262 probe now runs at **2 pass / 0 fail**.
+- **Map prototype receiver brand checks**: `Map.prototype` methods now reject
+  receivers without a `[[MapData]]` internal slot with `TypeError` instead of
+  silently returning `undefined`, `false`, empty arrays, or the original
+  receiver. The focused `built-ins/Map/prototype/{get,set,has,delete,clear,
+  entries,keys,values,forEach,size}` cluster now runs at **60 pass / 11 fail /
+  47 skip**, with remaining failures isolated to true MapIterator and live
+  iteration semantics.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a

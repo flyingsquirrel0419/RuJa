@@ -653,6 +653,21 @@ fn map_basic() {
         "Object.getOwnPropertyDescriptor(Map.prototype, 'size').get.call(new WeakMap());"
     )
     .contains("TypeError"));
+    for src in [
+        "Map.prototype.set.call({}, 'a', 1);",
+        "Map.prototype.get.call({}, 'a');",
+        "Map.prototype.has.call({}, 'a');",
+        "Map.prototype.delete.call({}, 'a');",
+        "Map.prototype.clear.call({});",
+        "Map.prototype.entries.call({});",
+        "Map.prototype.keys.call({});",
+        "Map.prototype.values.call({});",
+        "Map.prototype.forEach.call({}, function(){});",
+        "Map.prototype.set.call(1, 'a', 1);",
+        "Map.prototype.get.call(new Set(), 'a');",
+    ] {
+        assert!(run_err(src).contains("TypeError"), "{src}");
+    }
     assert_eq!(
         run("let m = new Map(); m.set('a', 1); m.has('a');"),
         Value::Bool(true)
