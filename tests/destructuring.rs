@@ -4,7 +4,7 @@
 //! target assignment to *existing* bindings.
 
 mod common;
-use common::run;
+use common::{run, run_err};
 use ruja::Value;
 use std::sync::Arc;
 
@@ -273,6 +273,33 @@ fn object_shorthand_literal() {
         run("var x=1, y=2; var o = {x, y}; o.x + o.y;"),
         Value::Number(3.0)
     );
+}
+
+#[test]
+fn object_assignment_shorthand_defaults() {
+    assert_eq!(
+        run("var x, vals={}; var result; result = {x = 1} = vals; x + ':' + (result === vals);"),
+        Value::String(Arc::from("1:true"))
+    );
+    assert_eq!(
+        run("var x, vals={x:undefined}; var result; result = {x = 1} = vals; x + ':' + (result === vals);"),
+        Value::String(Arc::from("1:true"))
+    );
+    assert_eq!(
+        run("var x, vals={x:null}; var result; result = {x = 1} = vals; String(x) + ':' + (result === vals);"),
+        Value::String(Arc::from("null:true"))
+    );
+    assert_eq!(
+        run("var x, vals={x:2}; var result; result = {x = 1} = vals; x + ':' + (result === vals);"),
+        Value::String(Arc::from("2:true"))
+    );
+}
+
+#[test]
+fn object_literal_rejects_assignment_shorthand_defaults() {
+    assert!(run_err("var x = 0; ({x = 1});").contains("SyntaxError"));
+    assert!(run_err("var x = 0; var o = {x = 1};").contains("SyntaxError"));
+    assert!(run_err("var x = 0; ({x = 1}) += {};").contains("SyntaxError"));
 }
 
 // ---- array destructuring via iterator protocol (#5) ----

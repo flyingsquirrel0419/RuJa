@@ -222,6 +222,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   language/expressions/logical-assignment language/expressions/delete` runs at
   **904 pass / 0 fail / 363 skip**, and the supported subset remains
   **5003 pass / 0 fail / 0 timeout**.
+- **Object assignment shorthand defaults**: object-literal cover grammar now
+  accepts shorthand default forms such as `{ x = 1 }` long enough for simple
+  destructuring assignment (`{ x = 1 } = rhs`) to consume them as assignment
+  patterns, while ordinary object literals and compound assignments still
+  reject the form as a `SyntaxError`. With diagnostic feature skips
+  temporarily lifted, `language/expressions/assignment
+  language/statements/for-in language/statements/for-of` improves from
+  **1009 pass / 220 fail / 122 skip** to
+  **1022 pass / 207 fail / 122 skip**.
 - **Promise built-in surface expansion**: `Symbol.species` is now exposed,
   `String(Symbol(...))` follows the special `String` constructor path instead
   of ordinary `ToString`, and `Promise` exposes `all`, `race`, `allSettled`,

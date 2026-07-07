@@ -1985,6 +1985,7 @@ impl Parser {
             TokenKind::NullishAssign => AssignOp::NullishAssign,
             _ => {
                 if self.defer_object_proto_duplicate_check == 0 {
+                    Self::reject_object_literal_assignment_cover(&left)?;
                     Self::reject_duplicate_proto_object_literal(&left)?;
                 }
                 return Ok(left);
@@ -1994,6 +1995,11 @@ impl Parser {
         let mut right = self.parse_assign()?;
         if !matches!(op, AssignOp::Assign) && self.defer_object_proto_duplicate_check == 0 {
             Self::reject_duplicate_proto_object_literal(&left)?;
+        }
+        if !matches!(op, AssignOp::Assign) && matches!(left, Expr::Array(_) | Expr::Object(_)) {
+            return Err(error::Error::syntax(
+                "Invalid left-hand side in assignment".to_string(),
+            ));
         }
         // Validate that the left side is a valid assignment target.
         // Invalid: literals, binary ops, unary ops, function calls, etc.
@@ -2109,6 +2115,100 @@ impl Parser {
                 }
             }),
             _ => false,
+        }
+    }
+
+    fn reject_object_literal_assignment_cover(expr: &Expr) -> error::Result<()> {
+        match expr {
+            Expr::Object(props) => {
+                for prop in props {
+                    if prop.shorthand && matches!(prop.value, Expr::Assign(AssignOp::Assign, _, _))
+                    {
+                        return Err(error::Error::syntax(
+                            "Invalid shorthand property initializer".to_string(),
+                        ));
+                    }
+                    Self::reject_object_literal_assignment_cover(&prop.value)?;
+                    match &prop.key {
+                        PropertyKey::Computed(expr) | PropertyKey::Spread(expr) => {
+                            Self::reject_object_literal_assignment_cover(expr)?;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(())
+            }
+            Expr::Array(elements) | Expr::Sequence(elements) => {
+                for element in elements {
+                    Self::reject_object_literal_assignment_cover(element)?;
+                }
+                Ok(())
+            }
+            Expr::Assign(_, left, right)
+            | Expr::Binary(_, left, right)
+            | Expr::Logical(_, left, right) => {
+                Self::reject_object_literal_assignment_cover(left)?;
+                Self::reject_object_literal_assignment_cover(right)
+            }
+            Expr::Conditional(cond, then_expr, else_expr) => {
+                Self::reject_object_literal_assignment_cover(cond)?;
+                Self::reject_object_literal_assignment_cover(then_expr)?;
+                Self::reject_object_literal_assignment_cover(else_expr)
+            }
+            Expr::Call { callee, args, .. } | Expr::New { callee, args } => {
+                Self::reject_object_literal_assignment_cover(callee)?;
+                for arg in args {
+                    Self::reject_object_literal_assignment_cover(arg)?;
+                }
+                Ok(())
+            }
+            Expr::Member {
+                object, property, ..
+            } => {
+                Self::reject_object_literal_assignment_cover(object)?;
+                Self::reject_object_literal_assignment_cover(property)
+            }
+            Expr::PrivateGet { object, .. } => Self::reject_object_literal_assignment_cover(object),
+            Expr::PrivateSet { object, value, .. } => {
+                Self::reject_object_literal_assignment_cover(object)?;
+                Self::reject_object_literal_assignment_cover(value)
+            }
+            Expr::PrivateDefineAccessor {
+                object, get, set, ..
+            } => {
+                Self::reject_object_literal_assignment_cover(object)?;
+                if let Some(get) = get {
+                    Self::reject_object_literal_assignment_cover(get)?;
+                }
+                if let Some(set) = set {
+                    Self::reject_object_literal_assignment_cover(set)?;
+                }
+                Ok(())
+            }
+            Expr::PrivateFieldDecl {
+                init: Some(init), ..
+            } => Self::reject_object_literal_assignment_cover(init),
+            Expr::TaggedTemplate { tag, exprs, .. } => {
+                Self::reject_object_literal_assignment_cover(tag)?;
+                for expr in exprs {
+                    Self::reject_object_literal_assignment_cover(expr)?;
+                }
+                Ok(())
+            }
+            Expr::TemplateInterp { exprs, .. } => {
+                for expr in exprs {
+                    Self::reject_object_literal_assignment_cover(expr)?;
+                }
+                Ok(())
+            }
+            Expr::Spread(expr)
+            | Expr::Unary(_, expr)
+            | Expr::Update(_, _, expr)
+            | Expr::Await(expr)
+            | Expr::YieldDelegate(expr)
+            | Expr::Yield(Some(expr)) => Self::reject_object_literal_assignment_cover(expr),
+            Expr::Function(_) | Expr::Arrow(_) | Expr::Class(_) => Ok(()),
+            _ => Ok(()),
         }
     }
 
@@ -3243,6 +3343,15 @@ impl Parser {
                     return Err(error::Error::syntax(
                         "Shorthand property requires an identifier key".to_string(),
                     ));
+                };
+                let value = if self.eat(&TokenKind::Assign) {
+                    Expr::Assign(
+                        AssignOp::Assign,
+                        Box::new(value),
+                        Box::new(self.parse_assign()?),
+                    )
+                } else {
+                    value
                 };
                 props.push(Property {
                     key,

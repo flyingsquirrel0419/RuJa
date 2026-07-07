@@ -362,6 +362,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   language/expressions/destructuring language/expressions/compound-assignment
   language/expressions/logical-assignment language/expressions/delete` runs at
   **904 pass / 0 fail / 363 skip**.
+- **Object assignment shorthand defaults** —
+  Object-literal cover grammar now keeps shorthand default forms such as
+  `{ x = 1 }` available for simple destructuring assignment
+  (`{ x = 1 } = rhs`), while ordinary object literals and compound assignments
+  still reject that form as `SyntaxError`. With diagnostic feature skips
+  temporarily lifted, `language/expressions/assignment
+  language/statements/for-in language/statements/for-of` improves from
+  **1009 pass / 220 fail / 122 skip** to
+  **1022 pass / 207 fail / 122 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`
