@@ -320,12 +320,15 @@ pub(crate) fn regexp_exec(
     // Run against the whole input so `^` still observes the real input start
     // and multiline line starts; sticky only requires the match to begin at
     // lastIndex.
-    let m = re.captures_at(&input, start_byte)?.filter(|c| {
+    let mut m = re.captures_at(&input, start_byte)?.filter(|c| {
         !sticky
             || c.get(0)
                 .map(|mch| mch.start() == start_byte)
                 .unwrap_or(false)
     });
+    if let Some(caps) = m.as_mut() {
+        caps.apply_ecmascript_capture_clearing(&source);
+    }
     match m {
         Some(caps) => {
             let items: Vec<Value> = caps

@@ -81,6 +81,40 @@ impl<'t> CompiledCaptures<'t> {
         self.groups.get(index).copied().flatten()
     }
 
+    fn apply_ecmascript_capture_clearing(&mut self, source: &str) {
+        let rules = regex_repeated_capture_clear_rules(source);
+        if rules.quantified_groups.is_empty() {
+            return;
+        }
+        for capture_index in 1..self.groups.len() {
+            let Some(capture) = self.groups[capture_index] else {
+                continue;
+            };
+            let should_clear = rules
+                .ancestors
+                .get(capture_index)
+                .into_iter()
+                .flatten()
+                .any(|ancestor| {
+                    let Some(parent_index) = ancestor.capture_index else {
+                        return false;
+                    };
+                    rules.quantified_groups.contains(&ancestor.group_id)
+                        && self
+                            .groups
+                            .get(parent_index)
+                            .copied()
+                            .flatten()
+                            .is_some_and(|parent| {
+                                capture.start < parent.start || capture.end > parent.end
+                            })
+                });
+            if should_clear {
+                self.groups[capture_index] = None;
+            }
+        }
+    }
+
     fn iter(&self) -> impl Iterator<Item = Option<CompiledMatch<'t>>> + '_ {
         self.groups.iter().copied()
     }
@@ -623,6 +657,117 @@ fn regex_capture_count(source: &str) -> usize {
         }
     }
     count
+}
+
+struct RegexCaptureClearRules {
+    ancestors: Vec<Vec<RegexGroupAncestor>>,
+    quantified_groups: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct RegexGroupAncestor {
+    group_id: usize,
+    capture_index: Option<usize>,
+}
+
+struct RegexGroupFrame {
+    group_id: usize,
+    capture_index: Option<usize>,
+}
+
+fn regex_repeated_capture_clear_rules(source: &str) -> RegexCaptureClearRules {
+    let chars: Vec<char> = source.chars().collect();
+    let mut ancestors = vec![Vec::new()];
+    let mut quantified_groups = Vec::new();
+    let mut stack: Vec<RegexGroupFrame> = Vec::new();
+    let mut group_count = 0;
+    let mut capture_count = 0;
+    let mut in_class = false;
+    let mut escaped = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            '(' if !in_class => {
+                group_count += 1;
+                let group_id = group_count;
+                let capture_index = if regex_group_is_capturing_chars(&chars, i) {
+                    capture_count += 1;
+                    let group_ancestors = stack
+                        .iter()
+                        .map(|frame| RegexGroupAncestor {
+                            group_id: frame.group_id,
+                            capture_index: frame.capture_index,
+                        })
+                        .collect();
+                    ancestors.push(group_ancestors);
+                    Some(capture_count)
+                } else {
+                    None
+                };
+                stack.push(RegexGroupFrame {
+                    group_id,
+                    capture_index,
+                });
+            }
+            ')' if !in_class => {
+                if let Some(frame) = stack.pop() {
+                    if regex_quantifier_starts_at_chars(&chars, i + 1) {
+                        quantified_groups.push(frame.group_id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    RegexCaptureClearRules {
+        ancestors,
+        quantified_groups,
+    }
+}
+
+fn regex_group_is_capturing_chars(chars: &[char], idx: usize) -> bool {
+    if chars.get(idx) != Some(&'(') {
+        return false;
+    }
+    if chars.get(idx + 1) != Some(&'?') {
+        return true;
+    }
+    chars.get(idx + 2) == Some(&'<') && !matches!(chars.get(idx + 3), Some('=' | '!'))
+}
+
+fn regex_quantifier_starts_at_chars(chars: &[char], idx: usize) -> bool {
+    match chars.get(idx) {
+        Some('*' | '+' | '?') => true,
+        Some('{') => {
+            let mut i = idx + 1;
+            let mut saw_digit = false;
+            while matches!(chars.get(i), Some(ch) if ch.is_ascii_digit()) {
+                saw_digit = true;
+                i += 1;
+            }
+            if !saw_digit {
+                return false;
+            }
+            if chars.get(i) == Some(&',') {
+                i += 1;
+                while matches!(chars.get(i), Some(ch) if ch.is_ascii_digit()) {
+                    i += 1;
+                }
+            }
+            chars.get(i) == Some(&'}')
+        }
+        _ => false,
+    }
 }
 
 fn regex_uses_backreference(source: &str, capture_count: usize) -> bool {

@@ -136,10 +136,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   fails. Unicode-mode lone surrogate escapes now lower to RuJa's internal
   surrogate sentinel so `/\udf06/u` compiles and does not match the low half
   of a surrogate pair.
+- **RegExp repeated capture clearing**: `RegExp.prototype.exec` now clears
+  descendant captures left over from earlier iterations of a quantified
+  capture group when those descendants did not participate in the final
+  iteration. This matches ES repeated-capture semantics for quantified
+  capturing-group cases like
+  `/(z)((a+)?(b+)?(c))*/`, where the final optional `(b+)` capture must be
+  `undefined` instead of the previous iteration's `"bbb"`.
   The focused `built-ins/RegExp/prototype/exec` diagnostic now improves from
-  **37 pass / 38 fail / 4 skip** to **74 pass / 1 fail / 4 skip**, with the
-  remaining failure isolated to ES capture-clearing semantics inside repeated
-  groups.
+  **37 pass / 38 fail / 4 skip** to **75 pass / 0 fail / 4 skip**.
 - **RegExp backreferences and identity escapes**: RegExp compilation now keeps
   the existing Rust regex fast path for ordinary patterns while routing true
   numeric backreferences through a backtracking-capable backend. Non-Unicode

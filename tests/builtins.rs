@@ -3083,6 +3083,18 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
 }
 
 #[test]
+fn regexp_repeated_capture_clears_nonparticipating_groups() {
+    assert_eq!(
+        run("var m = /(z)((a+)?(b+)?(c))*/.exec('zaacbbbcac'); [m[0], m[1], m[2], m[3], String(m[4]), m[5]].join('|');"),
+        Value::String(Arc::from("zaacbbbcac|z|ac|a|undefined|c"))
+    );
+    assert_eq!(
+        run("var m = /((a)|(b))*/.exec('ab'); [m[0], m[1], String(m[2]), m[3]].join('|');"),
+        Value::String(Arc::from("ab|b|undefined|b"))
+    );
+}
+
+#[test]
 fn regex_exec_no_match() {
     assert_eq!(run("/zzz/.exec('abc');"), Value::Null);
 }
