@@ -71,6 +71,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   focused `language/literals/regexp` diagnostic now runs at **144 pass / 36
   fail / 58 skip**, and broader `language/literals` improves to **438 pass /
   36 fail / 60 skip**.
+- **RegExp assertion quantifier early errors**: RegExp literal validation now
+  rejects quantifiers applied to lookbehind assertions in all modes and to
+  lookahead assertions in Unicode mode, while preserving Annex B non-Unicode
+  lookahead quantifiers at the lexical validation layer. The `RegExp`
+  constructor and parser fallback path share the same validation. The focused
+  `language/literals/regexp` diagnostic now runs at **156 pass / 24 fail / 58
+  skip**, and broader `language/literals` improves to **450 pass / 24 fail /
+  60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a

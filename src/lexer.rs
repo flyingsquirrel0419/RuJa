@@ -1691,6 +1691,7 @@ impl<'a> Lexer<'a> {
 pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
     validate_regex_flags(flags)?;
     validate_regex_quantifier_positions(pattern)?;
+    validate_regex_assertion_quantifiers(pattern, flags)?;
     validate_regex_modifier_groups(pattern)
 }
 
@@ -1804,6 +1805,132 @@ fn braced_quantifier_end(chars: &[char], start: usize) -> Option<usize> {
         }
         _ => None,
     }
+}
+
+fn validate_regex_assertion_quantifiers(pattern: &str, flags: &str) -> Result<(), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '[' {
+            in_class = true;
+            i += 1;
+            continue;
+        }
+
+        if ch == '(' && chars.get(i + 1) == Some(&'?') {
+            let assertion = match chars.get(i + 2).copied() {
+                Some('=') | Some('!') => Some(RegexAssertionKind::Lookahead),
+                Some('<') if matches!(chars.get(i + 3), Some('=') | Some('!')) => {
+                    Some(RegexAssertionKind::Lookbehind)
+                }
+                _ => None,
+            };
+
+            if let Some(kind) = assertion {
+                if let Some(end) = regex_group_end(&chars, i) {
+                    if regex_quantifier_starts_at(&chars, end + 1)
+                        && (kind == RegexAssertionKind::Lookbehind || unicode_mode)
+                    {
+                        return Err("invalid regular expression quantifier".to_string());
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+
+        i += 1;
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RegexAssertionKind {
+    Lookahead,
+    Lookbehind,
+}
+
+fn regex_quantifier_starts_at(chars: &[char], idx: usize) -> bool {
+    match chars.get(idx).copied() {
+        Some('*' | '+' | '?') => true,
+        Some('{') => braced_quantifier_end(chars, idx).is_some(),
+        _ => false,
+    }
+}
+
+fn regex_group_end(chars: &[char], start: usize) -> Option<usize> {
+    debug_assert_eq!(chars.get(start), Some(&'('));
+    let mut i = start + 1;
+    let mut depth = 1usize;
+    let mut in_class = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        match ch {
+            '[' => in_class = true,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+
+        i += 1;
+    }
+
+    None
 }
 
 fn validate_regex_modifier_groups(pattern: &str) -> Result<(), String> {
@@ -2068,8 +2195,21 @@ mod tests {
                 LexError(ref msg) if msg.contains("regular expression quantifier")
             ));
         }
+        for source in [
+            "/(?<=a)?/",
+            "/(?<!a){2,3}/",
+            "/(?=a)?/u",
+            "/(?!a){2,3}/u",
+            "/(?<=a)?/u",
+            "/(?<!a){2,3}/u",
+        ] {
+            assert!(matches!(
+                Lexer::new(source).tokens()[0].kind,
+                LexError(ref msg) if msg.contains("regular expression quantifier")
+            ));
+        }
         assert_eq!(
-            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/; /a?/; /a{2}/; /\\?/; /\\{2\\}/; /[?]/;"),
+            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/; /(?=a)?/; /a?/; /a{2}/; /\\?/; /\\{2\\}/; /[?]/;"),
             vec![
                 Regex("(?i:a)".into(), "".into()),
                 Semicolon,
@@ -2080,6 +2220,8 @@ mod tests {
                 Regex("(?=a)".into(), "".into()),
                 Semicolon,
                 Regex("(?!a)".into(), "".into()),
+                Semicolon,
+                Regex("(?=a)?".into(), "".into()),
                 Semicolon,
                 Regex("a?".into(), "".into()),
                 Semicolon,

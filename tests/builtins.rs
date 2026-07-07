@@ -3140,6 +3140,46 @@ fn regexp_quantifier_without_atom_reports_early_error() {
 }
 
 #[test]
+fn regexp_assertion_quantifier_reports_early_error() {
+    for source in [
+        "/(?<=.)?/;",
+        "/(?<!.)?/;",
+        "/(?<=.){2,3}/;",
+        "/(?<!.){2,3}/;",
+        "/(?=.)?/u;",
+        "/(?!.)?/u;",
+        "/(?=.){2,3}/u;",
+        "/(?!.){2,3}/u;",
+        "/(?<=.)?/u;",
+        "/(?<!.)?/u;",
+        "/(?<=.){2,3}/u;",
+        "/(?<!.){2,3}/u;",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression quantifier"),
+            "expected assertion quantifier early error for {source}"
+        );
+    }
+    for source in ["eval('{}/(?<!.){2,3}/;');", "eval('{}/(?!.){2,3}/u;');"] {
+        assert!(
+            run_err(source).contains("regular expression quantifier"),
+            "expected parser fallback assertion quantifier error for {source}"
+        );
+    }
+    for source in [
+        "new RegExp('(?<=.)?');",
+        "new RegExp('(?<!.){2,3}');",
+        "new RegExp('(?=.)?', 'u');",
+        "new RegExp('(?!.){2,3}', 'u');",
+    ] {
+        assert!(
+            run_err(source).contains("regular expression quantifier"),
+            "expected constructor assertion quantifier error for {source}"
+        );
+    }
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

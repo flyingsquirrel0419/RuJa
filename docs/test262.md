@@ -194,6 +194,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   also throw `SyntaxError`. The focused `language/literals/regexp` diagnostic
   now runs at **144 pass / 36 fail / 58 skip**, and broader
   `language/literals` improves to **438 pass / 36 fail / 60 skip**.
+- **RegExp assertion quantifier early errors** —
+  RegExp literal validation now rejects quantifiers applied to lookbehind
+  assertions in all modes and to lookahead assertions in Unicode mode. Annex B
+  non-Unicode lookahead quantifiers remain accepted by the lexical validator.
+  The `RegExp` constructor and statement-list regex fallback path use the same
+  validation. The focused `language/literals/regexp` diagnostic now runs at
+  **156 pass / 24 fail / 58 skip**, and broader `language/literals` improves
+  to **450 pass / 24 fail / 60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,
