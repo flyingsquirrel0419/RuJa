@@ -36,6 +36,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/String/prototype/indexOf
   built-ins/String/prototype/lastIndexOf` cluster now runs at
   **62 pass / 0 fail / 10 skip**.
+- **String slice/substring argument coercion**:
+  `String.prototype.slice` and `substring` now coerce start/end arguments
+  through `ToIntegerOrInfinity` in spec order. `slice` now observes object
+  `valueOf`/`toString`, propagates abrupt completions from `start` before
+  `end`, and treats explicit `undefined` end as the string length.
+  `substring` now truncates fractional positions and also treats missing or
+  explicit `undefined` end as the string length before clamping/swapping. The
+  focused
+  `built-ins/String/prototype/slice
+  built-ins/String/prototype/substring` cluster now runs at
+  **79 pass / 1 fail / 4 skip**; the remaining failure is a broader Math
+  object property/surface gap.
 - **String trim whitespace set**: `String.prototype.trim`, `trimStart`, and
   `trimEnd` now use the ECMAScript `WhiteSpace` plus `LineTerminator` set
   instead of Rust's host whitespace predicate, so BOM (`\uFEFF`) is trimmed

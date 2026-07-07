@@ -1432,6 +1432,26 @@ fn string_pad_at_replaceall_substring() {
         Value::String(Arc::from("el"))
     );
     assert_eq!(
+        run(r#"'5ABBBABAB'.slice({ valueOf: function(){ return 2; } }, '5');"#),
+        Value::String(Arc::from("BBB"))
+    );
+    assert_eq!(
+        run(r#"'report'.slice(function(){}());"#),
+        Value::String(Arc::from("report"))
+    );
+    assert_eq!(
+        run(r#"String(void 0).substring('e', undefined);"#),
+        Value::String(Arc::from("undefined"))
+    );
+    assert_eq!(
+        run(r#"(function(){
+                var b = new Boolean(false);
+                b.substring = String.prototype.substring;
+                return b.substring(function(){ return true; }(), undefined);
+            })();"#),
+        Value::String(Arc::from("alse"))
+    );
+    assert_eq!(
         run("'  hi  '.trimStart();"),
         Value::String(Arc::from("hi  "))
     );

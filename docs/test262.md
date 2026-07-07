@@ -151,6 +151,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/indexOf
   built-ins/String/prototype/lastIndexOf` cluster runs at **62 pass / 0 fail
   / 10 skip**.
+- **String slice/substring argument coercion** —
+  `String.prototype.slice` and `substring` now coerce start/end arguments
+  through the shared integer coercion path in spec order. `slice` observes
+  object `valueOf`/`toString`, propagates abrupt completions from `start`
+  before `end`, and treats explicit `undefined` end as the string length.
+  `substring` now truncates fractional positions and treats missing or
+  explicit `undefined` end as the string length before clamping and swapping.
+  The focused
+  `built-ins/String/prototype/slice
+  built-ins/String/prototype/substring` cluster runs at **79 pass / 1 fail /
+  4 skip**; the remaining failure is a broader Math object property/surface
+  gap.
 - **String trim whitespace set** —
   `String.prototype.trim`, `trimStart`, and `trimEnd` now trim exactly the
   ECMAScript `WhiteSpace` plus `LineTerminator` set instead of Rust's host

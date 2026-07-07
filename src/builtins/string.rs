@@ -245,36 +245,32 @@ pub(crate) fn str_index_of(
 }
 pub(crate) fn str_slice(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let s = str_val(vm, &this)?;
-    let len = crate::value::utf16_len(&s) as i64;
-    let start = args
-        .first()
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as i64)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(0);
-    let end = args
-        .get(1)
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(*n as i64)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(len);
-    let st = if start < 0 {
-        (len + start).max(0) as usize
-    } else {
-        (start as usize).min(len as usize)
+    let len = crate::value::utf16_len(&s);
+    let start = match args.first() {
+        Some(value) => to_integer_or_zero(vm, value)?,
+        None => 0.0,
     };
-    let en = if end < 0 {
-        (len + end).max(0) as usize
+    let end = match args.get(1) {
+        Some(Value::Undefined) | None => len as f64,
+        Some(value) => to_integer_or_zero(vm, value)?,
+    };
+    let st = if start == f64::NEG_INFINITY {
+        0
+    } else if start < 0.0 {
+        ((len as f64) + start).max(0.0) as usize
+    } else if start.is_infinite() {
+        len
     } else {
-        (end as usize).min(len as usize)
+        (start as usize).min(len)
+    };
+    let en = if end == f64::NEG_INFINITY {
+        0
+    } else if end < 0.0 {
+        ((len as f64) + end).max(0.0) as usize
+    } else if end.is_infinite() {
+        len
+    } else {
+        (end as usize).min(len)
     };
     let r = crate::value::utf16_slice(&s, st, en);
     Ok(Value::String(Arc::from(r.as_str())))
@@ -814,17 +810,17 @@ pub(crate) fn str_substring(
     let s = str_val(vm, &this)?;
     let len = crate::value::utf16_len(&s) as f64;
     let mut start = match args.first() {
-        Some(v) => vm.to_number(v)?,
+        Some(v) => to_integer_or_zero(vm, v)?,
         None => 0.0,
     };
     let mut end = match args.get(1) {
-        Some(v) => vm.to_number(v)?,
-        None => len,
+        Some(Value::Undefined) | None => len,
+        Some(v) => to_integer_or_zero(vm, v)?,
     };
-    if start < 0.0 || start.is_nan() {
+    if start < 0.0 {
         start = 0.0;
     }
-    if end < 0.0 || end.is_nan() {
+    if end < 0.0 {
         end = 0.0;
     }
     if start > len {
