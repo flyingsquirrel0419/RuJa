@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 32.5% of all matrix files; 65.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 32.5% of all matrix files; 65.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -95,17 +95,17 @@ tests are not reported as false failure buckets.
 The `test262-full` CI workflow runs the entire test262 tree (excluding
 `intl402`/`staging`) in parallel. Counts can vary slightly because a small
 number of tests can cross the timeout boundary. Baseline confirmation run:
-`test262-full` 28877525897 on `0366218`.
+`test262-full` 28879752323 on `4d3e7d2`.
 
 | Metric | Recent count |
 |--------|--------------|
 | Total matrix files | 48,465 |
-| Actually run | 24,133 |
-| Pass | 15,749 |
-| Fail | 8,384 |
-| Timeout | 11 |
+| Actually run | 24,131 |
+| Pass | 15,759 |
+| Fail | 8,372 |
+| Timeout | 13 |
 | Skip | 24,321 |
-| **Pass rate (of run)** | **65.2%** |
+| **Pass rate (of run)** | **65.3%** |
 | **Pass rate (of total)** | **32.5%** |
 
 This number is dominated by tests for features RuJa does not support.
