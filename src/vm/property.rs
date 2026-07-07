@@ -881,6 +881,50 @@ impl Vm {
         self.ordinary_set_with_receiver(*base_idx, &pkey, key, value, receiver)
     }
 
+    pub(crate) fn try_set_property_key_with_receiver(
+        &mut self,
+        base: &Value,
+        key: &crate::value::PropertyKey,
+        value: Value,
+        receiver: &Value,
+    ) -> error::Result<bool> {
+        let Value::Object(base_idx) = base else {
+            return Err(Error::type_err(
+                "Cannot set property of primitive".to_string(),
+            ));
+        };
+        if let Some(proxy_result) = self.heap.with_obj(base_idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'set' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        }) {
+            let (target, handler) = proxy_result?;
+            let trap = self.get_property(&handler, "set")?;
+            if !trap.is_undefined() {
+                let trap_result = self.call_function(
+                    &trap,
+                    &[
+                        target,
+                        Self::property_key_to_value(key),
+                        value,
+                        receiver.clone(),
+                    ],
+                    Some(handler),
+                )?;
+                return Ok(self.to_boolean(&trap_result));
+            }
+            return self.try_set_property_key_with_receiver(&target, key, value, receiver);
+        }
+        self.ordinary_set_with_receiver(*base_idx, key, key.as_str().unwrap_or(""), value, receiver)
+    }
+
     fn ordinary_set_with_receiver(
         &mut self,
         mut base_idx: GcIdx,
@@ -891,10 +935,29 @@ impl Vm {
     ) -> error::Result<bool> {
         for _ in 0..1024 {
             let (desc, proto) = self.heap.with_obj(base_idx.0, |o| {
-                (
-                    o.props().lock().get(pkey).cloned(),
-                    o.proto().lock().clone(),
-                )
+                let ordinary = o.props().lock().get(pkey).cloned();
+                let string_exotic = ordinary.or_else(|| {
+                    let HeapObj::Object(od) = o else {
+                        return None;
+                    };
+                    let Some(Value::String(s)) = od.primitive.lock().clone() else {
+                        return None;
+                    };
+                    let name = pkey.as_str()?;
+                    let is_length = name == "length";
+                    let is_index = name
+                        .parse::<usize>()
+                        .is_ok_and(|i| i.to_string() == name && i < crate::value::utf16_len(&s));
+                    if !is_length && !is_index {
+                        return None;
+                    }
+                    let mut desc = crate::value::PropertyDescriptor::data(Value::Undefined);
+                    desc.writable = false;
+                    desc.enumerable = is_index;
+                    desc.configurable = false;
+                    Some(desc)
+                });
+                (string_exotic, o.proto().lock().clone())
             });
             if let Some(desc) = desc {
                 if desc.is_accessor {
@@ -982,6 +1045,29 @@ impl Vm {
                 return Ok(false);
             }
         } else {
+            if let Some(name) = pkey.as_str() {
+                let array_receiver = self.heap.with_obj(receiver_idx.0, |o| {
+                    if let HeapObj::Array(a) = o {
+                        let present = crate::value::parse_array_index(name)
+                            .is_some_and(|i| a.is_dense_present(i));
+                        return Some((present, true));
+                    }
+                    None
+                });
+                if let Some((present, extensible)) = array_receiver {
+                    if name == "length" {
+                        self.set_array_length(receiver_idx.0, value)?;
+                        return Ok(true);
+                    }
+                    if let Some(index) = crate::value::parse_array_index(name) {
+                        if !present && !extensible {
+                            return Ok(false);
+                        }
+                        self.set_array_index(receiver_idx.0, index, value)?;
+                        return Ok(true);
+                    }
+                }
+            }
             let is_extensible = self.heap.with_obj(receiver_idx.0, |o| {
                 if let HeapObj::Object(od) = o {
                     od.extensible.load(std::sync::atomic::Ordering::Relaxed)

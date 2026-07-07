@@ -1077,6 +1077,71 @@ fn object_entries() {
 }
 
 #[test]
+fn object_assign_uses_to_object_target_and_copies_string_sources() {
+    assert_eq!(
+        run(r#"
+            var r = Object.assign(1, "ab");
+            [
+              typeof r,
+              r.valueOf(),
+              r[0],
+              r[1],
+              Object.getOwnPropertyNames(r).join("|")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("object,1,a,b,0|1"))
+    );
+    assert_eq!(
+        run(r#"
+            [
+              Object.assign(true).valueOf(),
+              Object.assign(2).valueOf(),
+              Object.assign("x").valueOf(),
+              Object.assign({}, null, undefined).constructor === Object
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|2|x|true"))
+    );
+    assert!(run_err("Object.assign(null, { a: 1 });").contains("TypeError"));
+    assert!(run_err("Object.assign(undefined, { a: 1 });").contains("TypeError"));
+}
+
+#[test]
+fn object_assign_throws_on_failed_target_set() {
+    assert!(run_err(
+        r#"
+            var target = {};
+            Object.defineProperty(target, "x", { value: 1, writable: false });
+            Object.assign(target, { x: 2 });
+        "#
+    )
+    .contains("TypeError"));
+    assert!(run_err(r#"Object.assign("ab", { 0: "x" });"#).contains("TypeError"));
+}
+
+#[test]
+fn object_assign_copies_symbols_after_strings() {
+    assert_eq!(
+        run(r#"
+            var s = Symbol("s");
+            var log = "";
+            var source = {};
+            Object.defineProperty(source, s, {
+              enumerable: true,
+              get: function() { log += "s"; return 2; }
+            });
+            Object.defineProperty(source, "a", {
+              enumerable: true,
+              get: function() { log += "a"; return 1; }
+            });
+            var target = Object.assign({}, source);
+            [log, target.a, target[s], Object.getOwnPropertySymbols(target).length].join("|");
+        "#),
+        Value::String(Arc::from("as|1|2|1"))
+    );
+}
+
+#[test]
 fn object_property_is_enumerable() {
     assert_eq!(run("({a:1}).propertyIsEnumerable('a');"), Value::Bool(true));
     assert_eq!(

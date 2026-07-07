@@ -1154,17 +1154,60 @@ pub(crate) fn own_property_keys(
     include_symbols: bool,
 ) -> Vec<PropertyKey> {
     if let Value::Object(idx) = obj {
-        if let Some(target) = vm.heap.with_obj(idx.0, |heap_obj| {
+        if let Some((target, handler)) = vm.heap.with_obj(idx.0, |heap_obj| {
             if let HeapObj::Proxy(proxy) = heap_obj {
                 if *proxy.revoked.lock() {
                     None
                 } else {
-                    Some(proxy.target.clone())
+                    Some((proxy.target.clone(), proxy.handler.clone()))
                 }
             } else {
                 None
             }
         }) {
+            if let Ok(trap) = vm.get_property(&handler, "ownKeys") {
+                if !trap.is_undefined() {
+                    if let Ok(key_list) =
+                        vm.call_function(&trap, std::slice::from_ref(&target), Some(handler))
+                    {
+                        let items = if let Value::Object(list_idx) = &key_list {
+                            vm.heap.with_obj(list_idx.0, |o| {
+                                if let HeapObj::Array(a) = o {
+                                    return Some(a.items.lock().clone());
+                                }
+                                None
+                            })
+                        } else {
+                            None
+                        };
+                        if let Some(items) = items {
+                            let mut keys = Vec::new();
+                            let mut seen = IndexSet::new();
+                            for item in items {
+                                let Ok(key) = to_property_key_descriptor(vm, &item) else {
+                                    continue;
+                                };
+                                if enumerable_only
+                                    && !own_property_descriptor_for_key(vm, &target, &key)
+                                        .is_some_and(|desc| desc.enumerable)
+                                {
+                                    continue;
+                                }
+                                match key {
+                                    PropertyKey::Str(_) if include_strings => {
+                                        push_unique_key(&mut keys, &mut seen, key);
+                                    }
+                                    PropertyKey::Symbol(_) if include_symbols => {
+                                        push_unique_key(&mut keys, &mut seen, key);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            return keys;
+                        }
+                    }
+                }
+            }
             return own_property_keys(
                 vm,
                 &target,
@@ -1363,14 +1406,29 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
 
 fn object_assign(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if target.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let to = vm.to_object(&target)?;
     for src in &args[1..] {
-        let keys = own_string_keys(vm, src);
+        if src.is_nullish() {
+            continue;
+        }
+        let from = vm.to_object(src)?;
+        let keys = own_property_keys(vm, &from, false, true, true);
         for k in keys {
-            let v = vm.get_property(src, &k)?;
-            vm.set_property(&target, &k, v)?;
+            if !own_property_descriptor_for_key(vm, &from, &k).is_some_and(|desc| desc.enumerable) {
+                continue;
+            }
+            let v = vm.get_property_by_key(&from, &k)?;
+            if !vm.try_set_property_key_with_receiver(&to, &k, v, &to)? {
+                return Err(Error::type_err("Cannot assign to read only property"));
+            }
         }
     }
-    Ok(target)
+    Ok(to)
 }
 
 fn object_is(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {

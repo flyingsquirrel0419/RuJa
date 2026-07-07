@@ -402,6 +402,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   follows the specified nullish receiver order. The focused
   `built-ins/Object/prototype` run now closes at
   **191 pass / 0 fail / 57 skip**.
+- **`Object.assign` target/source semantics** —
+  `Object.assign` now applies `ToObject` to primitive targets, skips nullish
+  sources, copies enumerable string and Symbol keys in own-key order, and
+  throws `TypeError` when the required `Set(..., Throw=true)` operation
+  fails. The shared PropertyKey `[[Get]]`/`[[Set]]` paths now observe array
+  dense elements, string exotic indices/`length`, and array receiver
+  index/length writes, while Proxy `ownKeys` trap order is preserved for
+  normal array key-list results. This closes the focused
+  `built-ins/Object/assign` run at **25 pass / 0 fail / 13 skip**.
 - **Promise built-in surface expansion** —
   `Symbol.species`, `Promise[@@species]`, `Promise.prototype.finally`, and the
   Promise static surface `all`/`race`/`allSettled`/`any`/`try`/`withResolvers`

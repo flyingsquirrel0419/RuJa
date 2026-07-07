@@ -520,7 +520,61 @@ impl Vm {
                 match desc {
                     Some(desc) if desc.is_accessor => (None, desc.get, proto),
                     Some(desc) => (Some(desc.value), None, proto),
-                    None => (None, None, proto),
+                    None => {
+                        if let HeapObj::Array(a) = o {
+                            if key.as_str() == Some("length")
+                                && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                return (
+                                    Some(Value::Number(a.items.lock().len() as f64)),
+                                    None,
+                                    proto,
+                                );
+                            }
+                            if let Some(index) =
+                                key.as_str().and_then(crate::value::parse_array_index)
+                            {
+                                if a.is_dense_present(index) {
+                                    return (
+                                        Some(
+                                            a.items
+                                                .lock()
+                                                .get(index)
+                                                .cloned()
+                                                .unwrap_or(Value::Undefined),
+                                        ),
+                                        None,
+                                        proto,
+                                    );
+                                }
+                            }
+                        }
+                        if let HeapObj::Object(od) = o {
+                            if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                                if key.as_str() == Some("length") {
+                                    return (
+                                        Some(Value::Number(crate::value::utf16_len(&s) as f64)),
+                                        None,
+                                        proto,
+                                    );
+                                }
+                                if let Some(index) =
+                                    key.as_str().and_then(|name| name.parse::<usize>().ok())
+                                {
+                                    if let Some(unit) = crate::value::utf16_get(&s, index) {
+                                        return (
+                                            Some(Value::String(Arc::from(
+                                                crate::value::utf16_to_string(&[unit]).as_str(),
+                                            ))),
+                                            None,
+                                            proto,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        (None, None, proto)
+                    }
                 }
             });
             if let Some(v) = found {
