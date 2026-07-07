@@ -1294,7 +1294,10 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        TokenKind::Regex(pattern, flags)
+        match validate_regex_literal(&pattern, &flags) {
+            Ok(()) => TokenKind::Regex(pattern, flags),
+            Err(msg) => TokenKind::LexError(msg),
+        }
     }
 
     fn read_template_start(&mut self, line: usize, col: usize, preceded_by_newline: bool) -> Token {
@@ -1637,6 +1640,105 @@ impl<'a> Lexer<'a> {
     }
 }
 
+pub(crate) fn validate_regex_literal(pattern: &str, flags: &str) -> Result<(), String> {
+    validate_regex_flags(flags)?;
+    validate_regex_modifier_groups(pattern)
+}
+
+fn validate_regex_flags(flags: &str) -> Result<(), String> {
+    let mut seen = Vec::new();
+    for ch in flags.chars() {
+        if !matches!(ch, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') {
+            return Err(format!("invalid regular expression flag '{}'", ch));
+        }
+        if seen.contains(&ch) {
+            return Err(format!("duplicate regular expression flag '{}'", ch));
+        }
+        seen.push(ch);
+    }
+    Ok(())
+}
+
+fn validate_regex_modifier_groups(pattern: &str) -> Result<(), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0usize;
+    let mut in_class = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if ch == '[' {
+            in_class = true;
+            i += 1;
+            continue;
+        }
+        if ch == ']' && in_class {
+            in_class = false;
+            i += 1;
+            continue;
+        }
+
+        if !in_class && ch == '(' && chars.get(i + 1) == Some(&'?') {
+            match chars.get(i + 2).copied() {
+                Some(':') | Some('=') | Some('!') | Some('<') => {
+                    i += 2;
+                    continue;
+                }
+                Some(_) => validate_regex_modifier_group_at(&chars, i + 2)?,
+                None => {}
+            }
+        }
+        i += 1;
+    }
+
+    Ok(())
+}
+
+fn validate_regex_modifier_group_at(chars: &[char], mut idx: usize) -> Result<(), String> {
+    let mut add = Vec::new();
+    let mut remove = Vec::new();
+    let mut removing = false;
+
+    while let Some(ch) = chars.get(idx).copied() {
+        if ch == ':' {
+            if add.is_empty() && remove.is_empty() {
+                return Err("invalid regular expression modifiers".to_string());
+            }
+            if add.iter().any(|ch| remove.contains(ch)) {
+                return Err("invalid regular expression modifiers".to_string());
+            }
+            return Ok(());
+        }
+        if ch == '-' && !removing {
+            removing = true;
+            idx += 1;
+            continue;
+        }
+        if !matches!(ch, 'i' | 'm' | 's') {
+            return Err("invalid regular expression modifiers".to_string());
+        }
+
+        let group = if removing { &mut remove } else { &mut add };
+        if group.contains(&ch) {
+            return Err("invalid regular expression modifiers".to_string());
+        }
+        group.push(ch);
+        idx += 1;
+    }
+
+    Err("invalid regular expression modifiers".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1765,6 +1867,50 @@ mod tests {
                 Regex("x".into(), "g".into()),
                 Semicolon,
                 Regex("x".into(), "g".into()),
+                Semicolon,
+                Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn regex_flags_and_modifiers_report_early_errors() {
+        assert!(matches!(
+            Lexer::new("/./G").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("regular expression flag")
+        ));
+        assert!(matches!(
+            Lexer::new("/./gig").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("regular expression flag")
+        ));
+        assert!(matches!(
+            Lexer::new("/(?i-i:a)/").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("regular expression modifiers")
+        ));
+        assert!(matches!(
+            Lexer::new("/(?u:a)/").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("regular expression modifiers")
+        ));
+        assert!(matches!(
+            Lexer::new("/(?ii:a)/").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("regular expression modifiers")
+        ));
+        assert!(matches!(
+            Lexer::new("/(?i)/").tokens()[0].kind,
+            LexError(ref msg) if msg.contains("regular expression modifiers")
+        ));
+        assert_eq!(
+            kinds("/(?i:a)/; /(?im-s:a)/; /(?:a)/; /(?=a)/; /(?!a)/;"),
+            vec![
+                Regex("(?i:a)".into(), "".into()),
+                Semicolon,
+                Regex("(?im-s:a)".into(), "".into()),
+                Semicolon,
+                Regex("(?:a)".into(), "".into()),
+                Semicolon,
+                Regex("(?=a)".into(), "".into()),
+                Semicolon,
+                Regex("(?!a)".into(), "".into()),
                 Semicolon,
                 Eof,
             ]

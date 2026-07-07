@@ -2780,6 +2780,7 @@ impl Parser {
             }
         }
 
+        crate::lexer::validate_regex_literal(&pattern, &flags).map_err(error::Error::syntax)?;
         Ok(Expr::Regex(Arc::from(pattern), Arc::from(flags)))
     }
 

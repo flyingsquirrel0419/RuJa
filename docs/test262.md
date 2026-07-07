@@ -147,6 +147,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   executing `$DONOTEVALUATE()`. The focused `language/literals/regexp`
   diagnostic now runs at **55 pass / 125 fail / 58 skip**, and broader
   `language/literals` improves to **324 pass / 150 fail / 60 skip**.
+- **RegExp flags and modifiers early errors** —
+  RegExp literals, statement-list regex recovery, and `new RegExp(pattern,
+  flags)` now share validation for duplicate/invalid flags and RegExp
+  modifiers groups. Modifier groups only accept source-text `i`, `m`, and
+  `s`, reject duplicates and add/remove intersections, require a colon, and
+  reject Unicode escapes or case-folded flag spellings. The focused
+  `language/literals/regexp` diagnostic now runs at **140 pass / 40 fail / 58
+  skip**, broader `language/literals` improves to **409 pass / 65 fail / 60
+  skip**, and `built-ins/RegExp/regexp-modifiers` runs at **37 pass / 33 fail
+  / 0 skip** with remaining failures in runtime modifier semantics.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect** —
   RuJa's internal `[[HasProperty]]` helper now invokes Proxy `has` traps,
   including revoked-proxy failures and basic invariant checks for

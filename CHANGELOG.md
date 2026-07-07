@@ -32,6 +32,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `language/literals/regexp` diagnostic now runs at
   **55 pass / 125 fail / 58 skip**, and broader `language/literals` improves
   to **324 pass / 150 fail / 60 skip**.
+- **RegExp flags and modifiers early errors**: RegExp literals, parser
+  recovery for statement-start regexes, and the `RegExp` constructor now share
+  syntax validation for duplicate/invalid flags plus RegExp modifiers groups.
+  Modifier groups only accept source-text `i`, `m`, and `s`, reject duplicate
+  add/remove flags, reject add/remove intersections, require a colon, and do
+  not accept Unicode escapes or case-folded flag spellings. This closes the
+  focused modifiers parse-negative cluster while leaving the remaining
+  `built-ins/RegExp/regexp-modifiers` failures isolated to runtime modifier
+  semantics. The focused `language/literals/regexp` diagnostic now runs at
+  **140 pass / 40 fail / 58 skip**, broader `language/literals` improves to
+  **409 pass / 65 fail / 60 skip**, and
+  `built-ins/RegExp/regexp-modifiers` runs at **37 pass / 33 fail / 0 skip**.
 - **Proxy-aware `[[HasProperty]]` for `with`/Reflect**:
   internal property-existence checks now route through Proxy `has` traps,
   including revoked-proxy errors and basic non-configurable/non-extensible
