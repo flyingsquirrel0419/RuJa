@@ -1473,6 +1473,14 @@ fn string_pad_at_replaceall_substring() {
         Value::String(Arc::from("\u{FEFF}hi"))
     );
     assert_eq!(
+        run(r#"String.prototype.trim.call(new RegExp(/test/));"#),
+        Value::String(Arc::from("/test/"))
+    );
+    assert_eq!(
+        run(r#"String.prototype.trim.call(function(){ return arguments; }(1, 2, true));"#),
+        Value::String(Arc::from("[object Arguments]"))
+    );
+    assert_eq!(
         run(r#"'\u180Ehi\u0085'.trim();"#),
         Value::String(Arc::from("\u{180E}hi\u{0085}"))
     );
@@ -2557,6 +2565,10 @@ fn regex_literal_test() {
     assert_eq!(run("/abc/.test('xyz');"), Value::Bool(false));
     assert_eq!(run("/\\d+/.test('abc123');"), Value::Bool(true));
     assert_eq!(run("/\\d+/.test('abc');"), Value::Bool(false));
+    assert_eq!(
+        run("var r = new RegExp(/test/i); [r.source, r.flags, r.toString()].join('|');"),
+        Value::String(Arc::from("test|i|/test/i"))
+    );
 }
 
 #[test]

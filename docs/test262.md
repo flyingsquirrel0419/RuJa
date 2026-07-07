@@ -168,13 +168,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `String.prototype.trim`, `trimStart`, and `trimEnd` now trim exactly the
   ECMAScript `WhiteSpace` plus `LineTerminator` set instead of Rust's host
   whitespace predicate. Boundary BOM (`\uFEFF`) is removed, while
-  non-ECMAScript whitespace such as `\u180E` and `\u0085` is preserved. The
+  non-ECMAScript whitespace such as `\u180E` and `\u0085` is preserved.
+  RegExp objects constructed from RegExp inputs now retain the wrapped pattern
+  source/flags, and arguments objects now stringify through their object
+  brand instead of RuJa's internal array storage. The
   focused
   `built-ins/String/prototype/trim
   built-ins/String/prototype/trimStart
-  built-ins/String/prototype/trimEnd` cluster runs at **143 pass / 2 fail /
-  30 skip**; the remaining failures are broader object `ToString`
-  representation gaps.
+  built-ins/String/prototype/trimEnd` cluster runs at **145 pass / 0 fail /
+  30 skip**.
 - **String repeat count coercion** —
   `String.prototype.repeat` now applies the shared integer coercion path to
   its count argument before range checking. `NaN`, `undefined`, `false`,

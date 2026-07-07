@@ -165,9 +165,9 @@ impl Vm {
             Value::String(s) => s.clone(),
             Value::BigInt(n) => Arc::from(n.to_string().as_str()),
             Value::Object(idx) => {
-                let is_array = self
-                    .heap
-                    .with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_)));
+                let is_array = self.heap.with_obj(idx.0, |obj| {
+                    matches!(obj, HeapObj::Array(a) if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+                });
                 if is_array {
                     // join items outside the borrow
                     let items = self.heap.with_obj(idx.0, |obj| {
@@ -274,9 +274,9 @@ impl Vm {
                 // honor it directly rather than looking up a method that may
                 // not be installed on Array.prototype yet.
                 let is_array = match v {
-                    Value::Object(idx) => self
-                        .heap
-                        .with_obj(idx.0, |obj| matches!(obj, HeapObj::Array(_))),
+                    Value::Object(idx) => self.heap.with_obj(idx.0, |obj| {
+                        matches!(obj, HeapObj::Array(a) if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
+                    }),
                     _ => false,
                 };
                 let methods: [&str; 2] = if effective_string_hint {

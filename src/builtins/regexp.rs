@@ -13,7 +13,13 @@ pub(crate) fn regexp_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    let pattern_is_regexp = matches!(args.first(), Some(Value::Object(idx)) if {
+        vm.heap.with_obj(idx.0, |o| {
+            matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
+        })
+    });
     let pattern = match args.first() {
+        Some(v) if pattern_is_regexp => read_regexp_source(vm, &Some(v.clone()))?,
         Some(Value::String(s)) => s.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
         _ => String::new(),
@@ -21,6 +27,7 @@ pub(crate) fn regexp_constructor(
     let flags = match args.get(1) {
         Some(Value::String(s)) => s.to_string(),
         Some(v) if !v.is_undefined() => vm.to_string(v)?.to_string(),
+        _ if pattern_is_regexp => read_regexp_flags(vm, &args.first().cloned())?,
         _ => String::new(),
     };
     // Validate the pattern eagerly so bad regexes throw at construction time.
