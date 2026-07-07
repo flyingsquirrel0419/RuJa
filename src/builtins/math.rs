@@ -98,6 +98,15 @@ fn math_acos(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Val
 fn math_atan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     math_unary(f64::atan, vm, args)
 }
+fn math_acosh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::acosh, vm, args)
+}
+fn math_asinh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::asinh, vm, args)
+}
+fn math_atanh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    math_unary(f64::atanh, vm, args)
+}
 fn math_sinh(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     math_unary(f64::sinh, vm, args)
 }
@@ -196,6 +205,9 @@ pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
         ("acos", math_acos, 1),
         ("atan", math_atan, 1),
         ("atan2", math_atan2, 2),
+        ("acosh", math_acosh, 1),
+        ("asinh", math_asinh, 1),
+        ("atanh", math_atanh, 1),
         ("sinh", math_sinh, 1),
         ("cosh", math_cosh, 1),
         ("tanh", math_tanh, 1),

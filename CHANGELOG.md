@@ -94,6 +94,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   longer overflows through Rust integer parsing, so large valid prefixes return
   their nearest IEEE-754 Number value instead of `NaN`. The focused
   `built-ins/parseInt` run now closes at **53 pass / 0 fail / 2 skip**.
+- **Math inverse hyperbolic methods**: `Math.acosh`, `Math.asinh`, and
+  `Math.atanh` are now exposed as unary native functions with spec-shaped
+  `name`, `length`, and own-property descriptors. They reuse the normal
+  `ToNumber` unary Math path and preserve NaN, infinity, and signed-zero
+  behavior through the host libm operations. The focused
+  `built-ins/Math/acosh built-ins/Math/asinh built-ins/Math/atanh` run now
+  closes at **14 pass / 0 fail / 3 skip**.
 - **String literal escape conformance**: string literals now decode UTF-8
   `NonEscapeCharacter` escapes such as `\А` as source code points instead of
   corrupting the UTF-8 tail byte, allow literal U+2028/U+2029 in strings per

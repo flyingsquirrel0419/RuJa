@@ -2330,6 +2330,14 @@ fn math_expanded() {
     assert_eq!(run("Math.clz32(1);"), Value::Number(31.0));
     assert_eq!(run("Math.sign(-5);"), Value::Number(-1.0));
     assert_eq!(run("Math.sinh(0);"), Value::Number(0.0));
+    assert_eq!(run("Math.acosh(1);"), Value::Number(0.0));
+    assert_eq!(run("Math.asinh(-0);"), Value::Number(-0.0));
+    assert_eq!(run("Math.atanh(1);"), Value::Number(f64::INFINITY));
+    assert!(matches!(run("Math.acosh(0);"), Value::Number(n) if n.is_nan()));
+    assert_eq!(
+        run("Math.acosh.length + ':' + Math.asinh.name + ':' + Math.atanh.length;"),
+        Value::String(Arc::from("1:asinh:1"))
+    );
 }
 
 // --- Promise ---

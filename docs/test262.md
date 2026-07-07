@@ -221,6 +221,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   large valid prefixes produce their nearest IEEE-754 Number value instead of
   `NaN`. The focused `built-ins/parseInt` run now closes at **53 pass / 0 fail
   / 2 skip**.
+- **Math inverse hyperbolic methods** —
+  `Math.acosh`, `Math.asinh`, and `Math.atanh` are now exposed as unary native
+  functions with the expected `name`, `length`, and own-property descriptors.
+  They share the ordinary unary Math `ToNumber` coercion path and preserve
+  NaN, infinity, and signed-zero behavior through the host libm operations.
+  The focused `built-ins/Math/acosh built-ins/Math/asinh
+  built-ins/Math/atanh` run now closes at **14 pass / 0 fail / 3 skip**.
 - **String literal escape conformance** —
   String literal scanning now decodes UTF-8 `NonEscapeCharacter` escapes as
   source code points, permits literal U+2028/U+2029 in strings per
