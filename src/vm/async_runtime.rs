@@ -959,43 +959,19 @@ impl Vm {
                 } else if is_array {
                     unreachable!("array iterators are handled lazily above")
                 } else if is_map {
-                    // Extract (k, v) pairs out of the borrow first; allocate the
-                    // pair arrays afterwards so we never call heap.allocate while
-                    // with_obj holds an immutable borrow of the heap cells (which
-                    // would panic on RefCell reborrow).
-                    let pairs: Vec<(Value, Value)> = self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Map(m) = o {
-                            m.entries
-                                .lock()
-                                .iter()
-                                .map(|(k, v)| (k.0.clone(), v.clone()))
-                                .collect::<Vec<_>>()
-                        } else {
-                            Vec::new()
-                        }
-                    });
-                    let array_proto = self.array_proto.clone();
-                    let mut pair_vals = Vec::with_capacity(pairs.len());
-                    for (k, v) in pairs {
-                        let pair = HeapObj::Array(crate::value::ArrayData::new(
-                            vec![k, v],
-                            Some(array_proto.clone()),
-                        ));
-                        pair_vals.push(Value::Object(GcIdx(self.heap.allocate(pair)?)));
-                    }
-                    pair_vals
+                    let iter = crate::builtins::new_collection_iterator(
+                        self,
+                        iterable.clone(),
+                        crate::value::CollectionIteratorKind::MapEntries,
+                    )?;
+                    return self.new_lazy_iterator(iter);
                 } else if is_set {
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Set(s) = o {
-                            s.items
-                                .lock()
-                                .iter()
-                                .map(|k| k.0.clone())
-                                .collect::<Vec<_>>()
-                        } else {
-                            Vec::new()
-                        }
-                    })
+                    let iter = crate::builtins::new_collection_iterator(
+                        self,
+                        iterable.clone(),
+                        crate::value::CollectionIteratorKind::SetValues,
+                    )?;
+                    return self.new_lazy_iterator(iter);
                 } else {
                     return Err(Error::type_err("value is not iterable".to_string()));
                 }

@@ -186,6 +186,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(&k.0, worklist);
             }
         }
+        HeapObj::CollectionIterator(it) => {
+            push_value(&it.source, worklist);
+        }
         HeapObj::DataView(d) => {
             push_value(&d.buffer, worklist);
         }

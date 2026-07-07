@@ -16,6 +16,183 @@ fn require_map_receiver(vm: &Vm, this: Option<Value>, name: &str) -> error::Resu
     }
 }
 
+pub(crate) fn new_collection_iterator(
+    vm: &mut Vm,
+    source: Value,
+    kind: CollectionIteratorKind,
+) -> error::Result<Value> {
+    let next_fn = vm.new_native_function("next", collection_iterator_next, 0)?;
+    let iter_fn = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
+    let obj_idx = vm
+        .heap
+        .allocate(HeapObj::CollectionIterator(CollectionIteratorData {
+            source,
+            kind,
+            index: std::sync::atomic::AtomicUsize::new(0),
+            done: std::sync::atomic::AtomicBool::new(false),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+        }))?;
+    vm.heap.with_obj(obj_idx, |obj| {
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            data_prop(Value::Object(iter_fn)),
+        );
+    });
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn collection_iterator_this(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    this.ok_or_else(|| Error::type_err("Iterator method called on non-iterator"))
+}
+
+fn collection_iterator_next(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(Value::Object(iter_idx)) = this else {
+        return Err(Error::type_err("Iterator next called on non-iterator"));
+    };
+    let (source, kind, index, already_done) = vm.heap.with_obj(iter_idx.0, |obj| {
+        if let HeapObj::CollectionIterator(iter) = obj {
+            (
+                iter.source.clone(),
+                iter.kind,
+                iter.index.load(std::sync::atomic::Ordering::Relaxed),
+                iter.done.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        } else {
+            (Value::Undefined, CollectionIteratorKind::SetValues, 0, true)
+        }
+    });
+    if already_done {
+        return gen_result(vm, Value::Undefined, true, false);
+    }
+
+    let next_value = match (&source, kind) {
+        (Value::Object(source_idx), CollectionIteratorKind::MapEntries) => {
+            map_entry_at(vm, *source_idx, index)?
+                .map(|(key, value)| make_value_array(vm, vec![key, value]))
+                .transpose()?
+        }
+        (Value::Object(source_idx), CollectionIteratorKind::MapKeys) => {
+            map_entry_at(vm, *source_idx, index)?.map(|(key, _)| key)
+        }
+        (Value::Object(source_idx), CollectionIteratorKind::MapValues) => {
+            map_entry_at(vm, *source_idx, index)?.map(|(_, value)| value)
+        }
+        (Value::Object(source_idx), CollectionIteratorKind::SetEntries) => {
+            set_value_at(vm, *source_idx, index)?
+                .map(|value| make_value_array(vm, vec![value.clone(), value]))
+                .transpose()?
+        }
+        (Value::Object(source_idx), CollectionIteratorKind::SetValues) => {
+            set_value_at(vm, *source_idx, index)?
+        }
+        _ => None,
+    };
+
+    if let Some(value) = next_value {
+        vm.heap.with_obj(iter_idx.0, |obj| {
+            if let HeapObj::CollectionIterator(iter) = obj {
+                iter.index
+                    .store(index + 1, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        gen_result(vm, value, false, false)
+    } else {
+        vm.heap.with_obj(iter_idx.0, |obj| {
+            if let HeapObj::CollectionIterator(iter) = obj {
+                iter.done.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        gen_result(vm, Value::Undefined, true, false)
+    }
+}
+
+fn map_entry_at(vm: &Vm, idx: GcIdx, index: usize) -> error::Result<Option<(Value, Value)>> {
+    Ok(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(map) = obj {
+            map.entries
+                .lock()
+                .get_index(index)
+                .map(|(key, value)| (key.0.clone(), value.clone()))
+        } else {
+            None
+        }
+    }))
+}
+
+fn set_value_at(vm: &Vm, idx: GcIdx, index: usize) -> error::Result<Option<Value>> {
+    Ok(vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(set) = obj {
+            set.items.lock().get_index(index).map(|key| key.0.clone())
+        } else {
+            None
+        }
+    }))
+}
+
+fn map_keys_in_order(vm: &Vm, idx: GcIdx) -> Vec<MapKey> {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Map(map) = obj {
+            map.entries.lock().keys().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    })
+}
+
+fn set_keys_in_order(vm: &Vm, idx: GcIdx) -> Vec<MapKey> {
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Set(set) = obj {
+            set.items.lock().iter().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    })
+}
+
+fn extend_collection_visit_queue(
+    queue: &mut Vec<MapKey>,
+    cursor: usize,
+    current: &[MapKey],
+    last_yielded: Option<&MapKey>,
+) {
+    let remaining: Vec<MapKey> = queue[cursor..].to_vec();
+    let cutoff = current
+        .iter()
+        .enumerate()
+        .filter(|(_, key)| remaining.iter().any(|known| known == *key))
+        .map(|(index, _)| index)
+        .max()
+        .or_else(|| last_yielded.and_then(|last| current.iter().position(|key| key == last)));
+
+    let candidates: Vec<MapKey> = if let Some(cutoff) = cutoff {
+        current.iter().skip(cutoff + 1).cloned().collect()
+    } else if remaining.is_empty() {
+        current.to_vec()
+    } else {
+        Vec::new()
+    };
+
+    for key in candidates {
+        if !remaining.iter().any(|known| known == &key)
+            && !queue[cursor..].iter().any(|known| known == &key)
+        {
+            queue.push(key);
+        }
+    }
+}
+
 pub(crate) fn map_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let key = args.first().cloned().unwrap_or(Value::Undefined);
     let val = args.get(1).cloned().unwrap_or(Value::Undefined);
@@ -336,19 +513,12 @@ pub(crate) fn map_entries(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let pairs = map_entries_list(vm, &this)?;
-    make_value_array(vm, pairs)
+    let idx = require_map_receiver(vm, this, "Map.prototype.entries")?;
+    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::MapEntries)
 }
 pub(crate) fn map_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let idx = require_map_receiver(vm, this, "Map.prototype.keys")?;
-    let keys: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Map(m) = obj {
-            m.entries.lock().iter().map(|(k, _)| k.0.clone()).collect()
-        } else {
-            Vec::new()
-        }
-    });
-    make_value_array(vm, keys)
+    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::MapKeys)
 }
 pub(crate) fn map_values(
     vm: &mut Vm,
@@ -356,14 +526,7 @@ pub(crate) fn map_values(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let idx = require_map_receiver(vm, this, "Map.prototype.values")?;
-    let vals: Vec<Value> = vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Map(m) = obj {
-            m.entries.lock().values().cloned().collect()
-        } else {
-            Vec::new()
-        }
-    });
-    make_value_array(vm, vals)
+    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::MapValues)
 }
 pub(crate) fn map_for_each(
     vm: &mut Vm,
@@ -373,27 +536,46 @@ pub(crate) fn map_for_each(
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned();
     let idx = require_map_receiver(vm, this.clone(), "Map.prototype.forEach")?;
-    let pairs: Vec<(Value, Value)> = vm.heap.with_obj(idx.0, |obj| {
-        if let HeapObj::Map(m) = obj {
-            m.entries
-                .lock()
-                .iter()
-                .map(|(k, v)| (k.0.clone(), v.clone()))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        }
-    });
-    for (k, v) in &pairs {
+    if !is_callable(&cb, &vm.heap) {
+        return Err(Error::type_err(
+            "Map.prototype.forEach callback is not callable",
+        ));
+    }
+    let mut queue = map_keys_in_order(vm, idx);
+    let mut cursor = 0;
+    let mut last_yielded: Option<MapKey> = None;
+    while cursor < queue.len() {
+        let key = queue[cursor].clone();
+        cursor += 1;
+        let value = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Map(map) = obj {
+                map.entries.lock().get(&key).cloned()
+            } else {
+                None
+            }
+        });
+        let Some(value) = value else {
+            extend_collection_visit_queue(
+                &mut queue,
+                cursor,
+                &map_keys_in_order(vm, idx),
+                last_yielded.as_ref(),
+            );
+            continue;
+        };
+        let key_value = key.0.clone();
         vm.call_function(
             &cb,
-            &[
-                v.clone(),
-                k.clone(),
-                this.clone().unwrap_or(Value::Undefined),
-            ],
+            &[value, key_value, this.clone().unwrap_or(Value::Undefined)],
             this_arg.clone(),
         )?;
+        last_yielded = Some(key);
+        extend_collection_visit_queue(
+            &mut queue,
+            cursor,
+            &map_keys_in_order(vm, idx),
+            last_yielded.as_ref(),
+        );
     }
     Ok(Value::Undefined)
 }
@@ -533,24 +715,20 @@ pub(crate) fn set_entries(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let vals = set_values_list(vm, this, "Set.prototype.entries")?;
-    let mut pairs: Vec<Value> = Vec::new();
-    for v in vals {
-        pairs.push(make_value_array(vm, vec![v.clone(), v])?);
-    }
-    make_value_array(vm, pairs)
+    let idx = require_set_receiver(vm, this, "Set.prototype.entries")?;
+    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::SetEntries)
 }
 pub(crate) fn set_keys(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let vals = set_values_list(vm, this, "Set.prototype.keys")?;
-    make_value_array(vm, vals)
+    let idx = require_set_receiver(vm, this, "Set.prototype.keys")?;
+    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::SetValues)
 }
 pub(crate) fn set_values(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let vals = set_values_list(vm, this, "Set.prototype.values")?;
-    make_value_array(vm, vals)
+    let idx = require_set_receiver(vm, this, "Set.prototype.values")?;
+    new_collection_iterator(vm, Value::Object(idx), CollectionIteratorKind::SetValues)
 }
 pub(crate) fn set_for_each(
     vm: &mut Vm,
@@ -559,22 +737,51 @@ pub(crate) fn set_for_each(
 ) -> error::Result<Value> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned();
-    let vals = set_values_list(vm, this.clone(), "Set.prototype.forEach")?;
+    let idx = require_set_receiver(vm, this.clone(), "Set.prototype.forEach")?;
     if !is_callable(&cb, &vm.heap) {
         return Err(Error::type_err(
             "Set.prototype.forEach callback is not callable",
         ));
     }
-    for v in &vals {
+    let mut queue = set_keys_in_order(vm, idx);
+    let mut cursor = 0;
+    let mut last_yielded: Option<MapKey> = None;
+    while cursor < queue.len() {
+        let key = queue[cursor].clone();
+        cursor += 1;
+        let present = vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Set(set) = obj {
+                set.items.lock().contains(&key)
+            } else {
+                false
+            }
+        });
+        if !present {
+            extend_collection_visit_queue(
+                &mut queue,
+                cursor,
+                &set_keys_in_order(vm, idx),
+                last_yielded.as_ref(),
+            );
+            continue;
+        }
+        let value = key.0.clone();
         vm.call_function(
             &cb,
             &[
-                v.clone(),
-                v.clone(),
+                value.clone(),
+                value,
                 this.clone().unwrap_or(Value::Undefined),
             ],
             this_arg.clone(),
         )?;
+        last_yielded = Some(key);
+        extend_collection_visit_queue(
+            &mut queue,
+            cursor,
+            &set_keys_in_order(vm, idx),
+            last_yielded.as_ref(),
+        );
     }
     Ok(Value::Undefined)
 }

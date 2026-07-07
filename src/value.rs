@@ -452,6 +452,7 @@ pub enum HeapObj {
     Environment(EnvironmentData),
     Map(MapData),
     Set(SetData),
+    CollectionIterator(CollectionIteratorData),
     WeakMap(WeakMapData),
     WeakSet(WeakSetData),
     Promise(PromiseData),
@@ -611,6 +612,24 @@ pub struct MapData {
 
 pub struct SetData {
     pub items: Mutex<IndexSet<MapKey>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CollectionIteratorKind {
+    MapEntries,
+    MapKeys,
+    MapValues,
+    SetEntries,
+    SetValues,
+}
+
+pub struct CollectionIteratorData {
+    pub source: Value,
+    pub kind: CollectionIteratorKind,
+    pub index: AtomicUsize,
+    pub done: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }
@@ -800,6 +819,7 @@ impl HeapObj {
             HeapObj::Function(f) => &f.props,
             HeapObj::Map(m) => &m.props,
             HeapObj::Set(s) => &s.props,
+            HeapObj::CollectionIterator(i) => &i.props,
             HeapObj::WeakMap(w) => &w.props,
             HeapObj::WeakSet(ws) => &ws.props,
             HeapObj::Promise(p) => &p.props,
@@ -822,6 +842,7 @@ impl HeapObj {
             HeapObj::Function(f) => &f.proto,
             HeapObj::Map(m) => &m.proto,
             HeapObj::Set(s) => &s.proto,
+            HeapObj::CollectionIterator(i) => &i.proto,
             HeapObj::WeakMap(w) => &w.proto,
             HeapObj::WeakSet(ws) => &ws.proto,
             HeapObj::Promise(p) => &p.proto,
@@ -862,6 +883,14 @@ impl HeapObj {
             HeapObj::Function(_) => "Function",
             HeapObj::Map(_) => "Map",
             HeapObj::Set(_) => "Set",
+            HeapObj::CollectionIterator(i) => match i.kind {
+                CollectionIteratorKind::MapEntries
+                | CollectionIteratorKind::MapKeys
+                | CollectionIteratorKind::MapValues => "Map Iterator",
+                CollectionIteratorKind::SetEntries | CollectionIteratorKind::SetValues => {
+                    "Set Iterator"
+                }
+            },
             HeapObj::WeakMap(_) => "WeakMap",
             HeapObj::WeakSet(_) => "WeakSet",
             HeapObj::Promise(_) => "Promise",

@@ -618,7 +618,7 @@ fn map_basic() {
         Value::String(Arc::from("42|42|1"))
     );
     assert_eq!(
-        run("let m = new Map([[-0, 1]]); m.set(+0, 42); [m.get(+0), m.get(-0), m.size, Object.is(m.keys()[0], -0)].join('|');"),
+        run("let m = new Map([[-0, 1]]); m.set(+0, 42); [m.get(+0), m.get(-0), m.size, Object.is(m.keys().next().value, -0)].join('|');"),
         Value::String(Arc::from("42|42|1|false"))
     );
     assert_eq!(
@@ -675,6 +675,18 @@ fn map_basic() {
     assert_eq!(
         run("let m = new Map(); m.set('a', 1); m.delete('a'); m.has('a');"),
         Value::Bool(false)
+    );
+    assert_eq!(
+        run("let m = new Map([[1, 'a'], [2, 'b']]); let it = m.entries(); let a = it.next(); let b = it.next(); let c = it.next(); [a.value[0], a.value[1], b.value[0], b.value[1], c.done, it[Symbol.iterator]() === it].join('|');"),
+        Value::String(Arc::from("1|a|2|b|true|true"))
+    );
+    assert_eq!(
+        run("Map.prototype[Symbol.iterator] === Map.prototype.entries;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("let m = new Map([['foo', 0], ['bar', 1]]); let out = []; m.forEach(function(v, k){ if (k === 'foo') { m.delete('foo'); m.set('foo', 2); } out.push(k + ':' + v); }); out.join('|');"),
+        Value::String(Arc::from("foo:0|bar:1|foo:2"))
     );
 }
 
@@ -736,12 +748,24 @@ fn set_basic() {
     );
     assert!(run_err("new Set().forEach(1);").contains("TypeError"));
     assert_eq!(
-        run("let s = new Set([-0]); s.add(-0); s.add(+0); [s.size, Object.is(s.values()[0], -0)].join('|');"),
+        run("let s = new Set([-0]); s.add(-0); s.add(+0); [s.size, Object.is(s.values().next().value, -0)].join('|');"),
         Value::String(Arc::from("1|false"))
     );
     assert_eq!(
         run("let s = new Set([+0]); s.add(-0); s.size;"),
         Value::Number(1.0)
+    );
+    assert_eq!(
+        run("let s = new Set([1, 2]); let it = s.values(); let a = it.next(); let b = it.next(); let c = it.next(); [a.value, b.value, c.done, it[Symbol.iterator]() === it].join('|');"),
+        Value::String(Arc::from("1|2|true|true"))
+    );
+    assert_eq!(
+        run("Set.prototype.keys === Set.prototype.values && Set.prototype[Symbol.iterator] === Set.prototype.values;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("let s = new Set([1, 2, 3]); let out = []; s.forEach(function(v){ if (v === 2) s.delete(1); if (v === 3) s.add(1); out.push(v); }); out.join('|');"),
+        Value::String(Arc::from("1|2|3|1"))
     );
     assert_eq!(run("new Set([NaN, Number('x')]).size;"), Value::Number(1.0));
     assert_eq!(run("new Set([0, 0n]).size;"), Value::Number(2.0));

@@ -166,6 +166,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Set/prototype/{size,add,has,delete,clear,entries,keys,values,
   forEach}` cluster now runs at **130 pass / 9 fail / 26 skip**, with
   remaining failures isolated to true SetIterator and live iteration semantics.
+- **Map/Set collection iterators and live forEach** —
+  `Map.prototype.entries`/`keys`/`values` and
+  `Set.prototype.entries`/`keys`/`values` now return iterator objects with
+  `next()` result objects instead of snapshot arrays. Built-in Map/Set
+  iteration uses the same lazy collection iterator path, `Map.prototype`
+  exposes `@@iterator` as the original `entries` method, and `Set.prototype`
+  exposes both `keys` and `@@iterator` as the original `values` method.
+  Map/Set `forEach` now observes values added during iteration, skips deleted
+  unvisited values, and revisits delete-then-readded values in insertion order.
+  The focused `built-ins/{Map,Set}/prototype` iterator/forEach/Symbol.iterator
+  cluster now runs at **104 pass / 0 fail / 38 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

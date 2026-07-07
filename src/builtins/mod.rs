@@ -38,8 +38,9 @@ use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
 use crate::value::{
-    ArrayData, BindingKind, FunctionData, FunctionKind, GcIdx, HeapObj, MapData, MapKey,
-    ObjectData, PropertyDescriptor, PropertyKey, SetData, Value,
+    ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
+    FunctionKind, GcIdx, HeapObj, MapData, MapKey, ObjectData, PropertyDescriptor, PropertyKey,
+    SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};

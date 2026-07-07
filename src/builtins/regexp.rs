@@ -666,12 +666,17 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
         );
     });
     // Map.prototype[Symbol.iterator] === Map.prototype.entries
-    let map_entries_fn = vm.new_native_function("entries", map_entries, 0)?;
     if let Value::Object(mp) = vm.map_proto.clone() {
         vm.heap.with_obj(mp.0, |o| {
+            let entries = o
+                .props()
+                .lock()
+                .get(&PropertyKey::from("entries"))
+                .map(|desc| desc.value.clone())
+                .unwrap_or(Value::Undefined);
             o.props().lock().insert(
                 PropertyKey::Symbol(vm.well_known_symbols.iterator),
-                data_prop(Value::Object(map_entries_fn)),
+                data_prop(entries),
             );
         });
     }
@@ -709,13 +714,21 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             accessor_get_prop(Value::Object(set_species_getter)),
         );
     });
-    // Set.prototype[Symbol.iterator] === Set.prototype.values
-    let set_values_fn = vm.new_native_function("values", set_values, 0)?;
+    // Set.prototype.keys === Set.prototype.values and @@iterator is values.
     if let Value::Object(sp) = vm.set_proto.clone() {
         vm.heap.with_obj(sp.0, |o| {
+            let values = o
+                .props()
+                .lock()
+                .get(&PropertyKey::from("values"))
+                .map(|desc| desc.value.clone())
+                .unwrap_or(Value::Undefined);
+            o.props()
+                .lock()
+                .insert(PropertyKey::from("keys"), data_prop(values.clone()));
             o.props().lock().insert(
                 PropertyKey::Symbol(vm.well_known_symbols.iterator),
-                data_prop(Value::Object(set_values_fn)),
+                data_prop(values),
             );
         });
     }

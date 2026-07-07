@@ -46,6 +46,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   entries,keys,values,forEach}` cluster now runs at **130 pass / 9 fail / 26
   skip**, with remaining failures isolated to true SetIterator and live
   iteration semantics.
+- **Map/Set collection iterators and live forEach**: `Map` and `Set`
+  `entries`/`keys`/`values` now return iterator objects with `next()` result
+  objects instead of snapshot arrays, built-in iteration uses the same lazy
+  collection iterator path, `Map.prototype[Symbol.iterator]` and
+  `Set.prototype[Symbol.iterator]` reuse the spec method objects, and
+  `Set.prototype.keys === Set.prototype.values`. Map/Set `forEach` now observes
+  values added during iteration, skips deleted unvisited values, and revisits
+  delete-then-readded values in insertion order. The focused
+  `built-ins/{Map,Set}/prototype` iterator/forEach/Symbol.iterator cluster now
+  runs at **104 pass / 0 fail / 38 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
