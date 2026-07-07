@@ -230,6 +230,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused `language/literals/regexp` diagnostic now runs at **174 pass / 6
   fail / 58 skip**, and broader `language/literals` improves to **468 pass /
   6 fail / 60 skip**.
+- **RegExp non-Unicode case folding** —
+  The internal regex backend now prevents Rust's Unicode case folding for
+  non-ASCII literal atoms and `\uXXXX`/`\xNN` escapes when a pattern has `i`
+  without `u`, while still allowing Unicode case folding for `iu`. This
+  matches ES canonicalization for probes such as Kelvin sign `\u212a`. The
+  focused `language/literals/regexp` diagnostic now runs at **175 pass / 5
+  fail / 58 skip**, and broader `language/literals` improves to **469 pass /
+  5 fail / 60 skip**.
 - **Map prototype size accessor** —
   `Map.prototype.size` is now an accessor property with a spec-shaped
   `"get size"` getter. The getter rejects non-Map receivers with `TypeError`,

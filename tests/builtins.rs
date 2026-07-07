@@ -3257,6 +3257,23 @@ fn regexp_sticky_start_assertion_uses_full_input() {
 }
 
 #[test]
+fn regexp_non_unicode_ignore_case_does_not_apply_unicode_folding() {
+    assert_eq!(run("/\\u212a/i.test('k');"), Value::Bool(false));
+    assert_eq!(run("/\\u212a/i.test('K');"), Value::Bool(false));
+    assert_eq!(run("/\\u212a/u.test('k');"), Value::Bool(false));
+    assert_eq!(run("/\\u212a/iu.test('k');"), Value::Bool(true));
+    assert_eq!(run("/K/i.test('k');"), Value::Bool(false));
+    assert_eq!(
+        run("new RegExp('\\\\u212a', 'i').test('K');"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var r = /\\u212a/i; r.source;"),
+        Value::String(Arc::from("\\u212a"))
+    );
+}
+
+#[test]
 fn string_replace_with_regex() {
     assert_eq!(
         run("'hello'.replace(/l/, 'L');"),

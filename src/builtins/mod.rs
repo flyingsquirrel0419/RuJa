@@ -54,7 +54,7 @@ use regex::{Regex, RegexBuilder};
 /// `m` (multiline ^/$), `s` (dotall). Other flags (`g`/`y`/`u`) do not affect
 /// the regex engine here and are handled by the caller.
 fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
-    let backend_source = normalize_regex_for_backend(source);
+    let backend_source = normalize_regex_for_backend(source, flags);
     let mut b = RegexBuilder::new(&backend_source);
     b.case_insensitive(flags.contains('i'));
     b.multi_line(flags.contains('m'));
@@ -62,16 +62,67 @@ fn compile_regex(source: &str, flags: &str) -> Result<Regex, regex::Error> {
     b.build()
 }
 
-fn normalize_regex_for_backend(source: &str) -> String {
+fn normalize_regex_for_backend(source: &str, flags: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
     let mut in_class = false;
     let mut escaped = false;
+    let protect_non_unicode_case = flags.contains('i') && !flags.contains('u');
 
     while let Some(ch) = chars.next() {
         if escaped {
             if ch == '0' && !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
                 out.push_str("x00");
+            } else if protect_non_unicode_case && !in_class && ch == 'u' {
+                let mut hex = String::new();
+                for _ in 0..4 {
+                    match chars.peek().copied() {
+                        Some(next) if next.is_ascii_hexdigit() => {
+                            hex.push(chars.next().unwrap());
+                        }
+                        _ => break,
+                    }
+                }
+                if hex.len() == 4 {
+                    let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
+                    if code > 0x7f {
+                        out.pop();
+                        out.push_str("(?-i:\\u");
+                        out.push_str(&hex);
+                        out.push(')');
+                    } else {
+                        out.push('u');
+                        out.push_str(&hex);
+                    }
+                } else {
+                    out.push(ch);
+                    out.push_str(&hex);
+                }
+            } else if protect_non_unicode_case && !in_class && ch == 'x' {
+                let mut hex = String::new();
+                for _ in 0..2 {
+                    match chars.peek().copied() {
+                        Some(next) if next.is_ascii_hexdigit() => {
+                            hex.push(chars.next().unwrap());
+                        }
+                        _ => break,
+                    }
+                }
+                if hex.len() == 2 {
+                    let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
+                    if code > 0x7f {
+                        out.pop();
+                        out.push_str("(?-i:\\x");
+                        out.push_str(&hex);
+                        out.push(')');
+                    } else {
+                        out.push('x');
+                        out.push_str(&hex);
+                    }
+                } else {
+                    out.push(ch);
+                    out.push_str(&hex);
+                }
             } else {
                 out.push(ch);
             }
@@ -115,7 +166,13 @@ fn normalize_regex_for_backend(source: &str) -> String {
             continue;
         }
 
-        out.push(ch);
+        if protect_non_unicode_case && !in_class && !ch.is_ascii() {
+            out.push_str("(?-i:");
+            out.push(ch);
+            out.push(')');
+        } else {
+            out.push(ch);
+        }
     }
 
     out

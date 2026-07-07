@@ -104,6 +104,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `language/literals/regexp` diagnostic now runs at **174 pass / 6 fail / 58
   skip**, and broader `language/literals` improves to **468 pass / 6 fail /
   60 skip**.
+- **RegExp non-Unicode case folding**: the internal regex backend now
+  protects non-ASCII literal atoms and `\uXXXX`/`\xNN` escapes from Rust's
+  Unicode case folding when a pattern has `i` without `u`, while preserving
+  Unicode case folding for `iu`. This matches ES canonicalization for cases
+  such as Kelvin sign `\u212a`. The focused `language/literals/regexp`
+  diagnostic now runs at **175 pass / 5 fail / 58 skip**, and broader
+  `language/literals` improves to **469 pass / 5 fail / 60 skip**.
 - **Map prototype size accessor**: `Map.prototype.size` is now installed as
   the spec accessor property instead of a data method. The getter has the
   expected `"get size"` name/zero length, validates that the receiver is a
