@@ -2590,10 +2590,13 @@ fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         ));
     }
     let obj = vm.to_object(object)?;
-    let keys = own_string_keys(vm, &obj);
+    let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
     let mut vals = Vec::with_capacity(keys.len());
-    for k in &keys {
-        if !own_property_descriptor_for_key(vm, &obj, &PropertyKey::from(k.clone()))
+    for key in &keys {
+        let Some(k) = key.as_str() else {
+            continue;
+        };
+        if !own_property_descriptor_for_key_or_throw(vm, &obj, key)?
             .is_some_and(|desc| desc.enumerable)
         {
             continue;
@@ -2612,17 +2615,20 @@ fn object_entries(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
         ));
     }
     let obj = vm.to_object(object)?;
-    let keys = own_string_keys(vm, &obj);
+    let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
     let mut pairs = Vec::new();
     for k in keys {
-        if !own_property_descriptor_for_key(vm, &obj, &PropertyKey::from(k.clone()))
+        if !own_property_descriptor_for_key_or_throw(vm, &obj, &k)?
             .is_some_and(|desc| desc.enumerable)
         {
             continue;
         }
-        let v = vm.get_property(&obj, &k)?;
+        let Some(name) = k.as_str() else {
+            continue;
+        };
+        let v = vm.get_property(&obj, name)?;
         let pair = HeapObj::Array(ArrayData::new(
-            vec![Value::String(k.clone()), v],
+            vec![Value::String(Arc::from(name)), v],
             Some(vm.array_proto.clone()),
         ));
         pairs.push(Value::Object(GcIdx(vm.heap.allocate(pair)?)));
@@ -3384,10 +3390,10 @@ fn object_get_own_property_descriptors(
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    let keys = own_property_keys(vm, &obj, false, true, true);
+    let keys = own_property_keys_or_throw(vm, &obj, false, true, true)?;
     let mut props = IndexMap::new();
     for key in keys {
-        if let Some(desc) = own_property_descriptor_for_key(vm, &obj, &key) {
+        if let Some(desc) = own_property_descriptor_for_key_or_throw(vm, &obj, &key)? {
             props.insert(
                 key,
                 PropertyDescriptor::data(from_property_descriptor(vm, desc)?),
@@ -3528,6 +3534,128 @@ fn own_property_descriptor_for_key(
     }
 }
 
+fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<PropertyDescriptor> {
+    if !matches!(desc, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
+        ));
+    }
+
+    let mut value = Value::Undefined;
+    let mut writable = false;
+    let mut enumerable = false;
+    let mut configurable = false;
+    let mut get = None;
+    let mut set = None;
+    let mut has_value = false;
+    let mut has_writable = false;
+    let mut has_get = false;
+    let mut has_set = false;
+
+    if vm.has_own(desc, "enumerable") {
+        enumerable = vm.get_property(desc, "enumerable")?.is_truthy();
+    }
+    if vm.has_own(desc, "configurable") {
+        configurable = vm.get_property(desc, "configurable")?.is_truthy();
+    }
+    if vm.has_own(desc, "value") {
+        value = vm.get_property(desc, "value")?;
+        has_value = true;
+    }
+    if vm.has_own(desc, "writable") {
+        writable = vm.get_property(desc, "writable")?.is_truthy();
+        has_writable = true;
+    }
+    if vm.has_own(desc, "get") {
+        let getter = vm.get_property(desc, "get")?;
+        if !getter.is_undefined() && !is_callable(&getter, &vm.heap) {
+            return Err(Error::type_err("Getter must be a function"));
+        }
+        get = if getter.is_undefined() {
+            None
+        } else {
+            Some(getter)
+        };
+        has_get = true;
+    }
+    if vm.has_own(desc, "set") {
+        let setter = vm.get_property(desc, "set")?;
+        if !setter.is_undefined() && !is_callable(&setter, &vm.heap) {
+            return Err(Error::type_err("Setter must be a function"));
+        }
+        set = if setter.is_undefined() {
+            None
+        } else {
+            Some(setter)
+        };
+        has_set = true;
+    }
+
+    let is_accessor = has_get || has_set;
+    let is_data = has_value || has_writable;
+    if is_accessor && is_data {
+        return Err(Error::type_err(
+            "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
+        ));
+    }
+
+    Ok(if is_accessor {
+        PropertyDescriptor {
+            value: Value::Undefined,
+            writable: false,
+            enumerable,
+            configurable,
+            get,
+            set,
+            is_accessor: true,
+        }
+    } else {
+        PropertyDescriptor {
+            value,
+            writable,
+            enumerable,
+            configurable,
+            get: None,
+            set: None,
+            is_accessor: false,
+        }
+    })
+}
+
+fn own_property_descriptor_for_key_or_throw(
+    vm: &mut Vm,
+    obj: &Value,
+    key: &PropertyKey,
+) -> error::Result<Option<PropertyDescriptor>> {
+    if let Value::Object(idx) = obj {
+        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'getOwnPropertyDescriptor' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        }) {
+            let (target, handler) = proxy_result?;
+            let key_value = property_key_to_value(key);
+            let trap = vm.get_property(&handler, "getOwnPropertyDescriptor")?;
+            if trap.is_undefined() {
+                return own_property_descriptor_for_key_or_throw(vm, &target, key);
+            }
+            let result = vm.call_function(&trap, &[target, key_value], Some(handler))?;
+            if result.is_undefined() {
+                return Ok(None);
+            }
+            return property_descriptor_from_object(vm, &result).map(Some);
+        }
+    }
+    Ok(own_property_descriptor_for_key(vm, obj, key))
+}
+
 fn from_property_descriptor(vm: &mut Vm, desc: PropertyDescriptor) -> error::Result<Value> {
     let desc_obj = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -3586,38 +3714,7 @@ fn object_get_own_property_descriptor(
     }
     let obj = vm.to_object(object)?;
     let key = to_property_key_descriptor(vm, args.get(1).unwrap_or(&Value::Undefined))?;
-    if let Value::Object(idx) = &obj {
-        if let Some(proxy_result) = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'getOwnPropertyDescriptor' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        }) {
-            let (target, handler) = proxy_result?;
-            let key_value = property_key_to_value(&key);
-            let trap = vm.get_property(&handler, "getOwnPropertyDescriptor")?;
-            if trap.is_undefined() {
-                return object_get_own_property_descriptor(vm, &[target, key_value], None);
-            }
-            let result = vm.call_function(&trap, &[target, key_value], Some(handler))?;
-            if result.is_undefined() {
-                return Ok(Value::Undefined);
-            }
-            if !matches!(result, Value::Object(_)) {
-                return Err(Error::type_err(
-                    "Proxy getOwnPropertyDescriptor trap must return an object or undefined",
-                ));
-            }
-            return Ok(result);
-        }
-    }
-    match own_property_descriptor_for_key(vm, &obj, &key) {
+    match own_property_descriptor_for_key_or_throw(vm, &obj, &key)? {
         Some(desc) => from_property_descriptor(vm, desc),
         None => Ok(Value::Undefined),
     }

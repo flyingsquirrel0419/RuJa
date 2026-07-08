@@ -215,6 +215,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   temporarily lifted, `built-ins/Proxy/revocable` runs at **13 pass / 1 fail /
   4 skip**; the remaining failure is callable Proxy support for function
   targets.
+- **Object descriptor helpers observe Proxy descriptors** —
+  `Object.values`, `Object.entries`, and
+  `Object.getOwnPropertyDescriptors` now revalidate each snapshotted key
+  through the Proxy-aware `[[GetOwnProperty]]` path, so
+  `getOwnPropertyDescriptor` traps are observable before enumerable filtering,
+  value reads, and descriptor materialization. With `Proxy`/`Reflect`/`Symbol`
+  skips temporarily lifted, focused
+  `built-ins/Object/{values,entries,getOwnPropertyDescriptors}` runs at **58
+  pass / 1 fail / 0 skip**; the remaining failure is the separate RegExp
+  internal-key exposure case.
 - **Reference-preserving identifier calls through `with`** —
   direct IdentifierReference calls now carry their Reference record into the
   VM call opcode. `with (o) { f() }` still binds `this` to `o` when `f` is

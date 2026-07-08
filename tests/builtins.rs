@@ -2814,6 +2814,46 @@ fn reflect_own_keys_propagates_proxy_trap_result_errors() {
 }
 
 #[test]
+fn object_entry_helpers_observe_proxy_descriptors() {
+    assert_eq!(
+        run(r##"
+            var log = [];
+            var target = { a: 1, b: 2, c: 3 };
+            var proxy = new Proxy(target, {
+              ownKeys: function(t) {
+                log.push("ownKeys");
+                return ["a", "b", "c"];
+              },
+              getOwnPropertyDescriptor: function(t, key) {
+                log.push("getOwnPropertyDescriptor:" + key);
+                return { enumerable: key !== "b", configurable: true };
+              },
+              get: function(t, key) {
+                log.push("get:" + key);
+                return t[key];
+              }
+            });
+            var values = Object.values(proxy).join(",");
+            var entries = Object.entries(proxy).map(function(pair) {
+              return pair.join(":");
+            }).join(",");
+            var descs = Object.getOwnPropertyDescriptors(proxy);
+            [
+              values,
+              entries,
+              descs.a.enumerable,
+              descs.b.enumerable,
+              descs.c.enumerable,
+              log.join("|")
+            ].join("#");
+            "##),
+        Value::String(Arc::from(
+            "1,3#a:1,c:3#true#false#true#ownKeys|getOwnPropertyDescriptor:a|get:a|getOwnPropertyDescriptor:b|getOwnPropertyDescriptor:c|get:c|ownKeys|getOwnPropertyDescriptor:a|get:a|getOwnPropertyDescriptor:b|getOwnPropertyDescriptor:c|get:c|ownKeys|getOwnPropertyDescriptor:a|getOwnPropertyDescriptor:b|getOwnPropertyDescriptor:c"
+        ))
+    );
+}
+
+#[test]
 fn reflect_construct_uses_array_like_args_and_new_target() {
     assert_eq!(
         run(r#"

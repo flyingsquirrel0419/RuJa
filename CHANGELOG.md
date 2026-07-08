@@ -85,6 +85,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   lifted, `built-ins/Proxy/revocable` now runs at **13 pass / 1 fail / 4
   skip**; the remaining failure requires callable Proxy support for function
   targets.
+- **Object descriptor helpers observe Proxy descriptors**: `Object.values`,
+  `Object.entries`, and `Object.getOwnPropertyDescriptors` now use the
+  Proxy-aware `[[GetOwnProperty]]` path for each snapshotted key, so
+  `getOwnPropertyDescriptor` traps run before enumerable filtering and
+  descriptor materialization instead of being bypassed through target storage.
+  With `Proxy`/`Reflect`/`Symbol` skips temporarily lifted, focused
+  `built-ins/Object/{values,entries,getOwnPropertyDescriptors}` now runs at
+  **58 pass / 1 fail / 0 skip**; the remaining failure is isolated to
+  RegExp internal bookkeeping keys.
 - **Reference-preserving identifier calls through `with`**: direct
   IdentifierReference calls now retain their Reference record through the VM
   call opcode, so `with (o) { f() }` still binds `this` to `o`, while value
