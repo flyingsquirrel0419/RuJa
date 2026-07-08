@@ -24,6 +24,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **`String.prototype.normalize` Unicode forms**: `String.prototype.normalize`
+  is now exposed as a non-constructor prototype builtin with spec-shaped
+  `name`, `length`, and descriptor properties. It defaults to NFC, coerces the
+  `form` argument observably, rejects invalid forms with `RangeError`, and
+  returns NFC/NFD/NFKC/NFKD output through Unicode normalization. The focused
+  `built-ins/String/prototype/normalize` run now closes at **11 pass / 0 fail /
+  3 skip**.
 - **`RegExp.escape` static builtin**: `RegExp.escape` is now installed on each
   realm-local `RegExp` constructor with the expected own property shape,
   rejects non-string inputs without coercion, and implements the ES

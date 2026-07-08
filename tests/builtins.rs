@@ -2214,6 +2214,40 @@ fn string_pad_at_replaceall_substring() {
 }
 
 #[test]
+fn string_normalize_follows_unicode_forms_and_descriptors() {
+    assert_eq!(
+        run(
+            r#"var d = Object.getOwnPropertyDescriptor(String.prototype, "normalize");
+               [
+                 typeof String.prototype.normalize,
+                 d.writable,
+                 d.enumerable,
+                 d.configurable,
+                 String.prototype.normalize.length,
+                 String.prototype.normalize.name
+               ].join("|");"#
+        ),
+        Value::String(Arc::from("function|true|false|true|0|normalize"))
+    );
+    assert_eq!(
+        run(r#"var s = "\u1E9B\u0323";
+               [
+                 s.normalize("NFC") === "\u1E9B\u0323",
+                 s.normalize("NFD") === "\u017F\u0323\u0307",
+                 s.normalize("NFKC") === "\u1E69",
+                 s.normalize("NFKD") === "\u0073\u0323\u0307"
+               ].join("|");"#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+    assert_eq!(
+        run(r#"var form = { toString: function() { return "NFD"; } };
+               "\u00C5".normalize(form) === "A\u030A";"#),
+        Value::Bool(true)
+    );
+    assert!(run_err(r#""x".normalize("bad");"#).contains("RangeError"));
+}
+
+#[test]
 fn number_static_methods() {
     assert_eq!(run("Number.isInteger(5);"), Value::Bool(true));
     assert_eq!(run("Number.isInteger(5.5);"), Value::Bool(false));

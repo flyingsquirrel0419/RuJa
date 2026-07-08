@@ -1,4 +1,5 @@
 use super::*;
+use unicode_normalization::UnicodeNormalization;
 
 // =========================================================================
 // String prototype + constructor
@@ -1147,6 +1148,27 @@ pub(crate) fn str_replace_all(
     }
     Ok(Value::String(Arc::from(s.replace(&from, &to))))
 }
+
+pub(crate) fn str_normalize(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let form = match args.first() {
+        None | Some(Value::Undefined) => "NFC".to_string(),
+        Some(value) => vm.to_string(value)?.to_string(),
+    };
+    let normalized = match form.as_str() {
+        "NFC" => s.nfc().collect::<String>(),
+        "NFD" => s.nfd().collect::<String>(),
+        "NFKC" => s.nfkc().collect::<String>(),
+        "NFKD" => s.nfkd().collect::<String>(),
+        _ => return Err(Error::range("Invalid normalization form".to_string())),
+    };
+    Ok(Value::String(Arc::from(normalized.as_str())))
+}
+
 pub(crate) fn str_substring(
     vm: &mut Vm,
     args: &[Value],

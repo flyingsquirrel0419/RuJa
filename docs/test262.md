@@ -355,6 +355,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   U+FFFD. The focused `built-ins/String/prototype/isWellFormed
   built-ins/String/prototype/toWellFormed` run now closes at **14 pass / 0
   fail / 2 skip**.
+- **`String.prototype.normalize` Unicode forms** —
+  `String.prototype.normalize` is now exposed with spec-shaped function
+  metadata and descriptor attributes, defaults missing/undefined forms to NFC,
+  observes `ToString(form)`, throws `RangeError` for invalid forms, and returns
+  NFC/NFD/NFKC/NFKD-normalized strings. The focused
+  `built-ins/String/prototype/normalize` run now closes at **11 pass / 0 fail /
+  3 skip**.
 - **`Array.of` constructor and property semantics** —
   `Array.of` now follows the constructable-`this` path, passes the argument
   count into custom constructors, creates element data properties without

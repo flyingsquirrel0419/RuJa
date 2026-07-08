@@ -4616,6 +4616,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("trimStart", str_trim_start, 0),
             ("trimEnd", str_trim_end, 0),
             ("replaceAll", str_replace_all, 2),
+            ("normalize", str_normalize, 0),
             ("substring", str_substring, 2),
             ("substr", str_substr, 2),
             ("codePointAt", str_code_point_at, 1),
