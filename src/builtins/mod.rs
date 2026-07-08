@@ -1467,11 +1467,13 @@ fn install_typed_array_constructor(
     name: &str,
     constructor: NativeFn,
     kind: crate::value::TypedArrayKind,
+    typed_array_ctor: &Value,
+    typed_array_proto: &Value,
 ) -> error::Result<()> {
-    let ctor_idx = vm.new_native_function(name, constructor, 1)?;
+    let ctor_idx = vm.new_native_function(name, constructor, 3)?;
     let proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(typed_array_proto.clone())),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from(name)),
         private_fields: Mutex::new(std::collections::HashMap::new()),
@@ -1479,6 +1481,7 @@ fn install_typed_array_constructor(
     }))?);
     vm.heap.with_obj(ctor_idx.0, |o| {
         if let HeapObj::Function(f) = o {
+            *f.proto.lock() = Some(typed_array_ctor.clone());
             *f.prototype.lock() = Some(Value::Object(proto_idx));
             f.props.lock().insert(
                 PropertyKey::from("prototype"),
@@ -1487,12 +1490,6 @@ fn install_typed_array_constructor(
         }
     });
     let element_size = Value::Number(kind.element_size() as f64);
-    let buffer_getter = vm.new_native_function("get buffer", typed_array_buffer_get, 0)?;
-    let byte_length_getter =
-        vm.new_native_function("get byteLength", typed_array_byte_length_get, 0)?;
-    let byte_offset_getter =
-        vm.new_native_function("get byteOffset", typed_array_byte_offset_get, 0)?;
-    let length_getter = vm.new_native_function("get length", typed_array_length_get, 0)?;
     vm.heap.with_obj(proto_idx.0, |o| {
         let mut props = o.props().lock();
         props.insert(
@@ -1502,22 +1499,6 @@ fn install_typed_array_constructor(
         props.insert(
             PropertyKey::from("BYTES_PER_ELEMENT"),
             const_prop(element_size.clone()),
-        );
-        props.insert(
-            PropertyKey::from("buffer"),
-            accessor_get_prop(Value::Object(buffer_getter)),
-        );
-        props.insert(
-            PropertyKey::from("byteLength"),
-            accessor_get_prop(Value::Object(byte_length_getter)),
-        );
-        props.insert(
-            PropertyKey::from("byteOffset"),
-            accessor_get_prop(Value::Object(byte_offset_getter)),
-        );
-        props.insert(
-            PropertyKey::from("length"),
-            accessor_get_prop(Value::Object(length_getter)),
         );
     });
     vm.heap.with_obj(ctor_idx.0, |o| {
@@ -4747,6 +4728,65 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "DataView", Value::Object(data_view_ctor));
 
+    let typed_array_ctor = Value::Object(vm.new_native_function(
+        "TypedArray",
+        typed_array_intrinsic_constructor,
+        0,
+    )?);
+    let typed_array_proto =
+        Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("TypedArray")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?));
+    if let Value::Object(idx) = &typed_array_ctor {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Function(f) = o {
+                *f.prototype.lock() = Some(typed_array_proto.clone());
+                f.props.lock().insert(
+                    PropertyKey::from("prototype"),
+                    const_prop(typed_array_proto.clone()),
+                );
+            }
+        });
+    }
+    let typed_array_buffer_getter =
+        vm.new_native_function("get buffer", typed_array_buffer_get, 0)?;
+    let typed_array_byte_length_getter =
+        vm.new_native_function("get byteLength", typed_array_byte_length_get, 0)?;
+    let typed_array_byte_offset_getter =
+        vm.new_native_function("get byteOffset", typed_array_byte_offset_get, 0)?;
+    let typed_array_length_getter =
+        vm.new_native_function("get length", typed_array_length_get, 0)?;
+    if let Value::Object(idx) = &typed_array_proto {
+        vm.heap.with_obj(idx.0, |obj| {
+            let mut props = obj.props().lock();
+            props.insert(
+                PropertyKey::from("constructor"),
+                data_prop(typed_array_ctor.clone()),
+            );
+            props.insert(
+                PropertyKey::from("buffer"),
+                accessor_get_prop(Value::Object(typed_array_buffer_getter)),
+            );
+            props.insert(
+                PropertyKey::from("byteLength"),
+                accessor_get_prop(Value::Object(typed_array_byte_length_getter)),
+            );
+            props.insert(
+                PropertyKey::from("byteOffset"),
+                accessor_get_prop(Value::Object(typed_array_byte_offset_getter)),
+            );
+            props.insert(
+                PropertyKey::from("length"),
+                accessor_get_prop(Value::Object(typed_array_length_getter)),
+            );
+        });
+    }
+
     for (name, constructor, kind) in [
         (
             "Int8Array",
@@ -4804,7 +4844,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             crate::value::TypedArrayKind::BigUint64,
         ),
     ] {
-        install_typed_array_constructor(vm, name, constructor, kind)?;
+        install_typed_array_constructor(
+            vm,
+            name,
+            constructor,
+            kind,
+            &typed_array_ctor,
+            &typed_array_proto,
+        )?;
     }
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with(

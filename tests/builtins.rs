@@ -809,8 +809,9 @@ fn typed_array_bigint_constructors_expose_element_size_and_validate_receivers() 
         run(r#"
             var ctorDesc = Object.getOwnPropertyDescriptor(BigInt64Array, "BYTES_PER_ELEMENT");
             var protoDesc = Object.getOwnPropertyDescriptor(BigUint64Array.prototype, "BYTES_PER_ELEMENT");
-            var bufferGetter = Object.getOwnPropertyDescriptor(BigInt64Array.prototype, "buffer").get;
-            var lengthGetter = Object.getOwnPropertyDescriptor(BigInt64Array.prototype, "length").get;
+            var TypedArrayPrototype = Object.getPrototypeOf(BigInt64Array.prototype);
+            var bufferGetter = Object.getOwnPropertyDescriptor(TypedArrayPrototype, "buffer").get;
+            var lengthGetter = Object.getOwnPropertyDescriptor(TypedArrayPrototype, "length").get;
             var ta = new BigInt64Array(2);
             var throwsOnProto = false;
             var throwsOnObject = false;
@@ -833,6 +834,33 @@ fn typed_array_bigint_constructors_expose_element_size_and_validate_receivers() 
             "#),
         Value::String(Arc::from(
             "8,false,false,false,8,false,false,false,true,2,true,true",
+        ))
+    );
+}
+
+#[test]
+fn typed_array_constructors_inherit_from_shared_intrinsics() {
+    assert_eq!(
+        run(r#"
+            var TypedArray = Object.getPrototypeOf(Int8Array);
+            var TypedArrayPrototype = TypedArray.prototype;
+            [
+              Int8Array.length,
+              BigUint64Array.length,
+              Object.getPrototypeOf(Uint8Array) === TypedArray,
+              Object.getPrototypeOf(Float64Array) === TypedArray,
+              Object.getPrototypeOf(Uint8Array.prototype) === TypedArrayPrototype,
+              Object.getPrototypeOf(BigInt64Array.prototype) === TypedArrayPrototype,
+              Uint8Array.prototype.hasOwnProperty("buffer"),
+              Float64Array.prototype.hasOwnProperty("byteLength"),
+              BigInt64Array.prototype.hasOwnProperty("byteOffset"),
+              BigUint64Array.prototype.hasOwnProperty("length"),
+              typeof Object.getOwnPropertyDescriptor(TypedArrayPrototype, "buffer").get,
+              typeof Object.getOwnPropertyDescriptor(TypedArrayPrototype, "length").get
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "3,3,true,true,true,true,false,false,false,false,function,function",
         ))
     );
 }

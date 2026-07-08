@@ -379,6 +379,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
   diagnostic now reports **28 pass / 0 fail / 19 skip**, closing that
   constructor probe.
+- **TypedArray intrinsic prototype shape** —
+  Concrete TypedArray constructors now expose the spec `length` of `3` and
+  share a `%TypedArray%` intrinsic constructor/prototype pair. The concrete
+  prototypes inherit `buffer`, `byteLength`, `byteOffset`, and `length`
+  accessors from `%TypedArray%.prototype` instead of defining those accessors
+  as own properties. With TypedArray-related skips temporarily lifted, the
+  focused constructor/prototype-shape diagnostic now reports **120 pass / 0
+  fail / 11 skip**, and the broader `built-ins/TypedArrayConstructors`
+  diagnostic reports **421 pass / 107 fail / 210 skip**.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel** —
   Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
   integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,

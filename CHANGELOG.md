@@ -95,6 +95,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   prevents a freshly returned `ArrayBuffer` from being swept during the long
   `sliceToImmutable` argument-coercion test and closes the focused
   `built-ins/ArrayBuffer` run at **91 pass / 0 fail / 130 skip**.
+- **TypedArray intrinsic prototype shape**: concrete TypedArray constructors
+  now report the spec `length` of `3`, inherit from a shared `%TypedArray%`
+  intrinsic constructor, and their prototypes inherit `buffer`, `byteLength`,
+  `byteOffset`, and `length` accessors from a shared `%TypedArray%.prototype`
+  instead of defining them as own properties. With TypedArray skips temporarily
+  lifted, the focused constructor/prototype-shape probe now reports
+  **120 pass / 0 fail / 11 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

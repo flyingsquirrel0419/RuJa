@@ -3,6 +3,16 @@ use super::*;
 const MAX_ARRAY_BUFFER_LENGTH: usize = 1 << 26;
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
+pub(crate) fn typed_array_intrinsic_constructor(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Err(Error::type_err(
+        "%TypedArray% intrinsic constructor cannot be called directly",
+    ))
+}
+
 fn to_index_length(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usize> {
     let n = vm.to_number(value)?;
     if n.is_nan() {
