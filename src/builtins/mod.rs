@@ -4147,6 +4147,13 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     )?;
     // override the constructor function to use array_constructor
     vm.array_proto = Value::Object(array_proto);
+    let array_values_fn = vm.get_property(&vm.array_proto.clone(), "values")?;
+    vm.heap.with_obj(array_proto.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            data_prop(array_values_fn),
+        );
+    });
     define_global(vm, "Array", Value::Object(array_ctor));
     // Array statics
     for (n, f, len) in [

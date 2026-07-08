@@ -158,6 +158,19 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   numeric and BigInt elements, and tracks `[[Extensible]]` so Object integrity
   operations can seal typed-array instances. This removes the final
   TypedArray-constructor failures from the Object integrity focused run.
+- **TypedArray constructor inputs** —
+  Typed-array constructors now require `new`, use the active typed-array
+  prototype as the default constructor prototype, coerce primitive lengths with
+  `ToIndex`-style `NaN`/`undefined` handling, initialize from observable
+  array-like `length` and indexed reads, and consume iterable inputs through an
+  `IteratorToList`-style path before element conversion. `Array.prototype` now
+  exposes `[Symbol.iterator]` as `values`, so array-backed iterable constructor
+  inputs use the iterator protocol. With TypedArray-related skips temporarily
+  lifted, the focused
+  `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
+  diagnostic moved from **8 pass / 20 fail / 19 skip** to **25 pass / 3 fail /
+  19 skip**. Remaining failures in that probe require ArrayBuffer-backed
+  typed-array views and shared ArrayIteratorPrototype mutation semantics.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel** —
   Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
   integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,

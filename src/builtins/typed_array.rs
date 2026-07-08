@@ -5,14 +5,25 @@ const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 fn to_index_length(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usize> {
     let n = vm.to_number(value)?;
-    if !n.is_finite() || n < 0.0 {
-        return Err(Error::range(format!("Invalid {name} length")));
+    if n.is_nan() {
+        return Ok(0);
     }
     let integer = n.trunc();
+    if !integer.is_finite() || integer < 0.0 {
+        return Err(Error::range(format!("Invalid {name} length")));
+    }
     if integer > MAX_ARRAY_BUFFER_LENGTH as f64 {
         return Err(Error::range(format!("Invalid {name} length")));
     }
     Ok(integer as usize)
+}
+
+fn to_array_like_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() || n <= 0.0 {
+        return Ok(0);
+    }
+    Ok(n.trunc().min(MAX_SAFE_INTEGER) as usize)
 }
 
 pub(crate) fn array_buffer_constructor(
@@ -1091,36 +1102,119 @@ pub(crate) fn typed_array_value_to_bytes(
     Ok(bytes)
 }
 
+fn typed_array_iterable_to_bytes(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+    value: &Value,
+) -> error::Result<Vec<u8>> {
+    const MAX_TYPED_ARRAY_ITERABLE_LEN: usize = 1 << 16;
+    let iterator = vm.make_iterator(value)?;
+    let pin = vm.pin(&iterator);
+    let mut values = Vec::new();
+    loop {
+        if values.len() >= MAX_TYPED_ARRAY_ITERABLE_LEN {
+            vm.unpin(pin);
+            return Err(Error::range(format!("Invalid {} length", kind.name())));
+        }
+        let (item, done) = vm.iterator_next(&iterator)?;
+        if done {
+            break;
+        }
+        values.push(item);
+    }
+    vm.unpin(pin);
+    let mut bytes = Vec::with_capacity(values.len() * kind.element_size());
+    for value in &values {
+        bytes.extend_from_slice(&typed_array_value_to_bytes(vm, kind, value)?);
+    }
+    Ok(bytes)
+}
+
 fn typed_array_constructor_with_kind(
     vm: &mut Vm,
     args: &[Value],
     kind: crate::value::TypedArrayKind,
 ) -> error::Result<Value> {
-    let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err(
+            "TypedArray constructor requires new".to_string(),
+        ));
+    }
+    let fallback_proto = vm
+        .current_native_callee
+        .clone()
+        .and_then(|callee| {
+            vm.get_property_by_key(&callee, &PropertyKey::from("prototype"))
+                .ok()
+        })
+        .filter(|proto| matches!(proto, Value::Object(_)))
+        .unwrap_or_else(|| vm.object_proto.clone());
+    let proto = native_constructor_prototype(vm, fallback_proto)?;
     let buffer = match args.first() {
         None => Vec::new(),
+        Some(Value::Undefined) => Vec::new(),
         Some(Value::Number(n)) => {
-            if *n < 0.0 || n.is_nan() || n.is_infinite() {
-                return Err(Error::type_err("Invalid typed array length".to_string()));
-            }
-            let length = *n as usize;
-            vec![0u8; length.saturating_mul(kind.element_size())]
+            let length = to_index_length(vm, &Value::Number(*n), kind.name())?;
+            let byte_len = length
+                .checked_mul(kind.element_size())
+                .filter(|len| *len <= MAX_ARRAY_BUFFER_LENGTH)
+                .ok_or_else(|| Error::range(format!("Invalid {} length", kind.name())))?;
+            vec![0u8; byte_len]
         }
         Some(Value::Object(idx)) => {
-            let items = vm.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Array(a) = o {
-                    a.items.lock().clone()
-                } else {
-                    Vec::new()
-                }
+            let array_like = Value::Object(*idx);
+            let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+            let is_builtin_iterable = vm.heap.with_obj(idx.0, |o| {
+                matches!(
+                    o,
+                    HeapObj::Generator(_)
+                        | HeapObj::LazyGenerator(_)
+                        | HeapObj::Map(_)
+                        | HeapObj::Set(_)
+                )
             });
-            let mut bytes = Vec::with_capacity(items.len() * kind.element_size());
-            for item in &items {
-                bytes.extend_from_slice(&typed_array_value_to_bytes(vm, kind, item)?);
+            if is_builtin_iterable || vm.has_property_key(&array_like, &iterator_key)? {
+                let iterator_method = vm.get_property_by_key(&array_like, &iterator_key)?;
+                if is_builtin_iterable
+                    || (!iterator_method.is_undefined() && !iterator_method.is_null())
+                {
+                    return typed_array_iterable_to_bytes(vm, kind, &array_like).and_then(
+                        |buffer| {
+                            let idx = vm.heap.allocate(HeapObj::TypedArray(
+                                crate::value::TypedArrayData {
+                                    buffer: Mutex::new(buffer),
+                                    kind,
+                                    props: Mutex::new(IndexMap::new()),
+                                    proto: Mutex::new(Some(proto)),
+                                    extensible: AtomicBool::new(true),
+                                },
+                            ))?;
+                            Ok(Value::Object(GcIdx(idx)))
+                        },
+                    );
+                }
+            }
+            let length_value = vm.get_property(&array_like, "length")?;
+            let length = to_array_like_length(vm, &length_value)?;
+            let byte_len = length
+                .checked_mul(kind.element_size())
+                .filter(|len| *len <= MAX_ARRAY_BUFFER_LENGTH)
+                .ok_or_else(|| Error::range(format!("Invalid {} length", kind.name())))?;
+            let mut bytes = Vec::with_capacity(byte_len);
+            for index in 0..length {
+                let item = vm.get_property(&array_like, &index.to_string())?;
+                bytes.extend_from_slice(&typed_array_value_to_bytes(vm, kind, &item)?);
             }
             bytes
         }
-        Some(_) => Vec::new(),
+        Some(value) => {
+            let length = to_index_length(vm, value, kind.name())?;
+            let byte_len = length
+                .checked_mul(kind.element_size())
+                .filter(|len| *len <= MAX_ARRAY_BUFFER_LENGTH)
+                .ok_or_else(|| Error::range(format!("Invalid {} length", kind.name())))?;
+            vec![0u8; byte_len]
+        }
     };
 
     let idx = vm

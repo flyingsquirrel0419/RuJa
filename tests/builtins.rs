@@ -438,6 +438,57 @@ fn typed_array_constructors_cover_numeric_and_bigint_variants() {
 }
 
 #[test]
+fn typed_array_constructors_read_array_like_objects_observably() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var source = {
+              get length() { log.push("length"); return "4"; },
+              0: 7,
+              get 1() { log.push("one"); return 8; },
+              3: 260
+            };
+            var a = new Uint8Array(source);
+            [a.length, a.byteLength, a[0], a[1], a[2], a[3], log.join("|")].join(",");
+        "#),
+        Value::String(Arc::from("4,4,7,8,0,4,length|one"))
+    );
+    assert_eq!(
+        run("try { Uint8Array(1); 'no'; } catch (e) { e.name; }"),
+        Value::String(Arc::from("TypeError"))
+    );
+    assert_eq!(
+        run(r#"
+            function C() {}
+            C.prototype = 1;
+            var a = Reflect.construct(Uint8Array, [1], C);
+            Object.getPrototypeOf(a) === Uint8Array.prototype;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("try { new Uint8Array(-1); 'no'; } catch (e) { e.name; }"),
+        Value::String(Arc::from("RangeError"))
+    );
+    assert_eq!(
+        run(r#"
+            function* gen() { yield 7; yield 42; }
+            var a = new Uint8Array(gen());
+            [a.length, a[0], a[1]].join(",");
+        "#),
+        Value::String(Arc::from("2,7,42"))
+    );
+    assert_eq!(
+        run(r#"
+            var values = [0, { valueOf: function() { values.length = 0; return 100; } }, 2];
+            var a = new Uint8Array(values);
+            [a.length, a[0], a[1], a[2], values.length].join(",");
+        "#),
+        Value::String(Arc::from("3,0,100,2,0"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"

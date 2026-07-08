@@ -44,6 +44,19 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `[[Extensible]]` tracking for `Object.seal`/`Object.preventExtensions`.
   This removes the final TypedArray-constructor failures from the Object
   integrity focused run.
+- **TypedArray constructor inputs**: typed-array constructors now reject
+  function-call usage without `new`, use the active typed-array prototype as
+  the fallback for `GetPrototypeFromConstructor`, coerce primitive lengths with
+  `ToIndex`-style `NaN`/`undefined` handling, read ordinary array-like
+  `length`/indexed properties observably, and consume iterable arguments via
+  `IteratorToList` before element conversion. `Array.prototype[Symbol.iterator]`
+  is now exposed as the `values` method so array-backed iterable constructor
+  inputs use the normal iterator protocol. With TypedArray-related skips
+  temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
+  diagnostic moved from **8 pass / 20 fail / 19 skip** to **25 pass / 3 fail /
+  19 skip**; the remaining failures are isolated to ArrayBuffer-backed
+  typed-array views and shared ArrayIteratorPrototype mutation semantics.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel**: transparent Proxy receivers
   for `Object.seal`/`Object.freeze` now tighten the target's own descriptors
   through the Proxy-aware `[[DefineOwnProperty]]` path, and
