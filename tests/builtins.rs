@@ -955,6 +955,20 @@ fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"
             var calls = 0;
+            var length = { valueOf: function() { calls++; return 1; } };
+            var threw = false;
+            try {
+              ArrayBuffer(length);
+            } catch (e) {
+              threw = e instanceof TypeError;
+            }
+            [threw, calls].join(",");
+            "#),
+        Value::String(Arc::from("true,0"))
+    );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
             var offset = { valueOf: function() { calls++; return 0; } };
             var threw = false;
             try {
@@ -981,6 +995,51 @@ fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
             [threw, calls].join(",");
             "#),
         Value::String(Arc::from("true,1"))
+    );
+}
+
+#[test]
+fn array_buffer_static_surface_matches_intrinsics() {
+    assert_eq!(
+        run(r#"
+            var isViewDesc = Object.getOwnPropertyDescriptor(ArrayBuffer, "isView");
+            var speciesDesc = Object.getOwnPropertyDescriptor(ArrayBuffer, Symbol.species);
+            var ab = new ArrayBuffer(4);
+            var ta = new Uint8Array(ab);
+            var dv = new DataView(ab);
+            var receiver = {};
+            [
+              isViewDesc.value.length,
+              isViewDesc.value.name,
+              isViewDesc.writable,
+              isViewDesc.enumerable,
+              isViewDesc.configurable,
+              ArrayBuffer.isView(ta),
+              ArrayBuffer.isView(dv),
+              ArrayBuffer.isView(ab),
+              ArrayBuffer.isView({}),
+              ArrayBuffer.isView(undefined),
+              speciesDesc.get.length,
+              speciesDesc.get.name,
+              speciesDesc.set === undefined,
+              speciesDesc.enumerable,
+              speciesDesc.configurable,
+              speciesDesc.get.call(receiver) === receiver,
+              (function() {
+                function F() {}
+                F.prototype = null;
+                return Object.getPrototypeOf(Reflect.construct(ArrayBuffer, [0], F)) === ArrayBuffer.prototype;
+              })(),
+              (function() {
+                function F() {}
+                F.prototype = Array.prototype;
+                return Object.getPrototypeOf(Reflect.construct(ArrayBuffer, [0], F)) === Array.prototype;
+              })()
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "1,isView,true,false,true,true,true,false,false,false,0,get [Symbol.species],true,false,true,true,true,true",
+        ))
     );
 }
 

@@ -2137,6 +2137,7 @@ impl Vm {
             &self.boolean_proto,
             &self.error_proto,
             &self.symbol_proto,
+            &self.array_buffer_proto,
             &self.promise_ctor,
             &self.promise_proto,
             &self.iterator_proto,

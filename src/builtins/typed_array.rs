@@ -31,11 +31,20 @@ pub(crate) fn array_buffer_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err("ArrayBuffer constructor requires new"));
+    }
+
     let length = match args.first() {
         Some(value) => to_index_length(vm, value, "ArrayBuffer")?,
         None => 0,
     };
-    let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
+    let fallback_proto = if matches!(vm.array_buffer_proto, Value::Object(_)) {
+        vm.array_buffer_proto.clone()
+    } else {
+        vm.object_proto.clone()
+    };
+    let proto = native_constructor_prototype(vm, fallback_proto)?;
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
@@ -45,6 +54,28 @@ pub(crate) fn array_buffer_constructor(
             proto: Mutex::new(Some(proto)),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
+}
+
+pub(crate) fn array_buffer_is_view(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let is_view = match args.first() {
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| {
+            matches!(o, HeapObj::TypedArray(_) | HeapObj::DataView(_))
+        }),
+        _ => false,
+    };
+    Ok(Value::Bool(is_view))
+}
+
+pub(crate) fn array_buffer_species_get(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(this.unwrap_or(Value::Undefined))
 }
 
 pub(crate) fn array_buffer_slice(
@@ -1224,10 +1255,11 @@ fn typed_array_iterable_to_bytes(
 }
 
 fn array_buffer_prototype(vm: &mut Vm) -> Value {
-    crate::environment::get(&vm.heap, vm.global, "ArrayBuffer")
-        .and_then(|ctor| vm.get_property(&ctor, "prototype").ok())
-        .filter(|proto| matches!(proto, Value::Object(_)))
-        .unwrap_or_else(|| vm.object_proto.clone())
+    if matches!(vm.array_buffer_proto, Value::Object(_)) {
+        vm.array_buffer_proto.clone()
+    } else {
+        vm.object_proto.clone()
+    }
 }
 
 fn allocate_array_buffer_with_bytes(vm: &mut Vm, bytes: Vec<u8>) -> error::Result<Value> {

@@ -211,6 +211,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   without typed array internal slots. The focused
   `built-ins/TypedArrayConstructors` run improves from **10 pass / 6 fail /
   722 skip** to **16 pass / 0 fail / 722 skip**.
+- **ArrayBuffer static surface** —
+  `ArrayBuffer` now rejects function calls before coercing `length`, exposes
+  spec-shaped `ArrayBuffer.isView()` for typed-array and DataView receivers,
+  provides the `ArrayBuffer[Symbol.species]` getter, and uses the intrinsic
+  `%ArrayBuffer.prototype%` fallback for `Reflect.construct` new targets with
+  non-object prototypes. The focused `built-ins/ArrayBuffer` run improves from
+  **41 pass / 50 fail / 130 skip** to **52 pass / 39 fail / 130 skip**.
 - **`%ThrowTypeError%` intrinsic** —
   Restricted function and arguments accessors now share an anonymous, frozen,
   non-extensible `%ThrowTypeError%` function within each Realm. Strict

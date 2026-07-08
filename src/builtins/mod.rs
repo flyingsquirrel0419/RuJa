@@ -4652,8 +4652,25 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         array_buffer_constructor,
         &[("slice", array_buffer_slice, 2)],
     )?;
+    vm.array_buffer_proto = Value::Object(array_buffer_proto);
     let array_buffer_byte_length_getter =
         vm.new_native_function("get byteLength", array_buffer_byte_length_get, 0)?;
+    let array_buffer_is_view_fn = vm.new_native_function("isView", array_buffer_is_view, 1)?;
+    let array_buffer_species_getter =
+        vm.new_native_function("get [Symbol.species]", array_buffer_species_get, 0)?;
+    vm.heap.with_obj(array_buffer_ctor.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            let mut props = f.props.lock();
+            props.insert(
+                PropertyKey::from("isView"),
+                data_prop(Value::Object(array_buffer_is_view_fn)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.species),
+                accessor_get_prop(Value::Object(array_buffer_species_getter)),
+            );
+        }
+    });
     vm.heap.with_obj(array_buffer_proto.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("byteLength"),
