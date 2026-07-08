@@ -509,6 +509,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   temporarily lifted, the focused
   `language/{statements,expressions}/class/elements/private-methods`
   diagnostic now closes at **2 pass / 0 fail / 8 skip**.
+- **Private slot brand checks** —
+  Private field, accessor, and method access now throws `TypeError` when the
+  receiver is primitive or does not carry the relevant private slot. Class
+  element initialization is split from ordinary private writes through
+  `InitPrivate` opcodes, private methods are stored as non-writable method
+  slots. With private class feature skips temporarily lifted, the
+  focused `language/{statements,expressions}/class/elements` probe improves
+  from **1045 pass / 587 fail / 1330 skip** to **1085 pass / 547 fail / 1330
+  skip**. Remaining same-spelling cross-class brand failures still need
+  per-evaluation private-name identity rather than textual `#name` slot keys.
 - **Object/Reflect preventExtensions semantics** —
   Array and arguments objects now carry their own `[[Extensible]]` state,
   assignment and receiver-set paths reject new indexed or named properties on

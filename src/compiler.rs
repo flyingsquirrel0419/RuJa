@@ -3694,10 +3694,11 @@ impl Compiler {
                                     pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
                                 Stmt {
                                     line: 0,
-                                    node: StmtNode::ExprStmt(Expr::PrivateSet {
+                                    node: StmtNode::ExprStmt(Expr::PrivateInit {
                                         object: Box::new(Expr::This),
                                         name: pf.name.clone(),
                                         value: init,
+                                        kind: pf.kind,
                                     }),
                                 }
                             })
@@ -4050,7 +4051,8 @@ impl Compiler {
                     let init = pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
                     self.compile_expr(&init)?;
                     let name_idx = self.chunk.add_constant(Value::String(pf.name.clone()));
-                    self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                    self.chunk
+                        .emit(Op::InitPrivate(name_idx), self.current_line);
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                 }
                 for method in cls.methods.iter().filter(|m| m.is_private && m.is_static) {
@@ -4093,7 +4095,8 @@ impl Compiler {
                             self.compile_expr(&m_fn)?;
                             let name_idx =
                                 self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                            self.chunk
+                                .emit(Op::InitPrivateMethod(name_idx), self.current_line);
                         }
                     }
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
@@ -4171,6 +4174,23 @@ impl Compiler {
                 self.compile_expr(value)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+            }
+            Expr::PrivateInit {
+                object,
+                name,
+                value,
+                kind,
+            } => {
+                self.compile_expr(object)?;
+                self.compile_expr(value)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                if matches!(kind, crate::ast::PropKind::Method) {
+                    self.chunk
+                        .emit(Op::InitPrivateMethod(name_idx), self.current_line);
+                } else {
+                    self.chunk
+                        .emit(Op::InitPrivate(name_idx), self.current_line);
+                }
             }
             Expr::PrivateDefineAccessor {
                 object,

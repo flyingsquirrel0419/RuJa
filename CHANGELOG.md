@@ -24,6 +24,15 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **Private slot brand checks**: class private field, accessor, and method
+  access now throws `TypeError` for primitive receivers and objects missing the
+  private slot instead of returning `undefined` or creating a new slot.
+  Class-element initialization now uses separate `InitPrivate` opcodes, private
+  method slots are not writable. With private class feature skips temporarily
+  lifted, the focused `language/{statements,expressions}/class/elements` probe
+  improves from **1045 pass / 587 fail / 1330 skip** to **1085 pass / 547 fail
+  / 1330 skip**. The remaining same-spelling cross-class failures require
+  per-evaluation private-name identity instead of textual `#name` keys.
 - **`String.prototype.matchAll` and RegExp `@@matchAll`**:
   `String.prototype.matchAll` is now exposed with spec-shaped builtin
   properties, validates non-global RegExp arguments before delegation, calls

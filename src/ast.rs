@@ -77,6 +77,13 @@ pub enum Expr {
         name: Arc<str>,
         value: Box<Expr>,
     },
+    /// Private field/method initialization performed by class element setup.
+    PrivateInit {
+        object: Box<Expr>,
+        name: Arc<str>,
+        value: Box<Expr>,
+        kind: PropKind,
+    },
     /// Private accessor declaration lowered into constructor/static init code.
     PrivateDefineAccessor {
         object: Box<Expr>,

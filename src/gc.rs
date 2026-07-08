@@ -107,7 +107,8 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         HeapObj::Object(o) => {
             for slot in o.private_fields.lock().values() {
                 match slot {
-                    crate::value::PrivateSlot::Value(value) => push_value(value, worklist),
+                    crate::value::PrivateSlot::Value(value)
+                    | crate::value::PrivateSlot::Method(value) => push_value(value, worklist),
                     crate::value::PrivateSlot::Accessor { get, set } => {
                         if let Some(get) = get {
                             push_value(get, worklist);
@@ -135,7 +136,8 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
             for slot in f.private_fields.lock().values() {
                 match slot {
-                    crate::value::PrivateSlot::Value(value) => push_value(value, worklist),
+                    crate::value::PrivateSlot::Value(value)
+                    | crate::value::PrivateSlot::Method(value) => push_value(value, worklist),
                     crate::value::PrivateSlot::Accessor { get, set } => {
                         if let Some(get) = get {
                             push_value(get, worklist);

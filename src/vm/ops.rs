@@ -2190,16 +2190,93 @@ impl Vm {
                         None
                     };
                     let v = match slot {
-                        Some(crate::value::PrivateSlot::Value(value)) => value,
+                        Some(crate::value::PrivateSlot::Value(value))
+                        | Some(crate::value::PrivateSlot::Method(value)) => value,
                         Some(crate::value::PrivateSlot::Accessor { get: Some(get), .. }) => {
                             self.call_function(&get, &[], Some(obj.clone()))?
                         }
                         Some(crate::value::PrivateSlot::Accessor { get: None, .. }) => {
                             return Err(Error::type_err("Private accessor has no getter"));
                         }
-                        None => Value::Undefined,
+                        None => return Err(Error::type_err("Private field is not present")),
                     };
                     self.stack.push(v);
+                }
+                Op::InitPrivate(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            let (fields, extensible) = match o {
+                                HeapObj::Object(od) => (&od.private_fields, &od.extensible),
+                                HeapObj::Function(f) => (&f.private_fields, &f.extensible),
+                                _ => {
+                                    return Err(Error::type_err(
+                                        "Private receiver is not an object",
+                                    ))
+                                }
+                            };
+                            let mut fields = fields.lock();
+                            if !extensible.load(Ordering::Relaxed) {
+                                return Err(Error::type_err(
+                                    "Cannot add private field to non-extensible object",
+                                ));
+                            }
+                            fields.insert(
+                                Arc::from(name.as_str()),
+                                crate::value::PrivateSlot::Value(value.clone()),
+                            );
+                            Ok(())
+                        })?;
+                    } else {
+                        return Err(Error::type_err("Private receiver is not an object"));
+                    }
+                    self.stack.push(value);
+                }
+                Op::InitPrivateMethod(name_idx) => {
+                    let name = {
+                        let frame = self.current_frame()?;
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.to_string(),
+                            _ => String::new(),
+                        }
+                    };
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if let Value::Object(idx) = &obj {
+                        self.heap.with_obj(idx.0, |o| {
+                            let (fields, extensible) = match o {
+                                HeapObj::Object(od) => (&od.private_fields, &od.extensible),
+                                HeapObj::Function(f) => (&f.private_fields, &f.extensible),
+                                _ => {
+                                    return Err(Error::type_err(
+                                        "Private receiver is not an object",
+                                    ))
+                                }
+                            };
+                            let mut fields = fields.lock();
+                            if !extensible.load(Ordering::Relaxed) {
+                                return Err(Error::type_err(
+                                    "Cannot add private field to non-extensible object",
+                                ));
+                            }
+                            fields.insert(
+                                Arc::from(name.as_str()),
+                                crate::value::PrivateSlot::Method(value.clone()),
+                            );
+                            Ok(())
+                        })?;
+                    } else {
+                        return Err(Error::type_err("Private receiver is not an object"));
+                    }
+                    self.stack.push(value);
                 }
                 Op::SetPrivate(name_idx) => {
                     let name = {
@@ -2223,20 +2300,17 @@ impl Vm {
                                     Some(crate::value::PrivateSlot::Accessor {
                                         set: None, ..
                                     }) => Err(Error::type_err("Private accessor has no setter")),
-                                    _ => {
-                                        if !fields.contains_key(name.as_str())
-                                            && !od.extensible.load(Ordering::Relaxed)
-                                        {
-                                            return Err(Error::type_err(
-                                                "Cannot add private field to non-extensible object",
-                                            ));
-                                        }
+                                    Some(crate::value::PrivateSlot::Value(_)) => {
                                         fields.insert(
                                             Arc::from(name.as_str()),
                                             crate::value::PrivateSlot::Value(value.clone()),
                                         );
                                         Ok(None)
                                     }
+                                    Some(crate::value::PrivateSlot::Method(_)) => {
+                                        Err(Error::type_err("Cannot assign to private method"))
+                                    }
+                                    None => Err(Error::type_err("Private field is not present")),
                                 }
                             } else {
                                 if let HeapObj::Function(f) = o {
@@ -2249,30 +2323,33 @@ impl Vm {
                                         Some(crate::value::PrivateSlot::Accessor {
                                             set: None,
                                             ..
-                                        }) => Err(Error::type_err("Private accessor has no setter")),
-                                        _ => {
-                                            if !fields.contains_key(name.as_str())
-                                                && !f.extensible.load(Ordering::Relaxed)
-                                            {
-                                                return Err(Error::type_err(
-                                                    "Cannot add private field to non-extensible object",
-                                                ));
-                                            }
+                                        }) => {
+                                            Err(Error::type_err("Private accessor has no setter"))
+                                        }
+                                        Some(crate::value::PrivateSlot::Value(_)) => {
                                             fields.insert(
                                                 Arc::from(name.as_str()),
                                                 crate::value::PrivateSlot::Value(value.clone()),
                                             );
                                             Ok(None)
                                         }
+                                        Some(crate::value::PrivateSlot::Method(_)) => {
+                                            Err(Error::type_err("Cannot assign to private method"))
+                                        }
+                                        None => {
+                                            Err(Error::type_err("Private field is not present"))
+                                        }
                                     }
                                 } else {
-                                    Ok(None)
+                                    Err(Error::type_err("Private receiver is not an object"))
                                 }
                             }
                         })?;
                         if let Some(setter) = setter {
                             self.call_function(&setter, std::slice::from_ref(&value), Some(obj))?;
                         }
+                    } else {
+                        return Err(Error::type_err("Private receiver is not an object"));
                     }
                     self.stack.push(value);
                 }
@@ -2317,7 +2394,8 @@ impl Vm {
                                         *set = Some(setter.clone());
                                     }
                                 }
-                                crate::value::PrivateSlot::Value(_) => {
+                                crate::value::PrivateSlot::Value(_)
+                                | crate::value::PrivateSlot::Method(_) => {
                                     *entry = crate::value::PrivateSlot::Accessor {
                                         get: if getter.is_undefined() {
                                             None
@@ -2354,12 +2432,13 @@ impl Vm {
                     };
                     let method = if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::Object(od) = o {
+                            let method = if let HeapObj::Object(od) = o {
                                 od.private_fields
                                     .lock()
                                     .get(name.as_str())
                                     .and_then(|slot| match slot {
-                                        crate::value::PrivateSlot::Value(value) => {
+                                        crate::value::PrivateSlot::Value(value)
+                                        | crate::value::PrivateSlot::Method(value) => {
                                             Some(value.clone())
                                         }
                                         crate::value::PrivateSlot::Accessor { .. } => None,
@@ -2370,18 +2449,23 @@ impl Vm {
                                     .lock()
                                     .get(name.as_str())
                                     .and_then(|slot| match slot {
-                                        crate::value::PrivateSlot::Value(value) => {
+                                        crate::value::PrivateSlot::Value(value)
+                                        | crate::value::PrivateSlot::Method(value) => {
                                             Some(value.clone())
                                         }
                                         crate::value::PrivateSlot::Accessor { .. } => None,
                                     })
                                     .unwrap_or(Value::Undefined)
                             } else {
-                                Value::Undefined
-                            }
-                        })
+                                return Err(Error::type_err("Private receiver is not an object"));
+                            };
+                            Ok(method)
+                        })?
                     } else {
-                        Value::Undefined
+                        return Err(Error::type_err("Private receiver is not an object"));
+                    };
+                    if method.is_undefined() {
+                        return Err(Error::type_err("Private method is not present"));
                     };
                     let result = self.call_function(&method, &args, Some(obj))?;
                     self.stack.push(result);

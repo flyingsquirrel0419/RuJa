@@ -1025,6 +1025,7 @@ fn read_regexp_private_string(vm: &mut Vm, idx: GcIdx, slot_name: &str) -> Optio
             .and_then(|slot| match slot {
                 crate::value::PrivateSlot::Value(value @ Value::String(_)) => Some(value.clone()),
                 crate::value::PrivateSlot::Value(_)
+                | crate::value::PrivateSlot::Method(_)
                 | crate::value::PrivateSlot::Accessor { .. } => None,
             })
     })
@@ -1041,6 +1042,7 @@ fn read_regexp_private_bool(vm: &mut Vm, idx: GcIdx, slot_name: &str) -> Option<
             .and_then(|slot| match slot {
                 crate::value::PrivateSlot::Value(Value::Bool(value)) => Some(*value),
                 crate::value::PrivateSlot::Value(_)
+                | crate::value::PrivateSlot::Method(_)
                 | crate::value::PrivateSlot::Accessor { .. } => None,
             })
     })

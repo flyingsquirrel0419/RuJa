@@ -234,6 +234,12 @@ pub enum Op {
     CallThisSpread,
     /// Push a private field value from `this`. arg = name constant idx.
     GetPrivate(usize),
+    /// Initialize a private field/method slot. arg = name constant idx.
+    /// Stack: [obj, value]. Only class element initialization should emit this.
+    InitPrivate(usize),
+    /// Initialize a private method slot. arg = name constant idx.
+    /// Stack: [obj, method].
+    InitPrivateMethod(usize),
     /// Set a private field on `this`. arg = name constant idx. Pops value.
     SetPrivate(usize),
     /// Define/merge a private accessor slot: stack [obj, get, set].

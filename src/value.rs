@@ -492,6 +492,7 @@ pub struct ObjectData {
 #[derive(Clone)]
 pub enum PrivateSlot {
     Value(Value),
+    Method(Value),
     Accessor {
         get: Option<Value>,
         set: Option<Value>,

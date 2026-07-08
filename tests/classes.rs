@@ -397,6 +397,46 @@ fn private_accessors_and_non_extensible_private_slots() {
 }
 
 #[test]
+fn private_brand_checks_reject_missing_slots() {
+    assert_eq!(
+        run("class C{#x=1;read(o){return o.#x;}}try{new C().read({});false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{#x=1;write(o){o.#x=2;}}try{new C().write({});false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{#x=1;inc(o){o.#x++;}}try{new C().inc({});false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{#m(){return 1;}call(o){return o.#m();}}try{new C().call({});false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{get #x(){return 1;}read(o){return o.#x;}}try{new C().read({});false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{static #x=1;static read(o){return o.#x;}}try{C.read({});false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class C{#x=1;read(o){return o.#x;}}try{new C().read(1);false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn private_methods_are_not_writable() {
+    assert_eq!(
+        run("class C{#m(){}set(){this.#m=1;}}try{new C().set();false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_names_follow_identifier_name_grammar() {
     assert_eq!(
         run(

@@ -91,7 +91,8 @@ fn proxy_revoke(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Re
                     .get("__proxy_idx__")
                     .and_then(|slot| match slot {
                         crate::value::PrivateSlot::Value(value) => Some(value),
-                        crate::value::PrivateSlot::Accessor { .. } => None,
+                        crate::value::PrivateSlot::Method(_)
+                        | crate::value::PrivateSlot::Accessor { .. } => None,
                     })
                     .and_then(|value| match value {
                         Value::Number(n) => Some(*n as usize),

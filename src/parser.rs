@@ -2169,7 +2169,7 @@ impl Parser {
                 Self::reject_object_literal_assignment_cover(property)
             }
             Expr::PrivateGet { object, .. } => Self::reject_object_literal_assignment_cover(object),
-            Expr::PrivateSet { object, value, .. } => {
+            Expr::PrivateSet { object, value, .. } | Expr::PrivateInit { object, value, .. } => {
                 Self::reject_object_literal_assignment_cover(object)?;
                 Self::reject_object_literal_assignment_cover(value)
             }
@@ -4030,7 +4030,7 @@ impl Parser {
             Expr::PrivateGet { object, .. } => {
                 Self::reject_duplicate_proto_object_literal(object)?;
             }
-            Expr::PrivateSet { object, value, .. } => {
+            Expr::PrivateSet { object, value, .. } | Expr::PrivateInit { object, value, .. } => {
                 Self::reject_duplicate_proto_object_literal(object)?;
                 Self::reject_duplicate_proto_object_literal(value)?;
             }
@@ -4292,7 +4292,7 @@ impl Parser {
                 Self::check_static_block_expr(property)
             }
             Expr::PrivateGet { object, .. } => Self::check_static_block_expr(object),
-            Expr::PrivateSet { object, value, .. } => {
+            Expr::PrivateSet { object, value, .. } | Expr::PrivateInit { object, value, .. } => {
                 Self::check_static_block_expr(object)?;
                 Self::check_static_block_expr(value)
             }
@@ -4652,6 +4652,12 @@ impl Parser {
                 object,
                 name,
                 value,
+            }
+            | Expr::PrivateInit {
+                object,
+                name,
+                value,
+                ..
             } => {
                 Self::validate_private_name_use(name, names)?;
                 if matches!(object.as_ref(), Expr::Super) {
