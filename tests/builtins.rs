@@ -1701,6 +1701,82 @@ fn object_prototype_proto_accessor_and_mutation_status() {
 }
 
 #[test]
+fn proxy_prototype_internal_methods_follow_traps_and_invariants() {
+    let src = r#"
+        var target = {};
+        var proto = { tag: "proto" };
+        var replacement = { tag: "replacement" };
+        var calls = [];
+        var proxy = new Proxy(target, {
+          getPrototypeOf: function(t) {
+            calls.push("get:" + (t === target));
+            return proto;
+          },
+          setPrototypeOf: function(t, v) {
+            calls.push("set:" + (t === target) + ":" + (v === replacement));
+            Object.setPrototypeOf(t, v);
+            return true;
+          }
+        });
+        var getViaReflect = Reflect.getPrototypeOf(proxy) === proto;
+        var getViaObject = Object.getPrototypeOf(proxy) === proto;
+        var setViaReflect = Reflect.setPrototypeOf(proxy, replacement);
+        var targetUpdated = Object.getPrototypeOf(target) === replacement;
+
+        var delegatedTarget = Object.create(proto);
+        var delegated = new Proxy(delegatedTarget, {
+          getPrototypeOf: null,
+          setPrototypeOf: undefined
+        });
+        var delegatedGet = Reflect.getPrototypeOf(delegated) === proto;
+        var delegatedSet = Reflect.setPrototypeOf(delegated, replacement);
+
+        var fixedGetTarget = Object.create(proto);
+        Object.preventExtensions(fixedGetTarget);
+        var fixedGetProxy = new Proxy(fixedGetTarget, {
+          getPrototypeOf: function() { return replacement; }
+        });
+        var getInvariant = false;
+        try { Reflect.getPrototypeOf(fixedGetProxy); }
+        catch (e) { getInvariant = e instanceof TypeError; }
+
+        var fixedSetTarget = Object.create(proto);
+        Object.preventExtensions(fixedSetTarget);
+        var fixedSetProxy = new Proxy(fixedSetTarget, {
+          setPrototypeOf: function() { return true; }
+        });
+        var setInvariant = false;
+        try { Reflect.setPrototypeOf(fixedSetProxy, replacement); }
+        catch (e) { setInvariant = e instanceof TypeError; }
+
+        function Custom() {}
+        var instanceProxy = new Proxy({}, {
+          getPrototypeOf: function() { return Custom.prototype; }
+        });
+
+        [
+          getViaReflect,
+          getViaObject,
+          setViaReflect,
+          targetUpdated,
+          delegatedGet,
+          delegatedSet,
+          Object.getPrototypeOf(delegatedTarget) === replacement,
+          getInvariant,
+          setInvariant,
+          instanceProxy instanceof Custom,
+          calls.join("|")
+        ].join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "true,true,true,true,true,true,true,true,true,true,get:true|get:true|set:true:true"
+        ))
+    );
+}
+
+#[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
     assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));

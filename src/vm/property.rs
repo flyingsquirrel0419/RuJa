@@ -1210,9 +1210,65 @@ impl Vm {
         Ok(true)
     }
 
-    /// Ordinary `[[SetPrototypeOf]]` for non-Proxy objects. Returns the spec
-    /// boolean status instead of throwing; callers choose whether false is a
-    /// silent failure, a returned boolean, or a TypeError.
+    /// Internal `[[GetPrototypeOf]]`, including Proxy `getPrototypeOf` traps
+    /// and the non-extensible target invariant.
+    pub(crate) fn get_prototype_of(&mut self, object: &Value) -> error::Result<Option<Value>> {
+        let Value::Object(idx) = object else {
+            return Err(Error::type_err(
+                "Object prototype target must be an object".to_string(),
+            ));
+        };
+
+        let proxy_info = self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'getPrototypeOf' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(result) = proxy_info {
+            let (target, handler) = result?;
+            let trap = self.get_property(&handler, "getPrototypeOf")?;
+            if trap.is_undefined() || trap.is_null() {
+                return self.get_prototype_of(&target);
+            }
+            if !crate::builtins::is_callable(&trap, &self.heap) {
+                return Err(Error::type_err("getPrototypeOf trap is not callable"));
+            }
+            let handler_proto =
+                self.call_function(&trap, std::slice::from_ref(&target), Some(handler))?;
+            let proto = match handler_proto {
+                Value::Object(_) => Some(handler_proto),
+                Value::Null => None,
+                _ => {
+                    return Err(Error::type_err(
+                        "Proxy getPrototypeOf trap must return an object or null",
+                    ))
+                }
+            };
+            if self.is_extensible(&target)? {
+                return Ok(proto);
+            }
+            let target_proto = self.get_prototype_of(&target)?;
+            if proto != target_proto {
+                return Err(Error::type_err(
+                    "Proxy getPrototypeOf trap returned incompatible prototype",
+                ));
+            }
+            return Ok(proto);
+        }
+
+        Ok(self.heap.with_obj(idx.0, |o| o.proto().lock().clone()))
+    }
+
+    /// Internal `[[SetPrototypeOf]]`, including Proxy `setPrototypeOf` traps.
+    /// Returns the spec boolean status instead of throwing; callers choose
+    /// whether false is a silent failure, a returned boolean, or a TypeError.
     pub(crate) fn set_prototype_of(
         &mut self,
         object: &Value,
@@ -1223,6 +1279,45 @@ impl Vm {
                 "Object prototype target must be an object".to_string(),
             ));
         };
+
+        let proxy_info = self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Proxy(proxy) = o {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'setPrototypeOf' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(result) = proxy_info {
+            let (target, handler) = result?;
+            let trap = self.get_property(&handler, "setPrototypeOf")?;
+            if trap.is_undefined() || trap.is_null() {
+                return self.set_prototype_of(&target, proto);
+            }
+            if !crate::builtins::is_callable(&trap, &self.heap) {
+                return Err(Error::type_err("setPrototypeOf trap is not callable"));
+            }
+            let proto_value = proto.clone().unwrap_or(Value::Null);
+            let trap_result =
+                self.call_function(&trap, &[target.clone(), proto_value], Some(handler))?;
+            let boolean_trap_result = self.to_boolean(&trap_result);
+            if !boolean_trap_result {
+                return Ok(false);
+            }
+            if !self.is_extensible(&target)? {
+                let target_proto = self.get_prototype_of(&target)?;
+                if target_proto != proto {
+                    return Err(Error::type_err(
+                        "Proxy setPrototypeOf trap returned true for incompatible prototype",
+                    ));
+                }
+            }
+            return Ok(true);
+        }
 
         let current_proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
         if current_proto == proto {

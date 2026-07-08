@@ -65,6 +65,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   ordinary empty exotics. With `Proxy`/`Reflect`/`Symbol` skips temporarily
   lifted, the focused Object integrity proxy diagnostic runs at **6 pass / 0
   fail**.
+- **Proxy prototype internal methods**: `Object.getPrototypeOf`,
+  `Reflect.getPrototypeOf`, `Object.setPrototypeOf`, `Reflect.setPrototypeOf`,
+  the `__proto__` accessor, and `instanceof` now route through Proxy
+  `getPrototypeOf`/`setPrototypeOf` traps, including nullish trap delegation,
+  revoked-proxy errors, and non-extensible target invariants. With
+  `Proxy`/`Reflect` skips temporarily lifted, the focused
+  `built-ins/Proxy/{getPrototypeOf,setPrototypeOf}
+  built-ins/Reflect/{getPrototypeOf,setPrototypeOf}` diagnostic runs at
+  **29 pass / 0 fail / 31 skip**, and the broader Proxy descriptor/prototype
+  diagnostic improves from **21 pass / 46 fail / 63 skip** to **46 pass / 21
+  fail / 63 skip**. The remaining failures are isolated to Proxy descriptor
+  conversion and define/getOwnPropertyDescriptor invariants.
 - **Map/Set zero-key canonicalization**: keyed collections now normalize
   numeric `-0` to `+0` when creating internal `MapKey`s, and the `MapKey`
   hash implementation now matches SameValueZero equality for both zero signs.

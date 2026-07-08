@@ -2584,12 +2584,7 @@ fn object_get_prototype_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
         ));
     }
     let object = vm.to_object(&obj)?;
-    if let Value::Object(idx) = &object {
-        return Ok(vm
-            .heap
-            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
-    }
-    Ok(Value::Null)
+    Ok(vm.get_prototype_of(&object)?.unwrap_or(Value::Null))
 }
 
 pub(crate) fn object_set_prototype_of(
@@ -2642,12 +2637,7 @@ fn object_proto_get(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error:
         ));
     }
     let object = vm.to_object(&this)?;
-    if let Value::Object(idx) = object {
-        return Ok(vm
-            .heap
-            .with_obj(idx.0, |o| o.proto().lock().clone().unwrap_or(Value::Null)));
-    }
-    Ok(Value::Undefined)
+    Ok(vm.get_prototype_of(&object)?.unwrap_or(Value::Null))
 }
 
 fn object_proto_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

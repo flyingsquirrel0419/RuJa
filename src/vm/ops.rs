@@ -1318,9 +1318,7 @@ impl Vm {
                             result = true;
                             break;
                         }
-                        cur = self.heap.with_obj(oi.0, |o| {
-                            o.proto().lock().clone().unwrap_or(Value::Undefined)
-                        });
+                        cur = self.get_prototype_of(&cur)?.unwrap_or(Value::Undefined);
                         if cur.is_undefined() {
                             break;
                         }
