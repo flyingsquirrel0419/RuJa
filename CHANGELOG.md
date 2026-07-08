@@ -102,6 +102,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   instead of defining them as own properties. With TypedArray skips temporarily
   lifted, the focused constructor/prototype-shape probe now reports
   **120 pass / 0 fail / 11 skip**.
+- **TypedArray static `from`/`of`**: concrete TypedArray constructors now
+  inherit `%TypedArray%.from` and `%TypedArray%.of`, construct the result before
+  reading array-like elements, call mapper functions with the expected
+  arguments and receiver, cache iterable `next` methods, and reject immutable
+  ArrayBuffer-backed results before value conversion. With TypedArray skips
+  temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/{from,from/BigInt,of,of/BigInt}` run
+  closes at **126 pass / 0 fail / 0 skip**, and the broader
+  `built-ins/TypedArrayConstructors` diagnostic now reports **473 pass / 54
+  fail / 211 skip**.
 - **Nullish computed property write/delete ordering**: simple computed
   property assignment and `delete` now reject `null`/`undefined` bases before
   observable `ToPropertyKey` coercion. Assignment still evaluates the RHS

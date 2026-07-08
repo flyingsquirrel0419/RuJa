@@ -1589,6 +1589,228 @@ fn allocate_typed_array_from_bytes(
     allocate_typed_array_view(vm, kind, proto, viewed_array_buffer, 0, byte_length)
 }
 
+fn typed_array_result_length(
+    vm: &mut Vm,
+    result: &Value,
+    required_len: usize,
+) -> error::Result<()> {
+    let (kind, viewed_array_buffer, _, byte_length) =
+        typed_array_slots(vm, Some(result.clone()), "static result")?;
+    let actual_len = typed_array_element_count(kind, byte_length);
+    if actual_len < required_len {
+        return Err(Error::type_err(
+            "TypedArray constructor returned a shorter typed array",
+        ));
+    }
+    if let Some(Value::Object(buffer_idx)) = viewed_array_buffer {
+        let immutable = vm.heap.with_obj(buffer_idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                return buffer.immutable.load(std::sync::atomic::Ordering::Relaxed);
+            }
+            false
+        });
+        if immutable {
+            return Err(Error::type_err(
+                "TypedArray constructor returned an immutable ArrayBuffer-backed result",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn typed_array_mapped_value(
+    vm: &mut Vm,
+    value: Value,
+    index: usize,
+    map_fn: Option<&Value>,
+    this_arg: &Value,
+) -> error::Result<Value> {
+    match map_fn {
+        Some(map_fn) => vm.call_function(
+            map_fn,
+            &[value, Value::Number(index as f64)],
+            Some(this_arg.clone()),
+        ),
+        None => Ok(value),
+    }
+}
+
+fn typed_array_write_indexed_values(
+    vm: &mut Vm,
+    result: &Value,
+    values: &[Value],
+    map_fn: Option<&Value>,
+    this_arg: &Value,
+) -> error::Result<()> {
+    typed_array_result_length(vm, result, values.len())?;
+    let result_pin = vm.pin(result);
+    let write_result: error::Result<()> = (|| {
+        for (index, value) in values.iter().cloned().enumerate() {
+            let mapped = typed_array_mapped_value(vm, value, index, map_fn, this_arg)?;
+            vm.set_property_strict(result, &index.to_string(), mapped)?;
+        }
+        Ok(())
+    })();
+    vm.unpin(result_pin);
+    write_result
+}
+
+fn typed_array_construct_and_fill(
+    vm: &mut Vm,
+    constructor: &Value,
+    values: &[Value],
+    map_fn: Option<&Value>,
+    this_arg: &Value,
+) -> error::Result<Value> {
+    let values_pin_count = vm.pin_many(values);
+    let result = match vm.construct(constructor, &[Value::Number(values.len() as f64)]) {
+        Ok(result) => result,
+        Err(err) => {
+            vm.unpin_many(values_pin_count);
+            return Err(err);
+        }
+    };
+    let write_result = typed_array_write_indexed_values(vm, &result, values, map_fn, this_arg);
+    vm.unpin_many(values_pin_count);
+    write_result?;
+    Ok(result)
+}
+
+fn typed_array_collect_iterator_values(
+    vm: &mut Vm,
+    source: &Value,
+    iterator_method: &Value,
+) -> error::Result<Vec<Value>> {
+    const MAX_TYPED_ARRAY_FROM_LEN: usize = 1 << 16;
+    let iterator = vm.call_function(iterator_method, &[], Some(source.clone()))?;
+    if !matches!(iterator, Value::Object(_)) {
+        return Err(Error::type_err("TypedArray.from iterator is not an object"));
+    }
+    let next = vm.get_property(&iterator, "next")?;
+    if !is_callable(&next, &vm.heap) {
+        return Err(Error::type_err(
+            "TypedArray.from iterator next is not callable",
+        ));
+    }
+    let pin_count = vm.pin(&iterator) + vm.pin(&next);
+    let mut values = Vec::new();
+    loop {
+        if values.len() >= MAX_TYPED_ARRAY_FROM_LEN {
+            vm.unpin_many(pin_count);
+            return Err(Error::range("Invalid TypedArray.from length"));
+        }
+        let next_result = match vm.call_function(&next, &[], Some(iterator.clone())) {
+            Ok(result) => result,
+            Err(err) => {
+                vm.unpin_many(pin_count);
+                return Err(err);
+            }
+        };
+        if !matches!(next_result, Value::Object(_)) {
+            vm.unpin_many(pin_count);
+            return Err(Error::type_err(
+                "TypedArray.from iterator result is not an object",
+            ));
+        }
+        let done = match vm.get_property(&next_result, "done") {
+            Ok(value) => vm.to_boolean(&value),
+            Err(err) => {
+                vm.unpin_many(pin_count);
+                return Err(err);
+            }
+        };
+        if done {
+            break;
+        }
+        let value = match vm.get_property(&next_result, "value") {
+            Ok(value) => value,
+            Err(err) => {
+                vm.unpin_many(pin_count);
+                return Err(err);
+            }
+        };
+        values.push(value);
+    }
+    vm.unpin_many(pin_count);
+    Ok(values)
+}
+
+pub(crate) fn typed_array_from(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let constructor = this.unwrap_or(Value::Undefined);
+    if !is_callable(&constructor, &vm.heap) || !vm.is_constructor_value(&constructor) {
+        return Err(Error::type_err(
+            "TypedArray.from receiver is not a constructor",
+        ));
+    }
+
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    let map_fn_value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let map_fn = if matches!(map_fn_value, Value::Undefined) {
+        None
+    } else {
+        if !is_callable(&map_fn_value, &vm.heap) {
+            return Err(Error::type_err("TypedArray.from mapfn is not callable"));
+        }
+        Some(map_fn_value)
+    };
+    let this_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
+
+    let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
+    let iterator_method = vm.get_property_by_key(&source, &iterator_key)?;
+    if !iterator_method.is_undefined() && !iterator_method.is_null() {
+        if !is_callable(&iterator_method, &vm.heap) {
+            return Err(Error::type_err(
+                "TypedArray.from iterator method is not callable",
+            ));
+        }
+        let values = typed_array_collect_iterator_values(vm, &source, &iterator_method)?;
+        return typed_array_construct_and_fill(
+            vm,
+            &constructor,
+            &values,
+            map_fn.as_ref(),
+            &this_arg,
+        );
+    }
+
+    let length_value = vm.get_property(&source, "length")?;
+    let length = to_array_like_length(vm, &length_value)?;
+    let result = vm.construct(&constructor, &[Value::Number(length as f64)])?;
+    typed_array_result_length(vm, &result, length)?;
+    let result_pin = vm.pin(&result);
+    let source_pin = vm.pin(&source);
+    let write_result: error::Result<()> = (|| {
+        for index in 0..length {
+            let value = vm.get_property(&source, &index.to_string())?;
+            let mapped = typed_array_mapped_value(vm, value, index, map_fn.as_ref(), &this_arg)?;
+            vm.set_property_strict(&result, &index.to_string(), mapped)?;
+        }
+        Ok(())
+    })();
+    vm.unpin(source_pin);
+    vm.unpin(result_pin);
+    write_result?;
+    Ok(result)
+}
+
+pub(crate) fn typed_array_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let constructor = this.unwrap_or(Value::Undefined);
+    if !is_callable(&constructor, &vm.heap) || !vm.is_constructor_value(&constructor) {
+        return Err(Error::type_err(
+            "TypedArray.of receiver is not a constructor",
+        ));
+    }
+    typed_array_construct_and_fill(vm, &constructor, args, None, &Value::Undefined)
+}
+
 fn typed_array_constructor_with_kind(
     vm: &mut Vm,
     args: &[Value],

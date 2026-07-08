@@ -866,6 +866,110 @@ fn typed_array_constructors_inherit_from_shared_intrinsics() {
 }
 
 #[test]
+fn typed_array_static_from_and_of_inherit_from_intrinsic_constructor() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var from = Uint8Array.from({0: 7, 1: 260, length: 2}, function(v, i) {
+              calls.push(this.tag + ":" + i + ":" + v);
+              return v + i;
+            }, { tag: "ctx" });
+            var of = Int16Array.of(-1, 65535);
+            [
+              typeof Uint8Array.from,
+              Uint8Array.hasOwnProperty("from"),
+              Object.getPrototypeOf(Uint8Array).hasOwnProperty("from"),
+              from instanceof Uint8Array,
+              from.length,
+              from[0],
+              from[1],
+              calls.join("|"),
+              of instanceof Int16Array,
+              of.length,
+              of[0],
+              of[1]
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "function,false,true,true,2,7,5,ctx:0:7|ctx:1:260,true,2,-1,-1"
+        ))
+    );
+}
+
+#[test]
+fn typed_array_static_from_constructs_before_array_like_elements() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function Custom(length) {
+              log.push("construct:" + length);
+              return new Uint8Array(length);
+            }
+            var source = {
+              get length() { log.push("length"); return 1; },
+              get 0() { log.push("element"); return 9; }
+            };
+            var result = Uint8Array.from.call(Custom, source);
+            [result[0], log.join("|")].join(",");
+        "#),
+        Value::String(Arc::from("9,length|construct:1|element"))
+    );
+}
+
+#[test]
+fn typed_array_static_from_and_of_reject_immutable_backing_results() {
+    assert_eq!(
+        run(r#"
+            function throwsTypeError(fn) {
+              try {
+                fn();
+              } catch (e) {
+                return e instanceof TypeError;
+              }
+              return false;
+            }
+            function Custom(length) {
+              return new Uint8Array(new ArrayBuffer(length).transferToImmutable());
+            }
+            [
+              throwsTypeError(function() { Uint8Array.from.call(Custom, [1]); }),
+              throwsTypeError(function() { Uint8Array.of.call(Custom, 1); })
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true"))
+    );
+}
+
+#[test]
+fn typed_array_static_from_caches_iterator_next_method() {
+    assert_eq!(
+        run(r#"
+            var nextGets = 0;
+            var nextCalls = 0;
+            var iterable = {};
+            Object.defineProperty(iterable, Symbol.iterator, {
+              value: function() {
+                var values = [4];
+                return {
+                  get next() {
+                    nextGets += 1;
+                    return function() {
+                      nextCalls += 1;
+                      if (values.length === 0) return { done: true };
+                      return { value: values.pop(), done: false };
+                    };
+                  }
+                };
+              }
+            });
+            var result = Uint8Array.from(iterable);
+            [result.length, result[0], nextGets, nextCalls].join(",");
+        "#),
+        Value::String(Arc::from("1,4,1,2"))
+    );
+}
+
+#[test]
 fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
     assert_eq!(
         run(r#"

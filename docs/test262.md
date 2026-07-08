@@ -147,6 +147,16 @@ broader Reference-adjacent cluster
 language/expressions/logical-assignment language/expressions/update
 language/statements/with` remains **835 pass / 0 fail / 363 skip**.
 
+Focused TypedArray static `from`/`of` local check:
+`built-ins/TypedArrayConstructors/{from,from/BigInt,of,of/BigInt}` closes at
+**126 pass / 0 fail / 0 skip** after concrete TypedArray constructors inherit
+the `%TypedArray%` static methods, array-like sources construct results before
+element reads, iterable sources cache their `next` method, mapper calls receive
+the expected arguments/receiver, and immutable ArrayBuffer-backed results are
+rejected before value conversion. With TypedArray-related skips temporarily
+lifted, the broader `built-ins/TypedArrayConstructors` diagnostic now reports
+**473 pass / 54 fail / 211 skip**.
+
 | Metric | Latest confirmed count |
 |--------|------------------------|
 | Total matrix files | 47,717 |
@@ -403,8 +413,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   accessors from `%TypedArray%.prototype` instead of defining those accessors
   as own properties. With TypedArray-related skips temporarily lifted, the
   focused constructor/prototype-shape diagnostic now reports **120 pass / 0
-  fail / 11 skip**, and the broader `built-ins/TypedArrayConstructors`
-  diagnostic reports **421 pass / 107 fail / 210 skip**.
+  fail / 11 skip**.
+- **TypedArray static `from`/`of`** —
+  Concrete TypedArray constructors now inherit `%TypedArray%.from` and
+  `%TypedArray%.of`, construct the result before reading array-like elements,
+  call mapper functions with the expected arguments and receiver, cache
+  iterable `next` methods, and reject immutable ArrayBuffer-backed results
+  before value conversion. With TypedArray-related skips temporarily lifted,
+  the focused
+  `built-ins/TypedArrayConstructors/{from,from/BigInt,of,of/BigInt}` run
+  closes at **126 pass / 0 fail / 0 skip**, and the broader
+  `built-ins/TypedArrayConstructors` diagnostic now reports **473 pass / 54
+  fail / 211 skip**.
 - **Nullish computed property write/delete ordering** —
   Simple computed property assignment and computed `delete` now check
   `null`/`undefined` bases before observable `ToPropertyKey` coercion. This

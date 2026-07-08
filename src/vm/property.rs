@@ -1290,7 +1290,6 @@ impl Vm {
         slots: TypedArrayNumericSlots,
         value: &Value,
     ) -> error::Result<bool> {
-        let element_bytes = crate::builtins::typed_array_value_to_bytes(self, slots.kind, value)?;
         let Some(i) = self.typed_array_valid_index(&slots) else {
             return Ok(true);
         };
@@ -1304,6 +1303,20 @@ impl Vm {
         if relative_end > slots.byte_length {
             return Ok(true);
         }
+        if let Some(Value::Object(buffer_idx)) = &slots.viewed_array_buffer {
+            let immutable = self.heap.with_obj(buffer_idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    return buffer.immutable.load(std::sync::atomic::Ordering::Relaxed);
+                }
+                false
+            });
+            if immutable {
+                return Err(Error::type_err(
+                    "Cannot write to immutable ArrayBuffer-backed TypedArray",
+                ));
+            }
+        }
+        let element_bytes = crate::builtins::typed_array_value_to_bytes(self, slots.kind, value)?;
         if let Some(backing) = slots.viewed_array_buffer {
             if let Value::Object(buffer_idx) = backing {
                 self.heap.with_obj(buffer_idx.0, |o| {

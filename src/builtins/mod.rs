@@ -4743,12 +4743,22 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             primitive: Mutex::new(None),
         }))?));
     if let Value::Object(idx) = &typed_array_ctor {
+        let typed_array_from_fn = vm.new_native_function("from", typed_array_from, 1)?;
+        let typed_array_of_fn = vm.new_native_function("of", typed_array_of, 0)?;
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
                 *f.prototype.lock() = Some(typed_array_proto.clone());
                 f.props.lock().insert(
                     PropertyKey::from("prototype"),
                     const_prop(typed_array_proto.clone()),
+                );
+                f.props.lock().insert(
+                    PropertyKey::from("from"),
+                    data_prop(Value::Object(typed_array_from_fn)),
+                );
+                f.props.lock().insert(
+                    PropertyKey::from("of"),
+                    data_prop(Value::Object(typed_array_of_fn)),
                 );
             }
         });
