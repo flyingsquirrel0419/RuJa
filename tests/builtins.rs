@@ -2865,6 +2865,28 @@ fn math_expanded() {
         run("Math.acosh.length + ':' + Math.asinh.name + ':' + Math.atanh.length;"),
         Value::String(Arc::from("1:asinh:1"))
     );
+    assert_eq!(run("Math.sumPrecise([1, 2, 3]);"), Value::Number(6.0));
+    assert_eq!(
+        run("Math.sumPrecise([1e30, 0.1, -1e30]);"),
+        Value::Number(0.1)
+    );
+    assert_eq!(
+        run("Object.is(Math.sumPrecise([]), -0);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("Object.is(Math.sumPrecise([-0, 0]), 0);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("Math.sumPrecise([Infinity, Infinity]);"),
+        Value::Number(f64::INFINITY)
+    );
+    assert!(matches!(
+        run("Math.sumPrecise([Infinity, -Infinity]);"),
+        Value::Number(n) if n.is_nan()
+    ));
+    assert!(common::run_err("Math.sumPrecise([{}]);").contains("TypeError"));
 }
 
 // --- Promise ---

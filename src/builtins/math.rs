@@ -157,6 +157,76 @@ fn math_pow(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
     }
     Ok(Value::Number(a.powf(b)))
 }
+
+fn math_sum_precise(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let iterable = args.first().cloned().unwrap_or(Value::Undefined);
+    let iterator = vm.make_iterator(&iterable)?;
+    let mut sum = Ratio::from_integer(BigInt::from(0));
+    let mut saw_nonzero_finite = false;
+    let mut saw_positive_zero = false;
+    let mut saw_positive_infinity = false;
+    let mut saw_negative_infinity = false;
+    let mut saw_nan = false;
+
+    loop {
+        let (value, done) = vm.iterator_next(&iterator)?;
+        if done {
+            break;
+        }
+        let number = match value {
+            Value::Number(number) => number,
+            _ => {
+                let _ = vm.iterator_close(&iterator);
+                return Err(Error::type_err("Math.sumPrecise element is not a Number"));
+            }
+        };
+        if number.is_nan() {
+            saw_nan = true;
+        } else if number == f64::INFINITY {
+            saw_positive_infinity = true;
+        } else if number == f64::NEG_INFINITY {
+            saw_negative_infinity = true;
+        } else if number == 0.0 {
+            if number.is_sign_positive() {
+                saw_positive_zero = true;
+            }
+        } else {
+            saw_nonzero_finite = true;
+            let exact = crate::builtins::string::f64_to_exact_ratio(number.abs());
+            if number.is_sign_negative() {
+                sum -= exact;
+            } else {
+                sum += exact;
+            }
+        }
+    }
+
+    if saw_nan || saw_positive_infinity && saw_negative_infinity {
+        return Ok(Value::Number(f64::NAN));
+    }
+    if saw_positive_infinity {
+        return Ok(Value::Number(f64::INFINITY));
+    }
+    if saw_negative_infinity {
+        return Ok(Value::Number(f64::NEG_INFINITY));
+    }
+    if sum.is_zero() {
+        return Ok(Value::Number(if saw_nonzero_finite || saw_positive_zero {
+            0.0
+        } else {
+            -0.0
+        }));
+    }
+
+    Ok(Value::Number(sum.to_f64().unwrap_or_else(|| {
+        if sum.is_negative() {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }
+    })))
+}
+
 fn math_max(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let mut m = f64::NEG_INFINITY;
     let mut saw_nan = false;
@@ -232,6 +302,7 @@ pub(crate) fn build_math(vm: &mut Vm) -> error::Result<Value> {
         ("cos", math_cos, 1),
         ("tan", math_tan, 1),
         ("pow", math_pow, 2),
+        ("sumPrecise", math_sum_precise, 1),
         ("max", math_max, 2),
         ("min", math_min, 2),
         ("random", math_random, 0),

@@ -354,6 +354,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   exponents before delegating to Rust's `powf`, while keeping the required
   `x ** ±0 === 1` behavior. The focused `built-ins/Math/pow` run now closes
   at **27 pass / 0 fail / 1 skip**.
+- **Math.sumPrecise** —
+  `Math.sumPrecise` is now exposed as a unary Math builtin, consumes iterable
+  Number values without coercing non-numbers, closes the iterator on
+  non-number failures, preserves `NaN`, infinity, and signed-zero semantics,
+  and accumulates finite values through exact-rational summation before final
+  IEEE-754 rounding. The focused `built-ins/Math/sumPrecise` run now closes at
+  **8 pass / 0 fail / 2 skip**, and broader `built-ins/Math` closes at **284
+  pass / 0 fail / 43 skip**.
 - **Number parse function identity** —
   `Number.parseInt` and `Number.parseFloat` now reference the same built-in
   function objects as the global `parseInt` and `parseFloat` properties,
