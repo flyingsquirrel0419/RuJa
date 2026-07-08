@@ -2199,8 +2199,8 @@ impl Vm {
         self.heap.collect(&roots);
     }
 
-    /// Pin a heap object as a temporary GC root. Returns a guard token to pass
-    /// to `unpin` when the value is no longer held in a Rust local.
+    /// Pin a heap object as a temporary GC root. Returns the number of roots
+    /// pushed so callers can pass it to `unpin`/`unpin_many`.
     pub fn pin(&mut self, v: &Value) -> usize {
         if let Value::Object(idx) = v {
             self.gc_pins.push(idx.0);
@@ -2212,18 +2212,7 @@ impl Vm {
 
     /// Release the temporary root pinned at `token`.
     pub fn unpin(&mut self, token: usize) {
-        if token != 0 {
-            // Swap-remove is unsafe here (would move another live pin's index),
-            // so just clear by setting to an invalid/no-op slot. We truncate
-            // trailing sentinels lazily; pins are short-lived (single call).
-            // Simplest correct approach: only the most-recent pin is popped.
-            if token + 1 == self.gc_pins.len() {
-                self.gc_pins.pop();
-            } else {
-                // Overwritten with a stale slot; collect_roots tolerates dupes.
-                self.gc_pins[token] = usize::MAX;
-            }
-        }
+        self.unpin_many(token);
     }
 
     /// Pin multiple values at once; returns the count to unpin later.

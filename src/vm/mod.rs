@@ -462,18 +462,25 @@ impl Vm {
             crate::value::BindingKind::Const,
         );
         let result = self.execute_chunk(chunk, self.global, Value::Undefined);
+        let result_roots: Vec<Value> = match &result {
+            Ok(value) => vec![value.clone()],
+            Err(err) => err.thrown_value.iter().cloned().collect(),
+        };
+        let pinned_result = self.pin_many(&result_roots);
         // Drain microtasks (Promise callbacks) after the synchronous run.
-        if !self.microtask_queue.is_empty() {
-            self.run_microtasks()?;
-        }
+        let microtask_result = if !self.microtask_queue.is_empty() {
+            self.run_microtasks()
+        } else {
+            Ok(())
+        };
         // Collect at a safe point: all frames are settled and no Rust local
-        // holds a heap value across this boundary. (Per-instruction GC was
-        // unsafe because call_function/run_then hold handler values in Rust
-        // locals that collect_roots could not see.)
-        if self.heap.live_count() > 0 {
+        // except `result` holds a heap value across this boundary.
+        if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
             self.heap.maybe_collect(&roots);
         }
+        self.unpin_many(pinned_result);
+        microtask_result?;
         result
     }
 
@@ -934,8 +941,14 @@ impl Vm {
         let live = self.heap.live_count();
         #[allow(clippy::manual_is_multiple_of)]
         if live > 0 && live % 2048 == 0 {
+            let result_roots: Vec<Value> = match &result {
+                Ok(value) => vec![value.clone()],
+                Err(err) => err.thrown_value.iter().cloned().collect(),
+            };
+            let pinned_result = self.pin_many(&result_roots);
             let roots = self.collect_roots();
             self.heap.maybe_collect(&roots);
+            self.unpin_many(pinned_result);
         }
         result
     }

@@ -1044,6 +1044,39 @@ fn array_buffer_static_surface_matches_intrinsics() {
 }
 
 #[test]
+fn array_buffer_return_value_survives_frame_boundary_gc() {
+    assert_eq!(
+        run(r#"
+            function make32ByteArrayBuffer() {
+              var ab = new ArrayBuffer(32);
+              var view = new Uint8Array(ab);
+              for (var i = 0; i < 8; i++) view[i] = i + 1;
+              return ab;
+            }
+
+            var failed = 0;
+            for (var n = 0; n < 3000; n++) {
+              var source = make32ByteArrayBuffer();
+              if (Object.getPrototypeOf(source) !== ArrayBuffer.prototype ||
+                  source.byteLength !== 32) {
+                failed = n + 1;
+                break;
+              }
+              var start = { valueOf: function() { return "+9"; } };
+              var end = { valueOf: function() { return "0o20"; } };
+              var dest = source.sliceToImmutable(start, end);
+              if (dest.byteLength !== 7 || dest.immutable !== true) {
+                failed = -(n + 1);
+                break;
+              }
+            }
+            failed;
+        "#),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn array_buffer_slice_uses_species_constructor_and_validates_result() {
     assert_eq!(
         run(r#"

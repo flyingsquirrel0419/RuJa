@@ -2647,6 +2647,7 @@ impl Vm {
                     } else {
                         new_target
                     });
+                    self.pending_new_target_prototype = None;
                     let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     // If the parent constructor returned an object, use it as the new `this`.
                     let new_this = if matches!(result, Value::Object(_)) {
@@ -2696,6 +2697,7 @@ impl Vm {
                     } else {
                         new_target
                     });
+                    self.pending_new_target_prototype = None;
                     let result = self.call_function(&super_ctor, &args, Some(this_val.clone()))?;
                     let new_this = if matches!(result, Value::Object(_)) {
                         result

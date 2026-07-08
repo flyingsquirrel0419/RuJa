@@ -88,9 +88,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   array-like lengths, trim ES whitespace including `\uFEFF` in string numeric
   conversion, and coerce `Array.prototype.slice` bounds such as `null`. The
   focused `built-ins/ArrayBuffer` run improves from **57 pass / 34 fail / 130
-  skip** to **90 pass / 1 fail / 130 skip**; the remaining failure is
-  `ArrayBuffer/prototype/sliceToImmutable/argument-coercion.js`, which still
-  exposes a deeper VM call/GC interaction after many observable coercions.
+  skip** to **90 pass / 1 fail / 130 skip**.
+- **VM GC return-value rooting**: frame-boundary and top-level GC safe points
+  now pin interpreted function return values and thrown values until the caller
+  can observe them, and native calls pin their receiver while dispatching. This
+  prevents a freshly returned `ArrayBuffer` from being swept during the long
+  `sliceToImmutable` argument-coercion test and closes the focused
+  `built-ins/ArrayBuffer` run at **91 pass / 0 fail / 130 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

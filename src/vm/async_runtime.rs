@@ -404,7 +404,7 @@ impl Vm {
         args: &[Value],
         this: Option<Value>,
     ) -> error::Result<Value> {
-        // Pin the callee and args as GC roots for the duration of this call:
+        // Pin the callee, args, and receiver as GC roots for the duration of this call:
         // reading the function kind and building the call frame involve heap
         // allocations that can trigger a GC, which would otherwise collect
         // values held only in the caller's Rust locals / args slice.
@@ -412,6 +412,9 @@ impl Vm {
             let mut n = self.pin(func);
             for a in args {
                 n += self.pin(a);
+            }
+            if let Some(this_value) = &this {
+                n += self.pin(this_value);
             }
             n
         };

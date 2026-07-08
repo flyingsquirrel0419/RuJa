@@ -120,12 +120,11 @@ Latest improvement confirmation: `test262-full` 28962802017 on `6d6328e`.
 Latest improvement confirmation: `test262-full` 28964634961 on `05173b6`.
 
 Focused ArrayBuffer transfer/immutable local check: `built-ins/ArrayBuffer`
-improves from **57 pass / 34 fail / 130 skip** to **90 pass / 1 fail / 130
+improves from **57 pass / 34 fail / 130 skip** to **91 pass / 0 fail / 130
 skip** after adding fixed-buffer `transfer`, `transferToFixedLength`,
-`transferToImmutable`, `sliceToImmutable`, and the `immutable` accessor. The
-remaining focused failure is
-`built-ins/ArrayBuffer/prototype/sliceToImmutable/argument-coercion.js`, which
-still trips a deeper VM call/GC interaction after many observable coercions.
+`transferToImmutable`, `sliceToImmutable`, and the `immutable` accessor, then
+pinning interpreted return values across VM GC safe points so
+`sliceToImmutable` argument coercion keeps freshly returned buffers alive.
 Latest improvement confirmation: `test262-full` 28965977305 on `576ba07`.
 Latest improvement confirmation: `test262-full` 28966918564 on `2256c6a`.
 Latest full baseline documentation check: `test262-full` 28967365155 on
