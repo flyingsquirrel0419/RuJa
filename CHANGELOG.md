@@ -670,16 +670,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   built-ins/Symbol/prototype/description built-ins/Symbol/prototype/toString`
   with the `Symbol` feature skip temporarily lifted runs at **28 pass / 0
   fail / 4 skip**.
-- **`Reflect.ownKeys` Symbol key coverage**: `Reflect.ownKeys` now rejects
-  primitive targets with `TypeError` and returns the full
-  `[[OwnPropertyKeys]]` list by preserving non-enumerable string keys and
-  Symbol keys in spec order. `Symbol.for` now uses a VM-level global symbol
-  registry for repeat-key identity, which closes the Symbol-backed
-  `Reflect.ownKeys` ordering case. Focused `built-ins/Reflect/ownKeys` with
-  `Reflect` and `Symbol` feature skips temporarily lifted runs at
-  **11 pass / 0 fail / 2 skip**; the remaining `built-ins/Symbol/for`
-  failures are separate cross-realm and `Symbol.prototype.description`
-  coverage.
+- **`Reflect.ownKeys` Symbol key and Proxy abrupt-completion coverage**:
+  `Reflect.ownKeys` now rejects primitive targets with `TypeError`, returns
+  the full `[[OwnPropertyKeys]]` list by preserving non-enumerable string keys
+  and Symbol keys in spec order, and propagates abrupt completions from Proxy
+  `ownKeys` trap result conversion instead of falling back to target keys.
+  `Symbol.for` now uses a VM-level global symbol registry for repeat-key
+  identity, which closes the Symbol-backed `Reflect.ownKeys` ordering case.
+  Focused `built-ins/Reflect/ownKeys` with `Proxy`/`Reflect`/`Symbol` feature
+  skips temporarily lifted now runs at **13 pass / 0 fail / 0 skip**.
 - **Destructuring assignment Reference target preservation**: identifier
   targets in object and array destructuring assignments now capture the
   spec Reference before reading the source property, stepping the iterator, or

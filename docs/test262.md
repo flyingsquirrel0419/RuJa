@@ -829,14 +829,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Symbol/for built-ins/Symbol/keyFor
   built-ins/Symbol/prototype/description built-ins/Symbol/prototype/toString`
   cluster runs at **28 pass / 0 fail / 4 skip**.
-- **`Reflect.ownKeys` Symbol key coverage** —
+- **`Reflect.ownKeys` Symbol key and Proxy abrupt-completion coverage** —
   `Reflect.ownKeys` now uses RuJa's full own-property-key helper instead of
   the string-only enumerable-key path, so it returns array-index strings,
   ordinary strings, and Symbols in `[[OwnPropertyKeys]]` order and includes
-  non-enumerable keys. Primitive targets now throw `TypeError`.
+  non-enumerable keys. Primitive targets now throw `TypeError`, and Proxy
+  `ownKeys` trap result conversion errors now propagate instead of falling
+  back to the target's keys.
   `Symbol.for` also reuses a VM-level global symbol registry for repeat keys.
-  With `Reflect` and `Symbol` skips temporarily lifted, focused
-  `built-ins/Reflect/ownKeys` runs at **11 pass / 0 fail / 2 skip**.
+  With `Proxy`/`Reflect`/`Symbol` skips temporarily lifted, focused
+  `built-ins/Reflect/ownKeys` runs at **13 pass / 0 fail / 0 skip**.
 - **Thrown custom object display** —
   Uncaught ordinary objects created by custom constructors now include their
   prototype constructor name in the host error message. This preserves

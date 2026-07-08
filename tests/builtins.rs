@@ -2798,6 +2798,22 @@ fn reflect_own_keys_includes_symbols_and_non_enumerables_in_spec_order() {
 }
 
 #[test]
+fn reflect_own_keys_propagates_proxy_trap_result_errors() {
+    assert!(run_err(
+        r#"
+        var key = {};
+        Object.defineProperty(key, Symbol.toPrimitive, {
+          get: function() { throw new Error("key-coercion"); }
+        });
+        Reflect.ownKeys(new Proxy({}, {
+          ownKeys: function() { return [key]; }
+        }));
+        "#,
+    )
+    .contains("key-coercion"));
+}
+
+#[test]
 fn reflect_construct_uses_array_like_args_and_new_target() {
     assert_eq!(
         run(r#"

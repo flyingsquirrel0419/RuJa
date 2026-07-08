@@ -983,7 +983,7 @@ pub(crate) fn reflect_own_keys(
     if !matches!(target, Value::Object(_)) {
         return Err(Error::type_err("Reflect.ownKeys target must be an object"));
     }
-    let keys = own_property_keys(vm, &target, false, true, true)
+    let keys = own_property_keys_or_throw(vm, &target, false, true, true)?
         .iter()
         .map(property_key_to_value)
         .collect();
