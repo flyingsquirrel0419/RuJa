@@ -159,6 +159,13 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **`%ThrowTypeError%` intrinsic** —
+  Restricted function and arguments accessors now share an anonymous, frozen,
+  non-extensible `%ThrowTypeError%` function within each Realm. Strict
+  arguments and non-simple-parameter unmapped arguments reuse the same
+  Realm-local thrower for `callee`, while `$262.createRealm()` receives a
+  distinct intrinsic. The focused `built-ins/ThrowTypeError` run improves from
+  **8 pass / 6 fail / 0 skip** to **14 pass / 0 fail / 0 skip**.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

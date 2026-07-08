@@ -536,7 +536,8 @@ impl Vm {
                     arg_array
                         .is_arguments
                         .store(true, std::sync::atomic::Ordering::Relaxed);
-                    if !func.chunk.is_strict && !func.has_parameter_expressions {
+                    let mapped_arguments = !func.chunk.is_strict && !func.has_parameter_expressions;
+                    if mapped_arguments {
                         let mut seen = std::collections::HashSet::new();
                         let mut names = vec![None; func.params.len()];
                         for (i, name) in func.params.iter().enumerate().rev() {
@@ -563,40 +564,16 @@ impl Vm {
                             props.insert(crate::value::PropertyKey::from("length"), length_desc);
                         }
                     });
-                    if func.chunk.is_strict {
-                        let thrower = match &self.function_proto {
-                            Value::Object(proto_idx) => self.heap.with_obj(proto_idx.0, |obj| {
-                                obj.props()
-                                    .lock()
-                                    .get(&crate::value::PropertyKey::from("caller"))
-                                    .and_then(|desc| {
-                                        if desc.is_accessor {
-                                            desc.get.clone()
-                                        } else {
-                                            None
-                                        }
-                                    })
-                            }),
-                            _ => None,
-                        };
-                        if let Some(thrower) = thrower {
-                            self.heap.with_obj(arg_idx.0, |obj| {
-                                if let HeapObj::Array(a) = obj {
-                                    a.props.lock().insert(
-                                        crate::value::PropertyKey::from("callee"),
-                                        crate::value::PropertyDescriptor {
-                                            value: Value::Undefined,
-                                            writable: false,
-                                            enumerable: false,
-                                            configurable: false,
-                                            get: Some(thrower.clone()),
-                                            set: Some(thrower),
-                                            is_accessor: true,
-                                        },
-                                    );
-                                }
-                            });
-                        }
+                    if !mapped_arguments {
+                        let thrower = crate::builtins::throw_type_error_intrinsic(self, closure)?;
+                        self.heap.with_obj(arg_idx.0, |obj| {
+                            if let HeapObj::Array(a) = obj {
+                                a.props.lock().insert(
+                                    crate::value::PropertyKey::from("callee"),
+                                    crate::builtins::restricted_throw_type_error_accessor(thrower),
+                                );
+                            }
+                        });
                     } else {
                         // In non-strict mode, arguments has a `callee` property
                         // pointing to the executing function.

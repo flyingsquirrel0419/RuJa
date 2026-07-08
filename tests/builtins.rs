@@ -1888,6 +1888,64 @@ fn bound_functions_inherit_restricted_caller_arguments_accessors() {
 }
 
 #[test]
+fn throw_type_error_intrinsic_is_frozen_and_anonymous() {
+    assert_eq!(
+        run(
+            r#"var args = function() { "use strict"; return arguments; }();
+               var thrower = Object.getOwnPropertyDescriptor(args, "callee").get;
+               var length = Object.getOwnPropertyDescriptor(thrower, "length");
+               var name = Object.getOwnPropertyDescriptor(thrower, "name");
+               [
+                 thrower.name,
+                 thrower.length,
+                 length.writable,
+                 length.enumerable,
+                 length.configurable,
+                 name.value,
+                 name.writable,
+                 name.enumerable,
+                 name.configurable,
+                 Object.isExtensible(thrower),
+                 Object.isFrozen(thrower)
+               ].join("|");"#
+        ),
+        Value::String(Arc::from(
+            "|0|false|false|false||false|false|false|false|true"
+        ))
+    );
+}
+
+#[test]
+fn throw_type_error_intrinsic_is_reused_for_unmapped_arguments() {
+    assert_eq!(
+        run(
+            r#"var strictArgs = function() { "use strict"; return arguments; }();
+               function nonSimple(a = 0) { return arguments; }
+               var strictCallee = Object.getOwnPropertyDescriptor(strictArgs, "callee");
+               var nonSimpleCallee = Object.getOwnPropertyDescriptor(nonSimple(), "callee");
+               (strictCallee.get === nonSimpleCallee.get) + ":" +
+                 (strictCallee.get === nonSimpleCallee.set);"#
+        ),
+        Value::String(Arc::from("true:true"))
+    );
+}
+
+#[test]
+fn throw_type_error_intrinsic_is_distinct_per_test262_realm() {
+    assert_eq!(
+        run(r#"var other = $262.createRealm().global;
+               var localArgs = function() { "use strict"; return arguments; }();
+               var otherArgs = (new other.Function('"use strict"; return arguments;'))();
+               var otherArgs2 = (new other.Function('"use strict"; return arguments;'))();
+               var localThrower = Object.getOwnPropertyDescriptor(localArgs, "callee").get;
+               var otherThrower = Object.getOwnPropertyDescriptor(otherArgs, "callee").get;
+               var otherThrower2 = Object.getOwnPropertyDescriptor(otherArgs2, "callee").get;
+               (localThrower !== otherThrower) + ":" + (otherThrower === otherThrower2);"#),
+        Value::String(Arc::from("true:true"))
+    );
+}
+
+#[test]
 fn json_parse_object() {
     assert_eq!(run(r#"JSON.parse("{\"a\":1}").a;"#), Value::Number(1.0));
     // HashMap key order is non-deterministic; just check both props round-trip.

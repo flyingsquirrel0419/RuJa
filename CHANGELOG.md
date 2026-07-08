@@ -24,6 +24,12 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **`%ThrowTypeError%` intrinsic**: restricted function and arguments
+  accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
+  function per Realm. Strict and non-simple-parameter unmapped arguments reuse
+  the same Realm-local thrower for `callee`, while `$262.createRealm()` gets a
+  distinct intrinsic. The focused `built-ins/ThrowTypeError` run improves from
+  **8 pass / 6 fail / 0 skip** to **14 pass / 0 fail / 0 skip**.
 - **Private slot brand checks**: class private field, accessor, and method
   access now throws `TypeError` for primitive receivers and objects missing the
   private slot instead of returning `undefined` or creating a new slot.

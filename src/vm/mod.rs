@@ -80,6 +80,9 @@ pub struct Vm {
     /// `%eval%` function object. Direct eval detection must not consult the
     /// mutable global `eval` property because scripts may replace it.
     pub(crate) realm_eval_functions: HashMap<usize, Value>,
+    /// Realm global environment index -> that Realm's intrinsic
+    /// `%ThrowTypeError%` function object.
+    pub(crate) realm_throw_type_errors: HashMap<usize, Value>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
     /// Optional execution fuel: when set, each dispatched opcode decrements
     /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
@@ -354,6 +357,7 @@ impl Vm {
             global_names: HashMap::new(),
             global_constants: Vec::new(),
             realm_eval_functions: HashMap::new(),
+            realm_throw_type_errors: HashMap::new(),
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,

@@ -1243,6 +1243,47 @@ fn accessor_prop(get: Value, set: Value) -> PropertyDescriptor {
     }
 }
 
+pub(crate) fn throw_type_error_intrinsic(vm: &mut Vm, realm: GcIdx) -> error::Result<Value> {
+    if let Some(value) = vm.realm_throw_type_errors.get(&realm.0) {
+        return Ok(value.clone());
+    }
+
+    let thrower_idx = vm.new_native_function_in_env("", function_throw_type_error, 0, realm)?;
+    vm.heap.with_obj(thrower_idx.0, |obj| {
+        if let HeapObj::Function(function) = obj {
+            let mut props = function.props.lock();
+            let mut length_desc = PropertyDescriptor::data(Value::Number(0.0));
+            length_desc.writable = false;
+            length_desc.enumerable = false;
+            length_desc.configurable = false;
+            props.insert(PropertyKey::from("length"), length_desc);
+
+            let mut name_desc = PropertyDescriptor::data(Value::String(Arc::from("")));
+            name_desc.writable = false;
+            name_desc.enumerable = false;
+            name_desc.configurable = false;
+            props.insert(PropertyKey::from("name"), name_desc);
+
+            function.extensible.store(false, Ordering::Relaxed);
+        }
+    });
+    let thrower = Value::Object(thrower_idx);
+    vm.realm_throw_type_errors.insert(realm.0, thrower.clone());
+    Ok(thrower)
+}
+
+pub(crate) fn restricted_throw_type_error_accessor(thrower: Value) -> PropertyDescriptor {
+    PropertyDescriptor {
+        value: Value::Undefined,
+        writable: false,
+        enumerable: false,
+        configurable: false,
+        get: Some(thrower.clone()),
+        set: Some(thrower),
+        is_accessor: true,
+    }
+}
+
 pub(crate) fn install_symbol_static_properties(
     vm: &Vm,
     props: &mut IndexMap<PropertyKey, PropertyDescriptor>,
@@ -5193,8 +5234,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let apply_fn = vm.new_native_function("apply", function_apply, 2)?;
     let bind_fn = vm.new_native_function("bind", function_bind, 1)?;
     let tostring_fn = vm.new_native_function("toString", function_to_string, 0)?;
-    let throw_type_error_fn =
-        vm.new_native_function("ThrowTypeError", function_throw_type_error, 0)?;
+    let throw_type_error_fn = throw_type_error_intrinsic(vm, vm.global)?;
     install_methods(
         vm,
         &Value::Object(function_proto_idx),
@@ -5225,8 +5265,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             writable: false,
             enumerable: false,
             configurable: true,
-            get: Some(Value::Object(throw_type_error_fn)),
-            set: Some(Value::Object(throw_type_error_fn)),
+            get: Some(throw_type_error_fn.clone()),
+            set: Some(throw_type_error_fn),
             is_accessor: true,
         };
         props.insert(PropertyKey::from("caller"), restricted.clone());
