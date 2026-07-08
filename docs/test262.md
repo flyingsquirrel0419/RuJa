@@ -120,16 +120,18 @@ Latest improvement confirmation: `test262-full` 28962802017 on `6d6328e`.
 Latest improvement confirmation: `test262-full` 28964634961 on `05173b6`.
 Latest improvement confirmation: `test262-full` 28965977305 on `576ba07`.
 Latest improvement confirmation: `test262-full` 28966918564 on `2256c6a`.
+Latest full baseline documentation check: `test262-full` 28967365155 on
+`a6964b7`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 48,465 |
-| Actually run | 24,135 |
-| Pass | 17,058 |
+| Actually run | 24,133-24,135 |
+| Pass | 17,056-17,058 |
 | Fail | 7,077 |
-| Timeout | 9 |
+| Timeout | 9-11 |
 | Skip | 24,321 |
-| **Pass rate (of run)** | **70.7%** |
+| **Pass rate (of run)** | **70.6-70.7%** |
 | **Pass rate (of total)** | **35.2%** |
 
 This number is dominated by tests for features RuJa does not support.
