@@ -317,8 +317,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   iteration. The same clearing now feeds `String.prototype.match` and function
   replacement callbacks. The focused `built-ins/RegExp/prototype/exec`
   diagnostic is **75 pass / 0 fail / 4 skip**; the broader
-  `built-ins/String/prototype/{match,replace}` diagnostic is **78 pass / 22
-  fail / 6 skip**, with remaining failures outside this capture-clearing edge.
+  `built-ins/String/prototype/{match,replace}` diagnostic now closes at
+  **100 pass / 0 fail / 6 skip**.
+- **String match RegExp creation and `@@match` dispatch**:
+  `String.prototype.match` now follows the `@@match` dispatch path before
+  ordinary matching, so custom `searchValue[Symbol.match]` getters and methods
+  are observable. Values without a custom matcher are converted through a
+  `RegExpCreate`-style intrinsic RegExp instead of returning `null`, and that
+  internally-created RegExp observes an overridden
+  `RegExp.prototype[Symbol.match]` before falling back to RuJa's internal match
+  algorithm. The focused
+  `built-ins/String/prototype/match` diagnostic now closes at **47 pass / 0
+  fail / 4 skip**.
 - **String replace substitution tokens and `@@replace` dispatch**:
   `String.prototype.replace` string replacements now expand ECMAScript
   replacement tokens (`$$`, `$&`, ``$` ``, `$'`, `$n`, `$nn`) for both RegExp
@@ -343,9 +353,8 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   RegExp function replacements receive that groups object as their final
   argument, and replacement strings expand `$<name>` using the same capture
   metadata. The focused `built-ins/RegExp/prototype/exec
-  built-ins/String/prototype/{match,replace}` diagnostic is **153 pass / 22
-  fail / 10 skip**; the remaining String failures are outside this
-  named-capture edge.
+  built-ins/String/prototype/{match,replace}` diagnostic now closes at
+  **175 pass / 0 fail / 10 skip**.
 - **RegExp backreferences and identity escapes**: RegExp compilation now keeps
   the existing Rust regex fast path for ordinary patterns while routing true
   numeric backreferences through a backtracking-capable backend. Non-Unicode

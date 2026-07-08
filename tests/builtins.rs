@@ -3524,6 +3524,74 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
         Value::String(Arc::from("bc|b|c|1|abc|b|true|0,1,2,index,input,groups"))
     );
     assert_eq!(
+        run("var m = 'abc'.match('b'); [m[0], m.index, m.input].join('|');"),
+        Value::String(Arc::from("b|1|abc"))
+    );
+    assert_eq!(
+        run(
+            r#"String.prototype[Symbol.match] = function(arg) { return "poison"; };
+               var m = "abc".match("b");
+               delete String.prototype[Symbol.match];
+               [m[0], m.index, m.input].join("|");"#
+        ),
+        Value::String(Arc::from("b|1|abc"))
+    );
+    assert_eq!(
+        run("var m = ''.match(); [m[0], m.index, m.input].join('|');"),
+        Value::String(Arc::from("|0|"))
+    );
+    assert_eq!(
+        run(r#"var r = /b/g;
+               r[Symbol.match] = undefined;
+               "abcbbc".match(r);"#),
+        Value::Null
+    );
+    assert_eq!(
+        run(r#"RegExp = function(){};
+               RegExp.prototype = {
+                 [Symbol.match]: function(s) { return "poison:" + s; }
+               };
+               var m = "abc".match("b");
+               [m[0], m.index, m.input].join("|");"#),
+        Value::String(Arc::from("b|1|abc"))
+    );
+    assert!(
+        run_err(
+            r#"var search = {};
+               Object.defineProperty(search, Symbol.match, {
+                 get: function(){ throw new Error("match-get"); }
+               });
+               "".match(search);"#
+        )
+        .contains("match-get"),
+        "String.prototype.match must observe searchValue[Symbol.match]"
+    );
+    assert_eq!(
+        run(r#"var search = {};
+               var seenThis, seenArg;
+               search[Symbol.match] = function(arg) {
+                 seenThis = this;
+                 seenArg = arg;
+                 return "custom";
+               };
+               var out = "abc".match(search);
+               [out, seenThis === search, seenArg].join("|");"#),
+        Value::String(Arc::from("custom|true|abc"))
+    );
+    assert_eq!(
+        run(r#"var old = RegExp.prototype[Symbol.match];
+               var seenThis, seenArg;
+               RegExp.prototype[Symbol.match] = function(arg) {
+                 seenThis = this;
+                 seenArg = arg;
+                 return "created";
+               };
+               var out = "target".match("string source");
+               RegExp.prototype[Symbol.match] = old;
+               [out, seenThis instanceof RegExp, seenThis.source, seenThis.flags, seenThis.lastIndex, seenArg].join("|");"#),
+        Value::String(Arc::from("created|true|string source||0|target"))
+    );
+    assert_eq!(
         run("/undefined/.exec()[0];"),
         Value::String(Arc::from("undefined"))
     );

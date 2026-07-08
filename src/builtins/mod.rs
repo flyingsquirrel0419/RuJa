@@ -4677,7 +4677,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "Promise", Value::Object(promise_ctor));
     // RegExp
-    let (regex_ctor, _) = make_regexp_constructor_in_env(vm, vm.global)?;
+    let (regex_ctor, regex_proto) = make_regexp_constructor_in_env(vm, vm.global)?;
+    vm.regexp_proto = Value::Object(regex_proto);
     define_global(vm, "RegExp", Value::Object(regex_ctor));
     // Generator prototype with next(). Generator instances inherit this proto.
     let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {

@@ -33,9 +33,6 @@ pub(crate) fn regexp_constructor(
         _ if pattern_is_regexp => read_regexp_flags(vm, &args.first().cloned())?,
         _ => String::new(),
     };
-    crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
-    // Validate the pattern eagerly so bad regexes throw at construction time.
-    compile_regex(&pattern, &flags).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     // Look up RegExp.prototype via the global RegExp constructor.
     let regex_proto_val = {
         let reg = crate::environment::get(&vm.heap, vm.global, "RegExp");
@@ -53,9 +50,30 @@ pub(crate) fn regexp_constructor(
         }
     };
     let regex_proto_val = native_constructor_prototype(vm, regex_proto_val)?;
+    create_regexp_object(vm, pattern, flags, regex_proto_val)
+}
+
+pub(crate) fn regexp_create_intrinsic(vm: &mut Vm, pattern: &Value) -> error::Result<Value> {
+    let pattern = if pattern.is_undefined() {
+        String::new()
+    } else {
+        vm.to_string(pattern)?.to_string()
+    };
+    create_regexp_object(vm, pattern, String::new(), vm.regexp_proto.clone())
+}
+
+fn create_regexp_object(
+    vm: &mut Vm,
+    pattern: String,
+    flags: String,
+    proto: Value,
+) -> error::Result<Value> {
+    crate::lexer::validate_regex_literal(&pattern, &flags).map_err(Error::syntax)?;
+    // Validate the pattern eagerly so bad regexes throw at construction time.
+    compile_regex(&pattern, &flags).map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
     let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(regex_proto_val)),
+        proto: Mutex::new(Some(proto)),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("RegExp")),
         private_fields: Mutex::new(std::collections::HashMap::new()),

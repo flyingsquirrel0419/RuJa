@@ -753,60 +753,103 @@ pub(crate) fn str_repeat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 }
 
 pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(vm, &this)?;
-    match args.first() {
-        Some(Value::Object(idx)) => {
-            let is_regexp_obj = vm.heap.with_obj(
-                idx.0,
-                |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
-            );
-            if is_regexp_obj {
-                let regexp = Some(Value::Object(*idx));
-                let source = read_regexp_source(vm, &regexp)?;
-                let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
-                let re = compile_regex(&source, &flags_str)
-                    .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-                let capture_names = regex_capture_names(&source);
-                let global = flags_str.contains('g');
-                if global {
-                    // Collect all matches (full-match substrings).
-                    let items: Vec<Value> = re
-                        .find_iter(&s)?
-                        .into_iter()
-                        .map(|m| Value::String(Arc::from(m.as_str())))
-                        .collect();
-                    if items.is_empty() {
-                        Ok(Value::Null)
-                    } else {
-                        make_value_array(vm, items)
-                    }
-                } else {
-                    match re.captures_ecma(&s, &source, &flags_str)? {
-                        Some(caps) => {
-                            let items: Vec<Value> = caps
-                                .iter()
-                                .map(|c| match c {
-                                    Some(m) => Value::String(Arc::from(m.as_str())),
-                                    None => Value::Undefined,
-                                })
-                                .collect();
-                            let match_start = caps
-                                .get(0)
-                                .map(|m| crate::value::utf16_len(&s[..m.start()]))
-                                .unwrap_or(0);
-                            let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
-                            let result = make_value_array(vm, items)?;
-                            add_regexp_exec_result_props(vm, &result, match_start, &s, groups)?;
-                            Ok(result)
-                        }
-                        None => Ok(Value::Null),
-                    }
-                }
-            } else {
-                Ok(Value::Null)
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
+    }
+    let match_key = PropertyKey::Symbol(vm.well_known_symbols.r#match);
+    let search_value = args.first().cloned().unwrap_or(Value::Undefined);
+    if !search_value.is_nullish() {
+        let matcher = vm.get_property_by_key(&search_value, &match_key)?;
+        if !matcher.is_nullish() {
+            let is_callable = matches!(&matcher, Value::Object(idx) if {
+                vm.heap.with_obj(idx.0, |o| o.is_function())
+            });
+            if !is_callable {
+                return Err(Error::type_err("Symbol.match method is not callable"));
             }
+            return vm.call_function(
+                &matcher,
+                std::slice::from_ref(&receiver),
+                Some(search_value),
+            );
         }
-        _ => Ok(Value::Null),
+    }
+    let s = str_val(vm, &Some(receiver))?;
+    let regexp = if is_regexp_object(vm, &search_value)
+        && !vm.has_property_key(&search_value, &match_key)?
+    {
+        search_value
+    } else {
+        regexp_create_intrinsic(vm, &search_value)?
+    };
+    let matcher = vm.get_property_by_key(&regexp, &match_key)?;
+    if !matcher.is_nullish() {
+        let is_callable = matches!(&matcher, Value::Object(idx) if {
+            vm.heap.with_obj(idx.0, |o| o.is_function())
+        });
+        if !is_callable {
+            return Err(Error::type_err("Symbol.match method is not callable"));
+        }
+        return vm.call_function(
+            &matcher,
+            &[Value::String(Arc::from(s.as_str()))],
+            Some(regexp),
+        );
+    }
+    regexp_match_internal(vm, regexp, &s)
+}
+
+fn is_regexp_object(vm: &mut Vm, value: &Value) -> bool {
+    matches!(value, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| {
+            matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
+        })
+    })
+}
+
+fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
+    let regexp = Some(regexp);
+    let source = read_regexp_source(vm, &regexp)?;
+    let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
+    let re = compile_regex(&source, &flags_str)
+        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let capture_names = regex_capture_names(&source);
+    let global = flags_str.contains('g');
+    if global {
+        let items: Vec<Value> = re
+            .find_iter(s)?
+            .into_iter()
+            .map(|m| Value::String(Arc::from(m.as_str())))
+            .collect();
+        if items.is_empty() {
+            Ok(Value::Null)
+        } else {
+            make_value_array(vm, items)
+        }
+    } else {
+        match re.captures_ecma(s, &source, &flags_str)? {
+            Some(caps) => {
+                let items: Vec<Value> = caps
+                    .iter()
+                    .map(|c| match c {
+                        Some(m) => Value::String(Arc::from(m.as_str())),
+                        None => Value::Undefined,
+                    })
+                    .collect();
+                let match_start = caps
+                    .get(0)
+                    .map(|m| crate::value::utf16_len(&s[..m.start()]))
+                    .unwrap_or(0);
+                let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
+                let result = make_value_array(vm, items)?;
+                add_regexp_exec_result_props(vm, &result, match_start, s, groups)?;
+                Ok(result)
+            }
+            None => Ok(Value::Null),
+        }
     }
 }
 pub(crate) fn array_find_last_index(
