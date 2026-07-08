@@ -341,6 +341,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `toString` and `toFixed(0)` diverge where the spec requires. The focused
   `built-ins/Number/prototype/toFixed` run now closes at **14 pass / 0 fail /
   2 skip**.
+- **Number exponential/precision formatting** —
+  `Number.prototype.toExponential` and `Number.prototype.toPrecision` now use
+  `ThisNumberValue`, truncate their digit arguments with
+  `ToIntegerOrInfinity`, return `"NaN"`/`"Infinity"` after argument coercion
+  but before range checks, normalize exponent signs, format `-0` as `+0`, and
+  use exact-rational half-up decimal rounding for exponential notation. The
+  broader `built-ins/Number` run now closes at **312 pass / 0 fail / 28
+  skip**.
 - **Math.pow NaN and infinite exponent edges** —
   `Math.pow` now handles exponent `NaN` and `abs(base) === 1` with infinite
   exponents before delegating to Rust's `powf`, while keeping the required

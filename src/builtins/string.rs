@@ -1357,33 +1357,29 @@ pub(crate) fn num_to_precision(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let n = match &this {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
-        None => 0.0,
-    };
-    if n.is_nan() {
-        return Ok(Value::String(Arc::from("NaN")));
-    }
-    if !n.is_finite() {
-        return Ok(Value::String(Arc::from(if n > 0.0 {
-            "Infinity"
-        } else {
-            "-Infinity"
-        })));
-    }
+    let n = this_number_value(vm, this)?;
     match args.first() {
         Some(v) if !v.is_undefined() => {
             // ES: precision must be an integer in 1..=100, else RangeError.
-            let pf = vm.to_number(v)?;
-            if pf.is_nan() || pf < 1.0 || pf.fract() != 0.0 || pf > 100.0 {
+            let pf = to_integer_or_zero(vm, v)?;
+            if n.is_nan() {
+                return Ok(Value::String(Arc::from("NaN")));
+            }
+            if !n.is_finite() {
+                return Ok(Value::String(Arc::from(if n > 0.0 {
+                    "Infinity"
+                } else {
+                    "-Infinity"
+                })));
+            }
+            if !(1.0..=100.0).contains(&pf) {
                 return Err(Error::range(
                     "toPrecision() argument must be between 1 and 100",
                 ));
             }
             let p = pf as usize;
-            if p == 0 {
-                return Ok(Value::String(Arc::from("0")));
+            if n == 0.0 {
+                return Ok(Value::String(Arc::from(format_precision_zero(p).as_str())));
             }
             // Use Rust's formatting with significant digits.
             let s = format!("{:.*e}", p - 1, n);
@@ -1391,11 +1387,14 @@ pub(crate) fn num_to_precision(
             let s = if let Some(pos) = s.find('e') {
                 let mantissa = &s[..pos];
                 let exp: i32 = s[pos + 1..].parse().unwrap_or(0);
-                if exp >= 0 && exp < p as i32 {
+                if exp >= p as i32 || exp < -6 {
+                    normalize_exponential_string(&s, false)
+                } else if exp >= 0 {
                     // Convert to fixed notation.
-                    let m = mantissa.replace('.', "");
+                    let negative = mantissa.starts_with('-');
+                    let m = mantissa.trim_start_matches('-').replace('.', "");
                     let target_len = (exp + 1) as usize;
-                    if m.len() >= target_len {
+                    let mut result = if m.len() >= target_len {
                         let mut result = m[..target_len].to_string();
                         if m.len() > target_len {
                             result.push('.');
@@ -1406,10 +1405,20 @@ pub(crate) fn num_to_precision(
                         let mut result = m.clone();
                         result.push_str(&"0".repeat(target_len - m.len()));
                         result
+                    };
+                    if negative {
+                        result.insert(0, '-');
                     }
+                    result
                 } else {
-                    let sign = if exp >= 0 { "+" } else { "" };
-                    format!("{}e{}{}", mantissa, sign, exp)
+                    let negative = mantissa.starts_with('-');
+                    let mut result = String::from("0.");
+                    result.push_str(&"0".repeat((-exp - 1) as usize));
+                    result.push_str(&mantissa.trim_start_matches('-').replace('.', ""));
+                    if negative {
+                        result.insert(0, '-');
+                    }
+                    result
                 }
             } else {
                 s
@@ -1427,10 +1436,10 @@ pub(crate) fn num_to_exponential(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let n = match &this {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
-        None => 0.0,
+    let n = this_number_value(vm, this)?;
+    let fraction_digits = match args.first() {
+        Some(v) if !v.is_undefined() => Some(to_integer_or_zero(vm, v)?),
+        _ => None,
     };
     if n.is_nan() {
         return Ok(Value::String(Arc::from("NaN")));
@@ -1442,20 +1451,124 @@ pub(crate) fn num_to_exponential(
             "-Infinity"
         })));
     }
-    match args.first() {
-        Some(v) if !v.is_undefined() => {
-            let d = vm.to_number(v)? as usize;
-            let s = format!("{:.*e}", d, n);
-            // Rust uses e0, e1; JS uses e+0, e+1.
-            let s = s.replace('e', "e+");
+    if let Some(d) = fraction_digits {
+        if !(0.0..=100.0).contains(&d) {
+            return Err(Error::range(
+                "toExponential() argument must be between 0 and 100",
+            ));
+        }
+    }
+    let n = if n == 0.0 { 0.0 } else { n };
+    match fraction_digits {
+        Some(d) => {
+            let s = format_to_exponential_decimal(n, d as usize);
             Ok(Value::String(Arc::from(s.as_str())))
         }
         _ => {
             let s = format!("{:e}", n);
-            let s = s.replace('e', "e+");
+            let s = normalize_exponential_string(&s, true);
             Ok(Value::String(Arc::from(s.as_str())))
         }
     }
+}
+
+fn format_to_exponential_decimal(n: f64, fraction_digits: usize) -> String {
+    if n == 0.0 {
+        let mantissa = if fraction_digits == 0 {
+            "0".to_string()
+        } else {
+            format!("0.{}", "0".repeat(fraction_digits))
+        };
+        return format!("{mantissa}e+0");
+    }
+
+    let negative = n < 0.0;
+    let x = n.abs();
+    let exact = f64_to_exact_ratio(x);
+    let mut exponent = decimal_exponent(x, &exact);
+    let scaled = exact * pow10_ratio(fraction_digits as i32 - exponent);
+    let (mut rounded, rem) = scaled.numer().div_rem(scaled.denom());
+    if &rem * 2 >= scaled.denom().clone() {
+        rounded += 1;
+    }
+
+    let limit = BigInt::from(10u32).pow((fraction_digits + 1) as u32);
+    if rounded >= limit {
+        rounded /= 10;
+        exponent += 1;
+    }
+
+    let mut digits = rounded.to_string();
+    if digits.len() < fraction_digits + 1 {
+        digits = format!(
+            "{}{}",
+            "0".repeat(fraction_digits + 1 - digits.len()),
+            digits
+        );
+    }
+    let mantissa = if fraction_digits == 0 {
+        digits
+    } else {
+        format!("{}.{}", &digits[..1], &digits[1..])
+    };
+    let sign = if negative { "-" } else { "" };
+    let exp_sign = if exponent >= 0 { "+" } else { "-" };
+    format!("{sign}{mantissa}e{exp_sign}{}", exponent.abs())
+}
+
+fn decimal_exponent(x: f64, exact: &Ratio<BigInt>) -> i32 {
+    let mut exponent = x.log10().floor() as i32;
+    while exact < &pow10_ratio(exponent) {
+        exponent -= 1;
+    }
+    while exact >= &pow10_ratio(exponent + 1) {
+        exponent += 1;
+    }
+    exponent
+}
+
+fn pow10_ratio(exponent: i32) -> Ratio<BigInt> {
+    let scale = BigInt::from(10u32).pow(exponent.unsigned_abs());
+    if exponent >= 0 {
+        Ratio::from_integer(scale)
+    } else {
+        Ratio::new(BigInt::from(1u32), scale)
+    }
+}
+
+fn format_precision_zero(precision: usize) -> String {
+    if precision == 1 {
+        "0".to_string()
+    } else {
+        format!("0.{}", "0".repeat(precision - 1))
+    }
+}
+
+fn normalize_exponential_string(s: &str, trim_mantissa: bool) -> String {
+    let Some(pos) = s.find('e') else {
+        return s.to_string();
+    };
+    let mut mantissa = s[..pos].to_string();
+    if trim_mantissa {
+        mantissa = mantissa
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string();
+        if mantissa.is_empty() || mantissa == "-" {
+            mantissa.push('0');
+        }
+    }
+    let exp = &s[pos + 1..];
+    let (sign, digits) = if let Some(rest) = exp.strip_prefix('-') {
+        ("-", rest)
+    } else if let Some(rest) = exp.strip_prefix('+') {
+        ("+", rest)
+    } else {
+        ("+", exp)
+    };
+    let digits = digits.trim_start_matches('0');
+    let digits = if digits.is_empty() { "0" } else { digits };
+    format!("{mantissa}e{sign}{digits}")
 }
 
 pub(crate) fn num_proto_to_string(

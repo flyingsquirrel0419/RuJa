@@ -248,7 +248,7 @@ fn array_from_small_length_works() {
     assert_eq!(v, Value::String(std::sync::Arc::from("a-b")));
 }
 
-// --- toFixed / toPrecision range conformance ---
+// --- toFixed / toExponential / toPrecision range conformance ---
 
 #[test]
 fn to_fixed_out_of_range_throws() {
@@ -305,9 +305,35 @@ fn to_precision_out_of_range_throws() {
 fn to_precision_normal_works() {
     let v = run("(1.1).toPrecision(3)");
     assert_eq!(v, Value::String(std::sync::Arc::from("1.10")));
+    let v = run("(123.456).toPrecision(1.9)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1e+2")));
+    let v = run("(-7).toPrecision(1)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("-7")));
+    let v = run("(NaN).toPrecision(Infinity)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("NaN")));
+    let v = run("(Infinity).toPrecision(Infinity)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("Infinity")));
     // No argument -> toString-like.
     let v = run("(1.1).toPrecision()");
     assert_eq!(v, Value::String(std::sync::Arc::from("1.1")));
+}
+
+#[test]
+fn to_exponential_normal_works() {
+    let v = run("(25).toExponential(0)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("3e+1")));
+    let v = run("(0.0001).toExponential(0)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1e-4")));
+    let v = run("(-0).toExponential(2)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("0.00e+0")));
+    let v = run("(123.456).toExponential()");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.23456e+2")));
+    let v = run("(NaN).toExponential(Infinity)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("NaN")));
+    let v = run("(Infinity).toExponential(Infinity)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("Infinity")));
+    let res = common::run_err("(1).toExponential(101)");
+    assert!(res.contains("between 0 and 100"), "got: {}", res);
 }
 
 // --- charCodeAt / codePointAt range conformance ---
