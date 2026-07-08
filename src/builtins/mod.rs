@@ -398,6 +398,16 @@ fn regex_runtime_error(error: fancy_regex::Error) -> Arc<Error> {
 }
 
 fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) -> String {
+    if source == "[]" {
+        return r"[^\s\S]".to_string();
+    }
+    if source == "[^]" {
+        return if flags.contains('u') {
+            "(?s:.)".to_string()
+        } else {
+            r"[\x00-\u{ffff}\u{f0000}-\u{f07ff}]".to_string()
+        };
+    }
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
     let mut in_class = false;
@@ -508,6 +518,17 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
                 }
             } else if ch == '0' && !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
                 out.push_str("x00");
+            } else if in_class && ch == 'b' {
+                out.pop();
+                out.push_str(r"\x08");
+            } else if ch == 'c' && chars.peek().is_some_and(|next| next.is_ascii_alphabetic()) {
+                let control = chars.next().unwrap() as u8 % 32;
+                out.pop();
+                out.push_str("\\x");
+                out.push_str(&format!("{control:02x}"));
+            } else if ch == 'x' && !has_exact_hex_escape(&chars, 2) {
+                out.pop();
+                push_regex_literal_for_backend(&mut out, ch);
             } else if protect_non_unicode_case && !in_class && ch == 'u' {
                 let mut hex = String::new();
                 for _ in 0..4 {
@@ -1053,6 +1074,14 @@ fn regex_backend_escape_passthrough(ch: char, next: Option<&char>) -> bool {
             | 'W'
             | 'x'
     ) || (ch == 'c' && next.is_some_and(|next| next.is_ascii_alphabetic()))
+}
+
+fn has_exact_hex_escape<I>(chars: &std::iter::Peekable<I>, len: usize) -> bool
+where
+    I: Iterator<Item = char> + Clone,
+{
+    let mut lookahead = chars.clone();
+    (0..len).all(|_| lookahead.next().is_some_and(|ch| ch.is_ascii_hexdigit()))
 }
 
 fn push_regex_literal_for_backend(out: &mut String, ch: char) {
@@ -4392,7 +4421,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toLocaleLowerCase", str_to_lower, 0),
             ("localeCompare", str_locale_compare, 1),
             ("trim", str_trim, 0),
-            ("split", str_split, 1),
+            ("split", str_split, 2),
             ("replace", str_replace, 2),
             ("includes", str_includes, 1),
             ("startsWith", str_starts_with, 1),

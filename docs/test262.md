@@ -101,7 +101,7 @@ runs: `test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`,
 `6d0f28a`; latest improvement confirmation: `test262-full` 28913345658 on
 `4cfd15e`, 28913946764 on `2be895e`, 28914775928 on `cb3ea6f`,
 28915947538 on `3b32bdf`, 28917214580 on `f6659da`, and 28918240994 on
-`2c63328`.
+`2c63328`; latest baseline refresh: `test262-full` 28918450090 on `e27b922`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
@@ -488,6 +488,20 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/search
   built-ins/RegExp/prototype/Symbol.search` diagnostic now closes at **61
   pass / 0 fail / 5 skip**.
+- **String split `@@split` dispatch and RegExp separator semantics** —
+  `String.prototype.split` now has the spec `length` of 2, rejects nullish
+  receivers before coercion, observes custom `separator[Symbol.split]`
+  getters and methods, and propagates abrupt completions from limit coercion.
+  Ordinary separators now use `ToString` in order, while `undefined`
+  separators and zero limits follow the expected array result shape. RegExp
+  separators now include captured substrings, honor split limits, ignore
+  boundary zero-length matches, and normalize additional ES RegExp escapes for
+  the backend (`[]`, `[^]`, control escapes, class backspace, and incomplete
+  `\x`). The focused `built-ins/String/prototype/split` diagnostic now closes
+  at **117 pass / 0 fail / 3 skip**, and the combined
+  `built-ins/String/prototype/search built-ins/String/prototype/split
+  built-ins/RegExp/prototype/Symbol.search` run closes at **178 pass / 0 fail
+  / 8 skip**.
 - **String replace substitution tokens and `@@replace` dispatch** —
   `String.prototype.replace` string replacements now expand ECMAScript
   replacement tokens (`$$`, `$&`, ``$` ``, `$'`, `$n`, `$nn`) for both RegExp

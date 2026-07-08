@@ -1189,6 +1189,82 @@ fn split_limit() {
 }
 
 #[test]
+fn string_split_observes_symbol_split_and_coercion_order() {
+    assert_eq!(run("String.prototype.split.length"), Value::Number(2.0));
+    assert_eq!(
+        run(r#"var separator = {};
+               var seenThis, seen0, seen1;
+               separator[Symbol.split] = function(str, limit) {
+                 seenThis = this;
+                 seen0 = str;
+                 seen1 = limit;
+                 return "custom";
+               };
+               var out = "".split(separator, "limit");
+               [out, seenThis === separator, seen0, seen1].join("|");"#),
+        Value::String(Arc::from("custom|true||limit"))
+    );
+    assert!(run_err(
+        r#"var separator = {};
+           Object.defineProperty(separator, Symbol.split, {
+             get: function(){ throw new Error("split-get"); }
+           });
+           "".split(separator);"#
+    )
+    .contains("split-get"));
+    assert_eq!(
+        run(r#""undefined is not a function".split(undefined).join("|")"#),
+        Value::String(Arc::from("undefined is not a function"))
+    );
+    assert_eq!(
+        run(r#""undefined is not a function".split(undefined, 0).length"#),
+        Value::Number(0.0)
+    );
+    assert!(run_err(
+        r#"var limit = { valueOf: function(){ throw new Error("limit-value"); } };
+           "".split("", limit);"#
+    )
+    .contains("limit-value"));
+    assert!(run_err(
+        r#"var sep = { toString: function(){ throw new Error("sep-string"); } };
+           "abc".split(sep, 0);"#
+    )
+    .contains("sep-string"));
+    assert_eq!(
+        run(r#""hello".split(new RegExp()).join("|")"#),
+        Value::String(Arc::from("h|e|l|l|o"))
+    );
+    assert_eq!(
+        run(r#""x".split(/^/).join("|")"#),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run(r#""x".split(/.+/).join("|")"#),
+        Value::String(Arc::from("|"))
+    );
+    assert_eq!(
+        run(r#""x".split(/[]/).join("|")"#),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run(r#""x".split(/[^]/).join("|")"#),
+        Value::String(Arc::from("|"))
+    );
+    assert_eq!(
+        run(r#""x".split(/\cY/).join("|")"#),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run(r#""x".split(/[\b]/).join("|")"#),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run(r#""x".split(/\x/).join("|")"#),
+        Value::String(Arc::from("|"))
+    );
+}
+
+#[test]
 fn string_split_reverse() {
     assert_eq!(
         run(r#""hello world".split(" ").reverse().join(" ");"#),

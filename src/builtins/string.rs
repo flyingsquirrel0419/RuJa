@@ -35,6 +35,22 @@ fn to_integer_or_zero(vm: &mut Vm, value: &Value) -> error::Result<f64> {
     }
 }
 
+fn split_limit(vm: &mut Vm, value: Option<&Value>) -> error::Result<usize> {
+    match value {
+        None | Some(Value::Undefined) => Ok(u32::MAX as usize),
+        Some(value) => Ok(crate::vm::to_uint32(vm.to_number(value)?) as usize),
+    }
+}
+
+fn string_array_from_parts(vm: &mut Vm, parts: Vec<String>) -> error::Result<Value> {
+    let items: Vec<Value> = parts
+        .into_iter()
+        .map(|p| Value::String(Arc::from(p.as_str())))
+        .collect();
+    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
+    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+}
+
 fn string_search_position(
     vm: &mut Vm,
     args: &[Value],
@@ -369,21 +385,31 @@ pub(crate) fn str_trim(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> err
     )))
 }
 pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(vm, &this)?;
-    // ES split limit: NaN -> 0 (empty result); a negative or non-finite
-    // value is treated as unbounded (matching V8/Node, where -1 yields all
-    // parts). `n as usize` saturated negatives to 0, wrongly producing [].
-    let limit = match args.get(1) {
-        Some(Value::Undefined) | None => usize::MAX,
-        Some(v) => match vm.to_number(v) {
-            Ok(n) if n.is_nan() => 0,
-            Ok(n) if n < 0.0 || n.is_infinite() => usize::MAX,
-            Ok(n) => n.trunc() as usize,
-            Err(_) => usize::MAX,
-        },
-    };
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
+    }
+    let separator = args.first().cloned().unwrap_or(Value::Undefined);
+    let limit_value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !separator.is_nullish() {
+        let split_key = PropertyKey::Symbol(vm.well_known_symbols.split);
+        let splitter = vm.get_property_by_key(&separator, &split_key)?;
+        if !splitter.is_nullish() {
+            let is_callable = matches!(&splitter, Value::Object(idx) if {
+                vm.heap.with_obj(idx.0, |o| o.is_function())
+            });
+            if !is_callable {
+                return Err(Error::type_err("Symbol.split method is not callable"));
+            }
+            return vm.call_function(&splitter, &[receiver.clone(), limit_value], Some(separator));
+        }
+    }
+    let s = str_val(vm, &Some(receiver))?;
+    let limit = split_limit(vm, args.get(1))?;
     // If the separator is a RegExp, split on regex matches.
-    if let Some(Value::Object(idx)) = args.first() {
+    if let Value::Object(idx) = &separator {
         let is_regexp_obj = vm.heap.with_obj(
             idx.0,
             |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
@@ -396,25 +422,44 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
             let mut parts: Vec<String> = Vec::new();
             let mut last_end = 0;
-            for m in re.find_iter(&s)? {
+            if limit == 0 {
+                return string_array_from_parts(vm, parts);
+            }
+            for caps in re.captures_iter_ecma(&s, &source, &flags_str)? {
+                let m = caps.get(0).unwrap();
+                if m.start() == m.end() && (m.start() == 0 || m.end() == s.len()) {
+                    continue;
+                }
                 if parts.len() >= limit {
                     break;
                 }
                 parts.push(s[last_end..m.start()].to_string());
+                for i in 1..caps.len() {
+                    if parts.len() >= limit {
+                        break;
+                    }
+                    parts.push(
+                        caps.get(i)
+                            .map(|capture| capture.as_str().to_string())
+                            .unwrap_or_default(),
+                    );
+                }
                 last_end = m.end();
             }
             if parts.len() < limit {
                 parts.push(s[last_end..].to_string());
             }
-            let items: Vec<Value> = parts
-                .into_iter()
-                .map(|p| Value::String(Arc::from(p.as_str())))
-                .collect();
-            let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
-            return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
+            return string_array_from_parts(vm, parts);
         }
     }
-    let sep = args.first().map(crate::value::value_to_debug_string);
+    let sep = if separator.is_undefined() {
+        None
+    } else {
+        Some(vm.to_string(&separator)?.to_string())
+    };
+    if limit == 0 {
+        return string_array_from_parts(vm, Vec::new());
+    }
     let parts: Vec<String> = match sep {
         None => vec![s],
         Some(sep) if sep.is_empty() => {
@@ -427,12 +472,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         }
         Some(sep) => s.split(&sep).take(limit).map(|p| p.to_string()).collect(),
     };
-    let items: Vec<Value> = parts
-        .into_iter()
-        .map(|p| Value::String(Arc::from(p.as_str())))
-        .collect();
-    let arr = HeapObj::Array(ArrayData::new(items, Some(vm.array_proto.clone())));
-    Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)))
+    string_array_from_parts(vm, parts)
 }
 pub(crate) fn str_replace(
     vm: &mut Vm,
