@@ -31,6 +31,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   returns NFC/NFD/NFKC/NFKD output through Unicode normalization. The focused
   `built-ins/String/prototype/normalize` run now closes at **11 pass / 0 fail /
   3 skip**.
+- **RegExp `@@match` prototype builtin**:
+  `RegExp.prototype[Symbol.match]` is now installed with the expected builtin
+  shape and routes through `RegExpExec`, so direct `r[Symbol.match](value)`
+  calls observe public `flags`, custom `exec`, `lastIndex` writes, global
+  empty-match advancement, and abrupt completions. `String.prototype.match`
+  now falls back through an intrinsic RegExp clone, preserving RegExp source
+  and flags when an own `@@match` is `undefined`. The focused
+  `built-ins/RegExp/prototype/Symbol.match` run moves from **8 pass / 44 fail /
+  1 skip** to **51 pass / 1 fail / 1 skip**; the remaining failure is isolated
+  to code-unit matching inside UTF-16 surrogate pairs in the regex backend.
 - **`String.prototype.replaceAll` and RegExp `@@replace`**:
   `String.prototype.replaceAll` now follows the spec's observable ordering for
   `IsRegExp`, global-flag validation, `@@replace` delegation, receiver/search

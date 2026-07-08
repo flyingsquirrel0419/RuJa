@@ -1556,6 +1556,7 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
     let unicode_sets_getter =
         vm.new_native_function_in_env("get unicodeSets", regexp_unicode_sets_get, 0, env)?;
     let sticky_getter = vm.new_native_function_in_env("get sticky", regexp_sticky_get, 0, env)?;
+    let match_fn = vm.new_native_function_in_env("[Symbol.match]", regexp_symbol_match, 1, env)?;
     let search_fn =
         vm.new_native_function_in_env("[Symbol.search]", regexp_symbol_search, 1, env)?;
     let replace_fn =
@@ -1606,6 +1607,10 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
             props.insert(
                 PropertyKey::from("sticky"),
                 accessor_get_prop(Value::Object(sticky_getter)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.r#match),
+                data_prop(Value::Object(match_fn)),
             );
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.search),

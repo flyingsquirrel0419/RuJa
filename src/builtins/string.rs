@@ -927,13 +927,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         }
     }
     let s = str_val(vm, &Some(receiver))?;
-    let regexp = if is_regexp_object(vm, &search_value)
-        && !vm.has_property_key(&search_value, &match_key)?
-    {
-        search_value
-    } else {
-        regexp_create_intrinsic(vm, &search_value)?
-    };
+    let regexp = regexp_create_intrinsic(vm, &search_value)?;
     let matcher = vm.get_property_by_key(&regexp, &match_key)?;
     if !matcher.is_nullish() {
         let is_callable = matches!(&matcher, Value::Object(idx) if {
@@ -949,14 +943,6 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
         );
     }
     regexp_match_internal(vm, regexp, &s)
-}
-
-fn is_regexp_object(vm: &mut Vm, value: &Value) -> bool {
-    matches!(value, Value::Object(idx) if {
-        vm.heap.with_obj(idx.0, |o| {
-            matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
-        })
-    })
 }
 
 fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {

@@ -78,12 +78,21 @@ pub(crate) fn regexp_escape(
 }
 
 pub(crate) fn regexp_create_intrinsic(vm: &mut Vm, pattern: &Value) -> error::Result<Value> {
-    let pattern = if pattern.is_undefined() {
-        String::new()
+    let (pattern, flags) = if matches!(pattern, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| {
+            matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
+        })
+    }) {
+        (
+            read_regexp_source(vm, &Some(pattern.clone()))?,
+            read_regexp_flags(vm, &Some(pattern.clone()))?,
+        )
+    } else if pattern.is_undefined() {
+        (String::new(), String::new())
     } else {
-        vm.to_string(pattern)?.to_string()
+        (vm.to_string(pattern)?.to_string(), String::new())
     };
-    create_regexp_object(vm, pattern, String::new(), vm.regexp_proto.clone())
+    create_regexp_object(vm, pattern, flags, vm.regexp_proto.clone())
 }
 
 fn create_regexp_object(
@@ -192,6 +201,48 @@ pub(crate) fn regexp_symbol_search(
         return Ok(Value::Number(-1.0));
     }
     vm.get_property(&result, "index")
+}
+
+pub(crate) fn regexp_symbol_match(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(rx @ Value::Object(_)) = this else {
+        return Err(Error::type_err("not a RegExp".to_string()));
+    };
+    let s = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
+    let flags_value = vm.get_property(&rx, "flags")?;
+    let flags = vm.to_string(&flags_value)?.to_string();
+    let global = flags.contains('g');
+    if !global {
+        return regexp_exec_dispatch(vm, &rx, &s);
+    }
+
+    let full_unicode = flags.contains('u') || flags.contains('v');
+    set_regexp_last_index(vm, &rx, 0.0)?;
+    let mut matches = Vec::new();
+
+    loop {
+        let result = regexp_exec_dispatch(vm, &rx, &s)?;
+        if result.is_null() {
+            if matches.is_empty() {
+                return Ok(Value::Null);
+            }
+            return make_value_array(vm, matches);
+        }
+        let matched_value = vm.get_property(&result, "0")?;
+        let matched = vm.to_string(&matched_value)?.to_string();
+        if matched.is_empty() {
+            let last_index = vm.get_property(&rx, "lastIndex")?;
+            let this_index = regexp_to_length(vm, &last_index)? as usize;
+            let next_index = advance_string_index(&s, this_index, full_unicode);
+            set_regexp_last_index(vm, &rx, next_index as f64)?;
+        }
+        matches.push(Value::String(Arc::from(matched.as_str())));
+    }
 }
 
 fn regexp_exec_dispatch(vm: &mut Vm, rx: &Value, s: &str) -> error::Result<Value> {

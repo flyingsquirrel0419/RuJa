@@ -4021,8 +4021,29 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
     assert_eq!(
         run(r#"var r = /b/g;
                r[Symbol.match] = undefined;
-               "abcbbc".match(r);"#),
-        Value::Null
+               "abcbbc".match(r).join(",");"#),
+        Value::String(Arc::from("b,b,b"))
+    );
+    assert_eq!(
+        run(r#"var r = /b/g;
+               var m = r[Symbol.match]("abcbbc");
+               [m.join(","), r.lastIndex].join("|");"#),
+        Value::String(Arc::from("b,b,b|0"))
+    );
+    assert_eq!(
+        run(r#"var r = /b/;
+               var m = r[Symbol.match]("abc");
+               [m[0], m.index, m.input].join("|");"#),
+        Value::String(Arc::from("b|1|abc"))
+    );
+    assert!(
+        run_err(
+            r#"var r = /./g;
+               Object.defineProperty(r, "lastIndex", { writable: false });
+               r[Symbol.match]("x");"#
+        )
+        .contains("lastIndex"),
+        "RegExp @@match must surface lastIndex write failures"
     );
     assert_eq!(
         run(r#"RegExp = function(){};

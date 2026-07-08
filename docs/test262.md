@@ -167,6 +167,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/replaceAll` run now closes at **35 pass / 0 fail /
   10 skip**. The same slice fixed `super[Symbol.*]` calls and nested array
   binding temporaries exposed by the replaceAll subclass tests.
+- **RegExp `@@match` prototype builtin** —
+  `RegExp.prototype[Symbol.match]` is now installed and delegates through
+  `RegExpExec`, preserving observable `flags`, custom `exec`, `lastIndex`
+  updates, global empty-match advancement, and thrown completions. The
+  `String.prototype.match` fallback now creates an intrinsic RegExp clone so
+  RegExp source/flags are preserved when an own `@@match` property is
+  `undefined`. The focused
+  `built-ins/String/prototype/match built-ins/RegExp/prototype/Symbol.match`
+  run now reports **98 pass / 1 fail / 5 skip**, with the remaining failure
+  isolated to surrogate-pair code-unit matching in the regex backend.
 - **Object integrity for arrays, arguments, functions, and Proxy traps** —
   `Object.seal` and `Object.freeze` now use the Proxy-aware
   `[[PreventExtensions]]` path so false Proxy traps throw for the `Object.*`
