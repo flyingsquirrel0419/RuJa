@@ -1916,6 +1916,126 @@ fn data_view_float_methods_read_write_endian_and_validate_order() {
 }
 
 #[test]
+fn data_view_float16_methods_read_write_endian_and_validate_order() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(6);
+            var dv = new DataView(buffer);
+            dv.setUint8(0, 66);
+            dv.setUint8(1, 40);
+            dv.setUint8(2, 40);
+            dv.setUint8(3, 66);
+            var values = [];
+            values.push(dv.getFloat16(0));
+            values.push(dv.getFloat16(0, true));
+            values.push(dv.getFloat16(2));
+            values.push(dv.getFloat16(2, true));
+            values.push(dv.setFloat16(4, 42, true) === undefined);
+            values.push(dv.getFloat16(4));
+            values.push(dv.getFloat16(4, true));
+            values.push(DataView.prototype.getFloat16.length);
+            values.push(DataView.prototype.setFloat16.length);
+            values.push(DataView.prototype.getFloat16.name);
+            values.push(DataView.prototype.setFloat16.name);
+            values.join(",");
+            "#),
+        Value::String(Arc::from(
+            "3.078125,0.03326416015625,0.03326416015625,3.078125,true,2.158203125,42,1,2,getFloat16,setFloat16"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(2));
+            dv.setFloat16(0, -0);
+            1 / dv.getFloat16(0);
+            "#),
+        Value::Number(f64::NEG_INFINITY)
+    );
+    assert_eq!(
+        run(r#"
+            var dv = new DataView(new ArrayBuffer(10));
+            var values = [];
+            dv.setFloat16(0, 1.1);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 0.1);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 2.9802322387695312e-8);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 2.980232238769532e-8);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 8.940696716308594e-8);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 1.4901161193847656e-7);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 1.490116119384766e-7);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 2049);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 2051);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 65504);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 65520);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, 65519.99999999999);
+            values.push(dv.getFloat16(0));
+            dv.setFloat16(0, NaN);
+            values.push(dv.getFloat16(0) !== dv.getFloat16(0));
+            values.join(",");
+            "#),
+        Value::String(Arc::from(
+            "1.099609375,0.0999755859375,0,5.960464477539063e-8,1.1920928955078125e-7,1.1920928955078125e-7,1.7881393432617188e-7,2048,2052,65504,Infinity,65504,true"
+        ))
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(2));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setFloat16(-1, poisoned);
+            "#
+        )
+        .contains("RangeError"),
+        "invalid byteOffset should be rejected before value conversion"
+    );
+    assert!(
+        run_err(
+            r#"
+            var dv = new DataView(new ArrayBuffer(2));
+            var poisoned = { valueOf: function() { throw new Error("value"); } };
+            dv.setFloat16(2, poisoned);
+            "#
+        )
+        .contains("Error"),
+        "value conversion should run before range check for valid ToIndex values"
+    );
+    assert!(
+        run_err(
+            r#"
+            var buffer = new ArrayBuffer(2);
+            var dv = new DataView(buffer);
+            var value = { valueOf: function() { $262.detachArrayBuffer(buffer); return 1; } };
+            dv.setFloat16(0, value);
+            "#
+        )
+        .contains("TypeError"),
+        "detached buffers should be checked after Float16 value conversion"
+    );
+    assert_eq!(
+        run(r#"
+            var iab = (new ArrayBuffer(2)).transferToImmutable();
+            var dv = new DataView(iab);
+            var calls = [];
+            var byteOffset = { valueOf: function() { calls.push("byteOffset"); return 0; } };
+            var value = { valueOf: function() { calls.push("value"); return 1; } };
+            try { dv.setFloat16(byteOffset, value); } catch (e) { calls.push(e instanceof TypeError); }
+            calls.join(",");
+            "#),
+        Value::String(Arc::from("true"))
+    );
+}
+
+#[test]
 fn data_view_bigint_methods_read_write_endian_and_validate_order() {
     assert_eq!(
         run(r#"

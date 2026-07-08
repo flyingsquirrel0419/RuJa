@@ -172,6 +172,18 @@ ArrayBuffer backing stores with `TypeError` before reading `byteOffset` or
 `built-ins/DataView` diagnostic improves to **320 pass / 1 fail / 240 skip**;
 the remaining failure is the unsupported `setFloat16` immutable-buffer case.
 
+Focused DataView Float16 local check:
+`built-ins/DataView/prototype/getFloat16` and
+`built-ins/DataView/prototype/setFloat16` run at **32 pass / 0 fail / 13 skip**
+with DataView/ArrayBuffer/Float16Array feature skips temporarily lifted. The
+new accessors implement binary16 endian reads/writes, ties-to-even rounding,
+signed zero, infinities, NaN, immutable-buffer validation before argument
+coercion, and the same detached/range ordering as the other DataView numeric
+methods. With DataView-related skips temporarily lifted, the broader
+`built-ins/DataView` diagnostic now closes at **321 pass / 0 fail / 240 skip**;
+also lifting `Float16Array` for that DataView diagnostic reports **352 pass / 0
+fail / 209 skip**.
+
 | Metric | Latest confirmed count |
 |--------|------------------------|
 | Total matrix files | 47,717 |

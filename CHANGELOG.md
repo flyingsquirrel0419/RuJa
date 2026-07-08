@@ -70,6 +70,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   DataView-related skips temporarily lifted, `built-ins/DataView` improves to
   **320 pass / 1 fail / 240 skip**, leaving only the unsupported
   `setFloat16` immutable-buffer case in that diagnostic.
+- **DataView Float16 accessors**: `DataView.prototype.getFloat16` and
+  `setFloat16` now read and write IEEE-754 binary16 values with spec-shaped
+  endian handling, ties-to-even rounding, signed zero, infinities, NaN, and the
+  same validation ordering as the other DataView numeric methods. With
+  DataView-related skips temporarily lifted, `built-ins/DataView` now closes at
+  **321 pass / 0 fail / 240 skip**; additionally lifting `Float16Array` for the
+  DataView diagnostic reports **352 pass / 0 fail / 209 skip**.
 - **BigInt TypedArray constructor surface**: BigInt typed array constructors
   and prototypes now expose non-writable, non-enumerable, non-configurable
   `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors

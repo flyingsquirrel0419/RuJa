@@ -958,6 +958,150 @@ fn data_view_write_f32(
     Ok(Value::Undefined)
 }
 
+fn f16_bits_to_f64(bits: u16) -> f64 {
+    let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
+    let exponent = (bits >> 10) & 0x1f;
+    let fraction = bits & 0x03ff;
+    match exponent {
+        0 => {
+            if fraction == 0 {
+                let sign_bit = ((bits as u64) & 0x8000) << 48;
+                f64::from_bits(sign_bit)
+            } else {
+                sign * (fraction as f64) * 2f64.powi(-24)
+            }
+        }
+        0x1f => {
+            if fraction == 0 {
+                sign * f64::INFINITY
+            } else {
+                f64::NAN
+            }
+        }
+        _ => sign * (1.0 + (fraction as f64) / 1024.0) * 2f64.powi(exponent as i32 - 15),
+    }
+}
+
+fn round_shift_right_ties_even(value: u64, shift: i32) -> u64 {
+    if shift <= 0 {
+        return value << (-shift as u32);
+    }
+    if shift >= 64 {
+        return 0;
+    }
+    let shift = shift as u32;
+    let quotient = value >> shift;
+    let halfway = 1u64 << (shift - 1);
+    let remainder = value & ((1u64 << shift) - 1);
+    if remainder > halfway || (remainder == halfway && quotient & 1 == 1) {
+        quotient + 1
+    } else {
+        quotient
+    }
+}
+
+fn f64_to_f16_bits(value: f64) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 48) & 0x8000) as u16;
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & 0x000f_ffff_ffff_ffff;
+
+    if exponent_bits == 0x7ff {
+        return if fraction == 0 {
+            sign | 0x7c00
+        } else {
+            sign | 0x7e00
+        };
+    }
+    if exponent_bits == 0 {
+        return sign;
+    }
+
+    let exponent = exponent_bits - 1023;
+    let significand = (1u64 << 52) | fraction;
+
+    if exponent < -14 {
+        let rounded = round_shift_right_ties_even(significand, 28 - exponent);
+        return sign | (rounded as u16);
+    }
+
+    if exponent > 15 {
+        return sign | 0x7c00;
+    }
+
+    let mut half_exponent = exponent;
+    let mut rounded = round_shift_right_ties_even(significand, 42);
+    if rounded == 0x800 {
+        half_exponent += 1;
+        rounded = 0x400;
+    }
+    if half_exponent > 15 {
+        return sign | 0x7c00;
+    }
+
+    sign | (((half_exponent + 15) as u16) << 10) | ((rounded as u16) & 0x03ff)
+}
+
+fn data_view_read_f16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView getter on detached buffer"));
+    }
+    if request_index
+        .checked_add(2)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let bytes = array_buffer_bytes_at(vm, &buffer, byte_index, 2)?;
+    let raw = [bytes[0], bytes[1]];
+    let bits = if little_endian {
+        u16::from_le_bytes(raw)
+    } else {
+        u16::from_be_bytes(raw)
+    };
+    Ok(Value::Number(f16_bits_to_f64(bits)))
+}
+
+fn data_view_write_f16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<Value> {
+    let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
+    let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    if is_detached_array_buffer(vm, &buffer) {
+        return Err(Error::type_err("DataView setter on detached buffer"));
+    }
+    if request_index
+        .checked_add(2)
+        .is_none_or(|end| end > view_length)
+    {
+        return Err(Error::range("Invalid DataView byte offset"));
+    }
+    let byte_index = view_offset + request_index;
+    let value = f64_to_f16_bits(number_value);
+    let bytes = if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    };
+    array_buffer_set_bytes_at(vm, &buffer, byte_index, &bytes)?;
+    Ok(Value::Undefined)
+}
+
 fn data_view_read_f64(
     vm: &mut Vm,
     args: &[Value],
@@ -1225,6 +1369,22 @@ pub(crate) fn data_view_set_int32(
     this: Option<Value>,
 ) -> error::Result<Value> {
     data_view_write_u32(vm, args, this, "setInt32")
+}
+
+pub(crate) fn data_view_get_float16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_read_f16(vm, args, this, "getFloat16")
+}
+
+pub(crate) fn data_view_set_float16(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    data_view_write_f16(vm, args, this, "setFloat16")
 }
 
 pub(crate) fn data_view_get_float32(
