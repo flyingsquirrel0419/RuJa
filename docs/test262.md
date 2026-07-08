@@ -157,6 +157,14 @@ rejected before value conversion. With TypedArray-related skips temporarily
 lifted, the broader `built-ins/TypedArrayConstructors` diagnostic now reports
 **473 pass / 54 fail / 211 skip**.
 
+Focused DataView constructor length local check:
+`built-ins/DataView/length.js` passes after `DataView.length` was corrected to
+the spec value `1` with the standard non-writable, non-enumerable,
+configurable descriptor. With DataView-related skips temporarily lifted, the
+broader `built-ins/DataView` diagnostic now reports **310 pass / 11 fail /
+240 skip**; the remaining failures are concentrated in immutable-buffer
+DataView setters and `setFloat16`.
+
 | Metric | Latest confirmed count |
 |--------|------------------------|
 | Total matrix files | 47,717 |

@@ -1027,6 +1027,17 @@ fn typed_array_constructor_observes_array_iterator_prototype_next_override() {
 }
 
 #[test]
+fn data_view_constructor_length_descriptor() {
+    assert_eq!(
+        run(r#"
+            var desc = Object.getOwnPropertyDescriptor(DataView, "length");
+            [desc.value, desc.writable, desc.enumerable, desc.configurable].join(",");
+        "#),
+        Value::String(Arc::from("1,false,false,true"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"

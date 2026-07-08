@@ -58,6 +58,11 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   only after the observable `byteOffset` coercion. The focused
   `built-ins/DataView` run improves from **266 pass / 2 fail / 293 skip** to
   **268 pass / 0 fail / 293 skip**.
+- **DataView constructor length**: `DataView.length` now has the spec value
+  `1` with the standard non-writable, non-enumerable, configurable descriptor.
+  With DataView-related skips temporarily lifted, `built-ins/DataView/length.js`
+  now passes, and the broader `built-ins/DataView` diagnostic reports
+  **310 pass / 11 fail / 240 skip**.
 - **BigInt TypedArray constructor surface**: BigInt typed array constructors
   and prototypes now expose non-writable, non-enumerable, non-configurable
   `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors

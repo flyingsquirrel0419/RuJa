@@ -4681,7 +4681,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let (data_view_ctor, data_view_proto) = make_builtin_constructor_with(
         vm,
         "DataView",
-        3,
+        1,
         data_view_constructor,
         &[
             ("getFloat32", data_view_get_float32, 1),
