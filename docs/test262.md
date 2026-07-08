@@ -219,6 +219,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `%ArrayBuffer.prototype%` fallback for `Reflect.construct` new targets with
   non-object prototypes. The focused `built-ins/ArrayBuffer` run improves from
   **41 pass / 50 fail / 130 skip** to **52 pass / 39 fail / 130 skip**.
+- **ArrayBuffer slice species construction** —
+  `ArrayBuffer.prototype.slice` now uses `SpeciesConstructor`, treats nullish
+  `@@species` as the default `ArrayBuffer` constructor, calls custom species
+  constructors with the slice length, rejects invalid species results, and
+  preserves larger result buffer lengths while copying sliced bytes. The
+  focused `built-ins/ArrayBuffer` run improves from **52 pass / 39 fail / 130
+  skip** to **57 pass / 34 fail / 130 skip**.
 - **`%ThrowTypeError%` intrinsic** —
   Restricted function and arguments accessors now share an anonymous, frozen,
   non-extensible `%ThrowTypeError%` function within each Realm. Strict

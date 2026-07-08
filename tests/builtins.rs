@@ -1044,6 +1044,76 @@ fn array_buffer_static_surface_matches_intrinsics() {
 }
 
 #[test]
+fn array_buffer_slice_uses_species_constructor_and_validates_result() {
+    assert_eq!(
+        run(r#"
+            var source = new ArrayBuffer(8);
+            var sourceBytes = new Uint8Array(source);
+            sourceBytes[0] = 7;
+            sourceBytes[1] = 9;
+            var calls = [];
+            var resultBuffer;
+            var speciesConstructor = {};
+            speciesConstructor[Symbol.species] = function(length) {
+              calls.push("species:" + length);
+              resultBuffer = new ArrayBuffer(10);
+              new Uint8Array(resultBuffer)[0] = 99;
+              return resultBuffer;
+            };
+            source.constructor = speciesConstructor;
+            var result = source.slice(0, 2);
+            [
+              result === resultBuffer,
+              result.byteLength,
+              new Uint8Array(result)[0],
+              new Uint8Array(result)[1],
+              new Uint8Array(result)[2],
+              calls.join("|")
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,10,7,9,0,species:2"))
+    );
+    assert_eq!(
+        run(r#"
+            function throwsTypeError(fn) {
+              try { fn(); } catch (e) { return e instanceof TypeError; }
+              return false;
+            }
+            var ab = new ArrayBuffer(8);
+            var speciesConstructor = {};
+            [
+              (function() {
+                ab.constructor = undefined;
+                return Object.getPrototypeOf(ab.slice()) === ArrayBuffer.prototype;
+              })(),
+              (function() {
+                ab.constructor = speciesConstructor;
+                speciesConstructor[Symbol.species] = null;
+                return Object.getPrototypeOf(ab.slice()) === ArrayBuffer.prototype;
+              })(),
+              throwsTypeError(function() { ab.constructor = null; ab.slice(); }),
+              throwsTypeError(function() {
+                ab.constructor = speciesConstructor;
+                speciesConstructor[Symbol.species] = function() { return {}; };
+                ab.slice();
+              }),
+              throwsTypeError(function() {
+                ab.constructor = speciesConstructor;
+                speciesConstructor[Symbol.species] = function() { return new ArrayBuffer(4); };
+                ab.slice();
+              }),
+              throwsTypeError(function() {
+                ab.constructor = speciesConstructor;
+                speciesConstructor[Symbol.species] = function() { return ab; };
+                ab.slice();
+              })
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,true,true,true,true,true"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_prototype_accessors_validate_receivers() {
     assert_eq!(
         run(r#"

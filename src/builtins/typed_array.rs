@@ -78,6 +78,37 @@ pub(crate) fn array_buffer_species_get(
     Ok(this.unwrap_or(Value::Undefined))
 }
 
+fn current_realm_array_buffer_constructor(vm: &mut Vm) -> error::Result<Value> {
+    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
+    crate::environment::get(&vm.heap, realm_env, "ArrayBuffer")
+        .or_else(|| crate::environment::get(&vm.heap, vm.global, "ArrayBuffer"))
+        .ok_or_else(|| Error::type_err("ArrayBuffer constructor is not available"))
+}
+
+fn array_buffer_species_constructor(
+    vm: &mut Vm,
+    buffer: &Value,
+    default_constructor: Value,
+) -> error::Result<Value> {
+    let constructor = vm.get_property(buffer, "constructor")?;
+    if constructor.is_undefined() {
+        return Ok(default_constructor);
+    }
+    if !matches!(constructor, Value::Object(_)) {
+        return Err(Error::type_err("ArrayBuffer constructor is not an object"));
+    }
+
+    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species = vm.get_property_by_key(&constructor, &species_key)?;
+    if species.is_undefined() || matches!(species, Value::Null) {
+        return Ok(default_constructor);
+    }
+    if !vm.is_constructor_value(&species) {
+        return Err(Error::type_err("ArrayBuffer species is not a constructor"));
+    }
+    Ok(species)
+}
+
 pub(crate) fn array_buffer_slice(
     vm: &mut Vm,
     args: &[Value],
@@ -122,20 +153,38 @@ pub(crate) fn array_buffer_slice(
     let to = to.max(from);
     let count = to - from;
 
-    let ctor = vm.get_property(&this, "constructor")?;
-    let ctor = if ctor.is_undefined() {
-        crate::environment::get(&vm.heap, vm.global, "ArrayBuffer").unwrap_or(Value::Undefined)
-    } else {
-        ctor
-    };
+    let default_ctor = current_realm_array_buffer_constructor(vm)?;
+    let ctor = array_buffer_species_constructor(vm, &this, default_ctor)?;
     let result = vm.construct(&ctor, &[Value::Number(count as f64)])?;
-    if let Value::Object(idx) = &result {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::ArrayBuffer(buffer) = o {
-                *buffer.bytes.lock() = bytes[from..to].to_vec();
-            }
-        });
+    if result == this {
+        return Err(Error::type_err(
+            "ArrayBuffer species returned the source buffer",
+        ));
     }
+
+    let (result_len, result_detached) = array_buffer_len_and_detached(vm, &result)
+        .ok_or_else(|| Error::type_err("ArrayBuffer species did not return an ArrayBuffer"))?;
+    if result_detached {
+        return Err(Error::type_err(
+            "ArrayBuffer species returned a detached buffer",
+        ));
+    }
+    if result_len < count {
+        return Err(Error::type_err(
+            "ArrayBuffer species returned a buffer that is too small",
+        ));
+    }
+
+    let Value::Object(idx) = &result else {
+        return Err(Error::type_err(
+            "ArrayBuffer species did not return an object",
+        ));
+    };
+    vm.heap.with_obj(idx.0, |o| {
+        if let HeapObj::ArrayBuffer(buffer) = o {
+            buffer.bytes.lock()[..count].copy_from_slice(&bytes[from..to]);
+        }
+    });
     Ok(result)
 }
 
