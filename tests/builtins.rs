@@ -4617,6 +4617,62 @@ fn array_of_and_isarray() {
     assert_eq!(run("Array.isArray({});"), Value::Bool(false));
 }
 
+#[test]
+fn array_of_uses_constructor_and_create_data_property() {
+    assert_eq!(
+        run(r#"
+            var len, hits = 0;
+            function C(length) { len = length; hits++; }
+            var result = Array.of.call(C, "a", "b");
+            [len, hits, result.length, result[0], result[1], result instanceof C].join("|");
+        "#),
+        Value::String(Arc::from("2|1|2|a|b|true"))
+    );
+    assert_eq!(
+        run(r#"
+            function C() {}
+            Object.defineProperty(C.prototype, "0", {
+                set: function() { throw new Error("setter"); }
+            });
+            var result = Array.of.call(C, "own");
+            [result[0], result.hasOwnProperty("0")].join("|");
+        "#),
+        Value::String(Arc::from("own|true"))
+    );
+    assert_eq!(
+        run(r#"
+            var hits = 0, seen;
+            function C() {
+                Object.defineProperty(this, "length", {
+                    set: function(value) { hits++; seen = value; }
+                });
+            }
+            var result = Array.of.call(C, "x", "y", "z");
+            [hits, seen, result[2]].join("|");
+        "#),
+        Value::String(Arc::from("1|3|z"))
+    );
+    assert!(run_err(
+        r#"function C() { Object.preventExtensions(this); }
+           Array.of.call(C, "x");"#
+    )
+    .contains("not extensible"));
+}
+
+#[test]
+fn array_of_cross_realm_constructor_fallbacks_to_constructor_realm_object_proto() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var C = new other.Function();
+            C.prototype = null;
+            var result = Array.of.call(C, 1, 2, 3);
+            Object.getPrototypeOf(result) === other.Object.prototype;
+        "#),
+        Value::Bool(true)
+    );
+}
+
 // --- async/await ---
 
 #[test]

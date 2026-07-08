@@ -429,6 +429,7 @@ fn dynamic_function_constructor(
         has_name_binding: false,
         is_derived: false,
     });
+    let function_realm = vm.native_callee_closure().unwrap_or(vm.global);
     vm.functions.push(fdef.clone());
     let func_idx = vm.functions.len() - 1;
     // Create the function object with a fresh prototype.
@@ -487,7 +488,7 @@ fn dynamic_function_constructor(
     let fd = FunctionData {
         name: Some(Arc::from("anonymous")),
         kind: FunctionKind::Interpreted { func: fdef },
-        closure: vm.global,
+        closure: function_realm,
         lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(proto_val.clone())),

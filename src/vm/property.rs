@@ -445,6 +445,29 @@ impl Vm {
                 }
             }
             self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    if let Some(index) = key.as_str().and_then(crate::value::parse_array_index) {
+                        if !desc.is_accessor && index < crate::value::MAX_DENSE_ARRAY_LEN {
+                            let mut items = a.items.lock();
+                            let mut present = a.present.lock();
+                            while items.len() <= index {
+                                items.push(Value::Undefined);
+                                present.push(false);
+                            }
+                            items[index] = desc.value.clone();
+                            if present.len() <= index {
+                                present.resize(index + 1, false);
+                            }
+                            present[index] = true;
+                            *a.sparse_max.lock() = None;
+                        } else if index >= crate::value::MAX_DENSE_ARRAY_LEN {
+                            let mut sparse_max = a.sparse_max.lock();
+                            if sparse_max.is_none_or(|current| index >= current) {
+                                *sparse_max = Some(index + 1);
+                            }
+                        }
+                    }
+                }
                 o.props().lock().insert(key, desc);
             });
             Ok(())

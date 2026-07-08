@@ -1679,6 +1679,26 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(type_error) = crate::environment::get(&vm.heap, vm.global, "TypeError") {
         define_realm_global(vm, realm_env, &global, "TypeError", type_error);
     }
+    let function_ctor_idx =
+        vm.new_native_function_in_env("Function", function_constructor, 1, realm_env)?;
+    vm.heap.with_obj(function_ctor_idx.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            if matches!(vm.function_proto, Value::Object(_)) {
+                f.prototype.lock().replace(vm.function_proto.clone());
+            }
+        }
+        obj.props().lock().insert(
+            PropertyKey::from("prototype"),
+            const_prop(vm.function_proto.clone()),
+        );
+    });
+    define_realm_global(
+        vm,
+        realm_env,
+        &global,
+        "Function",
+        Value::Object(function_ctor_idx),
+    );
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",

@@ -202,6 +202,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/String/prototype/isWellFormed
   built-ins/String/prototype/toWellFormed` run now closes at **14 pass / 0
   fail / 2 skip**.
+- **`Array.of` constructor and property semantics**: `Array.of` now uses a
+  constructable `this` value with the argument count, creates element data
+  properties without invoking prototype setters, routes final `length` through
+  strict `Set`, and propagates constructor/property abrupt completions.
+  Test262 realms now expose a constructable `Function` constructor so
+  cross-realm constructor fallback cases can run. The focused
+  `built-ins/Array/of` run now closes at **14 pass / 0 fail / 2 skip**.
 - **Reflect.construct `newTarget` semantics**: `Reflect.construct` now
   validates constructor-ness in spec order, builds its argument list through
   ordinary array-like property access, forwards the optional `newTarget` into

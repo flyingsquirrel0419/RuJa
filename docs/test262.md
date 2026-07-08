@@ -347,6 +347,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   U+FFFD. The focused `built-ins/String/prototype/isWellFormed
   built-ins/String/prototype/toWellFormed` run now closes at **14 pass / 0
   fail / 2 skip**.
+- **`Array.of` constructor and property semantics** —
+  `Array.of` now follows the constructable-`this` path, passes the argument
+  count into custom constructors, creates element data properties without
+  invoking inherited setters, observes strict `length` setters, and propagates
+  constructor/property abrupt completions. Test262-created realms now expose a
+  constructable `Function` constructor so cross-realm constructor fallback
+  diagnostics execute. The focused `built-ins/Array/of` run now closes at
+  **14 pass / 0 fail / 2 skip**.
 - **Reflect.construct `newTarget` semantics** —
   `Reflect.construct` now validates constructor-ness in spec order, creates
   its argument list through ordinary array-like `length` and indexed property

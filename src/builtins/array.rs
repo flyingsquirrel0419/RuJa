@@ -114,8 +114,24 @@ pub(crate) fn finish_array_from(
     }
     make_value_array(vm, items)
 }
-pub(crate) fn array_of(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    make_value_array(vm, args.to_vec())
+pub(crate) fn array_of(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let len = args.len();
+    let constructor = this.unwrap_or(Value::Undefined);
+    let result = if vm.is_constructor_value(&constructor) {
+        vm.construct(&constructor, &[Value::Number(len as f64)])?
+    } else {
+        make_value_array(vm, Vec::new())?
+    };
+
+    for (i, item) in args.iter().enumerate() {
+        vm.define_own_property_or_throw(
+            &result,
+            PropertyKey::from(i.to_string()),
+            PropertyDescriptor::data(item.clone()),
+        )?;
+    }
+    vm.set_property_strict(&result, "length", Value::Number(len as f64))?;
+    Ok(result)
 }
 
 pub(crate) fn array_is_array(
