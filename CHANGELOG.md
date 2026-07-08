@@ -41,6 +41,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/RegExp/prototype/Symbol.match` run moves from **8 pass / 44 fail /
   1 skip** to **51 pass / 1 fail / 1 skip**; the remaining failure is isolated
   to code-unit matching inside UTF-16 surrogate pairs in the regex backend.
+- **RegExp boolean flag accessors**: `global`, `ignoreCase`, `multiline`,
+  `dotAll`, `sticky`, `unicode`, `unicodeSets`, and `hasIndices` now enforce
+  RegExp internal-slot receiver validation. Real RegExp objects still expose
+  their stored flag bits, the current realm `%RegExp.prototype%` returns
+  `undefined`, and ordinary or cross-realm prototype receivers throw
+  `TypeError`. The focused
+  `built-ins/RegExp/prototype/{flags,global,ignoreCase,multiline,dotAll,sticky,unicode,unicodeSets,hasIndices}`
+  run now closes at **62 pass / 0 fail / 54 skip**.
 - **`String.prototype.replaceAll` and RegExp `@@replace`**:
   `String.prototype.replaceAll` now follows the spec's observable ordering for
   `IsRegExp`, global-flag validation, `@@replace` delegation, receiver/search

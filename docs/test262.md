@@ -177,6 +177,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/match built-ins/RegExp/prototype/Symbol.match`
   run now reports **98 pass / 1 fail / 5 skip**, with the remaining failure
   isolated to surrogate-pair code-unit matching in the regex backend.
+- **RegExp boolean flag accessors** —
+  `global`, `ignoreCase`, `multiline`, `dotAll`, `sticky`, `unicode`,
+  `unicodeSets`, and `hasIndices` now use RegExp internal-slot receiver
+  validation: RegExp instances return stored flag bits, the current realm
+  `%RegExp.prototype%` returns `undefined`, and ordinary/cross-realm prototype
+  receivers throw. The focused
+  `built-ins/RegExp/prototype/{flags,global,ignoreCase,multiline,dotAll,sticky,unicode,unicodeSets,hasIndices}`
+  run now closes at **62 pass / 0 fail / 54 skip**.
 - **Object integrity for arrays, arguments, functions, and Proxy traps** —
   `Object.seal` and `Object.freeze` now use the Proxy-aware
   `[[PreventExtensions]]` path so false Proxy traps throw for the `Object.*`

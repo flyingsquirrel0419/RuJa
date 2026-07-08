@@ -511,8 +511,14 @@ fn regexp_bool_field_get(vm: &mut Vm, this: Option<Value>, field: &str) -> error
             let Some(slot_name) = regexp_bool_slot_name(field) else {
                 return Ok(Value::Bool(false));
             };
-            Ok(Value::Bool(
-                read_regexp_private_bool(vm, idx, slot_name).unwrap_or(false),
+            if let Some(value) = read_regexp_private_bool(vm, idx, slot_name) {
+                return Ok(Value::Bool(value));
+            }
+            if is_current_realm_regexp_prototype(vm, idx) {
+                return Ok(Value::Undefined);
+            }
+            Err(Error::type_err(
+                "RegExp getter called on incompatible receiver",
             ))
         }
         _ => Err(Error::type_err(
