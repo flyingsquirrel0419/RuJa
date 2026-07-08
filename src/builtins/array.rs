@@ -658,6 +658,31 @@ fn length_of_array_like(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     to_length(vm, &len)
 }
 
+fn array_find_object_and_callback(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<(Value, usize, Value, Value)> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let object = vm.to_object(&receiver)?;
+    let len = length_of_array_like(vm, &object)?;
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err("Array predicate is not callable"));
+    }
+    let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+    Ok((object, len, callback, this_arg))
+}
+
+fn array_find_value_at(vm: &mut Vm, object: &Value, index: usize) -> error::Result<Value> {
+    vm.get_property(object, &index.to_string())
+}
+
 fn array_search_start(
     vm: &mut Vm,
     args: &[Value],
@@ -1334,28 +1359,16 @@ pub(crate) fn array_constructor(
 }
 
 pub(crate) fn array_find(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, item) in items.iter().enumerate() {
-            let found = vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
-            if found.is_truthy() {
-                return Ok(item.clone());
-            }
+    let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
+    for i in 0..len {
+        let value = array_find_value_at(vm, &object, i)?;
+        let found = vm.call_function(
+            &callback,
+            &[value.clone(), Value::Number(i as f64), object.clone()],
+            Some(this_arg.clone()),
+        )?;
+        if found.is_truthy() {
+            return Ok(value);
         }
     }
     Ok(Value::Undefined)
@@ -1365,28 +1378,16 @@ pub(crate) fn array_find_index(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, item) in items.iter().enumerate() {
-            let found = vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
-            if found.is_truthy() {
-                return Ok(Value::Number(i as f64));
-            }
+    let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
+    for i in 0..len {
+        let value = array_find_value_at(vm, &object, i)?;
+        let found = vm.call_function(
+            &callback,
+            &[value, Value::Number(i as f64), object.clone()],
+            Some(this_arg.clone()),
+        )?;
+        if found.is_truthy() {
+            return Ok(Value::Number(i as f64));
         }
     }
     Ok(Value::Number(-1.0))
@@ -1396,31 +1397,43 @@ pub(crate) fn array_find_last(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, item) in items.iter().enumerate().rev() {
-            let found = vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
-            if found.is_truthy() {
-                return Ok(item.clone());
-            }
+    let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
+    let mut i = len;
+    while i > 0 {
+        i -= 1;
+        let value = array_find_value_at(vm, &object, i)?;
+        let found = vm.call_function(
+            &callback,
+            &[value.clone(), Value::Number(i as f64), object.clone()],
+            Some(this_arg.clone()),
+        )?;
+        if found.is_truthy() {
+            return Ok(value);
         }
     }
     Ok(Value::Undefined)
+}
+
+pub(crate) fn array_find_last_index(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
+    let mut i = len;
+    while i > 0 {
+        i -= 1;
+        let value = array_find_value_at(vm, &object, i)?;
+        let found = vm.call_function(
+            &callback,
+            &[value, Value::Number(i as f64), object.clone()],
+            Some(this_arg.clone()),
+        )?;
+        if found.is_truthy() {
+            return Ok(Value::Number(i as f64));
+        }
+    }
+    Ok(Value::Number(-1.0))
 }
 pub(crate) fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);

@@ -33,6 +33,60 @@ fn array_findindex() {
 }
 
 #[test]
+fn array_find_methods_use_array_like_property_access() {
+    assert!(run_err("Array.prototype.find.call(null, function() {})")
+        .contains("Cannot convert undefined or null to object"));
+    assert!(run_err("[].find({})").contains("Array predicate is not callable"));
+    assert!(run_err(
+        r#"var o = {};
+           Object.defineProperty(o, "length", {
+             get: function(){ throw new Error("length-get"); }
+           });
+           Array.prototype.find.call(o);"#
+    )
+    .contains("length-get"));
+    assert!(run_err(
+        r#"var o = { length: 1 };
+           Object.defineProperty(o, "0", {
+             get: function(){ throw new Error("index-get"); }
+           });
+           Array.prototype.find.call(o, function(){ return false; });"#
+    )
+    .contains("index-get"));
+    assert_eq!(
+        run(r#"var arr = ["Shoes", "Car", "Bike"];
+               var seen = [];
+               arr.find(function(value) {
+                 if (seen.length === 0) arr.splice(1, 1);
+                 seen.push(String(value));
+                 return false;
+               });
+               seen.join("|");"#),
+        Value::String(Arc::from("Shoes|Bike|undefined"))
+    );
+    assert_eq!(
+        run(r#"var arr = ["Shoes", "Car", "Bike"];
+               var seen = [];
+               arr.findLastIndex(function(value) {
+                 if (seen.length === 0) arr.splice(1, 1);
+                 seen.push(String(value));
+                 return false;
+               });
+               seen.join("|");"#),
+        Value::String(Arc::from("Bike|Bike|Shoes"))
+    );
+    assert_eq!(
+        run(r#"var receiver;
+               var result = Array.prototype.find.call({0: "x", length: 1}, function(value, index, object) {
+                 receiver = this;
+                 return value === "x" && index === 0 && object.length === 1;
+               }, 7);
+               [result, receiver.valueOf()].join("|");"#),
+        Value::String(Arc::from("x|7"))
+    );
+}
+
+#[test]
 fn array_some() {
     assert_eq!(run("[1,2,3].some(x=>x>2);"), Value::Bool(true));
 }

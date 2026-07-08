@@ -928,34 +928,6 @@ fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<V
         }
     }
 }
-pub(crate) fn array_find_last_index(
-    vm: &mut Vm,
-    args: &[Value],
-    this: Option<Value>,
-) -> error::Result<Value> {
-    let fn_val = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, v) in items.iter().enumerate().rev() {
-            let result = vm.call_function(
-                &fn_val,
-                &[v.clone(), Value::Number(i as f64), Value::Object(idx)],
-                None,
-            )?;
-            if result.is_truthy() {
-                return Ok(Value::Number(i as f64));
-            }
-        }
-    }
-    Ok(Value::Number(-1.0))
-}
-
 pub(crate) fn str_pad_start(
     vm: &mut Vm,
     args: &[Value],

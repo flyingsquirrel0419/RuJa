@@ -650,6 +650,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   built-ins/Array/prototype/indexOf
   built-ins/Array/prototype/lastIndexOf` cluster runs at **409 pass / 0 fail
   / 20 skip**.
+- **Array find array-like access** —
+  `Array.prototype.find`, `findIndex`, `findLast`, and `findLastIndex` now
+  use `ToObject(this)`, `LengthOfArrayLike`, predicate callability checks, and
+  per-index `Get` in spec order instead of cloning dense Array storage before
+  iteration. Array-like receivers, nullish receiver errors, throwing
+  `length`/index accessors, callback `thisArg`, holes as `undefined`, and
+  mutations during traversal are now observable. The focused
+  `built-ins/Array/prototype/{find,findIndex,findLast,findLastIndex}`
+  diagnostic improves from **38 pass / 24 fail / 32 skip** to **62 pass / 0
+  fail / 32 skip**, and the combined Array search/find run closes at
+  **471 pass / 0 fail / 52 skip**.
 - **String search argument coercion** —
   `String.prototype.indexOf` and `lastIndexOf` now coerce `searchString`
   through `ToString` before reading the position argument. Missing arguments

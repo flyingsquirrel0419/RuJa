@@ -504,6 +504,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   built-ins/Array/prototype/indexOf
   built-ins/Array/prototype/lastIndexOf` cluster now runs at
   **409 pass / 0 fail / 20 skip**.
+- **Array find array-like access**: `Array.prototype.find`, `findIndex`,
+  `findLast`, and `findLastIndex` now share the spec order for
+  `ToObject(this)`, `LengthOfArrayLike`, predicate callability checks, and
+  per-index `Get`. They no longer clone dense Array storage before iteration,
+  so array-like receivers, nullish receiver errors, throwing `length`/index
+  accessors, callback `thisArg`, holes as `undefined`, and mutations during
+  traversal are observable. The focused
+  `built-ins/Array/prototype/{find,findIndex,findLast,findLastIndex}`
+  diagnostic improves from **38 pass / 24 fail / 32 skip** to **62 pass / 0
+  fail / 32 skip**, and the combined Array search/find run closes at
+  **471 pass / 0 fail / 52 skip**.
 - **String search argument coercion**: `String.prototype.indexOf` and
   `lastIndexOf` now coerce `searchString` through `ToString` before reading
   the position argument, so missing arguments search for `"undefined"`, object
