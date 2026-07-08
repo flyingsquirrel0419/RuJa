@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.5% of all matrix files; 68.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.6% of all matrix files; 68.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -109,6 +109,8 @@ and 28920345686 on `cde35de`, 28921293972 on `e3d11d3`, 28922341028 on
 `22973c3`, 28928286572 on `3cfdc6f`, 28930003448 on `6291e54`, and
 28931360498 on `33f4d61`; latest baseline refresh: `test262-full`
 28928721861 on `142d979` and 28931773376 on `bed25e4`.
+Latest full baseline documentation check: `test262-full` 28932188774 on
+`d9c9a1c`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
@@ -204,6 +206,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   diagnostic improves from **21 pass / 46 fail / 63 skip** to **46 pass / 21
   fail / 63 skip**. Remaining failures in that broader probe are descriptor
   conversion and define/getOwnPropertyDescriptor invariants.
+- **Proxy.revocable revoke function shape** —
+  `Proxy.revocable()` now creates its revoke closure through the native
+  function helper, giving the closure spec-shaped own `length` and `name`
+  properties in insertion order while keeping the associated proxy in a
+  non-observable private slot. With `Proxy`/`Reflect`/`Symbol` skips
+  temporarily lifted, `built-ins/Proxy/revocable` runs at **13 pass / 1 fail /
+  4 skip**; the remaining failure is callable Proxy support for function
+  targets.
 - **Reference-preserving identifier calls through `with`** —
   direct IdentifierReference calls now carry their Reference record into the
   VM call opcode. `with (o) { f() }` still binds `this` to `o` when `f` is

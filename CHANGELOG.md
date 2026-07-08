@@ -77,6 +77,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   diagnostic improves from **21 pass / 46 fail / 63 skip** to **46 pass / 21
   fail / 63 skip**. The remaining failures are isolated to Proxy descriptor
   conversion and define/getOwnPropertyDescriptor invariants.
+- **Proxy.revocable revoke function shape**: `Proxy.revocable()` now creates
+  its revoke closure through the native function helper so the closure exposes
+  spec-shaped own `length` and `name` properties in the expected order, while
+  keeping the associated proxy in a non-observable private slot rather than an
+  ordinary own property. With `Proxy`/`Reflect`/`Symbol` skips temporarily
+  lifted, `built-ins/Proxy/revocable` now runs at **13 pass / 1 fail / 4
+  skip**; the remaining failure requires callable Proxy support for function
+  targets.
 - **Reference-preserving identifier calls through `with`**: direct
   IdentifierReference calls now retain their Reference record through the VM
   call opcode, so `with (o) { f() }` still binds `this` to `o`, while value

@@ -51,31 +51,14 @@ pub(crate) fn proxy_revocable(
     };
 
     // Create a revoke function that sets revoked = true.
-    let revoke_fn_idx = vm.heap.allocate(HeapObj::Function(FunctionData {
-        name: Some(Arc::from("")),
-        kind: FunctionKind::Native {
-            func: proxy_revoke,
-            length: 0,
-        },
-        closure: vm.global,
-        lexical_new_target: Value::Undefined,
-        is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-        prototype: Mutex::new(None),
-        proto: Mutex::new(match vm.function_proto {
-            Value::Object(_) => Some(vm.function_proto.clone()),
-            _ => None,
-        }),
-        props: Mutex::new(IndexMap::new()),
-        extensible: std::sync::atomic::AtomicBool::new(true),
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-    }))?;
+    let revoke_fn_idx = vm.new_native_function("", proxy_revoke, 0)?;
 
-    // Store proxy idx in revoke fn props so the native fn can find it.
-    vm.heap.with_obj(revoke_fn_idx, |o| {
+    // Keep the associated proxy off the revoke function's observable own keys.
+    vm.heap.with_obj(revoke_fn_idx.0, |o| {
         if let HeapObj::Function(f) = o {
-            f.props.lock().insert(
-                PropertyKey::from("__proxy_idx__"),
-                data_prop(Value::Number(proxy_idx as f64)),
+            f.private_fields.lock().insert(
+                Arc::from("__proxy_idx__"),
+                crate::value::PrivateSlot::Value(Value::Number(proxy_idx as f64)),
             );
         }
     });
@@ -91,7 +74,7 @@ pub(crate) fn proxy_revocable(
                     .insert(PropertyKey::from("proxy"), data_prop(proxy_val));
                 od.props.lock().insert(
                     PropertyKey::from("revoke"),
-                    data_prop(Value::Object(GcIdx(revoke_fn_idx))),
+                    data_prop(Value::Object(revoke_fn_idx)),
                 );
             }
         });
@@ -103,10 +86,14 @@ fn proxy_revoke(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = vm.current_native_callee.clone() {
         let proxy_idx = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
-                f.props
+                f.private_fields
                     .lock()
-                    .get(&PropertyKey::from("__proxy_idx__"))
-                    .and_then(|d| match &d.value {
+                    .get("__proxy_idx__")
+                    .and_then(|slot| match slot {
+                        crate::value::PrivateSlot::Value(value) => Some(value),
+                        crate::value::PrivateSlot::Accessor { .. } => None,
+                    })
+                    .and_then(|value| match value {
                         Value::Number(n) => Some(*n as usize),
                         _ => None,
                     })

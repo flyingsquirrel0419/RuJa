@@ -1978,6 +1978,37 @@ fn proxy_prototype_internal_methods_follow_traps_and_invariants() {
 }
 
 #[test]
+fn proxy_revocable_revoke_function_has_spec_own_properties() {
+    assert_eq!(
+        run(r#"
+            var pair = Proxy.revocable({ x: 1 }, {});
+            var revoke = pair.revoke;
+            var length = Object.getOwnPropertyDescriptor(revoke, "length");
+            var name = Object.getOwnPropertyDescriptor(revoke, "name");
+            var names = Object.getOwnPropertyNames(revoke).join(",");
+            revoke();
+            var revoked = false;
+            try { pair.proxy.x; } catch (e) { revoked = e instanceof TypeError; }
+            [
+              revoke.length,
+              revoke.name,
+              length.writable,
+              length.enumerable,
+              length.configurable,
+              name.writable,
+              name.enumerable,
+              name.configurable,
+              names,
+              revoked
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "0||false|false|true|false|false|true|length,name|true"
+        ))
+    );
+}
+
+#[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
     assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));
