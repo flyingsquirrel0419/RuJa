@@ -321,6 +321,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   receiver errors are produced from the callee Realm. The focused
   `built-ins/Number/prototype/valueOf built-ins/String/prototype/valueOf` run
   now closes at **16 pass / 0 fail / 2 skip**.
+- **Number prototype toString radix order** —
+  `Number.prototype.toString` now follows the spec order of extracting the
+  Number receiver before inspecting `radix`, treats absent or explicit
+  `undefined` radix as decimal, and propagates abrupt completions from radix
+  `ToNumber` instead of replacing them with base 10. The focused
+  `built-ins/Number/prototype/toString built-ins/String/prototype/toString`
+  run now closes at **95 pass / 0 fail / 2 skip**.
 - **PrivateName lexical grammar** —
   Private class names now follow the same `IdentifierName` scanner rules as
   ordinary identifiers, including Unicode escapes, raw Unicode source text,

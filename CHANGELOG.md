@@ -183,6 +183,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   primitive wrapper constructors for cross-realm TypeError checks. The focused
   `built-ins/Number/prototype/valueOf built-ins/String/prototype/valueOf` run
   now closes at **16 pass / 0 fail / 2 skip**.
+- **Number prototype toString radix order**: `Number.prototype.toString` now
+  validates its Number receiver before radix coercion, treats an omitted or
+  explicit `undefined` radix as decimal, and propagates abrupt completions from
+  radix `ToNumber` instead of silently falling back to base 10. The focused
+  `built-ins/Number/prototype/toString built-ins/String/prototype/toString`
+  run now closes at **95 pass / 0 fail / 2 skip**.
 - **PrivateName lexical grammar**: private class names now use the same
   `IdentifierName` Unicode escape and raw Unicode scanning rules as ordinary
   identifiers, including `Other_ID_Start`, ZWNJ, and ZWJ handling. This fixes

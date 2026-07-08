@@ -1143,3 +1143,15 @@ fn to_string_radix_invalid_throws() {
     let res = common::run_err("(5).toString(37)");
     assert!(res.contains("between 2 and 36"), "got: {}", res);
 }
+
+#[test]
+fn to_string_radix_undefined_and_abrupt_completion() {
+    let v = run("(5).toString(undefined)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("5")));
+    let res = common::run_err("(5).toString({ valueOf(){ throw new Error('radix'); } })");
+    assert!(res.contains("radix"), "got: {}", res);
+    let res = common::run_err(
+        "Number.prototype.toString.call({}, { valueOf(){ throw new Error('radix'); } })",
+    );
+    assert!(res.contains("TypeError"), "got: {}", res);
+}

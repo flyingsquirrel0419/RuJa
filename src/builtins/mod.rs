@@ -2268,20 +2268,26 @@ fn boolean_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error
 
 /// `Number.prototype.toString(radix)`: convert number to string in given radix.
 fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let radix = if args.is_empty() {
-        10.0
-    } else {
-        vm.to_number(&args[0]).unwrap_or(10.0)
-    };
     let n = this_number_value(vm, this)?;
+    let radix = match args.first() {
+        None | Some(Value::Undefined) => 10.0,
+        Some(value) => {
+            let number = vm.to_number(value)?;
+            if number.is_nan() {
+                0.0
+            } else {
+                number.trunc()
+            }
+        }
+    };
     if radix == 10.0 {
         let s = vm.to_string(&Value::Number(n))?;
         return Ok(Value::String(s));
     }
-    let radix = radix as u32;
-    if !(2..=36).contains(&radix) {
+    if !(2.0..=36.0).contains(&radix) {
         return Err(Error::range("toString() radix must be between 2 and 36"));
     }
+    let radix = radix as u32;
     let s = if n.is_nan() {
         "NaN".to_string()
     } else if n.is_infinite() {
