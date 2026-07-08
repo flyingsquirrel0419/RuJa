@@ -464,6 +464,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   diagnostic is **75 pass / 0 fail / 4 skip**; the broader
   `built-ins/String/prototype/{match,replace}` diagnostic is **56 pass / 44
   fail / 6 skip**, with remaining failures outside this capture-clearing edge.
+- **String replace RegExp substitution tokens** —
+  RegExp-backed `String.prototype.replace` string replacements now expand
+  ECMAScript replacement tokens (`$$`, `$&`, ``$` ``, `$'`, `$n`, `$nn`)
+  instead of delegating to the regex backend's replacement syntax. Unmatched
+  captures substitute as the empty string, numeric fallback cases such as
+  `$11` and `$01` match JS behavior, and the replacement-string path now uses
+  the same repeated-capture clearing as `RegExp.prototype.exec`. The focused
+  `built-ins/String/prototype/replace` diagnostic remains **38 pass / 15 fail
+  / 2 skip**, with the remaining failures outside this substitution-token
+  edge.
 - **RegExp backreferences and identity escapes** —
   RegExp compilation now keeps ordinary patterns on the existing Rust regex
   fast path, uses a backtracking-capable backend only for true numeric

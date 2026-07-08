@@ -3952,6 +3952,46 @@ fn string_replace_with_regex() {
         run("'hello world'.replace(/o/g, '0');"),
         Value::String(Arc::from("hell0 w0rld"))
     );
+    assert_eq!(
+        run(r#""abc".replace(/(b)/, "[$&][$1][$$][$`][$']");"#),
+        Value::String(Arc::from("a[b][b][$][a][c]c"))
+    );
+    assert_eq!(
+        run(r#""b".replace(/(a)?(b)/, "$1-$2");"#),
+        Value::String(Arc::from("-b"))
+    );
+    assert_eq!(
+        run(r#""ab".replace(/(?:(a)|(b))*/, "$1|$2");"#),
+        Value::String(Arc::from("|b"))
+    );
+    assert_eq!(
+        run(r#""ab xa".replace(/(?:(a)|(b))+/g, "[$1|$2]");"#),
+        Value::String(Arc::from("[|b] x[a|]"))
+    );
+    assert_eq!(
+        run(r#""abcdefghijk".replace(/(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)/, "$10|$11|$01|$0|$99");"#),
+        Value::String(Arc::from("j|a1|a|$0|i9k"))
+    );
+    assert_eq!(
+        run(r#""abc".replace(/(b)/, "<$1|$2|$12>");"#),
+        Value::String(Arc::from("a<b|$2|b2>c"))
+    );
+    assert_eq!(
+        run(r#""ab".replace(/(a)/, "$0|$00|$09|$10|$11");"#),
+        Value::String(Arc::from("$0|$00|$09|a0|a1b"))
+    );
+    assert_eq!(
+        run(r#""aa".replace(/(a)\1/, "<$&|$1>");"#),
+        Value::String(Arc::from("<aa|a>"))
+    );
+    assert_eq!(
+        run(r#""abc".replace(/b|c/g, "<$`|$'>");"#),
+        Value::String(Arc::from("a<a|c><ab|>"))
+    );
+    assert_eq!(
+        run(r#""abc".replace(/b/, "$x|$<x>");"#),
+        Value::String(Arc::from("a$x|$<x>c"))
+    );
 }
 
 #[test]

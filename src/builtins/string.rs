@@ -455,12 +455,26 @@ pub(crate) fn str_replace(
                 result.push_str(&s[last_end..]);
                 return Ok(Value::String(Arc::from(result.as_str())));
             }
-            let replaced = if global {
-                re.replace_all(&s, to_str.as_str())?
-            } else {
-                re.replace(&s, to_str.as_str())?
-            };
-            return Ok(Value::String(Arc::from(replaced.as_ref())));
+            let mut result = String::new();
+            let mut last_end = 0;
+            let mut replaced = false;
+            for caps in re.captures_iter_ecma(&s, &source, &flags_str)? {
+                let Some(m) = caps.get(0) else {
+                    continue;
+                };
+                result.push_str(&s[last_end..m.start()]);
+                result.push_str(&regexp_replace_substitution(&to_str, &s, &caps));
+                last_end = m.end();
+                replaced = true;
+                if !global {
+                    break;
+                }
+            }
+            if !replaced {
+                return Ok(Value::String(Arc::from(s.as_str())));
+            }
+            result.push_str(&s[last_end..]);
+            return Ok(Value::String(Arc::from(result.as_str())));
         }
     }
     let from = match args.first() {
@@ -487,6 +501,80 @@ pub(crate) fn str_replace(
     Ok(Value::String(Arc::from(
         s.replacen(&from, &to_str, 1).as_str(),
     )))
+}
+
+fn regexp_replace_substitution(
+    replacement: &str,
+    input: &str,
+    caps: &CompiledCaptures<'_>,
+) -> String {
+    let Some(matched) = caps.get(0) else {
+        return replacement.to_string();
+    };
+    let capture_count = caps.len().saturating_sub(1);
+    let mut result = String::new();
+    let mut chars = replacement.char_indices().peekable();
+    while let Some((_, ch)) = chars.next() {
+        if ch != '$' {
+            result.push(ch);
+            continue;
+        }
+        let Some((next_index, next)) = chars.peek().copied() else {
+            result.push('$');
+            continue;
+        };
+        match next {
+            '$' => {
+                chars.next();
+                result.push('$');
+            }
+            '&' => {
+                chars.next();
+                result.push_str(matched.as_str());
+            }
+            '`' => {
+                chars.next();
+                result.push_str(&input[..matched.start()]);
+            }
+            '\'' => {
+                chars.next();
+                result.push_str(&input[matched.end()..]);
+            }
+            '0'..='9' => {
+                let first = next.to_digit(10).unwrap() as usize;
+                let mut consumed = 1;
+                let mut capture_index = 0;
+                let after_next_index = next_index + next.len_utf8();
+                if let Some(second) = replacement[after_next_index..].chars().next() {
+                    if second.is_ascii_digit() {
+                        let second_digit = second.to_digit(10).unwrap() as usize;
+                        let two_digit = first * 10 + second_digit;
+                        if (1..=capture_count).contains(&two_digit) {
+                            capture_index = two_digit;
+                            consumed = 2;
+                        }
+                    }
+                }
+                if capture_index == 0 && first != 0 && first <= capture_count {
+                    capture_index = first;
+                }
+                if capture_index == 0 {
+                    result.push('$');
+                    result.push(next);
+                    chars.next();
+                    continue;
+                }
+                for _ in 0..consumed {
+                    chars.next();
+                }
+                if let Some(capture) = caps.get(capture_index) {
+                    result.push_str(capture.as_str());
+                }
+            }
+            _ => result.push('$'),
+        }
+    }
+    result
 }
 /// String.prototype.lastIndexOf(searchString, fromIndex): last occurrence at
 /// or before `fromIndex` (default +Inf -> search from end).
