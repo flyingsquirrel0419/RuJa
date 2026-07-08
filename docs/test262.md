@@ -108,13 +108,13 @@ and 28920345686 on `cde35de`, 28921293972 on `e3d11d3`, 28922341028 on
 28924515143 on `3e939c8`, 28926073317 on `12b94b9`, and 28927197662 on
 `22973c3`, 28928286572 on `3cfdc6f`, 28930003448 on `6291e54`, and
 28931360498 on `33f4d61`; latest baseline refresh: `test262-full`
-28928721861 on `142d979`.
+28928721861 on `142d979` and 28931773376 on `bed25e4`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131-24,138 |
-| Pass | 16,268-16,501 |
+| Pass | 16,268-16,508 |
 | Fail | 7,630-7,863 |
 | Timeout | 6-13 |
 | Skip | 23,573 |
