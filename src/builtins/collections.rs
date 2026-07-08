@@ -21,8 +21,13 @@ pub(crate) fn new_collection_iterator(
     source: Value,
     kind: CollectionIteratorKind,
 ) -> error::Result<Value> {
-    let next_fn = vm.new_native_function("next", collection_iterator_next, 0)?;
-    let iter_fn = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
+    let proto = if kind == CollectionIteratorKind::ArrayValues
+        && matches!(vm.iterator_proto, Value::Object(_))
+    {
+        vm.iterator_proto.clone()
+    } else {
+        vm.object_proto.clone()
+    };
     let obj_idx = vm
         .heap
         .allocate(HeapObj::CollectionIterator(CollectionIteratorData {
@@ -31,18 +36,45 @@ pub(crate) fn new_collection_iterator(
             index: std::sync::atomic::AtomicUsize::new(0),
             done: std::sync::atomic::AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
+            proto: Mutex::new(Some(proto)),
         }))?;
-    vm.heap.with_obj(obj_idx, |obj| {
-        obj.props()
-            .lock()
-            .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
-        obj.props().lock().insert(
+    if kind != CollectionIteratorKind::ArrayValues {
+        let next_fn = vm.new_native_function("next", collection_iterator_next, 0)?;
+        let iter_fn = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
+        vm.heap.with_obj(obj_idx, |obj| {
+            obj.props()
+                .lock()
+                .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+            obj.props().lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                data_prop(Value::Object(iter_fn)),
+            );
+        });
+    }
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+pub(crate) fn setup_array_iterator_proto(vm: &mut Vm) -> error::Result<()> {
+    let next_fn = vm.new_native_function("next", collection_iterator_next, 0)?;
+    let iter_fn = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
+    let proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.heap.with_obj(proto_idx, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+        props.insert(
             PropertyKey::Symbol(vm.well_known_symbols.iterator),
             data_prop(Value::Object(iter_fn)),
         );
     });
-    Ok(Value::Object(GcIdx(obj_idx)))
+    vm.iterator_proto = Value::Object(GcIdx(proto_idx));
+    Ok(())
 }
 
 fn collection_iterator_this(

@@ -197,6 +197,11 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         HeapObj::DataView(d) => {
             push_value(&d.buffer, worklist);
         }
+        HeapObj::TypedArray(t) => {
+            if let Some(buffer) = &t.viewed_array_buffer {
+                push_value(buffer, worklist);
+            }
+        }
         HeapObj::Promise(p) => {
             push_value(&p.result.lock(), worklist);
             for h in p.handlers.lock().iter() {

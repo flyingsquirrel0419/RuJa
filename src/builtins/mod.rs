@@ -4714,6 +4714,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                 .insert(PropertyKey::from("UTC"), data_prop(Value::Object(utc_fn)));
         });
     }
+    setup_array_iterator_proto(vm)?;
     // Array
     let (array_ctor, array_proto) = make_builtin_constructor_with(
         vm,

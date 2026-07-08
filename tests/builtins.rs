@@ -767,6 +767,43 @@ fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
 }
 
 #[test]
+fn typed_array_length_allocation_keeps_backing_buffer_live_after_gc() {
+    assert_eq!(
+        run(r#"
+            var ta = new Uint8Array(9);
+            var trash = [];
+            for (var i = 0; i < 2000; i++) trash.push({ i: i });
+            [ta.length, ta.byteLength, ta[0], ta[4], ta[8]].join(",");
+        "#),
+        Value::String(Arc::from("9,9,0,0,0"))
+    );
+}
+
+#[test]
+fn typed_array_constructor_observes_array_iterator_prototype_next_override() {
+    assert_eq!(
+        run(r#"
+            var ArrayIteratorPrototype = Object.getPrototypeOf([].values());
+            var oldNext = ArrayIteratorPrototype.next;
+            var values;
+            ArrayIteratorPrototype.next = function() {
+                var done = values.length === 0;
+                var value = values.pop();
+                return { value: value, done: done };
+            };
+            try {
+                values = [1, 2, 3, 4];
+                var ta = new Uint8Array([0]);
+                [ta.length, ta[0], ta[1], ta[2], ta[3]].join(",");
+            } finally {
+                ArrayIteratorPrototype.next = oldNext;
+            }
+        "#),
+        Value::String(Arc::from("4,4,3,2,1"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"

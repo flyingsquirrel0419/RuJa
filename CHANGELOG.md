@@ -168,6 +168,16 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   properties. With TypedArray-related skips temporarily lifted, the focused
   `language/statements/with` diagnostic now reports **171 pass / 0 fail / 10
   skip**.
+- **TypedArray backing buffers and ArrayIteratorPrototype `next`**:
+  typed-array views now trace their `[[ViewedArrayBuffer]]` during GC, keeping
+  zero-filled length allocations alive across harness pressure. Array iterator
+  objects now inherit `next` and `@@iterator` from a shared prototype instead
+  of masking prototype writes with an own `next`, so typed-array construction
+  observes `Object.getPrototypeOf([].values()).next` overrides through the
+  iterator protocol. With TypedArray-related skips temporarily lifted, the
+  focused `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
+  diagnostic now reports **28 pass / 0 fail / 19 skip**, closing that
+  constructor probe.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel**: transparent Proxy receivers
   for `Object.seal`/`Object.freeze` now tighten the target's own descriptors
   through the Proxy-aware `[[DefineOwnProperty]]` path, and

@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.2% of all matrix files; 70.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.7% of all matrix files; 70.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -114,18 +114,19 @@ Latest full baseline documentation check: `test262-full` 28932188774 on
 `397d164`, 28935851288 on `5768889`, and 28937035685 on `9d7fe40`;
 latest full baseline documentation check: `test262-full` 28937391393 on
 `2e3bf0a`; latest improvement confirmation: `test262-full` 28947656670 on
-`70aede1`, 28954804300 on `9ecf2e2`, and 28956369778 on `220b6de`.
+`70aede1`, 28954804300 on `9ecf2e2`, 28956369778 on `220b6de`, and
+28960087423 on `500fd9a`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
-| Total matrix files | 48,465 |
+| Total matrix files | 47,717 |
 | Actually run | 24,133 |
 | Pass | 17,042 |
 | Fail | 7,091 |
 | Timeout | 11 |
-| Skip | 24,321 |
+| Skip | 23,573 |
 | **Pass rate (of run)** | **70.6%** |
-| **Pass rate (of total)** | **35.2%** |
+| **Pass rate (of total)** | **35.7%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
@@ -283,6 +284,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   indexes still create receiver data properties. With TypedArray-related skips
   temporarily lifted, the focused `language/statements/with` diagnostic now
   reports **171 pass / 0 fail / 10 skip**.
+- **TypedArray backing buffers and ArrayIteratorPrototype `next`** —
+  Typed-array views now trace their `[[ViewedArrayBuffer]]` during GC, so
+  length allocations keep their zero-filled backing storage alive after
+  harness allocation pressure. Array iterator objects now inherit `next` and
+  `@@iterator` from a shared prototype instead of defining own methods, so
+  typed-array construction observes
+  `Object.getPrototypeOf([].values()).next` overrides through the iterator
+  protocol. With TypedArray-related skips temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
+  diagnostic now reports **28 pass / 0 fail / 19 skip**, closing that
+  constructor probe.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel** —
   Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
   integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,
