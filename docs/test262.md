@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.3% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -135,17 +135,18 @@ Latest improvement confirmation: `test262-full` 28970908797 on `0b0528f`.
 Latest improvement confirmation: `test262-full` 28972311361 on `a1e44db`.
 Latest improvement confirmation: `test262-full` 28973435387 on `1394ad3`.
 Latest improvement confirmation: `test262-full` 28975444046 on `dc133c1`.
+Latest improvement confirmation: `test262-full` 28977306579 on `2c6f617`.
 
 | Metric | Latest confirmed count |
 |--------|------------------------|
-| Total matrix files | 48,465 |
+| Total matrix files | 47,717 |
 | Actually run | 24,133 reported run / 24,144 including timeouts |
-| Pass | 17,119 |
-| Fail | 7,014 |
+| Pass | 17,120 |
+| Fail | 7,013 |
 | Timeout | 11 |
-| Skip | 24,321 |
+| Skip | 23,573 |
 | **Pass rate (of run)** | **70.9%** |
-| **Pass rate (of total)** | **35.3%** |
+| **Pass rate (of total)** | **35.9%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
