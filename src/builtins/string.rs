@@ -945,6 +945,72 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     regexp_match_internal(vm, regexp, &s)
 }
 
+pub(crate) fn str_match_all(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
+    }
+
+    let search_value = args.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(search_value, Value::Object(_)) {
+        if is_regexp(vm, &search_value)? {
+            let flags = vm.get_property(&search_value, "flags")?;
+            if flags.is_nullish() {
+                return Err(Error::type_err(
+                    "RegExp flags must not be null or undefined",
+                ));
+            }
+            let flags = vm.to_string(&flags)?.to_string();
+            if !flags.contains('g') {
+                return Err(Error::type_err(
+                    "String.prototype.matchAll called with a non-global RegExp argument",
+                ));
+            }
+        }
+
+        let match_all_key = PropertyKey::Symbol(vm.well_known_symbols.match_all);
+        let matcher = vm.get_property_by_key(&search_value, &match_all_key)?;
+        if !matcher.is_nullish() {
+            let is_callable = matches!(&matcher, Value::Object(idx) if {
+                vm.heap.with_obj(idx.0, |o| o.is_function())
+            });
+            if !is_callable {
+                return Err(Error::type_err("Symbol.matchAll method is not callable"));
+            }
+            return vm.call_function(
+                &matcher,
+                std::slice::from_ref(&receiver),
+                Some(search_value),
+            );
+        }
+    }
+
+    let s = str_val(vm, &Some(receiver))?;
+    let regexp = regexp_create_intrinsic_with_flags(vm, &search_value, Some("g"))?;
+    let match_all_key = PropertyKey::Symbol(vm.well_known_symbols.match_all);
+    let matcher = vm.get_property_by_key(&regexp, &match_all_key)?;
+    if matcher.is_nullish() {
+        return Err(Error::type_err("Symbol.matchAll method is not callable"));
+    }
+    let is_callable = matches!(&matcher, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    });
+    if !is_callable {
+        return Err(Error::type_err("Symbol.matchAll method is not callable"));
+    }
+    vm.call_function(
+        &matcher,
+        &[Value::String(Arc::from(s.as_str()))],
+        Some(regexp),
+    )
+}
+
 fn regexp_match_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
     let regexp = Some(regexp);
     let source = read_regexp_source(vm, &regexp)?;

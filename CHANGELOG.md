@@ -24,6 +24,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **`String.prototype.matchAll` and RegExp `@@matchAll`**:
+  `String.prototype.matchAll` is now exposed with spec-shaped builtin
+  properties, validates non-global RegExp arguments before delegation, calls
+  custom `@@matchAll` methods with the original receiver value, and falls back
+  through a forced-global intrinsic RegExp. `RegExp.prototype[Symbol.matchAll]`
+  now creates a lazy RegExp String Iterator through `RegExpExec`, preserving
+  species construction, cached `lastIndex`, custom `exec`, match result
+  arrays, and empty-match advancement. The focused
+  `built-ins/String/prototype/matchAll
+  built-ins/RegExp/prototype/Symbol.matchAll` run moves from **5 pass / 43 fail
+  / 3 skip** to **48 pass / 0 fail / 3 skip**.
 - **`String.prototype.normalize` Unicode forms**: `String.prototype.normalize`
   is now exposed as a non-constructor prototype builtin with spec-shaped
   `name`, `length`, and descriptor properties. It defaults to NFC, coerces the

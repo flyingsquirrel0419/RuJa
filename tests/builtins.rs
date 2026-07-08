@@ -313,6 +313,51 @@ fn string_search_methods_follow_regexp_and_position_semantics() {
 }
 
 #[test]
+fn string_match_all_uses_regexp_iterator_semantics() {
+    assert_eq!(
+        run(r#"
+            var matches = Array.from("a1b22".matchAll(/\d+/g));
+            [
+              matches.length,
+              matches[0][0], matches[0].index, matches[0].input,
+              matches[1][0], matches[1].index, matches[1].input
+            ].join("|");
+        "#),
+        Value::String(Arc::from("2|1|1|a1b22|22|3|a1b22"))
+    );
+    assert_eq!(
+        run(r#"
+            var regexp = /./g;
+            regexp.lastIndex = { valueOf: function() { return 2; } };
+            var iterator = regexp[Symbol.matchAll]("abcd");
+            regexp.lastIndex = 0;
+            var first = iterator.next().value;
+            first[0] + ":" + first.index;
+        "#),
+        Value::String(Arc::from("c:2"))
+    );
+    assert!(run_err(r#""abc".matchAll(/./)"#).contains("TypeError"));
+}
+
+#[test]
+fn string_match_all_delegates_custom_matcher_before_string_coercion() {
+    assert_eq!(
+        run(r#"
+            var seenThis, seenArg;
+            var matcher = {};
+            matcher[Symbol.matchAll] = function(value) {
+              seenThis = this;
+              seenArg = value;
+              return "delegated";
+            };
+            var result = String.prototype.matchAll.call(7, matcher);
+            result + ":" + (seenThis === matcher) + ":" + (seenArg === 7);
+        "#),
+        Value::String(Arc::from("delegated:true:true"))
+    );
+}
+
+#[test]
 fn generated_symbols_do_not_collide_with_well_known_symbols() {
     assert_eq!(run("Symbol() === Symbol.iterator;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.match;"), Value::Bool(false));

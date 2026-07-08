@@ -157,6 +157,17 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **String.prototype.matchAll and RegExp `@@matchAll`** —
+  `String.prototype.matchAll` now performs the observable RegExp global-flag
+  validation before custom `@@matchAll` delegation, preserves the uncoerced
+  receiver argument for custom matchers, and creates a forced-global intrinsic
+  RegExp for fallback matching. `RegExp.prototype[Symbol.matchAll]` is
+  installed as a lazy RegExp String Iterator that calls `RegExpExec` per
+  `next()`, so species construction, cached `lastIndex`, custom `exec`, match
+  arrays, and empty-match advancement remain observable. The focused
+  `built-ins/String/prototype/matchAll
+  built-ins/RegExp/prototype/Symbol.matchAll` run now closes at **48 pass / 0
+  fail / 3 skip**.
 - **String.prototype.replaceAll and RegExp `@@replace`** —
   `String.prototype.replaceAll` now observes the spec ordering for RegExp
   detection, global-flag checks, custom `@@replace` delegation, receiver/search

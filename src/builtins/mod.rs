@@ -40,7 +40,7 @@ use crate::gc::Heap;
 use crate::value::{
     ArrayData, BindingKind, CollectionIteratorData, CollectionIteratorKind, FunctionData,
     FunctionKind, GcIdx, HeapObj, MapData, MapKey, ObjectData, PropertyDescriptor, PropertyKey,
-    SetData, Value,
+    RegExpStringIteratorData, SetData, Value,
 };
 use crate::vm::{NativeFn, Vm};
 use indexmap::{IndexMap, IndexSet};
@@ -1557,6 +1557,8 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
         vm.new_native_function_in_env("get unicodeSets", regexp_unicode_sets_get, 0, env)?;
     let sticky_getter = vm.new_native_function_in_env("get sticky", regexp_sticky_get, 0, env)?;
     let match_fn = vm.new_native_function_in_env("[Symbol.match]", regexp_symbol_match, 1, env)?;
+    let match_all_fn =
+        vm.new_native_function_in_env("[Symbol.matchAll]", regexp_symbol_match_all, 1, env)?;
     let search_fn =
         vm.new_native_function_in_env("[Symbol.search]", regexp_symbol_search, 1, env)?;
     let replace_fn =
@@ -1611,6 +1613,10 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.r#match),
                 data_prop(Value::Object(match_fn)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.match_all),
+                data_prop(Value::Object(match_all_fn)),
             );
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.search),
@@ -4621,6 +4627,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("endsWith", str_ends_with, 1),
             ("repeat", str_repeat, 1),
             ("match", str_match, 1),
+            ("matchAll", str_match_all, 1),
             ("padStart", str_pad_start, 1),
             ("padEnd", str_pad_end, 1),
             ("at", str_at, 1),

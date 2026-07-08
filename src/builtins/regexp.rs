@@ -78,6 +78,14 @@ pub(crate) fn regexp_escape(
 }
 
 pub(crate) fn regexp_create_intrinsic(vm: &mut Vm, pattern: &Value) -> error::Result<Value> {
+    regexp_create_intrinsic_with_flags(vm, pattern, None)
+}
+
+pub(crate) fn regexp_create_intrinsic_with_flags(
+    vm: &mut Vm,
+    pattern: &Value,
+    flags_override: Option<&str>,
+) -> error::Result<Value> {
     let (pattern, flags) = if matches!(pattern, Value::Object(idx) if {
         vm.heap.with_obj(idx.0, |o| {
             matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp"))
@@ -85,12 +93,21 @@ pub(crate) fn regexp_create_intrinsic(vm: &mut Vm, pattern: &Value) -> error::Re
     }) {
         (
             read_regexp_source(vm, &Some(pattern.clone()))?,
-            read_regexp_flags(vm, &Some(pattern.clone()))?,
+            match flags_override {
+                Some(flags) => flags.to_string(),
+                None => read_regexp_flags(vm, &Some(pattern.clone()))?,
+            },
         )
     } else if pattern.is_undefined() {
-        (String::new(), String::new())
+        (
+            String::new(),
+            flags_override.map(str::to_string).unwrap_or_default(),
+        )
     } else {
-        (vm.to_string(pattern)?.to_string(), String::new())
+        (
+            vm.to_string(pattern)?.to_string(),
+            flags_override.map(str::to_string).unwrap_or_default(),
+        )
     };
     create_regexp_object(vm, pattern, flags, vm.regexp_proto.clone())
 }
@@ -243,6 +260,178 @@ pub(crate) fn regexp_symbol_match(
         }
         matches.push(Value::String(Arc::from(matched.as_str())));
     }
+}
+
+pub(crate) fn regexp_symbol_match_all(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(rx @ Value::Object(_)) = this else {
+        return Err(Error::type_err("RegExp method called on non-object"));
+    };
+    let s = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
+    let flags_value = vm.get_property(&rx, "flags")?;
+    let flags = vm.to_string(&flags_value)?.to_string();
+    let default_constructor = current_realm_regexp_constructor(vm)?;
+    let constructor = regexp_species_constructor(vm, &rx, default_constructor.clone())?;
+
+    if same_value(&constructor, &default_constructor) {
+        let _ = is_regexp_spec(vm, &rx)?;
+    }
+
+    let matcher = vm.construct(
+        &constructor,
+        &[rx.clone(), Value::String(Arc::from(flags.as_str()))],
+    )?;
+    let last_index_value = vm.get_property(&rx, "lastIndex")?;
+    let last_index = regexp_to_length(vm, &last_index_value)?;
+    set_regexp_last_index(vm, &matcher, last_index)?;
+    let global = flags.contains('g');
+    let full_unicode = flags.contains('u') || flags.contains('v');
+    new_regexp_string_iterator(vm, matcher, Arc::from(s.as_str()), global, full_unicode)
+}
+
+fn new_regexp_string_iterator(
+    vm: &mut Vm,
+    matcher: Value,
+    string: Arc<str>,
+    global: bool,
+    full_unicode: bool,
+) -> error::Result<Value> {
+    let next_fn = vm.new_native_function("next", regexp_string_iterator_next, 0)?;
+    let iter_fn = vm.new_native_function("[Symbol.iterator]", regexp_string_iterator_this, 0)?;
+    let obj_idx = vm
+        .heap
+        .allocate(HeapObj::RegExpStringIterator(RegExpStringIteratorData {
+            matcher,
+            string,
+            global,
+            full_unicode,
+            done: AtomicBool::new(false),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+        }))?;
+    vm.heap.with_obj(obj_idx, |obj| {
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            data_prop(Value::Object(iter_fn)),
+        );
+    });
+    Ok(Value::Object(GcIdx(obj_idx)))
+}
+
+fn regexp_string_iterator_this(
+    _vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    this.ok_or_else(|| Error::type_err("Iterator method called on non-iterator"))
+}
+
+fn regexp_string_iterator_next(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(Value::Object(iter_idx)) = this else {
+        return Err(Error::type_err("Iterator next called on non-iterator"));
+    };
+    let (matcher, string, global, full_unicode, already_done) =
+        vm.heap.with_obj(iter_idx.0, |obj| {
+            if let HeapObj::RegExpStringIterator(iter) = obj {
+                (
+                    iter.matcher.clone(),
+                    iter.string.clone(),
+                    iter.global,
+                    iter.full_unicode,
+                    iter.done.load(Ordering::Relaxed),
+                )
+            } else {
+                (Value::Undefined, Arc::from(""), false, false, true)
+            }
+        });
+    if already_done {
+        return gen_result(vm, Value::Undefined, true, false);
+    }
+
+    let result = regexp_exec_dispatch(vm, &matcher, &string)?;
+    if result.is_null() {
+        vm.heap.with_obj(iter_idx.0, |obj| {
+            if let HeapObj::RegExpStringIterator(iter) = obj {
+                iter.done.store(true, Ordering::Relaxed);
+            }
+        });
+        return gen_result(vm, Value::Undefined, true, false);
+    }
+
+    if global {
+        let matched_value = vm.get_property(&result, "0")?;
+        let matched = vm.to_string(&matched_value)?.to_string();
+        if matched.is_empty() {
+            let last_index = vm.get_property(&matcher, "lastIndex")?;
+            let this_index = regexp_to_length(vm, &last_index)? as usize;
+            let next_index = advance_string_index(&string, this_index, full_unicode);
+            set_regexp_last_index(vm, &matcher, next_index as f64)?;
+        }
+    } else {
+        vm.heap.with_obj(iter_idx.0, |obj| {
+            if let HeapObj::RegExpStringIterator(iter) = obj {
+                iter.done.store(true, Ordering::Relaxed);
+            }
+        });
+    }
+    gen_result(vm, result, false, false)
+}
+
+fn current_realm_regexp_constructor(vm: &mut Vm) -> error::Result<Value> {
+    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
+    crate::environment::get(&vm.heap, realm_env, "RegExp")
+        .or_else(|| crate::environment::get(&vm.heap, vm.global, "RegExp"))
+        .ok_or_else(|| Error::type_err("RegExp constructor is not available"))
+}
+
+fn regexp_species_constructor(
+    vm: &mut Vm,
+    rx: &Value,
+    default_constructor: Value,
+) -> error::Result<Value> {
+    let constructor = vm.get_property(rx, "constructor")?;
+    if constructor.is_undefined() {
+        return Ok(default_constructor);
+    }
+    if !matches!(constructor, Value::Object(_)) {
+        return Err(Error::type_err("RegExp constructor is not an object"));
+    }
+    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species = vm.get_property_by_key(&constructor, &species_key)?;
+    if species.is_undefined() || matches!(species, Value::Null) {
+        return Ok(default_constructor);
+    }
+    if !vm.is_constructor_value(&species) {
+        return Err(Error::type_err("RegExp species is not a constructor"));
+    }
+    Ok(species)
+}
+
+pub(crate) fn is_regexp_spec(vm: &mut Vm, value: &Value) -> error::Result<bool> {
+    let Value::Object(idx) = value else {
+        return Ok(false);
+    };
+    let match_key = PropertyKey::Symbol(vm.well_known_symbols.r#match);
+    let matcher = vm.get_property_by_key(value, &match_key)?;
+    if !matcher.is_undefined() {
+        return Ok(vm.to_boolean(&matcher));
+    }
+    Ok(vm.heap.with_obj(
+        idx.0,
+        |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
+    ))
 }
 
 fn regexp_exec_dispatch(vm: &mut Vm, rx: &Value, s: &str) -> error::Result<Value> {
