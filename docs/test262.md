@@ -339,6 +339,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   returns a real Map instance, and closes custom iterators when the callback
   abruptly completes. This closes the focused `built-ins/Map/groupBy` run at
   **14 pass / 0 fail / 0 skip**.
+- **String well-formed Unicode methods** —
+  `String.prototype.isWellFormed` and `String.prototype.toWellFormed` now
+  apply UTF-16 surrogate-pair rules through RuJa's internal lone-surrogate
+  sentinel representation, reject nullish receivers, and preserve valid pair
+  representations while `toWellFormed` replaces unpaired surrogates with
+  U+FFFD. The focused `built-ins/String/prototype/isWellFormed
+  built-ins/String/prototype/toWellFormed` run now closes at **14 pass / 0
+  fail / 2 skip**.
 - **Reflect.construct `newTarget` semantics** —
   `Reflect.construct` now validates constructor-ness in spec order, creates
   its argument list through ordinary array-like `length` and indexed property

@@ -194,6 +194,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   instead of `ToPropertyKey`, returns a real Map instance, and closes custom
   iterators when the callback abruptly completes. The focused
   `built-ins/Map/groupBy` run now closes at **14 pass / 0 fail / 0 skip**.
+- **String well-formed Unicode methods**: `String.prototype.isWellFormed`
+  and `String.prototype.toWellFormed` now follow UTF-16 surrogate-pair
+  semantics, reject nullish receivers, preserve valid internal surrogate-pair
+  representations, and replace unpaired surrogates with U+FFFD for
+  `toWellFormed`. The focused
+  `built-ins/String/prototype/isWellFormed
+  built-ins/String/prototype/toWellFormed` run now closes at **14 pass / 0
+  fail / 2 skip**.
 - **Reflect.construct `newTarget` semantics**: `Reflect.construct` now
   validates constructor-ness in spec order, builds its argument list through
   ordinary array-like property access, forwards the optional `newTarget` into

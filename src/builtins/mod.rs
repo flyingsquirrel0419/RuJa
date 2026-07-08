@@ -4594,6 +4594,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("substring", str_substring, 2),
             ("substr", str_substr, 2),
             ("codePointAt", str_code_point_at, 1),
+            ("isWellFormed", str_is_well_formed, 0),
+            ("toWellFormed", str_to_well_formed, 0),
             ("concat", str_concat, 1),
             ("search", str_search, 1),
             ("toString", string_proto_to_string, 0),

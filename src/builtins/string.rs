@@ -111,6 +111,54 @@ fn is_regexp(vm: &mut Vm, value: &Value) -> error::Result<bool> {
         |o| matches!(o, HeapObj::Object(od) if od.class_name.as_deref() == Some("RegExp")),
     ))
 }
+
+fn is_well_formed_utf16(units: &[u16]) -> bool {
+    let mut i = 0;
+    while i < units.len() {
+        let unit = units[i];
+        if (0xD800..=0xDBFF).contains(&unit) {
+            if i + 1 < units.len() && (0xDC00..=0xDFFF).contains(&units[i + 1]) {
+                i += 2;
+                continue;
+            }
+            return false;
+        }
+        if (0xDC00..=0xDFFF).contains(&unit) {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+fn to_well_formed_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        let Some(unit) = crate::value::utf16_single_unit_from_internal_char(ch) else {
+            out.push(ch);
+            continue;
+        };
+        if (0xD800..=0xDBFF).contains(&unit) {
+            if let Some(next) = chars.peek().copied() {
+                if let Some(low) = crate::value::utf16_single_unit_from_internal_char(next) {
+                    if (0xDC00..=0xDFFF).contains(&low) {
+                        out.push(ch);
+                        out.push(chars.next().unwrap());
+                        continue;
+                    }
+                }
+            }
+            out.push('\u{FFFD}');
+        } else if (0xDC00..=0xDFFF).contains(&unit) {
+            out.push('\u{FFFD}');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 pub(crate) fn str_char_at(
     vm: &mut Vm,
     args: &[Value],
@@ -178,6 +226,30 @@ pub(crate) fn str_code_point_at(
         }
     }
     Ok(Value::Number(unit as f64))
+}
+
+pub(crate) fn str_is_well_formed(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let units = crate::value::utf16_from_str(&s);
+    Ok(Value::Bool(is_well_formed_utf16(&units)))
+}
+
+pub(crate) fn str_to_well_formed(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let s = str_val(vm, &this)?;
+    let units = crate::value::utf16_from_str(&s);
+    if is_well_formed_utf16(&units) {
+        return Ok(Value::String(Arc::from(s.as_str())));
+    }
+    let formed = to_well_formed_string(&s);
+    Ok(Value::String(Arc::from(formed.as_str())))
 }
 
 pub(crate) fn str_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

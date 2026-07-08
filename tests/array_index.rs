@@ -419,6 +419,64 @@ fn code_point_at_surrogate_pair() {
     assert_eq!(v, Value::Number(65536.0));
 }
 
+#[test]
+fn string_well_formed_methods_use_utf16_surrogate_rules() {
+    assert_eq!(
+        run("String.fromCharCode(0xD83D, 0xDE00).isWellFormed()"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("String.fromCharCode(0xD800).isWellFormed()"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("String.fromCharCode(0xDC00).isWellFormed()"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("String.fromCharCode(0xDC00, 0xD800).isWellFormed()"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("String.fromCharCode(0x61, 0xD800, 0x62).toWellFormed().charCodeAt(1)"),
+        Value::Number(0xFFFD as f64)
+    );
+    assert_eq!(
+        run("String.fromCharCode(0x61, 0xD83D, 0xDE00, 0x62).toWellFormed().codePointAt(1)"),
+        Value::Number(0x1F600 as f64)
+    );
+    assert_eq!(
+        run("var pair = String.fromCharCode(0xD83D) + String.fromCharCode(0xDE00); pair.toWellFormed() === pair"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var hi = String.fromCharCode(0xD83D); var lo = String.fromCharCode(0xDE00); var s = hi + lo + hi; var t = s.toWellFormed(); t.charCodeAt(0) === 0xD83D && t.charCodeAt(1) === 0xDE00 && t.charCodeAt(2) === 0xFFFD"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn string_well_formed_methods_coerce_receiver() {
+    let err = common::run_err("String.prototype.isWellFormed.call(null)");
+    assert!(
+        err.contains("null or undefined"),
+        "expected TypeError, got: {}",
+        err
+    );
+    let err = common::run_err(
+        r#"String.prototype.toWellFormed.call({ toString: function(){ throw new Error("boom"); } })"#,
+    );
+    assert!(
+        err.contains("boom"),
+        "expected toString error, got: {}",
+        err
+    );
+    assert_eq!(
+        run("String.prototype.toWellFormed.call(1)"),
+        Value::String(std::sync::Arc::from("1"))
+    );
+}
+
 // --- String.prototype.split limit semantics ---
 
 #[test]

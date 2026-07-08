@@ -1025,6 +1025,15 @@ fn sentinel_to_surrogate(ch: char) -> Option<u16> {
     }
 }
 
+/// Return the single JS UTF-16 code unit represented by an internal char.
+/// Supplementary scalar chars return None because they encode to a pair.
+pub(crate) fn utf16_single_unit_from_internal_char(ch: char) -> Option<u16> {
+    sentinel_to_surrogate(ch).or_else(|| {
+        let cp = ch as u32;
+        (cp <= 0xFFFF).then_some(cp as u16)
+    })
+}
+
 /// Encode an internal Rust string into JS UTF-16 code units. Supplementary
 /// characters become surrogate pairs, and RuJa's private lone-surrogate
 /// sentinels become their original code units.
