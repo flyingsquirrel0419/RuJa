@@ -403,18 +403,36 @@ pub(crate) fn str_replace(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let s = str_val(vm, &this)?;
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
+    }
     let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if let Some(search_value) = args.first().filter(|value| !value.is_nullish()).cloned() {
+        let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
+        let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
+        if !replacer.is_nullish() {
+            let is_callable = matches!(&replacer, Value::Object(idx) if {
+                vm.heap.with_obj(idx.0, |o| o.is_function())
+            });
+            if !is_callable {
+                return Err(Error::type_err("Symbol.replace method is not callable"));
+            }
+            return vm.call_function(
+                &replacer,
+                &[receiver.clone(), replacement],
+                Some(search_value),
+            );
+        }
+    }
+    let s = str_val(vm, &Some(receiver))?;
     // Is the replacement a function?
     let is_fn = if let Value::Object(idx) = &replacement {
         vm.heap.with_obj(idx.0, |o| o.is_function())
     } else {
         false
-    };
-    let to_str = if is_fn {
-        String::new()
-    } else {
-        vm.to_string(&replacement)?.to_string()
     };
     // If the search value is a RegExp, use regex replacement.
     if let Some(Value::Object(idx)) = args.first() {
@@ -462,6 +480,7 @@ pub(crate) fn str_replace(
                 result.push_str(&s[last_end..]);
                 return Ok(Value::String(Arc::from(result.as_str())));
             }
+            let to_str = vm.to_string(&replacement)?.to_string();
             let mut result = String::new();
             let mut last_end = 0;
             let mut replaced = false;
@@ -510,9 +529,23 @@ pub(crate) fn str_replace(
         }
         return Ok(Value::String(Arc::from(s.as_str())));
     }
-    Ok(Value::String(Arc::from(
-        s.replacen(&from, &to_str, 1).as_str(),
-    )))
+    let to_str = vm.to_string(&replacement)?.to_string();
+    if let Some(pos) = s.find(&from) {
+        let mut result = String::new();
+        result.push_str(&s[..pos]);
+        result.push_str(&replace_substitution(
+            &to_str,
+            &s,
+            pos,
+            pos + from.len(),
+            &from,
+            &[],
+            &[],
+        ));
+        result.push_str(&s[pos + from.len()..]);
+        return Ok(Value::String(Arc::from(result.as_str())));
+    }
+    Ok(Value::String(Arc::from(s.as_str())))
 }
 
 fn regexp_replace_substitution(
@@ -524,7 +557,30 @@ fn regexp_replace_substitution(
     let Some(matched) = caps.get(0) else {
         return replacement.to_string();
     };
-    let capture_count = caps.len().saturating_sub(1);
+    let captures: Vec<Option<&str>> = (1..caps.len())
+        .map(|index| caps.get(index).map(|capture| capture.as_str()))
+        .collect();
+    replace_substitution(
+        replacement,
+        input,
+        matched.start(),
+        matched.end(),
+        matched.as_str(),
+        &captures,
+        capture_names,
+    )
+}
+
+fn replace_substitution(
+    replacement: &str,
+    input: &str,
+    matched_start: usize,
+    matched_end: usize,
+    matched: &str,
+    captures: &[Option<&str>],
+    capture_names: &[RegexCaptureName],
+) -> String {
+    let capture_count = captures.len();
     let mut result = String::new();
     let mut chars = replacement.char_indices().peekable();
     while let Some((_, ch)) = chars.next() {
@@ -543,15 +599,15 @@ fn regexp_replace_substitution(
             }
             '&' => {
                 chars.next();
-                result.push_str(matched.as_str());
+                result.push_str(matched);
             }
             '`' => {
                 chars.next();
-                result.push_str(&input[..matched.start()]);
+                result.push_str(&input[..matched_start]);
             }
             '\'' => {
                 chars.next();
-                result.push_str(&input[matched.end()..]);
+                result.push_str(&input[matched_end..]);
             }
             '<' if !capture_names.is_empty() => {
                 let name_start = next_index + next.len_utf8();
@@ -559,8 +615,8 @@ fn regexp_replace_substitution(
                     let name_end = name_start + close_offset;
                     let name = &replacement[name_start..name_end];
                     if let Some(capture_index) = named_capture_index(capture_names, name) {
-                        if let Some(capture) = caps.get(capture_index) {
-                            result.push_str(capture.as_str());
+                        if let Some(Some(capture)) = captures.get(capture_index - 1) {
+                            result.push_str(capture);
                         }
                     }
                     chars.next();
@@ -601,8 +657,8 @@ fn regexp_replace_substitution(
                 for _ in 0..consumed {
                     chars.next();
                 }
-                if let Some(capture) = caps.get(capture_index) {
-                    result.push_str(capture.as_str());
+                if let Some(Some(capture)) = captures.get(capture_index - 1) {
+                    result.push_str(capture);
                 }
             }
             _ => result.push('$'),

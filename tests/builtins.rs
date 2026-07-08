@@ -4026,6 +4026,47 @@ fn string_replace_with_regex() {
         run(r#""𝌆ab".replace(/b/, function(m, offset){ return offset; });"#),
         Value::String(Arc::from("𝌆a3"))
     );
+    assert_eq!(
+        run(r#""abc".replace("b", "[$&][$$][$`][$']");"#),
+        Value::String(Arc::from("a[b][$][a][c]c"))
+    );
+    assert_eq!(
+        run(r#""abc".replace("b", "$0|$1|$<x>");"#),
+        Value::String(Arc::from("a$0|$1|$<x>c"))
+    );
+    assert!(
+        run_err(
+            r#"var search = { toString: function(){ throw "search"; } };
+               var replacement = { toString: function(){ throw "replacement"; } };
+               "abc".replace(search, replacement);"#
+        )
+        .contains("search"),
+        "searchValue must be coerced before replaceValue"
+    );
+    assert!(
+        run_err(
+            r#"var search = {};
+               Object.defineProperty(search, Symbol.replace, {
+                 get: function(){ throw new Error("replace-get"); }
+               });
+               "".replace(search);"#
+        )
+        .contains("replace-get"),
+        "String.prototype.replace must observe searchValue[Symbol.replace]"
+    );
+    assert_eq!(
+        run(r#"var search = {};
+               var seenThis, seenFirst, seenSecond;
+               search[Symbol.replace] = function(first, second) {
+                 seenThis = this;
+                 seenFirst = first;
+                 seenSecond = second;
+                 return "custom";
+               };
+               var out = "abc".replace(search, "replacement");
+               [out, seenThis === search, seenFirst, seenSecond].join("|");"#),
+        Value::String(Arc::from("custom|true|abc|replacement"))
+    );
 }
 
 #[test]

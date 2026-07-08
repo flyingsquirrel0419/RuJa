@@ -317,31 +317,33 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   iteration. The same clearing now feeds `String.prototype.match` and function
   replacement callbacks. The focused `built-ins/RegExp/prototype/exec`
   diagnostic is **75 pass / 0 fail / 4 skip**; the broader
-  `built-ins/String/prototype/{match,replace}` diagnostic is **56 pass / 44
+  `built-ins/String/prototype/{match,replace}` diagnostic is **78 pass / 22
   fail / 6 skip**, with remaining failures outside this capture-clearing edge.
-- **String replace RegExp substitution tokens**: RegExp-backed
+- **String replace substitution tokens and `@@replace` dispatch**:
   `String.prototype.replace` string replacements now expand ECMAScript
-  replacement tokens (`$$`, `$&`, ``$` ``, `$'`, `$n`, `$nn`) instead of
-  delegating to the regex backend's replacement syntax. Unmatched captures
-  substitute as the empty string, numeric fallback cases such as `$11` and
-  `$01` match JS behavior, and the replacement-string path now uses the same
-  repeated-capture clearing as `RegExp.prototype.exec`. The focused
-  `built-ins/String/prototype/replace` diagnostic remains **38 pass / 15 fail
-  / 2 skip**, with the remaining failures outside this substitution-token
-  edge.
+  replacement tokens (`$$`, `$&`, ``$` ``, `$'`, `$n`, `$nn`) for both RegExp
+  and plain string search values instead of delegating to backend replacement
+  syntax or raw `String::replacen`. Unmatched captures substitute as the empty
+  string, numeric fallback cases such as `$11` and `$01` match JS behavior,
+  and the replacement-string path now uses the same repeated-capture clearing
+  as `RegExp.prototype.exec`. Plain replacement now also coerces `searchValue`
+  before non-callable `replaceValue`, and custom `searchValue[Symbol.replace]`
+  methods are observed before ordinary replacement. The focused
+  `built-ins/String/prototype/replace` diagnostic now closes at **53 pass / 0
+  fail / 2 skip**.
 - **String replace callback offsets**: Function replacements for both
   RegExp and string search values now receive the match offset as a UTF-16
   code-unit index instead of a Rust UTF-8 byte offset, so matches after
   supplementary characters report the same offset that JS exposes through
   string indexing. The focused `built-ins/String/prototype/replace`
-  diagnostic remains **38 pass / 15 fail / 2 skip**.
+  diagnostic now closes at **53 pass / 0 fail / 2 skip**.
 - **RegExp named capture groups**: Named captures now feed the shared match
   result surface: `RegExp.prototype.exec` and non-global
   `String.prototype.match` expose a null-prototype `groups` object,
   RegExp function replacements receive that groups object as their final
   argument, and replacement strings expand `$<name>` using the same capture
   metadata. The focused `built-ins/RegExp/prototype/exec
-  built-ins/String/prototype/{match,replace}` diagnostic is **131 pass / 44
+  built-ins/String/prototype/{match,replace}` diagnostic is **153 pass / 22
   fail / 10 skip**; the remaining String failures are outside this
   named-capture edge.
 - **RegExp backreferences and identity escapes**: RegExp compilation now keeps
