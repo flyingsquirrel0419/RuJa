@@ -21,12 +21,23 @@ pub(crate) fn new_collection_iterator(
     source: Value,
     kind: CollectionIteratorKind,
 ) -> error::Result<Value> {
-    let proto = if kind == CollectionIteratorKind::ArrayValues
-        && matches!(vm.iterator_proto, Value::Object(_))
-    {
-        vm.iterator_proto.clone()
-    } else {
-        vm.object_proto.clone()
+    let proto = match kind {
+        CollectionIteratorKind::ArrayValues if matches!(vm.iterator_proto, Value::Object(_)) => {
+            vm.iterator_proto.clone()
+        }
+        CollectionIteratorKind::MapEntries
+        | CollectionIteratorKind::MapKeys
+        | CollectionIteratorKind::MapValues
+            if matches!(vm.map_iterator_proto, Value::Object(_)) =>
+        {
+            vm.map_iterator_proto.clone()
+        }
+        CollectionIteratorKind::SetEntries | CollectionIteratorKind::SetValues
+            if matches!(vm.set_iterator_proto, Value::Object(_)) =>
+        {
+            vm.set_iterator_proto.clone()
+        }
+        _ => vm.object_proto.clone(),
     };
     let obj_idx = vm
         .heap
@@ -38,19 +49,6 @@ pub(crate) fn new_collection_iterator(
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
-    if kind != CollectionIteratorKind::ArrayValues {
-        let next_fn = vm.new_native_function("next", collection_iterator_next, 0)?;
-        let iter_fn = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
-        vm.heap.with_obj(obj_idx, |obj| {
-            obj.props()
-                .lock()
-                .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
-            obj.props().lock().insert(
-                PropertyKey::Symbol(vm.well_known_symbols.iterator),
-                data_prop(Value::Object(iter_fn)),
-            );
-        });
-    }
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
@@ -77,6 +75,65 @@ pub(crate) fn setup_array_iterator_proto(vm: &mut Vm) -> error::Result<()> {
     Ok(())
 }
 
+pub(crate) fn setup_map_set_iterator_protos(vm: &mut Vm) -> error::Result<()> {
+    let map_next = vm.new_native_function("next", collection_iterator_next, 0)?;
+    let map_iter = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
+    let map_proto = collection_iterator_proto(vm, Value::Object(map_next), "Map Iterator")?;
+    vm.heap.with_obj(map_proto.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            data_prop(Value::Object(map_iter)),
+        );
+    });
+    vm.map_iterator_proto = Value::Object(map_proto);
+
+    let set_next = vm.new_native_function("next", collection_iterator_next, 0)?;
+    let set_iter = vm.new_native_function("[Symbol.iterator]", collection_iterator_this, 0)?;
+    let set_proto = collection_iterator_proto(vm, Value::Object(set_next), "Set Iterator")?;
+    vm.heap.with_obj(set_proto.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.iterator),
+            data_prop(Value::Object(set_iter)),
+        );
+    });
+    vm.set_iterator_proto = Value::Object(set_proto);
+    Ok(())
+}
+
+fn collection_iterator_proto(
+    vm: &mut Vm,
+    next: Value,
+    to_string_tag: &'static str,
+) -> error::Result<GcIdx> {
+    let proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: std::sync::atomic::AtomicBool::new(true),
+        class_name: None,
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.heap.with_obj(proto_idx, |obj| {
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("next"), data_prop(next));
+        let desc = PropertyDescriptor {
+            value: Value::String(Arc::from(to_string_tag)),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: None,
+            set: None,
+            is_accessor: false,
+        };
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            desc,
+        );
+    });
+    Ok(GcIdx(proto_idx))
+}
+
 fn collection_iterator_this(
     _vm: &mut Vm,
     _args: &[Value],
@@ -93,23 +150,20 @@ fn collection_iterator_next(
     let Some(Value::Object(iter_idx)) = this else {
         return Err(Error::type_err("Iterator next called on non-iterator"));
     };
-    let (source, kind, index, already_done) = vm.heap.with_obj(iter_idx.0, |obj| {
+    let Some((source, kind, index, already_done)) = vm.heap.with_obj(iter_idx.0, |obj| {
         if let HeapObj::CollectionIterator(iter) = obj {
-            (
+            Some((
                 iter.source.clone(),
                 iter.kind,
                 iter.index.load(std::sync::atomic::Ordering::Relaxed),
                 iter.done.load(std::sync::atomic::Ordering::Relaxed),
-            )
+            ))
         } else {
-            (
-                Value::Undefined,
-                CollectionIteratorKind::ArrayValues,
-                0,
-                true,
-            )
+            None
         }
-    });
+    }) else {
+        return Err(Error::type_err("Iterator next called on non-iterator"));
+    };
     if already_done {
         return gen_result(vm, Value::Undefined, true, false);
     }

@@ -1385,6 +1385,7 @@ pub(crate) fn generator_throw(
 }
 
 pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
+    setup_map_set_iterator_protos(vm)?;
     // Map
     let (map_ctor, map_proto) = make_builtin_constructor_with(
         vm,

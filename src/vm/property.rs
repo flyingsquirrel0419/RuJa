@@ -2140,6 +2140,8 @@ impl Vm {
             &self.promise_ctor,
             &self.promise_proto,
             &self.iterator_proto,
+            &self.map_iterator_proto,
+            &self.set_iterator_proto,
             &self.map_proto,
             &self.set_proto,
             &self.generator_proto,

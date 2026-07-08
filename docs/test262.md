@@ -189,6 +189,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   callability and object return values, and delegate to the target when no trap
   is present. The focused `built-ins/Proxy` run improves from **3 pass / 1
   fail / 307 skip** to **4 pass / 0 fail / 307 skip**.
+- **Map/Set iterator prototype shape** —
+  Map and Set iterators now inherit from shared `%MapIteratorPrototype%` and
+  `%SetIteratorPrototype%` objects instead of carrying own `next` methods,
+  expose spec-shaped `next` and `@@toStringTag` properties, and reject `next`
+  calls on receivers without collection-iterator internal slots. The focused
+  `built-ins/MapIteratorPrototype built-ins/SetIteratorPrototype` run improves
+  from **9 pass / 5 fail / 8 skip** to **14 pass / 0 fail / 8 skip**.
 - **`%ThrowTypeError%` intrinsic** —
   Restricted function and arguments accessors now share an anonymous, frozen,
   non-extensible `%ThrowTypeError%` function within each Realm. Strict

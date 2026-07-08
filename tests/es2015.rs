@@ -681,6 +681,25 @@ fn map_basic() {
         Value::String(Arc::from("1|a|2|b|true|true"))
     );
     assert_eq!(
+        run(r#"
+            let it = new Map([[1, 2]]).values();
+            let proto = Object.getPrototypeOf(it);
+            let d = Object.getOwnPropertyDescriptor(proto, "next");
+            let tag = Object.getOwnPropertyDescriptor(proto, Symbol.toStringTag);
+            [
+              Object.prototype.hasOwnProperty.call(it, "next"),
+              d.value.name, d.value.length, d.writable, d.enumerable, d.configurable,
+              tag.value, tag.writable, tag.enumerable, tag.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "false|next|0|true|false|true|Map Iterator|false|false|true"
+        ))
+    );
+    assert!(
+        run_err("Object.getPrototypeOf(new Map().values()).next.call({});").contains("TypeError")
+    );
+    assert_eq!(
         run("Map.prototype[Symbol.iterator] === Map.prototype.entries;"),
         Value::Bool(true)
     );
@@ -806,6 +825,25 @@ fn set_basic() {
     assert_eq!(
         run("let s = new Set([1, 2]); let it = s.values(); let a = it.next(); let b = it.next(); let c = it.next(); [a.value, b.value, c.done, it[Symbol.iterator]() === it].join('|');"),
         Value::String(Arc::from("1|2|true|true"))
+    );
+    assert_eq!(
+        run(r#"
+            let it = new Set([1]).values();
+            let proto = Object.getPrototypeOf(it);
+            let d = Object.getOwnPropertyDescriptor(proto, "next");
+            let tag = Object.getOwnPropertyDescriptor(proto, Symbol.toStringTag);
+            [
+              Object.prototype.hasOwnProperty.call(it, "next"),
+              d.value.name, d.value.length, d.writable, d.enumerable, d.configurable,
+              tag.value, tag.writable, tag.enumerable, tag.configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "false|next|0|true|false|true|Set Iterator|false|false|true"
+        ))
+    );
+    assert!(
+        run_err("Object.getPrototypeOf(new Set().values()).next.call({});").contains("TypeError")
     );
     assert_eq!(
         run("Set.prototype.keys === Set.prototype.values && Set.prototype[Symbol.iterator] === Set.prototype.values;"),
