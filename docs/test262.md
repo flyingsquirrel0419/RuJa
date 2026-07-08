@@ -312,6 +312,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Boolean receivers, and `valueOf`/`toString` reject non-Boolean receivers
   with `TypeError`. The focused `built-ins/Boolean` run now closes at **46
   pass / 0 fail / 5 skip**.
+- **Number/String prototype receiver checks** —
+  `Number.prototype` now carries the wrapped `+0` primitive value and
+  `String.prototype` carries the wrapped empty string, so their `valueOf`
+  methods accept only primitive or matching boxed receivers and throw
+  `TypeError` for borrowed incompatible receivers. `$262.createRealm()` now
+  exposes realm-local primitive wrapper constructors so cross-realm String
+  receiver errors are produced from the callee Realm. The focused
+  `built-ins/Number/prototype/valueOf built-ins/String/prototype/valueOf` run
+  now closes at **16 pass / 0 fail / 2 skip**.
 - **PrivateName lexical grammar** —
   Private class names now follow the same `IdentifierName` scanner rules as
   ordinary identifiers, including Unicode escapes, raw Unicode source text,

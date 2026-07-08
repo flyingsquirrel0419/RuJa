@@ -1675,6 +1675,55 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(type_error) = crate::environment::get(&vm.heap, vm.global, "TypeError") {
         define_realm_global(vm, realm_env, &global, "TypeError", type_error);
     }
+    let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
+        vm,
+        "String",
+        1,
+        string_constructor,
+        &[
+            ("valueOf", string_value_of, 0),
+            ("toString", string_proto_to_string, 0),
+        ],
+        realm_env,
+    )?;
+    let realm_string_proto = Value::Object(str_proto);
+    vm.set_primitive(&realm_string_proto, Value::String(Arc::from("")));
+    vm.heap.with_obj(str_proto.0, |obj| {
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("length"), const_prop(Value::Number(0.0)));
+    });
+    define_realm_global(vm, realm_env, &global, "String", Value::Object(str_ctor));
+
+    let (num_ctor, num_proto) = make_builtin_constructor_with_in_env(
+        vm,
+        "Number",
+        1,
+        number_constructor,
+        &[
+            ("toString", num_proto_to_string, 1),
+            ("toLocaleString", num_proto_to_string, 0),
+            ("valueOf", number_value_of, 0),
+        ],
+        realm_env,
+    )?;
+    vm.set_primitive(&Value::Object(num_proto), Value::Number(0.0));
+    define_realm_global(vm, realm_env, &global, "Number", Value::Object(num_ctor));
+
+    let (bool_ctor, bool_proto) = make_builtin_constructor_with_in_env(
+        vm,
+        "Boolean",
+        1,
+        boolean_constructor,
+        &[
+            ("valueOf", boolean_value_of, 0),
+            ("toString", boolean_to_string, 0),
+        ],
+        realm_env,
+    )?;
+    vm.set_primitive(&Value::Object(bool_proto), Value::Bool(false));
+    define_realm_global(vm, realm_env, &global, "Boolean", Value::Object(bool_ctor));
+
     let (regexp_ctor, _) = make_regexp_constructor_in_env(vm, realm_env)?;
     define_realm_global(vm, realm_env, &global, "RegExp", Value::Object(regexp_ctor));
     let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
@@ -2118,44 +2167,68 @@ fn global_uri_identity(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
     ))
 }
 
-/// `Number.prototype.valueOf` / `Boolean.prototype.valueOf` /
-/// `String.prototype.valueOf`: return the wrapped primitive of `this`.
-fn string_proto_to_string(
-    _vm: &mut Vm,
-    _args: &[Value],
-    this: Option<Value>,
-) -> error::Result<Value> {
+fn this_string_value(vm: &Vm, this: Option<Value>) -> error::Result<Arc<str>> {
     match this {
-        Some(Value::String(s)) => Ok(Value::String(s)),
+        Some(Value::String(s)) => Ok(s),
         Some(Value::Object(idx)) => {
-            // Boxed string: extract the primitive value.
-            _vm.heap.with_obj(idx.0, |o| {
+            let prim = vm.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Object(od) = o {
-                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
-                        return Ok(Value::String(s));
-                    }
+                    od.primitive.lock().clone()
+                } else {
+                    None
                 }
-                Ok(Value::String(Arc::from("")))
-            })
+            });
+            if let Some(Value::String(s)) = prim {
+                Ok(s)
+            } else {
+                Err(Error::type_err(
+                    "String method called on incompatible receiver",
+                ))
+            }
         }
-        _ => Ok(Value::String(Arc::from(""))),
+        _ => Err(Error::type_err(
+            "String method called on incompatible receiver",
+        )),
     }
 }
 
-fn boxed_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = &this {
-        let prim = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
-                od.primitive.lock().clone()
+/// `String.prototype.toString`: return the string primitive for `this`.
+fn string_proto_to_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::String(this_string_value(vm, this)?))
+}
+
+/// `String.prototype.valueOf`: return the string primitive for `this`.
+fn string_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(Value::String(this_string_value(vm, this)?))
+}
+
+fn this_number_value(vm: &Vm, this: Option<Value>) -> error::Result<f64> {
+    match this {
+        Some(Value::Number(n)) => Ok(n),
+        Some(Value::Object(idx)) => {
+            let prim = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Object(od) = o {
+                    od.primitive.lock().clone()
+                } else {
+                    None
+                }
+            });
+            if let Some(Value::Number(n)) = prim {
+                Ok(n)
             } else {
-                None
+                Err(Error::type_err(
+                    "Number method called on incompatible receiver",
+                ))
             }
-        });
-        if let Some(p) = prim {
-            return Ok(p);
         }
+        _ => Err(Error::type_err(
+            "Number method called on incompatible receiver",
+        )),
     }
-    Ok(this.unwrap_or(Value::Undefined))
 }
 
 fn this_boolean_value(vm: &Vm, this: Option<Value>) -> error::Result<bool> {
@@ -2200,18 +2273,7 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
     } else {
         vm.to_number(&args[0]).unwrap_or(10.0)
     };
-    let n = match &this {
-        Some(Value::Number(n)) => *n,
-        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
-                if let Some(Value::Number(n)) = od.primitive.lock().clone() {
-                    return n;
-                }
-            }
-            f64::NAN
-        }),
-        _ => f64::NAN,
-    };
+    let n = this_number_value(vm, this)?;
     if radix == 10.0 {
         let s = vm.to_string(&Value::Number(n))?;
         return Ok(Value::String(s));
@@ -2234,21 +2296,9 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
     Ok(Value::String(Arc::from(s.as_str())))
 }
 
-/// `Number.prototype.valueOf` (same as boxed_value_of for Number).
+/// `Number.prototype.valueOf`: return the number primitive for `this`.
 fn number_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = &this {
-        let prim = vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(od) = o {
-                od.primitive.lock().clone()
-            } else {
-                None
-            }
-        });
-        if let Some(p) = prim {
-            return Ok(p);
-        }
-    }
-    Ok(this.unwrap_or(Value::Undefined))
+    Ok(Value::Number(this_number_value(vm, this)?))
 }
 
 /// Format a number in a given radix (2-36). Handles integers and fractions.
@@ -4413,7 +4463,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("charCodeAt", str_char_code_at, 1),
             ("indexOf", str_index_of, 1),
             ("lastIndexOf", str_last_index_of, 1),
-            ("valueOf", boxed_value_of, 0),
+            ("valueOf", string_value_of, 0),
             ("slice", str_slice, 2),
             ("toUpperCase", str_to_upper, 0),
             ("toLowerCase", str_to_lower, 0),
@@ -4440,10 +4490,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("concat", str_concat, 1),
             ("search", str_search, 1),
             ("toString", string_proto_to_string, 0),
-            ("valueOf", boxed_value_of, 0),
         ],
     )?;
     vm.string_proto = Value::Object(str_proto);
+    vm.set_primitive(&vm.string_proto.clone(), Value::String(Arc::from("")));
     vm.heap.with_obj(str_proto.0, |obj| {
         obj.props()
             .lock()
@@ -4484,10 +4534,11 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toExponential", num_to_exponential, 1),
             ("toString", num_proto_to_string, 1),
             ("toLocaleString", num_proto_to_string, 0),
-            ("valueOf", boxed_value_of, 0),
+            ("valueOf", number_value_of, 0),
         ],
     )?;
     vm.number_proto = Value::Object(num_proto);
+    vm.set_primitive(&vm.number_proto.clone(), Value::Number(0.0));
     // Number static methods + constants
     let statics: &[(&str, NativeFn, usize)] = &[
         ("isInteger", number_is_integer, 1),

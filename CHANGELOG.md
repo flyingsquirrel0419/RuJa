@@ -176,6 +176,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   primitives from primitive/boxed Boolean receivers, and `valueOf`/`toString`
   reject non-Boolean receivers with `TypeError`. The focused
   `built-ins/Boolean` run now closes at **46 pass / 0 fail / 5 skip**.
+- **Number/String prototype receiver checks**: `Number.prototype` and
+  `String.prototype` now carry their required wrapped primitive values,
+  `Number.prototype.valueOf` and `String.prototype.valueOf` reject receivers
+  without matching wrapper data, and `$262.createRealm()` exposes realm-local
+  primitive wrapper constructors for cross-realm TypeError checks. The focused
+  `built-ins/Number/prototype/valueOf built-ins/String/prototype/valueOf` run
+  now closes at **16 pass / 0 fail / 2 skip**.
 - **PrivateName lexical grammar**: private class names now use the same
   `IdentifierName` Unicode escape and raw Unicode scanning rules as ordinary
   identifiers, including `Other_ID_Start`, ZWNJ, and ZWJ handling. This fixes

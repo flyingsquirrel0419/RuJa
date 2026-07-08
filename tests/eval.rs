@@ -322,6 +322,20 @@ fn test262_create_realm_exposes_constructable_proxy() {
 }
 
 #[test]
+fn test262_create_realm_exposes_primitive_wrapper_constructors() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        var ok = [];
+        try { other.String.prototype.valueOf.call(1); ok.push(false); }
+        catch (e) { ok.push(e.constructor === other.TypeError); }
+        ok.push(other.Number.prototype.valueOf() === 0);
+        ok.push(other.Boolean.prototype.valueOf() === false);
+        ok.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true,true,true")));
+}
+
+#[test]
 fn cross_realm_non_constructor_native_throws_current_realm_type_error() {
     let src = r#"
         var otherParseInt = $262.createRealm().global.parseInt;

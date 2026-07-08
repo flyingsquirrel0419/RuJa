@@ -4508,6 +4508,15 @@ fn boxed_number_valueof() {
         run("typeof new Number(5).valueOf();"),
         Value::String(std::sync::Arc::from("number"))
     );
+    assert_eq!(run("Number.prototype.valueOf();"), Value::Number(0.0));
+    assert_eq!(run("Number.prototype.valueOf.call(1);"), Value::Number(1.0));
+    assert_eq!(
+        run("Number.prototype.toString.call(Object(255), 16);"),
+        Value::String(Arc::from("ff"))
+    );
+    assert!(run_err("Number.prototype.valueOf.call(new String('1'));").contains("TypeError"));
+    assert!(run_err("Number.prototype.valueOf.call({});").contains("TypeError"));
+    assert!(run_err("Number.prototype.toString.call({});").contains("TypeError"));
 }
 
 #[test]
@@ -4534,6 +4543,25 @@ fn boxed_string_valueof() {
         run("new String('hi').valueOf();"),
         Value::String(std::sync::Arc::from("hi"))
     );
+    assert_eq!(
+        run("String.prototype.valueOf();"),
+        Value::String(Arc::from(""))
+    );
+    assert_eq!(
+        run("String.prototype.valueOf.call('x');"),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run("String.prototype.toString.call(Object('y'));"),
+        Value::String(Arc::from("y"))
+    );
+    assert!(run_err("String.prototype.valueOf.call(1);").contains("TypeError"));
+    assert!(run_err("String.prototype.valueOf.call(new Number(1));").contains("TypeError"));
+    assert!(
+        run_err("String.prototype.valueOf.call({ toString: function(){ return 'x'; } });")
+            .contains("TypeError")
+    );
+    assert!(run_err("String.prototype.toString.call(1);").contains("TypeError"));
 }
 
 #[test]
