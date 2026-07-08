@@ -174,26 +174,62 @@ pub(crate) fn str_concat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
 }
 
 pub(crate) fn str_search(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let s = str_val(vm, &this)?;
-    let pattern = args.first().cloned().unwrap_or(Value::Undefined);
-    if is_regexp(vm, &pattern)? {
-        let regexp = Some(pattern);
-        let source = read_regexp_source(vm, &regexp)?;
-        let flags = read_regexp_flags(vm, &regexp).unwrap_or_default();
-        let re = compile_regex(&source, &flags)
-            .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
-        let matched = if flags.contains('y') {
-            re.find_at(&s, 0)?.filter(|m| m.start() == 0)
-        } else {
-            re.find(&s)?
-        };
-        return Ok(matched
-            .map(|m| Value::Number(crate::value::utf16_len(&s[..m.start()]) as f64))
-            .unwrap_or(Value::Number(-1.0)));
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
     }
-    let p = vm.to_string(&pattern)?;
-    Ok(crate::value::utf16_index_of(&s, &p, 0)
-        .map(|i| Value::Number(i as f64))
+    let search_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let search_key = PropertyKey::Symbol(vm.well_known_symbols.search);
+    if matches!(search_value, Value::Object(_)) {
+        let searcher = vm.get_property_by_key(&search_value, &search_key)?;
+        if !searcher.is_nullish() {
+            let is_callable = matches!(&searcher, Value::Object(idx) if {
+                vm.heap.with_obj(idx.0, |o| o.is_function())
+            });
+            if !is_callable {
+                return Err(Error::type_err("Symbol.search method is not callable"));
+            }
+            return vm.call_function(
+                &searcher,
+                std::slice::from_ref(&receiver),
+                Some(search_value),
+            );
+        }
+    }
+    let s = str_val(vm, &Some(receiver))?;
+    let regexp = regexp_create_intrinsic(vm, &search_value)?;
+    let searcher = vm.get_property_by_key(&regexp, &search_key)?;
+    if !searcher.is_nullish() {
+        let is_callable = matches!(&searcher, Value::Object(idx) if {
+            vm.heap.with_obj(idx.0, |o| o.is_function())
+        });
+        if !is_callable {
+            return Err(Error::type_err("Symbol.search method is not callable"));
+        }
+        return vm.call_function(
+            &searcher,
+            &[Value::String(Arc::from(s.as_str()))],
+            Some(regexp),
+        );
+    }
+    regexp_search_internal(vm, regexp, &s)
+}
+
+fn regexp_search_internal(vm: &mut Vm, regexp: Value, s: &str) -> error::Result<Value> {
+    let regexp = Some(regexp);
+    let source = read_regexp_source(vm, &regexp)?;
+    let flags = read_regexp_flags(vm, &regexp).unwrap_or_default();
+    let re = compile_regex(&source, &flags)
+        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let matched = if flags.contains('y') {
+        re.find_at(s, 0)?.filter(|m| m.start() == 0)
+    } else {
+        re.find(s)?
+    };
+    Ok(matched
+        .map(|m| Value::Number(crate::value::utf16_len(&s[..m.start()]) as f64))
         .unwrap_or(Value::Number(-1.0)))
 }
 

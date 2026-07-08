@@ -219,6 +219,43 @@ fn string_search_methods_follow_regexp_and_position_semantics() {
         ),
         Value::String(Arc::from("search"))
     );
+    assert_eq!(
+        run(r#"var searcher = {};
+               var seenThis, seenArg;
+               searcher[Symbol.search] = function(arg) {
+                 seenThis = this;
+                 seenArg = arg;
+                 return "custom";
+               };
+               var out = "abc".search(searcher);
+               [out, seenThis === searcher, seenArg].join("|");"#),
+        Value::String(Arc::from("custom|true|abc"))
+    );
+    assert!(run_err(
+        r#"var searcher = {};
+               Object.defineProperty(searcher, Symbol.search, {
+                 get: function(){ throw new Error("search-get"); }
+               });
+               "abc".search(searcher);"#
+    )
+    .contains("search-get"));
+    assert_eq!(
+        run(r#"var original = RegExp.prototype[Symbol.search];
+               var seenThis, seenArg;
+               RegExp.prototype[Symbol.search] = function(arg) {
+                 seenThis = this;
+                 seenArg = arg;
+                 return "created";
+               };
+               var out = "target".search("string source");
+               RegExp.prototype[Symbol.search] = original;
+               [out, seenThis instanceof RegExp, seenThis.source, seenThis.flags, seenArg].join("|");"#),
+        Value::String(Arc::from("created|true|string source||target"))
+    );
+    assert_eq!(
+        run("var re = /b/g; re.lastIndex = 2; var n = re[Symbol.search]('abc'); n + ',' + re.lastIndex;"),
+        Value::String(Arc::from("1,2"))
+    );
 }
 
 #[test]

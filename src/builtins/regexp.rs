@@ -143,6 +143,58 @@ pub(crate) fn regexp_test(
     )))
 }
 
+pub(crate) fn regexp_symbol_search(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(rx @ Value::Object(_)) = this else {
+        return Err(Error::type_err("not a RegExp".to_string()));
+    };
+    let s = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
+    let previous_last_index = vm.get_property(&rx, "lastIndex")?;
+    if !same_value(&previous_last_index, &Value::Number(0.0)) {
+        vm.set_property_strict(&rx, "lastIndex", Value::Number(0.0))?;
+    }
+    let result = regexp_exec_dispatch(vm, &rx, &s)?;
+    let current_last_index = vm.get_property(&rx, "lastIndex")?;
+    if !same_value(&current_last_index, &previous_last_index) {
+        vm.set_property_strict(&rx, "lastIndex", previous_last_index)?;
+    }
+    if result.is_null() {
+        return Ok(Value::Number(-1.0));
+    }
+    vm.get_property(&result, "index")
+}
+
+fn regexp_exec_dispatch(vm: &mut Vm, rx: &Value, s: &str) -> error::Result<Value> {
+    let exec = vm.get_property(rx, "exec")?;
+    let is_callable = matches!(&exec, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    });
+    if is_callable {
+        let result = vm.call_function(&exec, &[Value::String(Arc::from(s))], Some(rx.clone()))?;
+        if matches!(result, Value::Object(_) | Value::Null) {
+            return Ok(result);
+        }
+        return Err(Error::type_err(
+            "RegExp exec result must be an object or null",
+        ));
+    }
+    regexp_exec(vm, &[Value::String(Arc::from(s))], Some(rx.clone()))
+}
+
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => {
+            (x.is_nan() && y.is_nan()) || x.to_bits() == y.to_bits()
+        }
+        _ => a == b,
+    }
+}
+
 pub(crate) fn regexp_to_string(
     vm: &mut Vm,
     _args: &[Value],

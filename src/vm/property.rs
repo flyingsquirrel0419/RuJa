@@ -366,7 +366,16 @@ impl Vm {
     }
 
     pub fn set_property(&mut self, obj: &Value, key: &str, value: Value) -> error::Result<()> {
-        self.set_property_impl(obj, key, value, true)
+        self.set_property_impl(obj, key, value, true, false)
+    }
+
+    pub(crate) fn set_property_strict(
+        &mut self,
+        obj: &Value,
+        key: &str,
+        value: Value,
+    ) -> error::Result<()> {
+        self.set_property_impl(obj, key, value, true, true)
     }
 
     pub(crate) fn set_object_environment_property(
@@ -375,7 +384,7 @@ impl Vm {
         key: &str,
         value: Value,
     ) -> error::Result<()> {
-        self.set_property_impl(obj, key, value, false)
+        self.set_property_impl(obj, key, value, false, false)
     }
 
     pub(crate) fn define_data_property(
@@ -547,7 +556,9 @@ impl Vm {
         key: &str,
         value: Value,
         route_global_this: bool,
+        force_strict: bool,
     ) -> error::Result<()> {
+        let strict = force_strict || self.current_strict();
         // ES [[Set]] semantics, simplified:
         //  1. Walk the prototype chain for an accessor descriptor with a
         //     `set` function; if found, call it and return.
@@ -588,12 +599,18 @@ impl Vm {
                                     &[target, key_val, value, receiver],
                                     Some(handler),
                                 )?;
-                                if !self.to_boolean(&trap_result) && self.current_strict() {
+                                if !self.to_boolean(&trap_result) && strict {
                                     return Err(Error::type_err("Proxy set trap returned false"));
                                 }
                                 return Ok(());
                             }
-                            return self.set_property(&target, key, value);
+                            return self.set_property_impl(
+                                &target,
+                                key,
+                                value,
+                                route_global_this,
+                                force_strict,
+                            );
                         }
                     }
                 }
@@ -647,7 +664,7 @@ impl Vm {
                         let pkey = crate::value::PropertyKey::from(key);
                         let success =
                             self.ordinary_set_with_receiver(*idx, &pkey, key, value, &obj)?;
-                        if !success && self.current_strict() {
+                        if !success && strict {
                             return Err(Error::type_err(format!(
                                 "Cannot assign to read only property '{}' of object",
                                 key
@@ -682,7 +699,7 @@ impl Vm {
                                 )?;
                                 return Ok(());
                             }
-                            if self.current_strict() {
+                            if strict {
                                 return Err(Error::type_err(format!(
                                     "Cannot set property '{}' which has only a getter",
                                     key
@@ -691,7 +708,7 @@ impl Vm {
                             return Ok(());
                         }
                         if !desc.writable {
-                            if self.current_strict() {
+                            if strict {
                                 return Err(Error::type_err(format!(
                                     "Cannot assign to read only property '{}' of object",
                                     key
@@ -730,7 +747,7 @@ impl Vm {
                                 return Ok(());
                             }
                             Some(None) => {
-                                if self.current_strict() {
+                                if strict {
                                     return Err(Error::type_err(format!(
                                         "Cannot set property '{}' which has only a getter",
                                         key
@@ -741,7 +758,7 @@ impl Vm {
                             None => {}
                         }
                         if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
-                            if self.current_strict() {
+                            if strict {
                                 return Err(Error::type_err(format!(
                                     "Cannot assign to read only property '{}' of object",
                                     key
@@ -751,7 +768,7 @@ impl Vm {
                         }
                         let is_extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
                         if !is_extensible {
-                            if self.current_strict() {
+                            if strict {
                                 return Err(Error::type_err(format!(
                                     "Cannot add property '{}', object is not extensible",
                                     key
@@ -801,7 +818,7 @@ impl Vm {
                             )?;
                             return Ok(());
                         }
-                        if self.current_strict() {
+                        if strict {
                             return Err(Error::type_err(format!(
                                 "Cannot set property '{}' which has only a getter",
                                 key
@@ -810,7 +827,7 @@ impl Vm {
                         return Ok(());
                     }
                     if !desc.writable {
-                        if self.current_strict() {
+                        if strict {
                             return Err(Error::type_err(format!(
                                 "Cannot assign to read only property '{}' of object",
                                 key
@@ -848,7 +865,7 @@ impl Vm {
                     }
                     Some(None) => {
                         // Accessor property with no setter.
-                        if self.current_strict() {
+                        if strict {
                             return Err(Error::type_err(format!(
                                 "Cannot set property '{}' which has only a getter",
                                 key
@@ -862,7 +879,7 @@ impl Vm {
                 // 3. A writable inherited data property permits creating an own
                 // property on the receiver; a non-writable one blocks assignment.
                 if self.has_non_writable_data_property_in_proto(*idx, &pkey) {
-                    if self.current_strict() {
+                    if strict {
                         return Err(Error::type_err(format!(
                             "Cannot assign to read only property '{}' of object",
                             key
@@ -879,7 +896,7 @@ impl Vm {
                     .heap
                     .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey));
                 if !is_extensible && !has_own {
-                    if self.current_strict() {
+                    if strict {
                         return Err(Error::type_err(format!(
                             "Cannot add property '{}', object is not extensible",
                             key
@@ -905,7 +922,7 @@ impl Vm {
                 Ok(())
             }
             _ => {
-                if obj.is_nullish() || self.current_strict() {
+                if obj.is_nullish() || strict {
                     Err(Error::type_err(
                         "Cannot set property of primitive".to_string(),
                     ))

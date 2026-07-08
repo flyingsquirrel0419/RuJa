@@ -329,6 +329,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   algorithm. The focused
   `built-ins/String/prototype/match` diagnostic now closes at **47 pass / 0
   fail / 4 skip**.
+- **String search `@@search` dispatch and RegExp search semantics**:
+  `String.prototype.search` now observes custom object
+  `searchValue[Symbol.search]` getters and methods, creates an intrinsic
+  RegExp for ordinary search values, and lets internally-created RegExp
+  objects dispatch through an overridden `RegExp.prototype[Symbol.search]`.
+  `RegExp.prototype[Symbol.search]` is now exposed with custom `exec`
+  dispatch, object-or-null result validation, strict `lastIndex` writes, and
+  restoration of the previous `lastIndex` after the search. The focused
+  `built-ins/String/prototype/search
+  built-ins/RegExp/prototype/Symbol.search` diagnostic now closes at **61
+  pass / 0 fail / 5 skip**.
 - **String replace substitution tokens and `@@replace` dispatch**:
   `String.prototype.replace` string replacements now expand ECMAScript
   replacement tokens (`$$`, `$&`, ``$` ``, `$'`, `$n`, `$nn`) for both RegExp
