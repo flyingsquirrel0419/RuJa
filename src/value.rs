@@ -951,9 +951,6 @@ pub fn num_to_string(n: f64) -> String {
     if !(1e-6..1e21).contains(&abs) {
         return format_exponential(n, abs);
     }
-    if n.fract() == 0.0 && n.abs() < 1e21 && n.abs() <= i64::MAX as f64 {
-        return format!("{}", n as i64);
-    }
     let s = format!("{}", n);
     if s.ends_with(".0") {
         s[..s.len() - 2].to_string()

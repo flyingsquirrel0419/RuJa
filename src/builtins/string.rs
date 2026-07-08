@@ -1308,11 +1308,23 @@ pub(crate) fn num_to_fixed(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let n = match &this {
-        Some(Value::Number(n)) => *n,
-        Some(v) => vm.to_number(v)?,
-        None => 0.0,
+    let n = this_number_value(vm, this)?;
+    let d = match args.first() {
+        None | Some(Value::Undefined) => 0.0,
+        Some(v) => {
+            let number = vm.to_number(v)?;
+            if number.is_nan() {
+                0.0
+            } else {
+                number.trunc()
+            }
+        }
     };
+    if !(0.0..=100.0).contains(&d) {
+        return Err(Error::range(
+            "toFixed() digits argument must be between 0 and 100",
+        ));
+    }
     if n.is_nan() {
         return Ok(Value::String(Arc::from("NaN")));
     }
@@ -1323,20 +1335,36 @@ pub(crate) fn num_to_fixed(
             "-Infinity"
         })));
     }
-    // ES: fractionDigits must be an integer in 0..=100, else RangeError.
-    // Without this, toFixed(-1) silently returned "1" and toFixed(200)
-    // produced a 201-digit string, both diverging from V8/Node.
-    let d = match args.first() {
-        Some(v) => vm.to_number(v)?,
-        None => 0.0,
-    };
-    if d.is_nan() || d < 0.0 || d.fract() != 0.0 || d > 100.0 {
-        return Err(Error::range(
-            "toFixed() digits argument must be between 0 and 100",
-        ));
+    if n.abs() >= 1e21 {
+        return Ok(Value::String(Arc::from(
+            crate::value::num_to_string(n).as_str(),
+        )));
     }
-    let digits = d as usize;
-    Ok(Value::String(Arc::from(format!("{:.*}", digits, n))))
+    Ok(Value::String(Arc::from(
+        format_to_fixed_decimal(n, d as usize).as_str(),
+    )))
+}
+
+fn format_to_fixed_decimal(n: f64, digits: usize) -> String {
+    let negative = n < 0.0;
+    let x = if negative { -n } else { n };
+    let scale = BigInt::from(10u32).pow(digits as u32);
+    let scaled = f64_to_exact_ratio(x) * Ratio::from_integer(scale);
+    let (mut rounded, rem) = scaled.numer().div_rem(scaled.denom());
+    if &rem * 2 >= scaled.denom().clone() {
+        rounded += 1;
+    }
+
+    let sign = if negative { "-" } else { "" };
+    let mut decimal = rounded.to_string();
+    if digits == 0 {
+        return format!("{sign}{decimal}");
+    }
+    if decimal.len() <= digits {
+        decimal = format!("{}{}", "0".repeat(digits + 1 - decimal.len()), decimal);
+    }
+    let split = decimal.len() - digits;
+    format!("{sign}{}.{}", &decimal[..split], &decimal[split..])
 }
 pub(crate) fn num_to_precision(
     vm: &mut Vm,

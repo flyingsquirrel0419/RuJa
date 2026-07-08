@@ -266,6 +266,29 @@ fn to_fixed_normal_works() {
     assert_eq!(v, Value::String(std::sync::Arc::from("1.10")));
     let v = run("(1).toFixed(0)");
     assert_eq!(v, Value::String(std::sync::Arc::from("1")));
+    let v = run("(1).toFixed(1.9)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.0")));
+    let v = run("(1).toFixed(Number.NaN)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1")));
+    let v = run("(2.5).toFixed(0)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("3")));
+    let v = run("(1.25).toFixed(1)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1.3")));
+    let v = run("(0.125).toFixed(2)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("0.13")));
+    let v = run("(-0.5).toFixed(0)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("-1")));
+    let v = run("(1e21).toFixed(1)");
+    assert_eq!(v, Value::String(std::sync::Arc::from("1e+21")));
+    let v = run("(1000000000000000128).toFixed(0)");
+    assert_eq!(
+        v,
+        Value::String(std::sync::Arc::from("1000000000000000128"))
+    );
+    let res = common::run_err("(NaN).toFixed(Infinity)");
+    assert!(res.contains("RangeError"), "got: {}", res);
+    let res = common::run_err("Number.prototype.toFixed.call({})");
+    assert!(res.contains("TypeError"), "got: {}", res);
 }
 
 #[test]

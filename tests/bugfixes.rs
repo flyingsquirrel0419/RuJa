@@ -96,6 +96,15 @@ fn num_to_string_fixed_notation_boundary() {
     assert_eq!(num_str("0.0000025"), "0.0000025");
 }
 
+#[test]
+fn num_to_string_uses_shortest_decimal_for_large_integer_values() {
+    assert_eq!(num_str("1000000000000000128"), "1000000000000000100");
+    assert_eq!(
+        run("(1000000000000000128).toString();"),
+        Value::String(Arc::from("1000000000000000100"))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // #2 writable:false honored by ordinary assignment [[Set]]
 // ---------------------------------------------------------------------------

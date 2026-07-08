@@ -329,6 +329,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `ToNumber` instead of replacing them with base 10. The focused
   `built-ins/Number/prototype/toString built-ins/String/prototype/toString`
   run now closes at **95 pass / 0 fail / 2 skip**.
+- **Number prototype toFixed integer conversion** —
+  `Number.prototype.toFixed` now uses `ThisNumberValue`, truncates
+  `fractionDigits` with `ToIntegerOrInfinity` semantics, checks the
+  `0..=100` range before returning `"NaN"`, delegates `|x| >= 1e21` to
+  ordinary Number stringification, and preserves exact fixed-point output for
+  large integer-valued doubles with spec tie-up rounding. Ordinary Number
+  stringification now uses the shortest decimal for integer-valued doubles, so
+  `toString` and `toFixed(0)` diverge where the spec requires. The focused
+  `built-ins/Number/prototype/toFixed` run now closes at **14 pass / 0 fail /
+  2 skip**.
 - **PrivateName lexical grammar** —
   Private class names now follow the same `IdentifierName` scanner rules as
   ordinary identifiers, including Unicode escapes, raw Unicode source text,

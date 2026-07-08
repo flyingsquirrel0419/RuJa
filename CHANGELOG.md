@@ -189,6 +189,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   radix `ToNumber` instead of silently falling back to base 10. The focused
   `built-ins/Number/prototype/toString built-ins/String/prototype/toString`
   run now closes at **95 pass / 0 fail / 2 skip**.
+- **Number prototype toFixed integer conversion**: `Number.prototype.toFixed`
+  now uses `ThisNumberValue`, applies `ToIntegerOrInfinity` semantics to
+  `fractionDigits`, validates the range before the NaN return path, delegates
+  `|x| >= 1e21` to ordinary Number stringification, and preserves the spec's
+  exact fixed-point output and tie-up rounding. Number stringification now uses
+  the shortest decimal for integer-valued doubles, so `toString` and
+  `toFixed(0)` differ where the spec requires. The focused
+  `built-ins/Number/prototype/toFixed` run now closes at **14 pass / 0 fail /
+  2 skip**.
 - **PrivateName lexical grammar**: private class names now use the same
   `IdentifierName` Unicode escape and raw Unicode scanning rules as ordinary
   identifiers, including `Other_ID_Start`, ZWNJ, and ZWJ handling. This fixes
