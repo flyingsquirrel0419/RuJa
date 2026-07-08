@@ -437,6 +437,7 @@ pub struct TypedArrayData {
 pub struct ArrayBufferData {
     pub bytes: Mutex<Vec<u8>>,
     pub detached: AtomicBool,
+    pub immutable: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

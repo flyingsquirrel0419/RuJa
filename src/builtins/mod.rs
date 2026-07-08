@@ -4650,11 +4650,23 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         "ArrayBuffer",
         1,
         array_buffer_constructor,
-        &[("slice", array_buffer_slice, 2)],
+        &[
+            ("slice", array_buffer_slice, 2),
+            ("sliceToImmutable", array_buffer_slice_to_immutable, 2),
+            ("transfer", array_buffer_transfer, 0),
+            (
+                "transferToFixedLength",
+                array_buffer_transfer_to_fixed_length,
+                0,
+            ),
+            ("transferToImmutable", array_buffer_transfer_to_immutable, 0),
+        ],
     )?;
     vm.array_buffer_proto = Value::Object(array_buffer_proto);
     let array_buffer_byte_length_getter =
         vm.new_native_function("get byteLength", array_buffer_byte_length_get, 0)?;
+    let array_buffer_immutable_getter =
+        vm.new_native_function("get immutable", array_buffer_immutable_get, 0)?;
     let array_buffer_is_view_fn = vm.new_native_function("isView", array_buffer_is_view, 1)?;
     let array_buffer_species_getter =
         vm.new_native_function("get [Symbol.species]", array_buffer_species_get, 0)?;
@@ -4672,9 +4684,15 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         }
     });
     vm.heap.with_obj(array_buffer_proto.0, |obj| {
-        obj.props().lock().insert(
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(
             PropertyKey::from("byteLength"),
             accessor_get_prop(Value::Object(array_buffer_byte_length_getter)),
+        );
+        props.insert(
+            PropertyKey::from("immutable"),
+            accessor_get_prop(Value::Object(array_buffer_immutable_getter)),
         );
     });
     define_global(vm, "ArrayBuffer", Value::Object(array_buffer_ctor));

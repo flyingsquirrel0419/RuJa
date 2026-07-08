@@ -30,10 +30,14 @@ pub(crate) fn to_uint32(n: f64) -> u32 {
     m as u32
 }
 
+fn trim_ecmascript_whitespace(s: &str) -> &str {
+    s.trim_matches(|ch: char| ch.is_whitespace() || ch == '\u{FEFF}')
+}
+
 impl Vm {
     /// float, or NaN if it does not parse.
     pub(crate) fn string_to_number(s: &str) -> f64 {
-        let t = s.trim();
+        let t = trim_ecmascript_whitespace(s);
         if t.is_empty() {
             return 0.0;
         }
@@ -70,7 +74,7 @@ impl Vm {
     }
 
     pub(crate) fn string_to_bigint(s: &str) -> Option<num_bigint::BigInt> {
-        let t = s.trim();
+        let t = trim_ecmascript_whitespace(s);
         if t.is_empty() {
             return Some(num_bigint::BigInt::from(0));
         }

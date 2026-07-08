@@ -54,34 +54,29 @@ pub(crate) fn array_from(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
             vm.unpin(pin);
             return finish_array_from(vm, items, map_fn);
         }
-        let (is_arr, arr_items, len) = vm.heap.with_obj(idx.0, |o| {
+        let (is_arr, arr_items, is_iterator_obj) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Array(a) = o {
-                (true, a.items.lock().clone(), 0)
+                (true, a.items.lock().clone(), false)
             } else if let HeapObj::Iterator(_) = o {
-                (false, Vec::new(), 0)
+                (false, Vec::new(), true)
             } else {
-                let len = o
-                    .props()
-                    .lock()
-                    .get(&crate::value::PropertyKey::from("length"))
-                    .and_then(|d| {
-                        if let Value::Number(n) = d.value {
-                            Some(n as usize)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                (false, Vec::new(), len)
+                (false, Vec::new(), false)
             }
         });
         if is_arr {
             items = arr_items;
-        } else {
+        } else if !is_iterator_obj {
             // array-like: read index 0..len. Cap to prevent untrusted input
             // like `{length: 2**26}` from forcing a multi-second / multi-GB
             // materialization (a trivial DoS). Node tolerates large lengths
             // but RuJa materializes densely, so we bound it.
+            let len_value = vm.get_property(&src_val, "length")?;
+            let len_number = vm.to_number(&len_value)?;
+            let len = if len_number.is_nan() || len_number <= 0.0 {
+                0
+            } else {
+                len_number.trunc().min((MAX_ARRAY_FROM_LEN + 1) as f64) as usize
+            };
             if len > MAX_ARRAY_FROM_LEN {
                 return Err(Error::range("Invalid array length"));
             }
@@ -798,37 +793,9 @@ pub(crate) fn array_slice(
                 Vec::new()
             }
         });
-        let len = items.len() as i64;
-        let start = args
-            .first()
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    Some(*n as i64)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-        let end = args
-            .get(1)
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    Some(*n as i64)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(len);
-        let s = if start < 0 {
-            (len + start).max(0) as usize
-        } else {
-            (start as usize).min(items.len())
-        };
-        let e = if end < 0 {
-            (len + end).max(0) as usize
-        } else {
-            (end as usize).min(items.len())
-        };
+        let len = items.len();
+        let s = array_slice_bound(vm, args.first(), len, 0)?;
+        let e = array_slice_bound(vm, args.get(1), len, len)?;
         let sliced = if s < e {
             items[s..e].to_vec()
         } else {
@@ -838,6 +805,36 @@ pub(crate) fn array_slice(
         return Ok(Value::Object(GcIdx(vm.heap.allocate(arr)?)));
     }
     Ok(Value::Undefined)
+}
+
+fn array_slice_bound(
+    vm: &mut Vm,
+    value: Option<&Value>,
+    len: usize,
+    default: usize,
+) -> error::Result<usize> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    if value.is_undefined() {
+        return Ok(default);
+    }
+    let number = vm.to_number(value)?;
+    if number.is_nan() {
+        return Ok(0);
+    }
+    if number == f64::INFINITY {
+        return Ok(len);
+    }
+    if number == f64::NEG_INFINITY {
+        return Ok(0);
+    }
+    let integer = number.trunc();
+    if integer < 0.0 {
+        Ok(((len as f64) + integer).max(0.0) as usize)
+    } else {
+        Ok((integer as usize).min(len))
+    }
 }
 pub(crate) fn array_concat(
     vm: &mut Vm,

@@ -78,6 +78,19 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   lengths while copying sliced bytes. The focused `built-ins/ArrayBuffer` run
   improves from **52 pass / 39 fail / 130 skip** to **57 pass / 34 fail / 130
   skip**.
+- **ArrayBuffer transfer and immutable surface**: fixed-length ArrayBuffers now
+  expose `transfer`, `transferToFixedLength`, `transferToImmutable`,
+  `sliceToImmutable`, and the `immutable` accessor with descriptor-compatible
+  names/lengths. Transfer operations copy, resize, zero-pad/truncate, detach
+  the source, reject detached/immutable sources in spec order, and
+  `ArrayBuffer.prototype.slice` now rejects detached sources and immutable
+  species results. Related coercion fixes let `Array.from` read TypedArray
+  array-like lengths, trim ES whitespace including `\uFEFF` in string numeric
+  conversion, and coerce `Array.prototype.slice` bounds such as `null`. The
+  focused `built-ins/ArrayBuffer` run improves from **57 pass / 34 fail / 130
+  skip** to **90 pass / 1 fail / 130 skip**; the remaining failure is
+  `ArrayBuffer/prototype/sliceToImmutable/argument-coercion.js`, which still
+  exposes a deeper VM call/GC interaction after many observable coercions.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

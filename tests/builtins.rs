@@ -1114,6 +1114,168 @@ fn array_buffer_slice_uses_species_constructor_and_validates_result() {
 }
 
 #[test]
+fn array_buffer_transfer_methods_copy_resize_and_detach_source() {
+    assert_eq!(
+        run(r#"
+            function throwsTypeError(fn) {
+              try { fn(); } catch (e) { return e instanceof TypeError; }
+              return false;
+            }
+            var source = new ArrayBuffer(4);
+            var bytes = new Uint8Array(source);
+            bytes[0] = 1;
+            bytes[1] = 2;
+            bytes[2] = 3;
+            bytes[3] = 4;
+            var grown = source.transfer(6);
+            var grownBytes = new Uint8Array(grown);
+            var grownSnapshot = [
+              grown.byteLength,
+              grownBytes[0],
+              grownBytes[1],
+              grownBytes[2],
+              grownBytes[3],
+              grownBytes[4],
+              grownBytes[5]
+            ];
+            var fixed = grown.transferToFixedLength(2);
+            var fixedBytes = new Uint8Array(fixed);
+            grownSnapshot.concat([
+              source.byteLength,
+              throwsTypeError(function() { source.slice(); }),
+              fixed.byteLength,
+              fixedBytes[0],
+              fixedBytes[1],
+              grown.byteLength
+            ]).join(",");
+            "#),
+        Value::String(Arc::from("6,1,2,3,4,0,0,0,true,2,1,2,0"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var ab = new ArrayBuffer(1);
+            ab.transfer(-1);
+            "#
+        )
+        .contains("RangeError"),
+        "negative transfer length should throw RangeError"
+    );
+}
+
+#[test]
+fn array_buffer_transfer_to_immutable_and_slice_to_immutable_mark_results() {
+    assert_eq!(
+        run(r#"
+            function throwsTypeError(fn) {
+              try { fn(); } catch (e) { return e instanceof TypeError; }
+              return false;
+            }
+            var source = new ArrayBuffer(4);
+            var bytes = new Uint8Array(source);
+            bytes[0] = 11;
+            bytes[1] = 12;
+            bytes[2] = 13;
+            bytes[3] = 14;
+            var sliced = source.sliceToImmutable(1, 3);
+            var slicedBytes = new Uint8Array(sliced);
+            bytes[1] = 99;
+            var moved = source.transferToImmutable();
+            var movedBytes = new Uint8Array(moved);
+            [
+              sliced.immutable,
+              sliced.byteLength,
+              slicedBytes[0],
+              slicedBytes[1],
+              moved.immutable,
+              moved.byteLength,
+              movedBytes[0],
+              movedBytes[1],
+              movedBytes[2],
+              movedBytes[3],
+              source.byteLength,
+              throwsTypeError(function() { moved.transfer(); }),
+              throwsTypeError(function() { source.transferToImmutable(); })
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,2,12,13,true,4,11,99,13,14,0,true,true",))
+    );
+}
+
+#[test]
+fn array_buffer_immutable_surface_and_transfer_validation_order() {
+    assert_eq!(
+        run(r#"
+            function throwsTypeError(fn) {
+              try { fn(); } catch (e) { return e instanceof TypeError; }
+              return false;
+            }
+            var ab = new ArrayBuffer(2);
+            var immutableDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "immutable");
+            var transferDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "transfer");
+            var fixedDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "transferToFixedLength");
+            var immutableTransferDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "transferToImmutable");
+            var sliceImmutableDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "sliceToImmutable");
+            var order = [];
+            var detached = ab.transfer();
+            try {
+              ab.transfer({ valueOf: function() { order.push("coerce"); return 0; } });
+            } catch (e) {
+              order.push(e instanceof TypeError);
+            }
+            [
+              immutableDesc.get.name,
+              immutableDesc.get.length,
+              immutableDesc.set === undefined,
+              immutableDesc.enumerable,
+              immutableDesc.configurable,
+              immutableDesc.get.call(new ArrayBuffer(1)),
+              immutableDesc.get.call(detached),
+              throwsTypeError(function() { immutableDesc.get.call({}); }),
+              transferDesc.value.length,
+              fixedDesc.value.length,
+              immutableTransferDesc.value.length,
+              sliceImmutableDesc.value.length,
+              order.join("|")
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "get immutable,0,true,false,true,false,false,true,0,0,0,2,coerce|true",
+        ))
+    );
+}
+
+#[test]
+fn array_buffer_immutable_argument_helpers_match_array_like_coercions() {
+    assert_eq!(
+        run(r#"
+            var ws = "\t\v\f\uFEFF\u3000\n\r\u2028\u2029";
+            var ab = new ArrayBuffer(8);
+            var moved = ab.transferToImmutable(ws + "1" + ws);
+            var source = new ArrayBuffer(4);
+            var bytes = new Uint8Array(source);
+            bytes[0] = 5;
+            bytes[1] = 6;
+            bytes[2] = 7;
+            bytes[3] = 8;
+            var immutable = source.sliceToImmutable(0, null);
+            var array = Array.from(new Uint8Array(source));
+            [
+              moved.byteLength,
+              moved.immutable,
+              immutable.byteLength,
+              Array.from(new Uint8Array(immutable)).length,
+              array.length,
+              array[0],
+              array[3],
+              [1, 2, 3].slice(0, null).length
+            ].join(",");
+            "#),
+        Value::String(Arc::from("1,true,0,0,4,5,8,0"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_prototype_accessors_validate_receivers() {
     assert_eq!(
         run(r#"

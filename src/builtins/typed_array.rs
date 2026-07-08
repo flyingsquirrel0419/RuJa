@@ -50,6 +50,7 @@ pub(crate) fn array_buffer_constructor(
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
             bytes: Mutex::new(vec![0; length]),
             detached: AtomicBool::new(false),
+            immutable: AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -115,14 +116,13 @@ pub(crate) fn array_buffer_slice(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let this = this.ok_or_else(|| Error::type_err("ArrayBuffer slice called without this"))?;
-    let bytes = match &this {
+    let (bytes, detached) = match &this {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::ArrayBuffer(buffer) = o {
-                if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
-                    Some(Vec::new())
-                } else {
-                    Some(buffer.bytes.lock().clone())
-                }
+                Some((
+                    buffer.bytes.lock().clone(),
+                    buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                ))
             } else {
                 None
             }
@@ -130,27 +130,14 @@ pub(crate) fn array_buffer_slice(
         _ => None,
     }
     .ok_or_else(|| Error::type_err("ArrayBuffer.prototype.slice called on non-ArrayBuffer"))?;
+    if detached {
+        return Err(Error::type_err(
+            "ArrayBuffer.prototype.slice on detached buffer",
+        ));
+    }
 
     let len = bytes.len();
-    let start = match args.first() {
-        Some(value) => vm.to_number(value)?.trunc() as isize,
-        None => 0,
-    };
-    let end = match args.get(1) {
-        Some(Value::Undefined) | None => len as isize,
-        Some(value) => vm.to_number(value)?.trunc() as isize,
-    };
-    let from = if start < 0 {
-        (len as isize + start).max(0) as usize
-    } else {
-        (start as usize).min(len)
-    };
-    let to = if end < 0 {
-        (len as isize + end).max(0) as usize
-    } else {
-        (end as usize).min(len)
-    };
-    let to = to.max(from);
+    let (from, to) = resolve_slice_bounds(vm, len, args.first(), args.get(1))?;
     let count = to - from;
 
     let default_ctor = current_realm_array_buffer_constructor(vm)?;
@@ -167,6 +154,13 @@ pub(crate) fn array_buffer_slice(
     if result_detached {
         return Err(Error::type_err(
             "ArrayBuffer species returned a detached buffer",
+        ));
+    }
+    let (_, _, result_immutable) = array_buffer_slots(vm, &result)
+        .ok_or_else(|| Error::type_err("ArrayBuffer species did not return an ArrayBuffer"))?;
+    if result_immutable {
+        return Err(Error::type_err(
+            "ArrayBuffer species returned an immutable buffer",
         ));
     }
     if result_len < count {
@@ -186,6 +180,117 @@ pub(crate) fn array_buffer_slice(
         }
     });
     Ok(result)
+}
+
+pub(crate) fn array_buffer_immutable_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("ArrayBuffer immutable getter needs this"))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    Some(Value::Bool(
+                        buffer.immutable.load(std::sync::atomic::Ordering::Relaxed),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::type_err("ArrayBuffer immutable getter on non-ArrayBuffer")),
+        _ => Err(Error::type_err(
+            "ArrayBuffer immutable getter on non-object",
+        )),
+    }
+}
+
+pub(crate) fn array_buffer_transfer(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    array_buffer_copy_and_detach(vm, args, this, false)
+}
+
+pub(crate) fn array_buffer_transfer_to_fixed_length(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    array_buffer_copy_and_detach(vm, args, this, false)
+}
+
+pub(crate) fn array_buffer_transfer_to_immutable(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    array_buffer_copy_and_detach(vm, args, this, true)
+}
+
+pub(crate) fn array_buffer_slice_to_immutable(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this =
+        this.ok_or_else(|| Error::type_err("ArrayBuffer sliceToImmutable called without this"))?;
+    let mut pins = Vec::with_capacity(args.len() + 1);
+    pins.push(this.clone());
+    pins.extend_from_slice(args);
+    let pin_count = vm.pin_many(&pins);
+    let result = array_buffer_slice_to_immutable_pinned(vm, args, this);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn array_buffer_slice_to_immutable_pinned(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Value,
+) -> error::Result<Value> {
+    let (len, detached) = array_buffer_len_and_detached(vm, &this).ok_or_else(|| {
+        Error::type_err("ArrayBuffer.prototype.sliceToImmutable called on non-ArrayBuffer")
+    })?;
+    if detached {
+        return Err(Error::type_err(
+            "ArrayBuffer.prototype.sliceToImmutable on detached buffer",
+        ));
+    }
+
+    let (from, to) = resolve_slice_bounds(vm, len, args.first(), args.get(1))?;
+    let count = to - from;
+    let (current_len, detached) = array_buffer_len_and_detached(vm, &this).ok_or_else(|| {
+        Error::type_err("ArrayBuffer.prototype.sliceToImmutable called on non-ArrayBuffer")
+    })?;
+    if detached {
+        return Err(Error::type_err(
+            "ArrayBuffer.prototype.sliceToImmutable on detached buffer",
+        ));
+    }
+    if current_len < to {
+        return Err(Error::range(
+            "ArrayBuffer sliceToImmutable source is too small",
+        ));
+    }
+
+    let bytes = match &this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    Some(buffer.bytes.lock()[from..to].to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    allocate_array_buffer_with_bytes_and_immutable(vm, bytes, true)
 }
 
 pub(crate) fn array_buffer_byte_length_get(
@@ -295,6 +400,113 @@ fn array_buffer_len_and_detached(vm: &Vm, value: &Value) -> Option<(usize, bool)
         }),
         _ => None,
     }
+}
+
+fn array_buffer_slots(vm: &Vm, value: &Value) -> Option<(usize, bool, bool)> {
+    match value {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                Some((
+                    buffer.bytes.lock().len(),
+                    buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                    buffer.immutable.load(std::sync::atomic::Ordering::Relaxed),
+                ))
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+}
+
+fn resolve_slice_bounds(
+    vm: &mut Vm,
+    len: usize,
+    start: Option<&Value>,
+    end: Option<&Value>,
+) -> error::Result<(usize, usize)> {
+    let from = match start {
+        Some(value) => slice_bound(vm, value, len)?,
+        None => 0,
+    };
+    let to = match end {
+        Some(Value::Undefined) | None => len,
+        Some(value) => slice_bound(vm, value, len)?,
+    };
+    Ok((from, to.max(from)))
+}
+
+fn slice_bound(vm: &mut Vm, value: &Value, len: usize) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() {
+        return Ok(0);
+    }
+    if n == f64::INFINITY {
+        return Ok(len);
+    }
+    if n == f64::NEG_INFINITY {
+        return Ok(0);
+    }
+    let integer = n.trunc();
+    if integer < 0.0 {
+        Ok(((len as f64) + integer).max(0.0) as usize)
+    } else {
+        Ok((integer as usize).min(len))
+    }
+}
+
+fn array_buffer_new_length(
+    vm: &mut Vm,
+    old_len: usize,
+    value: Option<&Value>,
+) -> error::Result<usize> {
+    match value {
+        Some(Value::Undefined) | None => Ok(old_len),
+        Some(value) => to_index_length(vm, value, "ArrayBuffer"),
+    }
+}
+
+fn array_buffer_copy_and_detach(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    immutable: bool,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("ArrayBuffer transfer called without this"))?;
+    let (old_len, _, _) = array_buffer_slots(vm, &this)
+        .ok_or_else(|| Error::type_err("ArrayBuffer transfer called on non-ArrayBuffer"))?;
+    let new_len = array_buffer_new_length(vm, old_len, args.first())?;
+    let (_, detached, source_immutable) = array_buffer_slots(vm, &this)
+        .ok_or_else(|| Error::type_err("ArrayBuffer transfer called on non-ArrayBuffer"))?;
+    if detached {
+        return Err(Error::type_err("ArrayBuffer transfer on detached buffer"));
+    }
+    if source_immutable {
+        return Err(Error::type_err("ArrayBuffer transfer on immutable buffer"));
+    }
+
+    let mut bytes = vec![0; new_len];
+    if let Value::Object(idx) = &this {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                let source = buffer.bytes.lock();
+                let copy_len = source.len().min(new_len);
+                bytes[..copy_len].copy_from_slice(&source[..copy_len]);
+            }
+        });
+    }
+    let result = allocate_array_buffer_with_bytes_and_immutable(vm, bytes, immutable)?;
+    if let Value::Object(idx) = &this {
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                buffer
+                    .detached
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                buffer.bytes.lock().clear();
+            }
+        });
+    }
+    Ok(result)
 }
 
 fn is_detached_array_buffer(vm: &Vm, value: &Value) -> bool {
@@ -1312,12 +1524,21 @@ fn array_buffer_prototype(vm: &mut Vm) -> Value {
 }
 
 fn allocate_array_buffer_with_bytes(vm: &mut Vm, bytes: Vec<u8>) -> error::Result<Value> {
+    allocate_array_buffer_with_bytes_and_immutable(vm, bytes, false)
+}
+
+fn allocate_array_buffer_with_bytes_and_immutable(
+    vm: &mut Vm,
+    bytes: Vec<u8>,
+    immutable: bool,
+) -> error::Result<Value> {
     let proto = array_buffer_prototype(vm);
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
             bytes: Mutex::new(bytes),
             detached: AtomicBool::new(false),
+            immutable: AtomicBool::new(immutable),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
