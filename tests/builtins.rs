@@ -918,6 +918,36 @@ fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
         run_err("new ArrayBuffer(9007199254740991);").contains("RangeError"),
         "huge ArrayBuffer lengths should throw RangeError"
     );
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var offset = { valueOf: function() { calls++; return 0; } };
+            var threw = false;
+            try {
+              DataView(new ArrayBuffer(1), offset);
+            } catch (e) {
+              threw = e instanceof TypeError;
+            }
+            [threw, calls].join(",");
+            "#),
+        Value::String(Arc::from("true,0"))
+    );
+    assert_eq!(
+        run(r#"
+            var ab = new ArrayBuffer(1);
+            $262.detachArrayBuffer(ab);
+            var calls = 0;
+            var offset = { valueOf: function() { calls++; return 0; } };
+            var threw = false;
+            try {
+              new DataView(ab, offset);
+            } catch (e) {
+              threw = e instanceof TypeError;
+            }
+            [threw, calls].join(",");
+            "#),
+        Value::String(Arc::from("true,1"))
+    );
 }
 
 #[test]

@@ -197,6 +197,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   calls on receivers without collection-iterator internal slots. The focused
   `built-ins/MapIteratorPrototype built-ins/SetIteratorPrototype` run improves
   from **9 pass / 5 fail / 8 skip** to **14 pass / 0 fail / 8 skip**.
+- **DataView constructor ordering** —
+  `DataView` now rejects calls without `new` before coercing constructor
+  arguments, while detached ArrayBuffer validation runs after observable
+  `byteOffset` coercion. The focused `built-ins/DataView` run improves from
+  **266 pass / 2 fail / 293 skip** to **268 pass / 0 fail / 293 skip**.
 - **`%ThrowTypeError%` intrinsic** —
   Restricted function and arguments accessors now share an anonymous, frozen,
   non-extensible `%ThrowTypeError%` function within each Realm. Strict

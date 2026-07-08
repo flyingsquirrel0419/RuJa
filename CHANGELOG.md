@@ -53,6 +53,11 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   collection-iterator internal slots. The focused
   `built-ins/MapIteratorPrototype built-ins/SetIteratorPrototype` run improves
   from **9 pass / 5 fail / 8 skip** to **14 pass / 0 fail / 8 skip**.
+- **DataView constructor ordering**: `DataView` now rejects function calls
+  before coercing constructor arguments, and detached ArrayBuffers are checked
+  only after the observable `byteOffset` coercion. The focused
+  `built-ins/DataView` run improves from **266 pass / 2 fail / 293 skip** to
+  **268 pass / 0 fail / 293 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

@@ -140,36 +140,46 @@ pub(crate) fn data_view_constructor(
     args: &[Value],
     _this: Option<Value>,
 ) -> error::Result<Value> {
-    let buffer = args.first().cloned().unwrap_or(Value::Undefined);
-    let buffer_len = match &buffer {
-        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::ArrayBuffer(array_buffer) = o {
-                if array_buffer
-                    .detached
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    None
-                } else {
-                    Some(array_buffer.bytes.lock().len())
-                }
-            } else {
-                None
-            }
-        }),
-        _ => None,
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err("DataView constructor requires new"));
     }
-    .ok_or_else(|| Error::type_err("DataView buffer must be an ArrayBuffer"))?;
+
+    let buffer = args.first().cloned().unwrap_or(Value::Undefined);
+    let is_array_buffer = match &buffer {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| matches!(o, HeapObj::ArrayBuffer(_))),
+        _ => false,
+    };
+    if !is_array_buffer {
+        return Err(Error::type_err("DataView buffer must be an ArrayBuffer"));
+    }
 
     let byte_offset = match args.get(1) {
         Some(value) => to_index_length(vm, value, "DataView byteOffset")?,
         None => 0,
     };
+
+    let (mut buffer_len, detached) = array_buffer_len_and_detached(vm, &buffer)
+        .ok_or_else(|| Error::type_err("DataView buffer must be an ArrayBuffer"))?;
+    if detached {
+        return Err(Error::type_err("DataView buffer is detached"));
+    }
     if byte_offset > buffer_len {
         return Err(Error::range("Invalid DataView byteOffset"));
     }
     let byte_length = match args.get(2) {
         Some(Value::Undefined) | None => buffer_len - byte_offset,
-        Some(value) => to_index_length(vm, value, "DataView byteLength")?,
+        Some(value) => {
+            let byte_length = to_index_length(vm, value, "DataView byteLength")?;
+            let (current_len, detached) = array_buffer_len_and_detached(vm, &buffer)
+                .ok_or_else(|| Error::type_err("DataView buffer must be an ArrayBuffer"))?;
+            if detached {
+                return Err(Error::type_err("DataView buffer is detached"));
+            }
+            buffer_len = current_len;
+            byte_length
+        }
     };
     if byte_offset
         .checked_add(byte_length)
@@ -189,6 +199,22 @@ pub(crate) fn data_view_constructor(
             proto: Mutex::new(Some(proto)),
         }))?;
     Ok(Value::Object(GcIdx(idx)))
+}
+
+fn array_buffer_len_and_detached(vm: &Vm, value: &Value) -> Option<(usize, bool)> {
+    match value {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                Some((
+                    buffer.bytes.lock().len(),
+                    buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                ))
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
 }
 
 fn is_detached_array_buffer(vm: &Vm, value: &Value) -> bool {
