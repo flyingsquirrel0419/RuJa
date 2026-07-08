@@ -169,6 +169,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused `language/{statements,expressions}/class/elements` diagnostic improves
   from **1085 pass / 547 fail / 1330 skip** to **1096 pass / 536 fail / 1330
   skip**.
+- **Private names before division** —
+  The lexer now treats private names as value-ending tokens for slash
+  disambiguation, so `this.#x / y` and `this.#x /= y` parse as division and
+  divide-assignment instead of starting a RegExp literal. With private class
+  feature skips temporarily lifted, the focused
+  `language/expressions/compound-assignment` diagnostic now reports **454 pass
+  / 0 fail / 0 skip**.
 - **String.prototype.matchAll and RegExp `@@matchAll`** —
   `String.prototype.matchAll` now performs the observable RegExp global-flag
   validation before custom `@@matchAll` delegation, preserves the uncoerced

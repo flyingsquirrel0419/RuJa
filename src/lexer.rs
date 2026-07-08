@@ -1297,6 +1297,7 @@ impl<'a> Lexer<'a> {
         self.prev_value_ending = matches!(
             &kind,
             TokenKind::Ident(_)
+                | TokenKind::PrivateName(_)
                 | TokenKind::Number(_)
                 | TokenKind::LegacyNumber(_)
                 | TokenKind::BigInt(_)

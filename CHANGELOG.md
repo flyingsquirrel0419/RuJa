@@ -42,6 +42,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   share brands. With private class feature skips temporarily lifted, the
   focused `language/{statements,expressions}/class/elements` probe improves from
   **1085 pass / 547 fail / 1330 skip** to **1096 pass / 536 fail / 1330 skip**.
+- **Private names before division**: the lexer now treats private names as
+  value-ending tokens for slash disambiguation, so `this.#x / y` and
+  `this.#x /= y` parse as division and divide-assignment instead of starting a
+  RegExp literal. With private class feature skips temporarily lifted, the
+  focused `language/expressions/compound-assignment` diagnostic now reports
+  **454 pass / 0 fail / 0 skip**.
 - **`String.prototype.matchAll` and RegExp `@@matchAll`**:
   `String.prototype.matchAll` is now exposed with spec-shaped builtin
   properties, validates non-global RegExp arguments before delegation, calls

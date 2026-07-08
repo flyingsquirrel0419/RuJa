@@ -343,6 +343,22 @@ fn private_field_compound_assignment_updates_field() {
 }
 
 #[test]
+fn private_name_slash_is_division_or_divide_assignment() {
+    assert_eq!(
+        run("class C { #x = 4; m() { return this.#x / 2; } } new C().m();"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run("class C { #x = 4; m() { return this.#x /= 2; } } new C().m();"),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run("class C { #v = 4; get #x() { return this.#v; } set #x(v) { this.#v = v; } m() { return this.#x /= 2; } value() { return this.#v; } } var c = new C(); [c.m(), c.value()].join(',');"),
+        Value::String(Arc::from("2,2"))
+    );
+}
+
+#[test]
 fn private_field_logical_assignment_updates_and_short_circuits() {
     assert_eq!(
         run("class C{#c=0;m(){this.#c ||= 5; return this.#c;}} new C().m();"),
