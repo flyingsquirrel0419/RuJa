@@ -79,6 +79,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/{decodeURI,decodeURIComponent,encodeURI,encodeURIComponent}` run
   improves from **74 pass / 93 fail / 2 timeout / 4 skip** to **167 pass / 0
   fail / 2 timeout / 4 skip**.
+- **Array `some`/`every` generic iteration**: `Array.prototype.some` and
+  `Array.prototype.every` now follow `LengthOfArrayLike`/`HasProperty` before
+  `Get`, so array-like receivers, boxed primitives, inherited sparse indexes,
+  callback `thisArg`, length snapshots, and abrupt completions are observed.
+  The focused `built-ins/Array/prototype/{some,every}` run improves from
+  **225 pass / 202 fail / 10 skip** to **427 pass / 0 fail / 10 skip**.
 - **RegExp boolean flag accessors**: `global`, `ignoreCase`, `multiline`,
   `dotAll`, `sticky`, `unicode`, `unicodeSets`, and `hasIndices` now enforce
   RegExp internal-slot receiver validation. Real RegExp objects still expose

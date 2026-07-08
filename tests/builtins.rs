@@ -97,6 +97,49 @@ fn array_every_false() {
 }
 
 #[test]
+fn array_some_every_use_array_like_property_access() {
+    assert!(run_err("Array.prototype.some.call(null, function() {})")
+        .contains("Cannot convert undefined or null to object"));
+    assert!(run_err("[].every({})").contains("Array predicate is not callable"));
+    assert_eq!(
+        run(r#"var seen = [];
+               var receiver = 0;
+               var result = Array.prototype.some.call({0: 11, 1: 12, length: 2}, function(value, index, object) {
+                 receiver = this.valueOf();
+                 seen.push(value + ":" + index + ":" + object.length);
+                 return value === 12;
+               }, 7);
+               result + "|" + receiver + "|" + seen.join(",");"#),
+        Value::String(Arc::from("true|7|11:0:2,12:1:2"))
+    );
+    assert_eq!(
+        run(r#"Array.prototype[1] = 13;
+               var seen = [];
+               var result = [, , ,].every(function(value, index) {
+                 seen.push(value + ":" + index);
+                 return value !== 13;
+               });
+               delete Array.prototype[1];
+               result + "|" + seen.join(",");"#),
+        Value::String(Arc::from("false|13:1"))
+    );
+    assert_eq!(
+        run(r#"var arr = [1, 2, 3];
+               var seen = [];
+               arr.some(function(value, index, object) {
+                 seen.push(String(value));
+                 if (index === 0) {
+                   object.length = 1;
+                   object[2] = 9;
+                 }
+                 return false;
+               });
+               seen.join(",");"#),
+        Value::String(Arc::from("1,9"))
+    );
+}
+
+#[test]
 fn array_includes_nan() {
     assert_eq!(run("[NaN].includes(NaN);"), Value::Bool(true));
 }

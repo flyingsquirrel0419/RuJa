@@ -210,6 +210,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   improves from **74 pass / 93 fail / 2 timeout / 4 skip** to **167 pass / 0
   fail / 2 timeout / 4 skip**. The remaining two timeouts are exhaustive
   4-byte UTF-8 loop tests that pass under a longer local timeout.
+- **Array `some`/`every` generic iteration** —
+  `Array.prototype.some` and `Array.prototype.every` now use
+  `LengthOfArrayLike`, skip absent indexes via `HasProperty`, read values only
+  after presence checks, and pass `(value, index, object)` with the supplied
+  callback `thisArg`. This makes array-like receivers, boxed primitives,
+  inherited sparse indexes, length snapshots, and abrupt completions observable.
+  The focused `built-ins/Array/prototype/{some,every}` run improves from
+  **225 pass / 202 fail / 10 skip** to **427 pass / 0 fail / 10 skip**.
 - **RegExp boolean flag accessors** —
   `global`, `ignoreCase`, `multiline`, `dotAll`, `sticky`, `unicode`,
   `unicodeSets`, and `hasIndices` now use RegExp internal-slot receiver

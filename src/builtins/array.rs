@@ -1510,28 +1510,20 @@ pub(crate) fn array_fill(vm: &mut Vm, args: &[Value], this: Option<Value>) -> er
     Ok(Value::Undefined)
 }
 pub(crate) fn array_some(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, item) in items.iter().enumerate() {
-            let found = vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
-            if found.is_truthy() {
-                return Ok(Value::Bool(true));
-            }
+    let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
+    for i in 0..len {
+        let key = i.to_string();
+        if !array_search_has_property(vm, &object, &key)? {
+            continue;
+        }
+        let value = vm.get_property(&object, &key)?;
+        let found = vm.call_function(
+            &callback,
+            &[value, Value::Number(i as f64), object.clone()],
+            Some(this_arg.clone()),
+        )?;
+        if found.is_truthy() {
+            return Ok(Value::Bool(true));
         }
     }
     Ok(Value::Bool(false))
@@ -1541,28 +1533,20 @@ pub(crate) fn array_every(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let cb = args.first().cloned().unwrap_or(Value::Undefined);
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        for (i, item) in items.iter().enumerate() {
-            let ok = vm.call_function(
-                &cb,
-                &[
-                    item.clone(),
-                    Value::Number(i as f64),
-                    this.clone().unwrap_or(Value::Undefined),
-                ],
-                args.get(1).cloned(),
-            )?;
-            if !ok.is_truthy() {
-                return Ok(Value::Bool(false));
-            }
+    let (object, len, callback, this_arg) = array_find_object_and_callback(vm, args, this)?;
+    for i in 0..len {
+        let key = i.to_string();
+        if !array_search_has_property(vm, &object, &key)? {
+            continue;
+        }
+        let value = vm.get_property(&object, &key)?;
+        let ok = vm.call_function(
+            &callback,
+            &[value, Value::Number(i as f64), object.clone()],
+            Some(this_arg.clone()),
+        )?;
+        if !ok.is_truthy() {
+            return Ok(Value::Bool(false));
         }
     }
     Ok(Value::Bool(true))
