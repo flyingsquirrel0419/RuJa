@@ -1463,6 +1463,10 @@ fn math_basic() {
     assert_eq!(run("Math.floor(3.7);"), Value::Number(3.0));
     assert_eq!(run("Math.max(1, 5, 3);"), Value::Number(5.0));
     assert_eq!(run("Math.sqrt(16);"), Value::Number(4.0));
+    assert!(matches!(run("Math.pow(1, NaN);"), Value::Number(n) if n.is_nan()));
+    assert!(matches!(run("Math.pow(-1, Infinity);"), Value::Number(n) if n.is_nan()));
+    assert!(matches!(run("Math.pow(1, -Infinity);"), Value::Number(n) if n.is_nan()));
+    assert_eq!(run("Math.pow(NaN, 0);"), Value::Number(1.0));
     assert_eq!(run("Object.isExtensible(Math);"), Value::Bool(true));
     assert_eq!(
         run("Math.substring = String.prototype.substring; Math.substring(Math.PI, -10);"),

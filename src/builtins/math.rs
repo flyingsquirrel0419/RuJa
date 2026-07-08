@@ -149,6 +149,12 @@ fn math_tan(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Valu
 fn math_pow(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     let a = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
     let b = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    if b == 0.0 {
+        return Ok(Value::Number(1.0));
+    }
+    if b.is_nan() || a.abs() == 1.0 && b.is_infinite() {
+        return Ok(Value::Number(f64::NAN));
+    }
     Ok(Value::Number(a.powf(b)))
 }
 fn math_max(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {

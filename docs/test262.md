@@ -339,6 +339,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `toString` and `toFixed(0)` diverge where the spec requires. The focused
   `built-ins/Number/prototype/toFixed` run now closes at **14 pass / 0 fail /
   2 skip**.
+- **Math.pow NaN and infinite exponent edges** —
+  `Math.pow` now handles exponent `NaN` and `abs(base) === 1` with infinite
+  exponents before delegating to Rust's `powf`, while keeping the required
+  `x ** ±0 === 1` behavior. The focused `built-ins/Math/pow` run now closes
+  at **27 pass / 0 fail / 1 skip**.
 - **PrivateName lexical grammar** —
   Private class names now follow the same `IdentifierName` scanner rules as
   ordinary identifiers, including Unicode escapes, raw Unicode source text,

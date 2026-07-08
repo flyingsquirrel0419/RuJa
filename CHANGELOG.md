@@ -198,6 +198,11 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `toFixed(0)` differ where the spec requires. The focused
   `built-ins/Number/prototype/toFixed` run now closes at **14 pass / 0 fail /
   2 skip**.
+- **Math.pow NaN and infinite exponent edges**: `Math.pow` now handles
+  exponent `NaN` and `abs(base) === 1` with infinite exponents before
+  delegating to Rust's `powf`, while preserving the required `x ** ±0 === 1`
+  behavior. The focused `built-ins/Math/pow` run now closes at **27 pass / 0
+  fail / 1 skip**.
 - **PrivateName lexical grammar**: private class names now use the same
   `IdentifierName` Unicode escape and raw Unicode scanning rules as ordinary
   identifiers, including `Other_ID_Start`, ZWNJ, and ZWJ handling. This fixes
