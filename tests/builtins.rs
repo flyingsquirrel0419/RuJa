@@ -2008,6 +2008,14 @@ fn array_flat_flatmap() {
 fn array_at_shift_unshift_splice() {
     assert_eq!(run("[1,2,3].at(-1);"), Value::Number(3.0));
     assert_eq!(run("[1,2,3].at(0);"), Value::Number(1.0));
+    assert!(run_err("Array.prototype.at.call(null, 0)")
+        .contains("Cannot convert undefined or null to object"));
+    assert!(run_err("Array.prototype.at.call(undefined, 0)")
+        .contains("Cannot convert undefined or null to object"));
+    assert_eq!(
+        run("Array.prototype.at.call({0:'x', 1:'y', length: 2}, -1);"),
+        Value::String(Arc::from("y"))
+    );
     assert_eq!(
         run("var a=[1,2,3]; a.shift(); a.join(',');"),
         Value::String(Arc::from("2,3"))

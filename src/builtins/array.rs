@@ -1074,29 +1074,32 @@ pub(crate) fn array_last_index_of(
     Ok(Value::Number(-1.0))
 }
 pub(crate) fn array_at(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = this {
-        let items = vm.heap.with_obj(idx.0, |obj| {
-            if let HeapObj::Array(a) = obj {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        });
-        let n = match args.first() {
-            Some(v) => vm.to_number(v)?,
-            None => 0.0,
-        };
-        let len = items.len() as isize;
-        let idx = if n < 0.0 {
-            len + n as isize
-        } else {
-            n as isize
-        };
-        if idx >= 0 && idx < len {
-            return Ok(items[idx as usize].clone());
-        }
+    let receiver = this.unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
     }
-    Ok(Value::Undefined)
+    let object = vm.to_object(&receiver)?;
+    let len = length_of_array_like(vm, &object)?;
+    let relative_index = match args.first() {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let integer_index = if relative_index.is_nan() {
+        0.0
+    } else {
+        relative_index.trunc()
+    };
+    let k = if integer_index >= 0.0 {
+        integer_index
+    } else {
+        len as f64 + integer_index
+    };
+    if k < 0.0 || k >= len as f64 {
+        return Ok(Value::Undefined);
+    }
+    vm.get_property(&object, &(k as usize).to_string())
 }
 pub(crate) fn array_flat(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let depth = match args.first() {

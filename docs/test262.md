@@ -662,6 +662,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   diagnostic improves from **38 pass / 24 fail / 32 skip** to **62 pass / 0
   fail / 32 skip**, and the combined Array search/find run closes at
   **471 pass / 0 fail / 52 skip**.
+- **Array `at` array-like access** —
+  `Array.prototype.at` now applies `ToObject(this)` with nullish receiver
+  errors, reads `length` through `LengthOfArrayLike`, uses indexed property
+  access for generic array-like receivers, and normalizes `-0` to property key
+  `"0"`. The focused `built-ins/Array/prototype/at` run now closes at **11
+  pass / 0 fail / 2 skip**.
 - **String search argument coercion** —
   `String.prototype.indexOf` and `lastIndexOf` now coerce `searchString`
   through `ToString` before reading the position argument. Missing arguments
