@@ -143,6 +143,28 @@ pub fn parse_array_index(key: &str) -> Option<usize> {
     None
 }
 
+/// ES CanonicalNumericIndexString. `"-0"` is canonical even though
+/// `String(-0)` is `"0"`.
+pub fn canonical_numeric_index_string(key: &str) -> Option<f64> {
+    if key == "-0" {
+        return Some(-0.0);
+    }
+    let n = match key {
+        "NaN" => f64::NAN,
+        "Infinity" => f64::INFINITY,
+        "-Infinity" => f64::NEG_INFINITY,
+        _ => match key.parse::<f64>() {
+            Ok(n) => n,
+            Err(_) => return None,
+        },
+    };
+    if num_to_string(n) == key {
+        Some(n)
+    } else {
+        None
+    }
+}
+
 /// The value type used throughout the engine.
 #[derive(Clone)]
 pub enum Value {

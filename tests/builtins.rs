@@ -747,6 +747,26 @@ fn typed_array_constructors_create_array_buffer_backed_views() {
 }
 
 #[test]
+fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
+    assert_eq!(
+        run(r#"
+            var ta = new Int32Array(1);
+            ta[0] = 7;
+            var obj = Object.create(ta);
+            obj[0] = 9;
+            obj.NaN = 10;
+            [
+              ta[0],
+              obj[0],
+              obj.hasOwnProperty("0"),
+              Object.getOwnPropertyDescriptor(obj, "NaN") === undefined
+            ].join(",");
+        "#),
+        Value::String(Arc::from("7,9,true,true"))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"

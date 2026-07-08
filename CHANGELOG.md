@@ -160,6 +160,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   diagnostic now reports **26 pass / 2 fail / 19 skip**; the remaining
   failures are isolated to iterable zero-fill coverage and shared
   ArrayIteratorPrototype mutation semantics.
+- **TypedArray prototype numeric `[[Set]]`**: assignment now recognizes full
+  `CanonicalNumericIndexString` keys, including `"NaN"` and `"-0"`, when a
+  TypedArray appears on an ordinary object's prototype chain. Invalid numeric
+  indexes are treated as successful no-ops instead of creating receiver
+  properties, while valid inherited numeric indexes still create receiver data
+  properties. With TypedArray-related skips temporarily lifted, the focused
+  `language/statements/with` diagnostic now reports **171 pass / 0 fail / 10
+  skip**.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel**: transparent Proxy receivers
   for `Object.seal`/`Object.freeze` now tighten the target's own descriptors
   through the Proxy-aware `[[DefineOwnProperty]]` path, and

@@ -4,8 +4,16 @@
 use super::*;
 use crate::error::{self, Error};
 use crate::value::HeapObj;
-use crate::value::{GcIdx, PromiseStatus, Value};
+use crate::value::{GcIdx, PromiseStatus, TypedArrayKind, Value};
 use std::sync::Arc;
+
+struct TypedArrayNumericSlots {
+    kind: TypedArrayKind,
+    viewed_array_buffer: Option<Value>,
+    byte_offset: usize,
+    byte_length: usize,
+    numeric_index: f64,
+}
 
 impl Vm {
     pub(crate) fn function_caller_value(&self, callee_idx: GcIdx) -> error::Result<Value> {
@@ -655,72 +663,10 @@ impl Vm {
                         }
                     }
                 }
-                let typed_array_index = self.heap.with_obj(idx.0, |o| {
-                    if matches!(o, HeapObj::TypedArray(_)) {
-                        crate::value::parse_array_index(key)
-                    } else {
-                        None
-                    }
-                });
-                if let Some(i) = typed_array_index {
-                    let slots = self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::TypedArray(t) = o {
-                            return Some((
-                                t.kind,
-                                t.viewed_array_buffer.clone(),
-                                t.byte_offset,
-                                t.byte_length,
-                            ));
-                        }
-                        None
-                    });
-                    let Some((kind, viewed_array_buffer, byte_offset, byte_length)) = slots else {
-                        return Ok(());
-                    };
-                    let element_bytes =
-                        crate::builtins::typed_array_value_to_bytes(self, kind, &value)?;
-                    let size = kind.element_size();
-                    let Some(relative_offset) = i.checked_mul(size) else {
-                        return Ok(());
-                    };
-                    let Some(relative_end) = relative_offset.checked_add(size) else {
-                        return Ok(());
-                    };
-                    if relative_end > byte_length {
-                        return Ok(());
-                    }
-                    if let Some(backing) = viewed_array_buffer {
-                        if let Value::Object(buffer_idx) = backing {
-                            self.heap.with_obj(buffer_idx.0, |o| {
-                                if let HeapObj::ArrayBuffer(buffer) = o {
-                                    if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
-                                        return;
-                                    }
-                                    let Some(offset) = byte_offset.checked_add(relative_offset)
-                                    else {
-                                        return;
-                                    };
-                                    let Some(end) = offset.checked_add(size) else {
-                                        return;
-                                    };
-                                    let mut bytes = buffer.bytes.lock();
-                                    if end <= bytes.len() {
-                                        bytes[offset..end].copy_from_slice(&element_bytes);
-                                    }
-                                }
-                            });
-                        }
-                    } else {
-                        self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::TypedArray(t) = o {
-                                let mut buffer = t.buffer.lock();
-                                if relative_end <= buffer.len() {
-                                    buffer[relative_offset..relative_end]
-                                        .copy_from_slice(&element_bytes);
-                                }
-                            }
-                        });
-                    }
+                if self
+                    .set_typed_array_numeric_property(*idx, key, &value)?
+                    .is_some()
+                {
                     return Ok(());
                 }
                 // --- Array fast paths ---
@@ -961,6 +907,18 @@ impl Vm {
                     return Ok(());
                 }
 
+                if let Some(success) =
+                    self.set_typed_array_numeric_property_in_proto(*idx, key, &value)?
+                {
+                    if !success && strict {
+                        return Err(Error::type_err(format!(
+                            "Cannot assign to read only property '{}' of object",
+                            key
+                        )));
+                    }
+                    return Ok(());
+                }
+
                 // 4. Define a new own writable data property.
                 // Check extensibility: adding a new property to a
                 // non-extensible object throws TypeError in strict mode.
@@ -1144,6 +1102,18 @@ impl Vm {
         receiver: &Value,
     ) -> error::Result<bool> {
         for _ in 0..1024 {
+            let receiver_is_base =
+                matches!(receiver, Value::Object(receiver_idx) if *receiver_idx == base_idx);
+            if let Some(slots) = self.typed_array_numeric_slots(base_idx, key) {
+                if receiver_is_base {
+                    self.set_typed_array_numeric_slots(base_idx, slots, &value)?;
+                    return Ok(true);
+                }
+                if !self.is_valid_typed_array_numeric_index(&slots) {
+                    return Ok(true);
+                }
+                return self.set_receiver_data_property(receiver, pkey.clone(), value);
+            }
             let (desc, proto) = self.heap.with_obj(base_idx.0, |o| {
                 let ordinary = o.props().lock().get(pkey).cloned();
                 let string_exotic = ordinary.or_else(|| {
@@ -1192,6 +1162,158 @@ impl Vm {
             }
         }
         Err(Error::type_err("Prototype chain too deep".to_string()))
+    }
+
+    fn set_typed_array_numeric_property_in_proto(
+        &mut self,
+        idx: GcIdx,
+        key: &str,
+        _value: &Value,
+    ) -> error::Result<Option<bool>> {
+        let mut cur = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
+        for _ in 0..1024 {
+            let Some(Value::Object(proto_idx)) = cur else {
+                return Ok(None);
+            };
+            if let Some(slots) = self.typed_array_numeric_slots(proto_idx, key) {
+                if !self.is_valid_typed_array_numeric_index(&slots) {
+                    return Ok(Some(true));
+                }
+                return Ok(None);
+            }
+            let (own_data_descriptor, next) = self.heap.with_obj(proto_idx.0, |o| {
+                let desc = o
+                    .props()
+                    .lock()
+                    .get(&crate::value::PropertyKey::from(key))
+                    .cloned();
+                let data = desc.is_some_and(|d| !d.is_accessor);
+                (data, o.proto().lock().clone())
+            });
+            if own_data_descriptor {
+                return Ok(None);
+            }
+            cur = next;
+        }
+        Err(Error::type_err("Prototype chain too deep".to_string()))
+    }
+
+    fn typed_array_numeric_slots(&self, idx: GcIdx, key: &str) -> Option<TypedArrayNumericSlots> {
+        let numeric_index = crate::value::canonical_numeric_index_string(key)?;
+        let (kind, viewed_array_buffer, byte_offset, byte_length) =
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::TypedArray(t) = o {
+                    return Some((
+                        t.kind,
+                        t.viewed_array_buffer.clone(),
+                        t.byte_offset,
+                        t.byte_length,
+                    ));
+                }
+                None
+            })?;
+        Some(TypedArrayNumericSlots {
+            kind,
+            viewed_array_buffer,
+            byte_offset,
+            byte_length,
+            numeric_index,
+        })
+    }
+
+    fn is_valid_typed_array_numeric_index(&self, slots: &TypedArrayNumericSlots) -> bool {
+        self.typed_array_valid_index(slots).is_some()
+    }
+
+    fn typed_array_valid_index(&self, slots: &TypedArrayNumericSlots) -> Option<usize> {
+        let index = slots.numeric_index;
+        if !index.is_finite()
+            || index.is_sign_negative()
+            || index.fract() != 0.0
+            || index > usize::MAX as f64
+        {
+            return None;
+        }
+        if let Some(Value::Object(buffer_idx)) = &slots.viewed_array_buffer {
+            let detached = self.heap.with_obj(buffer_idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    return buffer.detached.load(std::sync::atomic::Ordering::Relaxed);
+                }
+                false
+            });
+            if detached {
+                return None;
+            }
+        }
+        let index = index as usize;
+        let len = crate::builtins::typed_array_element_count(slots.kind, slots.byte_length);
+        (index < len).then_some(index)
+    }
+
+    fn set_typed_array_numeric_property(
+        &mut self,
+        idx: GcIdx,
+        key: &str,
+        value: &Value,
+    ) -> error::Result<Option<bool>> {
+        let Some(slots) = self.typed_array_numeric_slots(idx, key) else {
+            return Ok(None);
+        };
+        self.set_typed_array_numeric_slots(idx, slots, value)
+            .map(Some)
+    }
+
+    fn set_typed_array_numeric_slots(
+        &mut self,
+        idx: GcIdx,
+        slots: TypedArrayNumericSlots,
+        value: &Value,
+    ) -> error::Result<bool> {
+        let element_bytes = crate::builtins::typed_array_value_to_bytes(self, slots.kind, value)?;
+        let Some(i) = self.typed_array_valid_index(&slots) else {
+            return Ok(true);
+        };
+        let size = slots.kind.element_size();
+        let Some(relative_offset) = i.checked_mul(size) else {
+            return Ok(true);
+        };
+        let Some(relative_end) = relative_offset.checked_add(size) else {
+            return Ok(true);
+        };
+        if relative_end > slots.byte_length {
+            return Ok(true);
+        }
+        if let Some(backing) = slots.viewed_array_buffer {
+            if let Value::Object(buffer_idx) = backing {
+                self.heap.with_obj(buffer_idx.0, |o| {
+                    if let HeapObj::ArrayBuffer(buffer) = o {
+                        if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        let Some(offset) = slots.byte_offset.checked_add(relative_offset) else {
+                            return;
+                        };
+                        let Some(end) = offset.checked_add(size) else {
+                            return;
+                        };
+                        let mut bytes = buffer.bytes.lock();
+                        if end <= bytes.len() {
+                            bytes[offset..end].copy_from_slice(&element_bytes);
+                        }
+                    }
+                });
+            }
+        } else {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::TypedArray(t) = o {
+                    let mut buffer = t.buffer.lock();
+                    if relative_end <= buffer.len() {
+                        buffer[relative_offset..relative_end].copy_from_slice(&element_bytes);
+                    }
+                }
+            });
+        }
+        Ok(true)
     }
 
     fn set_receiver_data_property(

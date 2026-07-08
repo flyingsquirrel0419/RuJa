@@ -909,3 +909,49 @@ fn with_single_statement_rejects_let_array_expression_start() {
     );
     assert!(err.contains("SyntaxError"));
 }
+
+#[test]
+fn with_deleted_binding_on_typed_array_numeric_proto_is_noop() {
+    assert_eq!(
+        run(r#"
+            var ta = new Int32Array(10);
+            var env = Object.create(ta);
+            Object.defineProperty(env, "NaN", { configurable: true, value: 100 });
+            with (env) {
+                NaN = (delete env.NaN, 0);
+            }
+            Object.getOwnPropertyDescriptor(env, "NaN") === undefined;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var ta = new Int32Array(10);
+            var env = Object.create(ta);
+            Object.defineProperty(env, "NaN", { configurable: true, value: 100 });
+            with (env) {
+                NaN += (delete env.NaN, 0);
+            }
+            Object.getOwnPropertyDescriptor(env, "NaN") === undefined;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn strict_with_deleted_binding_on_typed_array_numeric_proto_throws() {
+    let err = run_err(
+        r#"
+        var ta = new Int32Array(10);
+        var env = Object.create(ta);
+        Object.defineProperty(env, "NaN", { configurable: true, value: 100 });
+        with (env) {
+            (function() {
+                "use strict";
+                NaN = (delete env.NaN, 0);
+            })();
+        }
+        "#,
+    );
+    assert!(err.contains("ReferenceError"));
+}
