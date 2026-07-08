@@ -1090,7 +1090,9 @@ pub fn utf16_from_str(s: &str) -> Vec<u16> {
 
 /// Decode a sequence of UTF-16 code units back into a Rust `String`. Lone
 /// surrogates are preserved using private-use sentinels because Rust `String`
-/// cannot directly represent them.
+/// cannot directly represent them. Valid pairs whose scalar value collides with
+/// that sentinel range are kept as two sentinel-backed code units so later
+/// UTF-16 round trips preserve the original JS string length.
 pub fn utf16_to_string(units: &[u16]) -> String {
     let mut out = String::new();
     let mut i = 0;
@@ -1100,7 +1102,12 @@ pub fn utf16_to_string(units: &[u16]) -> String {
             let low = units[i + 1];
             if (0xDC00..=0xDFFF).contains(&low) {
                 let cp = 0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
-                if let Some(ch) = char::from_u32(cp) {
+                if (SURROGATE_SENTINEL_BASE..=SURROGATE_SENTINEL_BASE + 0x7FF).contains(&cp) {
+                    out.push(surrogate_to_sentinel(unit));
+                    out.push(surrogate_to_sentinel(low));
+                    i += 2;
+                    continue;
+                } else if let Some(ch) = char::from_u32(cp) {
                     out.push(ch);
                     i += 2;
                     continue;
@@ -1118,11 +1125,10 @@ pub fn utf16_to_string(units: &[u16]) -> String {
 }
 
 /// Build a Rust `String` from a series of UTF-16 code-unit numeric arguments
-/// (as used by `String.fromCharCode`). Unlike `char::from_u32`, this handles
-/// lone surrogates by emitting them directly into the u16 vector, then
-/// decoding. Lone surrogates become U+FFFD in the resulting String (so the
-/// length seen by the engine is correct even though the lone surrogate is
-/// not directly representable as UTF-8).
+/// (as used by `String.fromCharCode`). Lone surrogates are preserved through
+/// private-use sentinels. Pairs whose scalar would collide with that sentinel
+/// range are also kept as two sentinel-backed code units so later UTF-16
+/// operations can still distinguish them from a lone surrogate.
 pub fn utf16_from_codes(codes: &[u16]) -> String {
     utf16_to_string(codes)
 }

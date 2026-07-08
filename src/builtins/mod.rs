@@ -2250,10 +2250,158 @@ fn object_lookup_setter(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     object_lookup_legacy_accessor(vm, args, this, "set")
 }
 
-fn global_uri_identity(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
-    Ok(Value::String(
-        vm.to_string(args.first().unwrap_or(&Value::Undefined))?,
-    ))
+fn global_decode_uri(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    uri_decode(&input, URI_RESERVED_SET)
+}
+
+fn global_decode_uri_component(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    uri_decode(&input, "")
+}
+
+fn global_encode_uri(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    uri_encode(&input, URI_UNESCAPED_SET_WITH_RESERVED)
+}
+
+fn global_encode_uri_component(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let input = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    uri_encode(&input, URI_UNESCAPED_SET)
+}
+
+const URI_UNESCAPED_SET: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
+const URI_RESERVED_SET: &str = ";/?:@&=+$,#";
+const URI_UNESCAPED_SET_WITH_RESERVED: &str =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'();/?:@&=+$,#";
+
+fn uri_encode(input: &str, unescaped_set: &str) -> error::Result<Value> {
+    let units = crate::value::utf16_from_str(input);
+    let mut out = String::new();
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let code_point = if (0xd800..=0xdbff).contains(&unit) {
+            let Some(&low) = units.get(index + 1) else {
+                return Err(Error::uri("malformed URI sequence"));
+            };
+            if !(0xdc00..=0xdfff).contains(&low) {
+                return Err(Error::uri("malformed URI sequence"));
+            }
+            index += 2;
+            0x10000 + (((unit as u32 - 0xd800) << 10) | (low as u32 - 0xdc00))
+        } else if (0xdc00..=0xdfff).contains(&unit) {
+            return Err(Error::uri("malformed URI sequence"));
+        } else {
+            index += 1;
+            unit as u32
+        };
+
+        if code_point <= 0x7f {
+            let ch = char::from_u32(code_point).unwrap();
+            if unescaped_set.contains(ch) {
+                out.push(ch);
+                continue;
+            }
+        }
+
+        let ch = char::from_u32(code_point).ok_or_else(|| Error::uri("malformed URI sequence"))?;
+        let mut buf = [0; 4];
+        for byte in ch.encode_utf8(&mut buf).as_bytes() {
+            out.push('%');
+            out.push(hex_digit(byte >> 4));
+            out.push(hex_digit(byte & 0x0f));
+        }
+    }
+    Ok(Value::String(Arc::from(out.as_str())))
+}
+
+fn uri_decode(input: &str, reserved_set: &str) -> error::Result<Value> {
+    let mut out = String::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '%' {
+            out.push(chars[index]);
+            index += 1;
+            continue;
+        }
+
+        let first = parse_uri_hex_byte(&chars, index)?;
+        let utf8_len = uri_utf8_sequence_len(first)?;
+        let mut bytes = Vec::with_capacity(utf8_len);
+        let mut raw = String::with_capacity(utf8_len * 3);
+        for offset in 0..utf8_len {
+            let triplet_index = index + offset * 3;
+            let byte = parse_uri_hex_byte(&chars, triplet_index)?;
+            bytes.push(byte);
+            raw.push('%');
+            raw.push(chars[triplet_index + 1]);
+            raw.push(chars[triplet_index + 2]);
+        }
+
+        let decoded =
+            std::str::from_utf8(&bytes).map_err(|_| Error::uri("malformed URI sequence"))?;
+        if decoded.chars().count() != 1 {
+            return Err(Error::uri("malformed URI sequence"));
+        }
+        let decoded_char = decoded.chars().next().unwrap();
+        if reserved_set.contains(decoded_char) {
+            out.push_str(&raw);
+        } else {
+            push_decoded_uri_char(&mut out, decoded_char);
+        }
+        index += utf8_len * 3;
+    }
+    Ok(Value::String(Arc::from(out.as_str())))
+}
+
+fn push_decoded_uri_char(out: &mut String, ch: char) {
+    let mut units = [0; 2];
+    let encoded = ch.encode_utf16(&mut units);
+    out.push_str(&crate::value::utf16_from_codes(encoded));
+}
+
+fn parse_uri_hex_byte(chars: &[char], index: usize) -> error::Result<u8> {
+    if chars.get(index) != Some(&'%') {
+        return Err(Error::uri("malformed URI sequence"));
+    }
+    let high = chars
+        .get(index + 1)
+        .and_then(|ch| ch.to_digit(16))
+        .ok_or_else(|| Error::uri("malformed URI sequence"))?;
+    let low = chars
+        .get(index + 2)
+        .and_then(|ch| ch.to_digit(16))
+        .ok_or_else(|| Error::uri("malformed URI sequence"))?;
+    Ok(((high << 4) | low) as u8)
+}
+
+fn uri_utf8_sequence_len(first: u8) -> error::Result<usize> {
+    match first {
+        0x00..=0x7f => Ok(1),
+        0xc2..=0xdf => Ok(2),
+        0xe0..=0xef => Ok(3),
+        0xf0..=0xf4 => Ok(4),
+        _ => Err(Error::uri("malformed URI sequence")),
+    }
+}
+
+fn hex_digit(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'A' + (nibble - 10)) as char,
+        _ => unreachable!(),
+    }
 }
 
 fn this_string_value(vm: &Vm, this: Option<Value>) -> error::Result<Arc<str>> {
@@ -4812,13 +4960,19 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     vm.realm_eval_functions
         .insert(vm.global.0, eval_value.clone());
     define_global(vm, "eval", eval_value);
-    for name in [
-        "decodeURI",
-        "decodeURIComponent",
-        "encodeURI",
-        "encodeURIComponent",
+    for (name, func) in [
+        ("decodeURI", global_decode_uri as NativeFn),
+        (
+            "decodeURIComponent",
+            global_decode_uri_component as NativeFn,
+        ),
+        ("encodeURI", global_encode_uri as NativeFn),
+        (
+            "encodeURIComponent",
+            global_encode_uri_component as NativeFn,
+        ),
     ] {
-        let idx = vm.new_native_function(name, global_uri_identity, 1)?;
+        let idx = vm.new_native_function(name, func, 1)?;
         define_global(vm, name, Value::Object(idx));
     }
     define_global_const(vm, "NaN", Value::Number(f64::NAN));

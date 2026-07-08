@@ -88,6 +88,15 @@ impl Error {
             line: None,
         })
     }
+    pub fn uri(msg: impl Into<String>) -> Arc<Error> {
+        Arc::new(Error {
+            kind: ErrorKind::Uri,
+            message: msg.into(),
+            stack: Vec::new(),
+            thrown_value: None,
+            line: None,
+        })
+    }
     /// A non-catchable fuel-exhaustion abort (displayed as RangeError).
     pub fn fuel(msg: impl Into<String>) -> Arc<Error> {
         Arc::new(Error {

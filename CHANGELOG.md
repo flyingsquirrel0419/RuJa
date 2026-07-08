@@ -70,6 +70,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/RegExp/prototype/Symbol.match` run moves from **8 pass / 44 fail /
   1 skip** to **52 pass / 0 fail / 1 skip** after non-Unicode surrogate escapes
   are lowered for the Rust regex backend.
+- **URI encode/decode globals**: `encodeURI`, `encodeURIComponent`,
+  `decodeURI`, and `decodeURIComponent` now implement ECMAScript percent
+  encoding/decoding over UTF-16 code units, preserve `decodeURI` reserved
+  escapes, reject malformed UTF-8 and lone surrogates with `URIError`, and keep
+  `String.fromCharCode` pairs in RuJa's surrogate-sentinel range distinguishable
+  from lone surrogates. The focused
+  `built-ins/{decodeURI,decodeURIComponent,encodeURI,encodeURIComponent}` run
+  improves from **74 pass / 93 fail / 2 timeout / 4 skip** to **167 pass / 0
+  fail / 2 timeout / 4 skip**.
 - **RegExp boolean flag accessors**: `global`, `ignoreCase`, `multiline`,
   `dotAll`, `sticky`, `unicode`, `unicodeSets`, and `hasIndices` now enforce
   RegExp internal-slot receiver validation. Real RegExp objects still expose

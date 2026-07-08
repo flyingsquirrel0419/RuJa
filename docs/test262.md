@@ -200,6 +200,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/match built-ins/RegExp/prototype/Symbol.match`
   run now reports **99 pass / 0 fail / 5 skip** after non-Unicode surrogate
   escapes are lowered for the regex backend using the stored RegExp flags.
+- **URI encode/decode globals** —
+  `encodeURI`, `encodeURIComponent`, `decodeURI`, and `decodeURIComponent` now
+  implement ECMAScript percent encoding/decoding over UTF-16 code units,
+  preserve `decodeURI` reserved escapes, reject malformed UTF-8 and lone
+  surrogates with `URIError`, and keep `String.fromCharCode` pairs in RuJa's
+  surrogate-sentinel range distinguishable from lone surrogates. The focused
+  `built-ins/{decodeURI,decodeURIComponent,encodeURI,encodeURIComponent}` run
+  improves from **74 pass / 93 fail / 2 timeout / 4 skip** to **167 pass / 0
+  fail / 2 timeout / 4 skip**. The remaining two timeouts are exhaustive
+  4-byte UTF-8 loop tests that pass under a longer local timeout.
 - **RegExp boolean flag accessors** —
   `global`, `ignoreCase`, `multiline`, `dotAll`, `sticky`, `unicode`,
   `unicodeSets`, and `hasIndices` now use RegExp internal-slot receiver

@@ -102,6 +102,46 @@ fn array_includes_nan() {
 }
 
 #[test]
+fn global_uri_functions_follow_percent_encoding_rules() {
+    assert_eq!(
+        run("decodeURI('%3B') + '|' + decodeURIComponent('%3B');"),
+        Value::String(Arc::from("%3B|;"))
+    );
+    assert_eq!(
+        run("decodeURI('%5E') + '|' + decodeURIComponent('%2F');"),
+        Value::String(Arc::from("^|/"))
+    );
+    assert_eq!(
+        run("encodeURI('http://ru.wikipedia.org/wiki/Юникод');"),
+        Value::String(Arc::from(
+            "http://ru.wikipedia.org/wiki/%D0%AE%D0%BD%D0%B8%D0%BA%D0%BE%D0%B4"
+        ))
+    );
+    assert_eq!(
+        run("encodeURIComponent(';/?:@&=+$,#');"),
+        Value::String(Arc::from("%3B%2F%3F%3A%40%26%3D%2B%24%2C%23"))
+    );
+    assert_eq!(
+        run("var s = String.fromCharCode(0xDB80, 0xDC00); s.length + '|' + s.charCodeAt(0).toString(16) + '|' + s.charCodeAt(1).toString(16) + '|' + encodeURI(s);"),
+        Value::String(Arc::from("2|db80|dc00|%F3%B0%80%80"))
+    );
+    assert_eq!(
+        run("var s = String.fromCharCode(0xDB80, 0xDC00); var p = String.fromCodePoint(0xF0000); (s === p) + '|' + p.length + '|' + encodeURI(p) + '|' + encodeURI(s.substring(0, 2)) + '|' + encodeURI(s.slice(0, 2));"),
+        Value::String(Arc::from(
+            "true|2|%F3%B0%80%80|%F3%B0%80%80|%F3%B0%80%80"
+        ))
+    );
+    assert_eq!(
+        run("decodeURI('%F3%B0%80%80') === String.fromCharCode(0xDB80, 0xDC00);"),
+        Value::Bool(true)
+    );
+    assert!(run_err("decodeURIComponent('%C0%AF');").contains("URIError"));
+    assert!(run_err("decodeURIComponent('%ED%BF%BF');").contains("URIError"));
+    assert!(run_err("encodeURI(String.fromCharCode(0xD800));").contains("URIError"));
+    assert!(run_err("encodeURIComponent(String.fromCharCode(0xDC00));").contains("URIError"));
+}
+
+#[test]
 fn array_search_methods_use_array_like_property_access() {
     assert_eq!(
         run("var obj = {0:'x', 1:true, length:2}; Array.prototype.indexOf.call(obj, true);"),
