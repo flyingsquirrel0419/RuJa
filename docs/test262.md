@@ -111,14 +111,14 @@ and 28920345686 on `cde35de`, 28921293972 on `e3d11d3`, 28922341028 on
 28928721861 on `142d979` and 28931773376 on `bed25e4`.
 Latest full baseline documentation check: `test262-full` 28932188774 on
 `d9c9a1c`; latest improvement confirmation: `test262-full` 28932874097 on
-`397d164`.
+`397d164` and 28935851288 on `5768889`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131-24,138 |
 | Pass | 16,268-16,508 |
-| Fail | 7,629-7,863 |
+| Fail | 7,626-7,863 |
 | Timeout | 6-13 |
 | Skip | 23,573 |
 | **Pass rate (of run)** | **67.4%-68.4%** |
