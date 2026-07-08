@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.4% of all matrix files; 68.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.5% of all matrix files; 68.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -105,14 +105,14 @@ runs: `test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`,
 latest improvement confirmation: `test262-full` 28919444373 on `031e3c1`
 and 28920345686 on `cde35de`, 28921293972 on `e3d11d3`, 28922341028 on
 `28601c4`, 28922677138 on `a2425ab`, 28923518987 on `016a395`, and
-28924515143 on `3e939c8`.
+28924515143 on `3e939c8`, and 28926073317 on `12b94b9`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131-24,133 |
-| Pass | 16,268-16,471 |
-| Fail | 7,660-7,863 |
+| Pass | 16,268-16,477 |
+| Fail | 7,654-7,863 |
 | Timeout | 11-13 |
 | Skip | 23,573 |
 | **Pass rate (of run)** | **67.4%-68.3%** |
