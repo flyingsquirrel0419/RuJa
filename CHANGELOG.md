@@ -196,6 +196,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `newTarget` instead of resetting it to the bound target. With
   `Reflect`/`Reflect.construct` skips temporarily lifted, the focused
   `built-ins/Reflect/construct` diagnostic now runs at **10 pass / 0 fail**.
+- **Reflect.apply array-like arguments**: `Reflect.apply` now validates
+  callability before observing `argumentsList`, then builds the call argument
+  list through ordinary array-like `length` and indexed property access instead
+  of cloning only dense Array storage. This makes primitive or missing
+  `argumentsList` values throw `TypeError`, propagates abrupt `length`/index
+  gets, and accepts ordinary array-like objects and functions. With
+  `Reflect`/`Symbol` skips temporarily lifted, the focused
+  `built-ins/Reflect/apply` diagnostic now runs at **8 pass / 0 fail / 1
+  skip**.
 - **Number static method descriptors**: `Number.isFinite`,
   `Number.isInteger`, `Number.isNaN`, `Number.isSafeInteger`,
   `Number.parseInt`, and `Number.parseFloat` are now installed as writable,

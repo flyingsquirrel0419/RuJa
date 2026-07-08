@@ -2973,6 +2973,43 @@ fn reflect_construct_uses_array_like_args_and_new_target() {
 }
 
 #[test]
+fn reflect_apply_uses_create_list_from_array_like() {
+    assert_eq!(
+        run(r#"
+            function collect() {
+              return Array.prototype.join.call(arguments, "|");
+            }
+            var args = {0: "a", 1: "b", length: 2};
+            Reflect.apply(collect, null, args);
+            "#),
+        Value::String(Arc::from("a|b"))
+    );
+    assert_eq!(
+        run(r#"
+            function count() {
+              return arguments.length + ":" + String(arguments[0]);
+            }
+            var args = {};
+            Object.defineProperty(args, "length", {
+              get: function() { return 1; }
+            });
+            Reflect.apply(count, null, args);
+            "#),
+        Value::String(Arc::from("1:undefined"))
+    );
+    assert!(run_err("Reflect.apply(function(){}, null, 1);").contains("TypeError"));
+    assert!(run_err("Reflect.apply(function(){}, null);").contains("TypeError"));
+    assert!(run_err(
+        "var o = {}; Object.defineProperty(o, 'length', { get: function(){ throw new Error('boom'); } }); Reflect.apply({}, null, o);"
+    )
+    .contains("TypeError"));
+    assert!(
+        run_err("var o = {}; Object.defineProperty(o, 'length', { get: function(){ throw new Error('boom'); } }); Reflect.apply(function(){}, null, o);")
+            .contains("boom")
+    );
+}
+
+#[test]
 fn math_expanded() {
     assert_eq!(run("Math.hypot(3,4);"), Value::Number(5.0));
     assert_eq!(

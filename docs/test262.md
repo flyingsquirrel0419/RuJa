@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.6% of all matrix files; 68.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.1%-34.6% of all matrix files; 68.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -111,16 +111,18 @@ and 28920345686 on `cde35de`, 28921293972 on `e3d11d3`, 28922341028 on
 28928721861 on `142d979` and 28931773376 on `bed25e4`.
 Latest full baseline documentation check: `test262-full` 28932188774 on
 `d9c9a1c`; latest improvement confirmation: `test262-full` 28932874097 on
-`397d164`, 28935851288 on `5768889`, and 28937035685 on `9d7fe40`.
+`397d164`, 28935851288 on `5768889`, and 28937035685 on `9d7fe40`;
+latest full baseline documentation check: `test262-full` 28937391393 on
+`2e3bf0a`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
-| Total matrix files | 47,717 |
+| Total matrix files | 47,717-48,465 |
 | Actually run | 24,131-24,138 |
 | Pass | 16,268-16,508 |
 | Fail | 7,625-7,863 |
 | Timeout | 6-13 |
-| Skip | 23,573 |
+| Skip | 23,573-24,321 |
 | **Pass rate (of run)** | **67.4%-68.4%** |
 | **Pass rate (of total)** | **34.1%-34.6%** |
 
@@ -339,6 +341,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   rather than substituting the bound target. With `Reflect`/
   `Reflect.construct` skips temporarily lifted, the focused
   `built-ins/Reflect/construct` diagnostic runs at **10 pass / 0 fail**.
+- **Reflect.apply array-like arguments** —
+  `Reflect.apply` now performs the spec `IsCallable(target)` check before
+  observing `argumentsList`, then creates the call argument list through
+  ordinary array-like `length` and indexed property access. This rejects
+  primitive or missing `argumentsList` values with `TypeError`, propagates
+  abrupt `length`/index gets, and accepts ordinary array-like objects and
+  functions instead of treating every non-Array object as an empty argument
+  list. With `Reflect`/`Symbol` skips temporarily lifted, the focused
+  `built-ins/Reflect/apply` diagnostic runs at **8 pass / 0 fail / 1 skip**.
 - **Number static method descriptors** —
   `Number.isFinite`, `Number.isInteger`, `Number.isNaN`,
   `Number.isSafeInteger`, `Number.parseInt`, and `Number.parseFloat` are now

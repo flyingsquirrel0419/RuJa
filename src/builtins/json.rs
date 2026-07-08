@@ -1021,17 +1021,10 @@ fn reflect_apply(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
     let args_arr = args.get(2).cloned().unwrap_or(Value::Undefined);
-    let call_args = if let Value::Object(idx) = &args_arr {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Array(a) = o {
-                a.items.lock().clone()
-            } else {
-                Vec::new()
-            }
-        })
-    } else {
-        Vec::new()
-    };
+    if !is_callable(&target, &vm.heap) {
+        return Err(Error::type_err("target is not callable"));
+    }
+    let call_args = reflect_create_list_from_array_like(vm, &args_arr)?;
     vm.call_function(&target, &call_args, Some(this_arg))
 }
 
