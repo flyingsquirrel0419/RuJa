@@ -183,13 +183,12 @@ pub enum Op {
     Dec,             // pop [val]; push val-1 (Number or BigInt)
 
     // Functions
-    MakeFunction(usize),  // function index in a function table
-    Call(usize),          // arg count
-    CallRef(usize),       // arg count; stack [ref, callee, args...]
-    CallMethod(usize),    // arg count (method call: this is on stack)
-    CallMethodOpt(usize), // arg count (optional method call: skip if method is nullish)
-    CallSpread,           // callee + args-array on stack; spread array into call args
-    CallRefSpread,        // ref + callee + args-array on stack
+    MakeFunction(usize), // function index in a function table
+    Call(usize),         // arg count
+    CallRef(usize),      // arg count; stack [ref, callee, args...]
+    CallMethod(usize),   // arg count (method call: this is on stack)
+    CallSpread,          // callee + args-array on stack; spread array into call args
+    CallRefSpread,       // ref + callee + args-array on stack
     /// Unqualified `eval(...)`: call directly only if the resolved callee is
     /// the current Realm's intrinsic eval function; otherwise call normally.
     /// Stack: [callee, args...].

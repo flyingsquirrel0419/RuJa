@@ -3143,44 +3143,47 @@ impl Compiler {
                                 .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
+                        let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
+                        self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                        let mut call_jend = 0usize;
                         if *call_opt {
-                            // `a?.b?.()`: keep the optional-call path, which
-                            // short-circuits if the method value is nullish.
+                            // `a.b?.(args)` resolves the method before
+                            // evaluating arguments, and skips the arguments if
+                            // the method value is nullish.
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            let jskip = self.chunk.code.len();
+                            self.chunk.emit(Op::JumpIfNotNullish(0), self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                            self.chunk.emit(Op::Undefined, self.current_line);
+                            call_jend = self.chunk.code.len();
+                            self.chunk.emit(Op::Jump(0), self.current_line);
+                            self.chunk.patch_jump(jskip, self.chunk.code.len());
+                        }
+                        if has_spread {
+                            self.chunk.emit(Op::NewArray(0), self.current_line);
                             for a in args {
-                                if let Expr::Spread(_) = a {
-                                } else {
-                                    self.compile_expr(a)?;
-                                }
-                            }
-                            self.chunk
-                                .emit(Op::CallMethodOpt(args.len()), self.current_line);
-                        } else {
-                            // Ordinary member calls resolve the property
-                            // before evaluating arguments. Callability is
-                            // still checked by CallThis after args run.
-                            let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
-                            self.chunk.emit(Op::GetMethodForCall, self.current_line);
-                            if has_spread {
-                                self.chunk.emit(Op::NewArray(0), self.current_line);
-                                for a in args {
-                                    match a {
-                                        Expr::Spread(inner) => {
-                                            self.compile_expr(inner)?;
-                                            self.chunk.emit(Op::SpreadPush, self.current_line);
-                                        }
-                                        _ => {
-                                            self.compile_expr(a)?;
-                                            self.chunk.emit(Op::ArrayPush, self.current_line);
-                                        }
+                                match a {
+                                    Expr::Spread(inner) => {
+                                        self.compile_expr(inner)?;
+                                        self.chunk.emit(Op::SpreadPush, self.current_line);
+                                    }
+                                    _ => {
+                                        self.compile_expr(a)?;
+                                        self.chunk.emit(Op::ArrayPush, self.current_line);
                                     }
                                 }
-                                self.chunk.emit(Op::CallThisSpread, self.current_line);
-                            } else {
-                                for a in args {
-                                    self.compile_expr(a)?;
-                                }
-                                self.chunk.emit(Op::CallThis(args.len()), self.current_line);
                             }
+                            self.chunk.emit(Op::CallThisSpread, self.current_line);
+                        } else {
+                            for a in args {
+                                self.compile_expr(a)?;
+                            }
+                            self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                        }
+                        if *call_opt {
+                            let end = self.chunk.code.len();
+                            self.chunk.patch_jump(call_jend, end);
                         }
                         if *m_opt {
                             let end = self.chunk.code.len();

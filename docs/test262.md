@@ -203,6 +203,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Reference-preserving path, and unqualified `eval(...)` keeps direct eval
   behavior only for the intrinsic eval function. The focused
   `language/statements/with` run closes at **169 pass / 0 fail / 12 skip**.
+- **Optional method-call argument order** —
+  Optional member calls now fetch the method and short-circuit nullish method
+  values before evaluating ordinary or spread arguments. This keeps
+  `o.m?.(sideEffect())` from running side effects when `o.m` is
+  `null`/`undefined`, while present methods still receive the original object
+  as `this`. The focused `language/expressions/optional-chaining` directory is
+  still feature-skipped by the runner (**38 skip**), so the edge is pinned by
+  local `operators` regression tests.
 - **Symbol computed keys for member assignments** —
   computed member update, numeric/bitwise compound assignment, and logical
   assignment now coerce computed keys with `ToPropertyKey` instead of

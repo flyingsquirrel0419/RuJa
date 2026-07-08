@@ -902,6 +902,46 @@ fn optional_method_chain_present() {
     );
 }
 
+#[test]
+fn optional_method_call_skips_arguments_when_method_nullish() {
+    assert_eq!(
+        run("var called = false; var o = {m: null}; o.m?.(called = true); called;"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var called = false; var o = {}; o.m?.(called = true); called;"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var called = false; var o = {m: null}; o.m?.(...(called = true, [])); called;"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var called = false; var o = null; o?.m?.(called = true); called;"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        run("var log = []; var o = { get m(){ log.push('get'); return null; } }; o.m?.(log.push('arg')); log.join(',');"),
+        Value::String(Arc::from("get"))
+    );
+    assert_eq!(
+        run("var called = false; var o = {m: 1}; var ok = false; try { o.m?.(called = true); } catch (e) { ok = e instanceof TypeError; } called && ok;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn optional_method_call_preserves_receiver_when_present() {
+    assert_eq!(
+        run("var o = {x: 3, m: function(a){ return this.x + a; }}; o.m?.(4);"),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run("var o = {x: 3, m: function(a){ return this.x + a; }}; o.m?.(...[4]);"),
+        Value::Number(7.0)
+    );
+}
+
 // --- ToInt32 / ToUint32 conformance (Rust `as i32` saturates; spec needs modular reduction) ---
 
 #[test]

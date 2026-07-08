@@ -86,6 +86,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `eval(...)` keeps its existing intrinsic-eval behavior. The focused
   `language/statements/with` test262 run closes at **169 pass / 0 fail / 12
   skip**.
+- **Optional method-call argument order**: optional member calls now resolve the
+  method and short-circuit nullish method values before evaluating arguments,
+  so `o.m?.(sideEffect())` and spread arguments skip side effects when `o.m` is
+  `null`/`undefined` while preserving `this` for present methods. The focused
+  `language/expressions/optional-chaining` test262 directory remains feature
+  skipped by the runner (**38 skip**), so this edge is covered by local
+  `operators` regressions.
 - **Symbol computed keys for member assignments**: computed member update,
   numeric/bitwise compound assignment, and logical assignment now coerce keys
   with `ToPropertyKey` instead of `ToString`, preserving Symbol property keys

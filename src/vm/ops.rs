@@ -2482,7 +2482,6 @@ impl Vm {
                 Op::Call(arg_count) => self.op_call(arg_count)?,
                 Op::CallRef(arg_count) => self.op_call_ref(arg_count)?,
                 Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
-                Op::CallMethodOpt(arg_count) => self.op_call_method_opt(arg_count)?,
                 Op::CallEval(arg_count) => self.op_call_eval(arg_count)?,
                 Op::CallEvalRef(arg_count) => self.op_call_eval_ref(arg_count)?,
                 Op::YieldValue => {
@@ -3002,26 +3001,6 @@ impl Vm {
         let method = self.get_property(&obj, &key_str)?;
         let result = self.call_function(&method, &args, Some(obj))?;
         self.stack.push(result);
-        Ok(())
-    }
-
-    /// `Op::CallMethodOpt(arg_count)`: optional chaining member call.
-    fn op_call_method_opt(&mut self, arg_count: usize) -> error::Result<()> {
-        let mut args = Vec::with_capacity(arg_count);
-        for _ in 0..arg_count {
-            args.push(self.stack.pop().unwrap_or(Value::Undefined));
-        }
-        args.reverse();
-        let key = self.stack.pop().unwrap_or(Value::Undefined);
-        let obj = self.stack.pop().unwrap_or(Value::Undefined);
-        let key_str = self.to_property_key(&key)?;
-        let method = self.get_property(&obj, &key_str)?;
-        if method.is_nullish() {
-            self.stack.push(Value::Undefined);
-        } else {
-            let result = self.call_function(&method, &args, Some(obj))?;
-            self.stack.push(result);
-        }
         Ok(())
     }
 
