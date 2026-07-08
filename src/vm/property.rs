@@ -304,6 +304,12 @@ impl Vm {
                 return Ok(true);
             }
 
+            if let Some(name) = key.as_str() {
+                if let Some(slots) = self.typed_array_numeric_slots(*idx, name) {
+                    return Ok(!self.is_valid_typed_array_numeric_index(&slots));
+                }
+            }
+
             let array_delete = self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
                     if key.as_str().is_some_and(|name| name == "length") {

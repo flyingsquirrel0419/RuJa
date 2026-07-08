@@ -157,6 +157,19 @@ rejected before value conversion. With TypedArray-related skips temporarily
 lifted, the broader `built-ins/TypedArrayConstructors` diagnostic now reports
 **473 pass / 54 fail / 211 skip**.
 
+Focused TypedArray integer-indexed `[[Delete]]` local check:
+canonical numeric index deletes now follow Integer-Indexed exotic semantics for
+numeric and BigInt TypedArrays. Valid in-bounds indexes return `false`, strict
+delete of those indexes throws through the delete operator, detached buffers and
+invalid canonical numeric keys such as `"-0"`, fractional, negative, infinite,
+and out-of-bounds indexes return `true`, and non-canonical keys continue through
+ordinary delete. With TypedArray-related skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/Delete` now reports **29 pass / 2
+fail / 8 skip**; the remaining failures are detached-buffer realm constructor
+coverage. The current runner's broader `built-ins/TypedArrayConstructors`
+diagnostic moves from **419 pass / 54 fail / 265 skip** to **431 pass / 42 fail
+/ 265 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,
@@ -452,6 +465,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   closes at **126 pass / 0 fail / 0 skip**, and the broader
   `built-ins/TypedArrayConstructors` diagnostic now reports **473 pass / 54
   fail / 211 skip**.
+- **TypedArray integer-indexed `[[Delete]]`** —
+  TypedArray canonical numeric index deletes now return `false` for valid
+  in-bounds elements and `true` for detached buffers or invalid canonical
+  numeric indexes, including `"-0"`, fractional, negative, infinite, and
+  out-of-bounds keys. Non-canonical keys continue through ordinary delete. With
+  TypedArray-related skips temporarily lifted,
+  `built-ins/TypedArrayConstructors/internals/Delete` now reports **29 pass / 2
+  fail / 8 skip**, while the current runner's broader
+  `built-ins/TypedArrayConstructors` diagnostic moves from **419 pass / 54 fail
+  / 265 skip** to **431 pass / 42 fail / 265 skip**.
 - **Nullish computed property write/delete ordering** —
   Simple computed property assignment and computed `delete` now check
   `null`/`undefined` bases before observable `ToPropertyKey` coercion. This

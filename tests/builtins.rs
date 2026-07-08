@@ -1027,6 +1027,74 @@ fn typed_array_constructor_observes_array_iterator_prototype_next_override() {
 }
 
 #[test]
+fn typed_array_delete_canonical_numeric_indices_follow_integer_indexed_exotic() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array(2);
+            var values = [];
+            values.push(delete sample[0]);
+            values.push(delete sample["0"]);
+            values.push(delete sample[1]);
+            values.push(delete sample["2"]);
+            values.push(delete sample["-1"]);
+            values.push(delete sample["1.1"]);
+            values.push(delete sample["-0"]);
+            values.push(delete sample[-0]);
+            values.join(",");
+        "#),
+        Value::String(Arc::from("false,false,false,true,true,true,true,false"))
+    );
+    assert_eq!(
+        run(r#"
+            "use strict";
+            var sample = new Uint8Array(1);
+            [delete sample["-0"], delete sample["1.1"], delete sample["1"]].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array(1);
+            $262.detachArrayBuffer(sample.buffer);
+            [delete sample[0], delete sample["0"], delete sample["1"], delete sample["-0"], delete sample["1.1"], delete sample["Infinity"]].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true,true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new BigInt64Array(1);
+            var values = [];
+            values.push(delete sample[0]);
+            values.push(delete sample["-0"]);
+            values.push(delete sample["1"]);
+            $262.detachArrayBuffer(sample.buffer);
+            values.push(delete sample[0]);
+            values.join(",");
+        "#),
+        Value::String(Arc::from("false,true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array(0);
+            Object.defineProperty(sample, "+1", { value: 1, configurable: false });
+            [delete sample["+1"], Object.getOwnPropertyDescriptor(sample, "+1").value].join(",");
+        "#),
+        Value::String(Arc::from("false,1"))
+    );
+    assert!(
+        run_err(
+            r#"
+            "use strict";
+            var sample = new Uint8Array(1);
+            delete sample[0];
+            "#
+        )
+        .contains("TypeError"),
+        "strict delete of a valid TypedArray integer index should throw"
+    );
+}
+
+#[test]
 fn data_view_constructor_length_descriptor() {
     assert_eq!(
         run(r#"
