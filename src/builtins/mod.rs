@@ -4545,20 +4545,23 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     )?;
     vm.number_proto = Value::Object(num_proto);
     vm.set_primitive(&vm.number_proto.clone(), Value::Number(0.0));
+    let parse_int_value = Value::Object(vm.new_native_function("parseInt", global_parse_int, 2)?);
+    let parse_float_value =
+        Value::Object(vm.new_native_function("parseFloat", global_parse_float, 1)?);
     // Number static methods + constants
     let statics: &[(&str, NativeFn, usize)] = &[
         ("isInteger", number_is_integer, 1),
         ("isFinite", number_is_finite, 1),
         ("isNaN", number_is_nan, 1),
         ("isSafeInteger", number_is_safe_integer, 1),
-        ("parseInt", number_parse_int, 2),
-        ("parseFloat", number_parse_float, 1),
     ];
     let mut static_methods: Vec<(Arc<str>, Value)> = Vec::new();
     for (name, fnp, len) in statics {
         let idx = vm.new_native_function(name, *fnp, *len)?;
         static_methods.push((Arc::from(*name), Value::Object(idx)));
     }
+    static_methods.push((Arc::from("parseInt"), parse_int_value.clone()));
+    static_methods.push((Arc::from("parseFloat"), parse_float_value.clone()));
     let static_constants: Vec<(Arc<str>, Value)> = vec![
         (
             Arc::from("MAX_SAFE_INTEGER"),
@@ -4608,10 +4611,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     vm.set_primitive(&vm.boolean_proto.clone(), Value::Bool(false));
     define_global(vm, "Boolean", Value::Object(bool_ctor));
     // globals
-    let idx = vm.new_native_function("parseInt", global_parse_int, 2)?;
-    define_global(vm, "parseInt", Value::Object(idx));
-    let idx = vm.new_native_function("parseFloat", global_parse_float, 1)?;
-    define_global(vm, "parseFloat", Value::Object(idx));
+    define_global(vm, "parseInt", parse_int_value);
+    define_global(vm, "parseFloat", parse_float_value);
     let idx = vm.new_native_function("isNaN", global_is_nan, 1)?;
     define_global(vm, "isNaN", Value::Object(idx));
     let idx = vm.new_native_function("isFinite", global_is_finite, 1)?;

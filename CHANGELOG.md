@@ -203,6 +203,11 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   delegating to Rust's `powf`, while preserving the required `x ** ±0 === 1`
   behavior. The focused `built-ins/Math/pow` run now closes at **27 pass / 0
   fail / 1 skip**.
+- **Number parse function identity**: `Number.parseInt` and
+  `Number.parseFloat` now reference the same built-in function objects as the
+  global `parseInt` and `parseFloat` properties instead of separate native
+  wrappers. The broader `built-ins/Number` run now improves to **301 pass /
+  11 fail / 28 skip**.
 - **PrivateName lexical grammar**: private class names now use the same
   `IdentifierName` Unicode escape and raw Unicode scanning rules as ordinary
   identifiers, including `Other_ID_Start`, ZWNJ, and ZWJ handling. This fixes

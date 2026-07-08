@@ -345,6 +345,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   exponents before delegating to Rust's `powf`, while keeping the required
   `x ** ±0 === 1` behavior. The focused `built-ins/Math/pow` run now closes
   at **27 pass / 0 fail / 1 skip**.
+- **Number parse function identity** —
+  `Number.parseInt` and `Number.parseFloat` now reference the same built-in
+  function objects as the global `parseInt` and `parseFloat` properties,
+  rather than separate native wrappers. The broader `built-ins/Number` run now
+  improves to **301 pass / 11 fail / 28 skip**.
 - **PrivateName lexical grammar** —
   Private class names now follow the same `IdentifierName` scanner rules as
   ordinary identifiers, including Unicode escapes, raw Unicode source text,

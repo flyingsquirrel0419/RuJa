@@ -1289,20 +1289,6 @@ pub(crate) fn number_is_safe_integer(
         _ => Ok(Value::Bool(false)),
     }
 }
-pub(crate) fn number_parse_int(
-    vm: &mut Vm,
-    args: &[Value],
-    _: Option<Value>,
-) -> error::Result<Value> {
-    global_parse_int(vm, args, None)
-}
-pub(crate) fn number_parse_float(
-    vm: &mut Vm,
-    args: &[Value],
-    _: Option<Value>,
-) -> error::Result<Value> {
-    global_parse_float(vm, args, None)
-}
 pub(crate) fn num_to_fixed(
     vm: &mut Vm,
     args: &[Value],
