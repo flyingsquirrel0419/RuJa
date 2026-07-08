@@ -40,6 +40,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   strict assignment throws `TypeError`, and delete returns `false`. The focused
   `built-ins/global built-ins/undefined` run improves from **33 pass / 4 fail
   / 0 skip** to **37 pass / 0 fail / 0 skip**.
+- **Proxy `[[Construct]]` semantics**: constructable Proxy objects now follow
+  their target's constructability, dispatch `construct` traps with a current
+  Realm argument array, validate trap callability and object return values, and
+  delegate through the target when no trap is present. The focused
+  `built-ins/Proxy` run improves from **3 pass / 1 fail / 307 skip** to **4
+  pass / 0 fail / 307 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

@@ -180,6 +180,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   assignment throws `TypeError`, and `delete undefined` returns `false`. The
   focused `built-ins/global built-ins/undefined` run improves from **33 pass /
   4 fail / 0 skip** to **37 pass / 0 fail / 0 skip**.
+- **Proxy `[[Construct]]` semantics** —
+  Constructable Proxy objects now inherit constructability from their target,
+  dispatch `construct` traps with a current-Realm argument array, validate trap
+  callability and object return values, and delegate to the target when no trap
+  is present. The focused `built-ins/Proxy` run improves from **3 pass / 1
+  fail / 307 skip** to **4 pass / 0 fail / 307 skip**.
 - **`%ThrowTypeError%` intrinsic** —
   Restricted function and arguments accessors now share an anonymous, frozen,
   non-extensible `%ThrowTypeError%` function within each Realm. Strict

@@ -289,11 +289,8 @@ impl Vm {
         let Value::Object(idx) = value else {
             return false;
         };
-        self.heap.with_obj(idx.0, |obj| {
-            let HeapObj::Function(f) = obj else {
-                return false;
-            };
-            match &f.kind {
+        self.heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Function(f) => match &f.kind {
                 crate::value::FunctionKind::Interpreted { func } => {
                     !func.is_arrow && !func.is_method
                 }
@@ -301,8 +298,56 @@ impl Vm {
                 crate::value::FunctionKind::Bound { target, .. } => {
                     self.is_constructor_value(&Value::Object(*target))
                 }
-            }
+            },
+            HeapObj::Proxy(proxy) => self.is_constructor_value(&proxy.target),
+            _ => false,
         })
+    }
+
+    fn proxy_construct_info(&self, constructor: GcIdx) -> Option<error::Result<(Value, Value)>> {
+        self.heap.with_obj(constructor.0, |obj| {
+            let HeapObj::Proxy(proxy) = obj else {
+                return None;
+            };
+            if *proxy.revoked.lock() {
+                return Some(Err(Error::type_err(
+                    "Cannot perform 'construct' on a proxy that has been revoked",
+                )));
+            }
+            Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+        })
+    }
+
+    fn construct_proxy(
+        &mut self,
+        target: Value,
+        handler: Value,
+        args: &[Value],
+        new_target: &Value,
+    ) -> error::Result<Value> {
+        if !self.is_constructor_value(&target) {
+            return Err(Error::type_err("not a constructor".to_string()));
+        }
+        let trap = self.get_property(&handler, "construct")?;
+        if trap.is_undefined() || trap.is_null() {
+            return self.construct_with_new_target(&target, args, new_target);
+        }
+        if !crate::builtins::is_callable(&trap, &self.heap) {
+            return Err(Error::type_err("Proxy construct trap is not callable"));
+        }
+        let arg_array = crate::builtins::make_value_array(self, args.to_vec())?;
+        let new_obj = self.call_function(
+            &trap,
+            &[target, arg_array, new_target.clone()],
+            Some(handler),
+        )?;
+        if matches!(new_obj, Value::Object(_)) {
+            Ok(new_obj)
+        } else {
+            Err(Error::type_err(
+                "Proxy construct trap must return an object".to_string(),
+            ))
+        }
     }
 
     /// Define a global binding (visible to JS as a top-level variable).
@@ -851,6 +896,10 @@ impl Vm {
                 &all,
                 &forwarded_new_target,
             );
+        }
+        if let Some(proxy_construct) = self.proxy_construct_info(idx) {
+            let (target, handler) = proxy_construct?;
+            return self.construct_proxy(target, handler, args, new_target);
         }
         if !self.is_constructor_value(constructor) {
             return Err(Error::type_err("not a constructor".to_string()));

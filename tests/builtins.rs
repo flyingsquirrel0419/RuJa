@@ -2391,6 +2391,51 @@ fn callable_proxy_follows_target_callability_and_apply_trap() {
 }
 
 #[test]
+fn constructable_proxy_follows_target_and_construct_trap() {
+    assert_eq!(
+        run(r#"
+            function Target(a, b) { this.sum = a + b; }
+            var proxy = new Proxy(Target, {});
+            new proxy(2, 3).sum;
+            "#),
+        Value::Number(5.0)
+    );
+    assert_eq!(
+        run(r#"
+            var C = $262.createRealm().global.eval(
+              "new Proxy(function() {}, { construct: function(_, args) { return args; } })"
+            );
+            new C(1, 2).constructor === Array;
+            "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            function Target() {}
+            function NewTarget() {}
+            NewTarget.prototype = { marker: true };
+            var seen = [];
+            var proxy = new Proxy(Target, {
+              construct: function(t, args, nt) {
+                seen.push(t === Target, args.constructor === Array, args.join(","), nt === NewTarget);
+                return Reflect.construct(t, args, nt);
+              }
+            });
+            var result = Reflect.construct(proxy, [4, 5], NewTarget);
+            seen.join("|") + "|" + (Object.getPrototypeOf(result) === NewTarget.prototype);
+            "#),
+        Value::String(Arc::from("true|true|4,5|true|true"))
+    );
+    assert!(run_err(
+        r#"
+            var proxy = new Proxy(function() {}, { construct: function() { return 1; } });
+            new proxy();
+            "#,
+    )
+    .contains("TypeError"));
+}
+
+#[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
     assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));
