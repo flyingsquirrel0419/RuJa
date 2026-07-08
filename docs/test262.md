@@ -256,8 +256,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   lifted, the focused
   `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
   diagnostic moved from **8 pass / 20 fail / 19 skip** to **25 pass / 3 fail /
-  19 skip**. Remaining failures in that probe require ArrayBuffer-backed
-  typed-array views and shared ArrayIteratorPrototype mutation semantics.
+  19 skip**.
+- **ArrayBuffer-backed TypedArray views** —
+  Typed-array instances now carry `[[ViewedArrayBuffer]]`, `[[ByteOffset]]`,
+  and `[[ByteLength]]` slots. Constructors accept `ArrayBuffer` inputs with
+  range/alignment checks, expose the original buffer through `.buffer`, report
+  view-relative `length`, `byteLength`, and `byteOffset`, and route indexed
+  reads/writes through the shared backing buffer. With TypedArray-related skips
+  temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
+  diagnostic now reports **26 pass / 2 fail / 19 skip**. Remaining failures in
+  that probe require iterable zero-fill coverage and shared
+  ArrayIteratorPrototype mutation semantics.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel** —
   Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
   integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,

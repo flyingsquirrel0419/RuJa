@@ -663,32 +663,64 @@ impl Vm {
                     }
                 });
                 if let Some(i) = typed_array_index {
-                    let kind = self.heap.with_obj(idx.0, |o| {
+                    let slots = self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::TypedArray(t) = o {
-                            return Some(t.kind);
+                            return Some((
+                                t.kind,
+                                t.viewed_array_buffer.clone(),
+                                t.byte_offset,
+                                t.byte_length,
+                            ));
                         }
                         None
                     });
-                    let Some(kind) = kind else {
+                    let Some((kind, viewed_array_buffer, byte_offset, byte_length)) = slots else {
                         return Ok(());
                     };
                     let element_bytes =
                         crate::builtins::typed_array_value_to_bytes(self, kind, &value)?;
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::TypedArray(t) = o {
-                            let size = t.kind.element_size();
-                            let Some(offset) = i.checked_mul(size) else {
-                                return;
-                            };
-                            let mut buffer = t.buffer.lock();
-                            let Some(end) = offset.checked_add(size) else {
-                                return;
-                            };
-                            if end <= buffer.len() {
-                                buffer[offset..end].copy_from_slice(&element_bytes);
-                            }
+                    let size = kind.element_size();
+                    let Some(relative_offset) = i.checked_mul(size) else {
+                        return Ok(());
+                    };
+                    let Some(relative_end) = relative_offset.checked_add(size) else {
+                        return Ok(());
+                    };
+                    if relative_end > byte_length {
+                        return Ok(());
+                    }
+                    if let Some(backing) = viewed_array_buffer {
+                        if let Value::Object(buffer_idx) = backing {
+                            self.heap.with_obj(buffer_idx.0, |o| {
+                                if let HeapObj::ArrayBuffer(buffer) = o {
+                                    if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                                        return;
+                                    }
+                                    let Some(offset) = byte_offset.checked_add(relative_offset)
+                                    else {
+                                        return;
+                                    };
+                                    let Some(end) = offset.checked_add(size) else {
+                                        return;
+                                    };
+                                    let mut bytes = buffer.bytes.lock();
+                                    if end <= bytes.len() {
+                                        bytes[offset..end].copy_from_slice(&element_bytes);
+                                    }
+                                }
+                            });
                         }
-                    });
+                    } else {
+                        self.heap.with_obj(idx.0, |o| {
+                            if let HeapObj::TypedArray(t) = o {
+                                let mut buffer = t.buffer.lock();
+                                if relative_end <= buffer.len() {
+                                    buffer[relative_offset..relative_end]
+                                        .copy_from_slice(&element_bytes);
+                                }
+                            }
+                        });
+                    }
                     return Ok(());
                 }
                 // --- Array fast paths ---

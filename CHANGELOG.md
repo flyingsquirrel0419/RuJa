@@ -142,8 +142,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   temporarily lifted, the focused
   `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
   diagnostic moved from **8 pass / 20 fail / 19 skip** to **25 pass / 3 fail /
-  19 skip**; the remaining failures are isolated to ArrayBuffer-backed
-  typed-array views and shared ArrayIteratorPrototype mutation semantics.
+  19 skip**.
+- **ArrayBuffer-backed TypedArray views**: typed-array instances now carry
+  `[[ViewedArrayBuffer]]`, `[[ByteOffset]]`, and `[[ByteLength]]` slots.
+  Constructors accept `ArrayBuffer` inputs with range/alignment checks, expose
+  the original buffer through `.buffer`, report view-relative `length`,
+  `byteLength`, and `byteOffset`, and route indexed reads/writes through the
+  shared backing buffer. With TypedArray-related skips temporarily lifted, the
+  focused
+  `built-ins/TypedArrayConstructors/ctors/{no-args,length-arg,object-arg}`
+  diagnostic now reports **26 pass / 2 fail / 19 skip**; the remaining
+  failures are isolated to iterable zero-fill coverage and shared
+  ArrayIteratorPrototype mutation semantics.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel**: transparent Proxy receivers
   for `Object.seal`/`Object.freeze` now tighten the target's own descriptors
   through the Proxy-aware `[[DefineOwnProperty]]` path, and

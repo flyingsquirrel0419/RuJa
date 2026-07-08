@@ -1130,6 +1130,60 @@ fn typed_array_iterable_to_bytes(
     Ok(bytes)
 }
 
+fn array_buffer_prototype(vm: &mut Vm) -> Value {
+    crate::environment::get(&vm.heap, vm.global, "ArrayBuffer")
+        .and_then(|ctor| vm.get_property(&ctor, "prototype").ok())
+        .filter(|proto| matches!(proto, Value::Object(_)))
+        .unwrap_or_else(|| vm.object_proto.clone())
+}
+
+fn allocate_array_buffer_with_bytes(vm: &mut Vm, bytes: Vec<u8>) -> error::Result<Value> {
+    let proto = array_buffer_prototype(vm);
+    let idx = vm
+        .heap
+        .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
+            bytes: Mutex::new(bytes),
+            detached: AtomicBool::new(false),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+        }))?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
+fn allocate_typed_array_view(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+    proto: Value,
+    viewed_array_buffer: Value,
+    byte_offset: usize,
+    byte_length: usize,
+) -> error::Result<Value> {
+    let idx = vm
+        .heap
+        .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
+            buffer: Mutex::new(Vec::new()),
+            viewed_array_buffer: Some(viewed_array_buffer),
+            byte_offset,
+            byte_length,
+            kind,
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+        }))?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
+fn allocate_typed_array_from_bytes(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+    proto: Value,
+    bytes: Vec<u8>,
+) -> error::Result<Value> {
+    let byte_length = bytes.len();
+    let viewed_array_buffer = allocate_array_buffer_with_bytes(vm, bytes)?;
+    allocate_typed_array_view(vm, kind, proto, viewed_array_buffer, 0, byte_length)
+}
+
 fn typed_array_constructor_with_kind(
     vm: &mut Vm,
     args: &[Value],
@@ -1163,6 +1217,54 @@ fn typed_array_constructor_with_kind(
         }
         Some(Value::Object(idx)) => {
             let array_like = Value::Object(*idx);
+            let array_buffer_len = vm.heap.with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Some(Err(Error::type_err("TypedArray buffer is detached")));
+                    }
+                    return Some(Ok(buffer.bytes.lock().len()));
+                }
+                None
+            });
+            if let Some(len_result) = array_buffer_len {
+                let buffer_len = len_result?;
+                let byte_offset = match args.get(1) {
+                    Some(Value::Undefined) | None => 0,
+                    Some(value) => to_index_length(vm, value, "TypedArray byteOffset")?,
+                };
+                if byte_offset > buffer_len || byte_offset % kind.element_size() != 0 {
+                    return Err(Error::range("Invalid TypedArray byteOffset"));
+                }
+                let byte_length = match args.get(2) {
+                    Some(Value::Undefined) | None => {
+                        let remaining = buffer_len - byte_offset;
+                        if remaining % kind.element_size() != 0 {
+                            return Err(Error::range("Invalid TypedArray length"));
+                        }
+                        remaining
+                    }
+                    Some(value) => {
+                        let element_length = to_index_length(vm, value, "TypedArray length")?;
+                        element_length
+                            .checked_mul(kind.element_size())
+                            .ok_or_else(|| Error::range("Invalid TypedArray length"))?
+                    }
+                };
+                if byte_offset
+                    .checked_add(byte_length)
+                    .is_none_or(|end| end > buffer_len)
+                {
+                    return Err(Error::range("Invalid TypedArray length"));
+                }
+                return allocate_typed_array_view(
+                    vm,
+                    kind,
+                    proto,
+                    array_like,
+                    byte_offset,
+                    byte_length,
+                );
+            }
             let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
             let is_builtin_iterable = vm.heap.with_obj(idx.0, |o| {
                 matches!(
@@ -1178,20 +1280,8 @@ fn typed_array_constructor_with_kind(
                 if is_builtin_iterable
                     || (!iterator_method.is_undefined() && !iterator_method.is_null())
                 {
-                    return typed_array_iterable_to_bytes(vm, kind, &array_like).and_then(
-                        |buffer| {
-                            let idx = vm.heap.allocate(HeapObj::TypedArray(
-                                crate::value::TypedArrayData {
-                                    buffer: Mutex::new(buffer),
-                                    kind,
-                                    props: Mutex::new(IndexMap::new()),
-                                    proto: Mutex::new(Some(proto)),
-                                    extensible: AtomicBool::new(true),
-                                },
-                            ))?;
-                            Ok(Value::Object(GcIdx(idx)))
-                        },
-                    );
+                    let buffer = typed_array_iterable_to_bytes(vm, kind, &array_like)?;
+                    return allocate_typed_array_from_bytes(vm, kind, proto, buffer);
                 }
             }
             let length_value = vm.get_property(&array_like, "length")?;
@@ -1217,16 +1307,7 @@ fn typed_array_constructor_with_kind(
         }
     };
 
-    let idx = vm
-        .heap
-        .allocate(HeapObj::TypedArray(crate::value::TypedArrayData {
-            buffer: Mutex::new(buffer),
-            kind,
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(proto)),
-            extensible: AtomicBool::new(true),
-        }))?;
-    Ok(Value::Object(GcIdx(idx)))
+    allocate_typed_array_from_bytes(vm, kind, proto, buffer)
 }
 
 pub(crate) fn uint8array_constructor(

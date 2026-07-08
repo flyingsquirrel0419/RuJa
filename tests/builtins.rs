@@ -708,6 +708,45 @@ fn typed_array_constructors_read_array_like_objects_observably() {
 }
 
 #[test]
+fn typed_array_constructors_create_array_buffer_backed_views() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(16);
+            var bytes = new Uint8Array(buffer);
+            bytes[0] = 7;
+            var ints = new Int16Array(buffer, 2, 2);
+            ints[0] = 258;
+            [
+              bytes.length,
+              bytes.byteLength,
+              bytes.byteOffset,
+              bytes.buffer === buffer,
+              ints.length,
+              ints.byteLength,
+              ints.byteOffset,
+              ints.buffer === buffer,
+              bytes[0],
+              bytes[2],
+              bytes[3]
+            ].join(",");
+        "#),
+        Value::String(Arc::from("16,16,0,true,2,4,2,true,7,2,1"))
+    );
+    assert!(
+        run_err("new Int16Array(new ArrayBuffer(3));").contains("RangeError"),
+        "misaligned ArrayBuffer byte length should throw RangeError"
+    );
+    assert!(
+        run_err("new Int16Array(new ArrayBuffer(4), 1);").contains("RangeError"),
+        "misaligned TypedArray byte offset should throw RangeError"
+    );
+    assert!(
+        run_err("new Uint8Array(new ArrayBuffer(4), 3, 2);").contains("RangeError"),
+        "TypedArray view past the ArrayBuffer should throw RangeError"
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_subclasses_initialize_internal_slots() {
     assert_eq!(
         run(r#"

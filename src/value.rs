@@ -398,10 +398,14 @@ impl fmt::Debug for Value {
     }
 }
 
-/// A TypedArray backed by a Vec<u8>. Only Uint8Array is supported for now;
-/// other TypedArray kinds can be added by extending `TypedArrayKind`.
+/// A TypedArray view over an ArrayBuffer. `buffer` is kept only for legacy
+/// owned-storage objects from older snapshots; new allocations use
+/// `viewed_array_buffer` plus byte offset/length slots.
 pub struct TypedArrayData {
     pub buffer: Mutex<Vec<u8>>,
+    pub viewed_array_buffer: Option<Value>,
+    pub byte_offset: usize,
+    pub byte_length: usize,
     pub kind: TypedArrayKind,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,

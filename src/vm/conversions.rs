@@ -990,12 +990,25 @@ impl Vm {
                 // TypedArray index access: read from buffer.
                 let ta_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::TypedArray(t) = o {
-                        Some((t.kind, t.buffer.lock().len()))
+                        Some((
+                            t.kind,
+                            t.viewed_array_buffer.clone(),
+                            t.byte_offset,
+                            t.byte_length,
+                            t.buffer.lock().len(),
+                        ))
                     } else {
                         None
                     }
                 });
-                if let Some((kind, buf_len)) = ta_info {
+                if let Some((kind, viewed_array_buffer, byte_offset, byte_length, owned_len)) =
+                    ta_info
+                {
+                    let buf_len = if viewed_array_buffer.is_some() {
+                        byte_length
+                    } else {
+                        owned_len
+                    };
                     if key == "length" {
                         return Ok(Value::Number(crate::builtins::typed_array_element_count(
                             kind, buf_len,
@@ -1005,10 +1018,42 @@ impl Vm {
                         return Ok(Value::Number(buf_len as f64));
                     }
                     if key == "byteOffset" {
-                        return Ok(Value::Number(0.0));
+                        return Ok(Value::Number(byte_offset as f64));
+                    }
+                    if key == "buffer" {
+                        return Ok(viewed_array_buffer.unwrap_or(Value::Undefined));
                     }
                     if let Ok(i) = key.parse::<usize>() {
-                        if let Some(value) = self.heap.with_obj(idx.0, |o| {
+                        if let Some(backing) = viewed_array_buffer {
+                            if let Value::Object(buffer_idx) = backing {
+                                if let Some(value) = self.heap.with_obj(buffer_idx.0, |o| {
+                                    if let crate::value::HeapObj::ArrayBuffer(buffer) = o {
+                                        if buffer
+                                            .detached
+                                            .load(std::sync::atomic::Ordering::Relaxed)
+                                        {
+                                            return None;
+                                        }
+                                        let bytes = buffer.bytes.lock();
+                                        let size = kind.element_size();
+                                        let offset =
+                                            i.checked_mul(size)?.checked_add(byte_offset)?;
+                                        let end = offset.checked_add(size)?;
+                                        if end > byte_offset + byte_length {
+                                            return None;
+                                        }
+                                        return crate::builtins::typed_array_read_element(
+                                            kind,
+                                            &bytes,
+                                            offset / size,
+                                        );
+                                    }
+                                    None
+                                }) {
+                                    return Ok(value);
+                                }
+                            }
+                        } else if let Some(value) = self.heap.with_obj(idx.0, |o| {
                             if let crate::value::HeapObj::TypedArray(t) = o {
                                 return crate::builtins::typed_array_read_element(
                                     kind,
