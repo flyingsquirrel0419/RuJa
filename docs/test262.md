@@ -171,6 +171,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   strings as equal. The focused
   `built-ins/String` run improves from **1093 pass / 3 fail / 127 skip** to
   **1096 pass / 0 fail / 127 skip**.
+- **Global `undefined` Reference semantics** —
+  Source `undefined` now parses as an IdentifierReference instead of a literal
+  expression, so assignment and delete use the same Reference/`PutValue` paths
+  as other global names. The non-writable, non-configurable global property is
+  preserved: sloppy assignment is ignored while returning the RHS, strict
+  assignment throws `TypeError`, and `delete undefined` returns `false`. The
+  focused `built-ins/global built-ins/undefined` run improves from **33 pass /
+  4 fail / 0 skip** to **37 pass / 0 fail / 0 skip**.
 - **`%ThrowTypeError%` intrinsic** —
   Restricted function and arguments accessors now share an anonymous, frozen,
   non-extensible `%ThrowTypeError%` function within each Realm. Strict

@@ -2817,7 +2817,7 @@ impl Parser {
             }
             TokenKind::Undefined => {
                 self.advance();
-                Ok(Expr::Undefined)
+                Ok(Expr::Ident(Arc::from("undefined")))
             }
             TokenKind::This => {
                 self.advance();

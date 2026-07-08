@@ -82,6 +82,24 @@ fn undefined_can_be_declared_as_var_name() {
 }
 
 #[test]
+fn global_undefined_is_read_only_reference() {
+    assert_eq!(
+        run("undefined = 5; typeof undefined;"),
+        Value::String(Arc::from("undefined"))
+    );
+    assert_eq!(
+        run("var result = undefined = 42; result;"),
+        Value::Number(42.0)
+    );
+    assert_eq!(
+        run("(delete undefined) + ':' + typeof undefined;"),
+        Value::String(Arc::from("false:undefined"))
+    );
+    let err = run_err(r#""use strict"; undefined = 12;"#);
+    assert!(err.contains("TypeError"), "got: {}", err);
+}
+
+#[test]
 fn nullish_keeps_falsy_non_nullish() {
     // 0, '', false are NOT nullish -> kept as-is.
     assert_eq!(run("0 ?? 2;"), Value::Number(0.0));

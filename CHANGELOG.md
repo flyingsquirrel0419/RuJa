@@ -33,6 +33,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   canonically equivalent Unicode strings as equal. The focused
   `built-ins/String` run improves from **1093 pass / 3 fail / 127 skip** to
   **1096 pass / 0 fail / 127 skip**.
+- **Global `undefined` Reference semantics**: source `undefined` now parses as
+  an IdentifierReference, so assignment uses `PutValue` against the
+  non-writable global property and `delete undefined` uses the identifier
+  delete path. Sloppy assignment remains ignored while returning the RHS,
+  strict assignment throws `TypeError`, and delete returns `false`. The focused
+  `built-ins/global built-ins/undefined` run improves from **33 pass / 4 fail
+  / 0 skip** to **37 pass / 0 fail / 0 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse
