@@ -356,6 +356,9 @@ impl Vm {
         key: &Value,
         value: Value,
     ) -> error::Result<()> {
+        if matches!(obj, Value::Null | Value::Undefined) {
+            return Err(Error::type_err("Cannot set property of primitive"));
+        }
         match key {
             Value::Symbol(id) => {
                 if let Value::Object(idx) = obj {

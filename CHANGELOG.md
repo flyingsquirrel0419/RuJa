@@ -102,6 +102,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   instead of defining them as own properties. With TypedArray skips temporarily
   lifted, the focused constructor/prototype-shape probe now reports
   **120 pass / 0 fail / 11 skip**.
+- **Nullish computed property write/delete ordering**: simple computed
+  property assignment and `delete` now reject `null`/`undefined` bases before
+  observable `ToPropertyKey` coercion. Assignment still evaluates the RHS
+  before the `PutValue` `TypeError`, while delete evaluates only the computed
+  key expression before the nullish-base failure. The focused
+  `language/expressions/{assignment,delete,member-expression}` run remains
+  **273 pass / 0 fail / 282 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

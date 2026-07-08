@@ -388,6 +388,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   focused constructor/prototype-shape diagnostic now reports **120 pass / 0
   fail / 11 skip**, and the broader `built-ins/TypedArrayConstructors`
   diagnostic reports **421 pass / 107 fail / 210 skip**.
+- **Nullish computed property write/delete ordering** —
+  Simple computed property assignment and computed `delete` now check
+  `null`/`undefined` bases before observable `ToPropertyKey` coercion. This
+  keeps simple assignment's spec order where the RHS runs before the
+  `PutValue` `TypeError`, while preventing the computed key's `toString`/
+  `@@toPrimitive` from running after the nullish-base failure is known. The
+  focused `language/expressions/assignment language/expressions/delete
+  language/expressions/member-expression` diagnostic remains **273 pass / 0
+  fail / 282 skip**.
 - **Proxy SetIntegrityLevel/TestIntegrityLevel** —
   Transparent Proxy receivers for `Object.seal`/`Object.freeze` now define the
   integrity descriptors through the Proxy-aware `[[DefineOwnProperty]]` path,

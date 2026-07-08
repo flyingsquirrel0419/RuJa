@@ -1844,6 +1844,11 @@ impl Vm {
                     // stack: [obj, key]; remove the own property, push boolean.
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    if matches!(obj, Value::Null | Value::Undefined) {
+                        return Err(Error::type_err(
+                            "Cannot convert undefined or null to object",
+                        ));
+                    }
                     let pkey = match &key {
                         Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
                         _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
@@ -1855,12 +1860,6 @@ impl Vm {
                         }
                         Value::Bool(deleted)
                     } else {
-                        // null/undefined receiver: ToObject throws TypeError.
-                        if matches!(obj, Value::Null | Value::Undefined) {
-                            return Err(Error::type_err(
-                                "Cannot convert undefined or null to object",
-                            ));
-                        }
                         // Other primitives (number, string, boolean): delete is
                         // a no-op that returns true (ToObject wraps in a wrapper
                         // object, which has no own configurable properties).

@@ -410,6 +410,29 @@ fn delete_super_property_checks_this_before_key_expression() {
 }
 
 #[test]
+fn delete_nullish_computed_property_skips_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var base = null;
+            var prop = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            try {
+              delete base[(log.push("prop"), prop)];
+            } catch (e) {
+              log.push(e.name);
+            }
+            log.join("|");
+            "#),
+        Value::String(Arc::from("prop|TypeError"))
+    );
+}
+
+#[test]
 fn update_identifier_preserves_with_reference_after_getter_delete() {
     assert_eq!(
         run(r#"
@@ -498,6 +521,29 @@ fn strict_destructuring_eval_arguments_assignment_targets_are_syntax_errors() {
 #[test]
 fn assign_element() {
     assert_eq!(run("var a = [0,0,0]; a[1] = 9; a[1];"), Value::Number(9.0));
+}
+
+#[test]
+fn assign_nullish_computed_property_evaluates_rhs_before_type_error_but_skips_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var base = null;
+            var prop = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            try {
+              base[(log.push("prop"), prop)] = (log.push("rhs"), 1);
+            } catch (e) {
+              log.push(e.name);
+            }
+            log.join("|");
+            "#),
+        Value::String(Arc::from("prop|rhs|TypeError"))
+    );
 }
 
 // --- compound assignment (numeric/bitwise) ---
