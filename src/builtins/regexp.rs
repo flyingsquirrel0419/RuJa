@@ -225,11 +225,185 @@ pub(crate) fn regexp_to_string(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let source = escape_regexp_source_for_accessor(&read_regexp_source(vm, &this)?);
-    let flags = read_regexp_flags(vm, &this).unwrap_or_default();
+    let Some(this_value @ Value::Object(_)) = this else {
+        return Err(Error::type_err(
+            "RegExp method called on incompatible receiver",
+        ));
+    };
+    let source_value = vm.get_property(&this_value, "source")?;
+    let flags_value = vm.get_property(&this_value, "flags")?;
+    let source = vm.to_string(&source_value)?.to_string();
+    let flags = vm.to_string(&flags_value)?.to_string();
     Ok(Value::String(Arc::from(
         format!("/{source}/{flags}").as_str(),
     )))
+}
+
+pub(crate) fn regexp_symbol_replace(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    struct MatchRecord {
+        matched: String,
+        start_byte: usize,
+        end_byte: usize,
+        start_utf16: usize,
+        captures: Vec<Option<String>>,
+        groups: Value,
+    }
+
+    let rx = this.ok_or_else(|| Error::type_err("not a RegExp".to_string()))?;
+    let Value::Object(_) = rx else {
+        return Err(Error::type_err("not a RegExp".to_string()));
+    };
+
+    let s = vm
+        .to_string(args.first().unwrap_or(&Value::Undefined))?
+        .to_string();
+    let replace_value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let functional_replace = matches!(&replace_value, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    });
+    let replace_string = if functional_replace {
+        String::new()
+    } else {
+        vm.to_string(&replace_value)?.to_string()
+    };
+
+    let source = read_regexp_source(vm, &Some(rx.clone()))?;
+    let flags = read_regexp_flags(vm, &Some(rx.clone())).unwrap_or_default();
+    let global = flags.contains('g');
+    let sticky = flags.contains('y');
+    let full_unicode = flags.contains('u') || flags.contains('v');
+    let re = compile_regex(&source, &flags)
+        .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let capture_names = regex_capture_names(&source);
+
+    if global {
+        set_regexp_last_index(vm, &rx, 0.0)?;
+    }
+
+    let input_len = crate::value::utf16_len(&s);
+    let mut next_index = if global {
+        0
+    } else {
+        let last_index = vm.get_property(&rx, "lastIndex")?;
+        regexp_to_length(vm, &last_index)? as usize
+    };
+    let mut matches = Vec::new();
+
+    loop {
+        if next_index > input_len {
+            if global || sticky {
+                set_regexp_last_index(vm, &rx, 0.0)?;
+            }
+            break;
+        }
+        let Some(start_byte) = crate::value::utf16_index_to_byte(&s, next_index) else {
+            if global || sticky {
+                set_regexp_last_index(vm, &rx, 0.0)?;
+            }
+            break;
+        };
+        let caps = re
+            .captures_at_ecma(&s, start_byte, &source, &flags)?
+            .filter(|caps| {
+                !sticky
+                    || caps
+                        .get(0)
+                        .map(|matched| matched.start() == start_byte)
+                        .unwrap_or(false)
+            });
+        let Some(caps) = caps else {
+            if global || sticky {
+                set_regexp_last_index(vm, &rx, 0.0)?;
+            }
+            break;
+        };
+        let Some(matched) = caps.get(0) else {
+            break;
+        };
+        let match_start = crate::value::utf16_len(&s[..matched.start()]);
+        let match_end = crate::value::utf16_len(&s[..matched.end()]);
+        let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
+        let captures = (1..caps.len())
+            .map(|index| caps.get(index).map(|capture| capture.as_str().to_string()))
+            .collect();
+        matches.push(MatchRecord {
+            matched: matched.as_str().to_string(),
+            start_byte: matched.start(),
+            end_byte: matched.end(),
+            start_utf16: match_start,
+            captures,
+            groups,
+        });
+
+        if !global {
+            break;
+        }
+
+        next_index = if match_end == match_start {
+            advance_string_index(&s, match_end, full_unicode)
+        } else {
+            match_end
+        };
+        set_regexp_last_index(vm, &rx, next_index as f64)?;
+    }
+
+    let mut result = String::new();
+    let mut next_source_position = 0;
+    for record in matches {
+        result.push_str(&s[next_source_position..record.start_byte]);
+        if functional_replace {
+            let mut call_args = vec![Value::String(Arc::from(record.matched.as_str()))];
+            for capture in &record.captures {
+                match capture {
+                    Some(capture) => call_args.push(Value::String(Arc::from(capture.as_str()))),
+                    None => call_args.push(Value::Undefined),
+                }
+            }
+            call_args.push(Value::Number(record.start_utf16 as f64));
+            call_args.push(Value::String(Arc::from(s.as_str())));
+            if !record.groups.is_undefined() {
+                call_args.push(record.groups.clone());
+            }
+            let replacement = vm.call_function(&replace_value, &call_args, None)?;
+            result.push_str(vm.to_string(&replacement)?.as_ref());
+        } else {
+            let captures: Vec<Option<&str>> =
+                record.captures.iter().map(|c| c.as_deref()).collect();
+            result.push_str(&crate::builtins::string::replace_substitution(
+                &replace_string,
+                &s,
+                record.start_byte,
+                record.end_byte,
+                &record.matched,
+                &captures,
+                &capture_names,
+            ));
+        }
+        next_source_position = record.end_byte;
+    }
+    result.push_str(&s[next_source_position..]);
+    Ok(Value::String(Arc::from(result.as_str())))
+}
+
+fn advance_string_index(input: &str, index: usize, unicode: bool) -> usize {
+    if !unicode {
+        return index + 1;
+    }
+    let units = crate::value::utf16_from_str(input);
+    if index + 1 >= units.len() {
+        return index + 1;
+    }
+    let first = units[index];
+    let second = units[index + 1];
+    if (0xD800..=0xDBFF).contains(&first) && (0xDC00..=0xDFFF).contains(&second) {
+        index + 2
+    } else {
+        index + 1
+    }
 }
 
 pub(crate) fn regexp_source_get(

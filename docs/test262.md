@@ -157,6 +157,16 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **String.prototype.replaceAll and RegExp `@@replace`** —
+  `String.prototype.replaceAll` now observes the spec ordering for RegExp
+  detection, global-flag checks, custom `@@replace` delegation, receiver/search
+  coercion, callable replacers, empty search strings, and `$` substitution
+  tokens. `RegExp.prototype[Symbol.replace]` is installed for global/sticky,
+  capture, named-capture, and functional replacement paths, and
+  `RegExp.prototype.toString` reads observable `source`/`flags`. The focused
+  `built-ins/String/prototype/replaceAll` run now closes at **35 pass / 0 fail /
+  10 skip**. The same slice fixed `super[Symbol.*]` calls and nested array
+  binding temporaries exposed by the replaceAll subclass tests.
 - **Object integrity for arrays, arguments, functions, and Proxy traps** —
   `Object.seal` and `Object.freeze` now use the Proxy-aware
   `[[PreventExtensions]]` path so false Proxy traps throw for the `Object.*`

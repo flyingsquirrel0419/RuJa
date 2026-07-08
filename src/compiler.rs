@@ -132,6 +132,16 @@ impl Compiler {
         idx
     }
 
+    fn fresh_temp(&mut self, prefix: &str) -> usize {
+        let name = format!(
+            "{}:{}:{}",
+            prefix,
+            self.chunk.code.len(),
+            self.chunk.constants.len()
+        );
+        self.intern(&name)
+    }
+
     /// Whether the current scope is strict (inherited from the enclosing
     /// strict context or set by a `"use strict"` directive).
     fn is_strict(&self) -> bool {
@@ -1861,7 +1871,7 @@ impl Compiler {
                 // (generators, custom iterables, sets) as well as arrays.
                 self.load_path(temp_idx, path);
                 self.chunk.emit(Op::GetIterator, self.current_line);
-                let iter_idx = self.intern("#arr-iter");
+                let iter_idx = self.fresh_temp("#arr-iter");
                 self.chunk.emit(Op::DeclareEnv(iter_idx), self.current_line);
                 for el in elems.iter() {
                     match el {
@@ -1869,7 +1879,7 @@ impl Compiler {
                             // Collect the remaining iterator values into an array.
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
-                            let rest_idx = self.intern("#arr-rest");
+                            let rest_idx = self.fresh_temp("#arr-rest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
                             self.compile_pattern(inner, rest_idx, &[], kind)?;
                         }
@@ -1881,7 +1891,7 @@ impl Compiler {
                             // here (a missing element binds undefined, matching
                             // the spec where exhausted iterators yield undefined).
                             self.chunk.emit(Op::Pop, self.current_line); // discard `done`
-                            let elem_idx = self.intern("#arr-elem");
+                            let elem_idx = self.fresh_temp("#arr-elem");
                             self.chunk.emit(Op::DeclareEnv(elem_idx), self.current_line);
                             self.compile_pattern(el, elem_idx, &[], kind)?;
                         }
@@ -1907,7 +1917,7 @@ impl Compiler {
                             let key_idx = self.chunk.add_constant(Value::Number(*n));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.chunk.emit(Op::GetElem, self.current_line);
-                            let t2 = self.intern("#d2");
+                            let t2 = self.fresh_temp("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.bind_destructure_target_value(target, t2, kind)?;
                         }
@@ -1916,7 +1926,7 @@ impl Compiler {
                             self.load_path(temp_idx, path);
                             self.compile_expr(e)?;
                             self.chunk.emit(Op::GetElem, self.current_line);
-                            let t2 = self.intern("#d2");
+                            let t2 = self.fresh_temp("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.bind_destructure_target_value(target, t2, kind)?;
                         }
@@ -1936,7 +1946,7 @@ impl Compiler {
                     }
                     self.chunk
                         .emit(Op::ObjRest(bound_keys.len()), self.current_line); // [restObj]
-                    let t2 = self.intern("#drest");
+                    let t2 = self.fresh_temp("#drest");
                     self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                     self.bind_destructure_target_value(r, t2, kind)?;
                 }
@@ -1952,13 +1962,13 @@ impl Compiler {
                 self.compile_expr(default)?;
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
-                let t2 = self.intern("#d2");
+                let t2 = self.fresh_temp("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_pattern(inner, t2, &[], kind)?;
             }
             Pattern::Rest(inner) => {
                 self.load_path(temp_idx, path);
-                let t2 = self.intern("#d2");
+                let t2 = self.fresh_temp("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                 self.compile_pattern(inner, t2, &[], kind)?;
             }
@@ -3079,6 +3089,7 @@ impl Compiler {
                     } => {
                         if matches!(object.as_ref(), Expr::Super) {
                             // super.m(args): call parent proto's m with `this`.
+                            let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
                             let this_idx = self.intern("this");
                             self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
                             let super_idx = self.intern("#super");
@@ -3097,14 +3108,31 @@ impl Compiler {
                                     .add_constant(Value::String(Arc::from(key.as_str())));
                                 self.chunk.emit(Op::Const(key_idx), self.current_line);
                             }
-                            for a in args {
-                                if let Expr::Spread(_) = a {
-                                } else {
+                            if has_spread {
+                                self.chunk.emit(Op::GetSuperProp, self.current_line);
+                                self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                                self.chunk.emit(Op::Swap, self.current_line);
+                                self.chunk.emit(Op::NewArray(0), self.current_line);
+                                for a in args {
+                                    match a {
+                                        Expr::Spread(inner) => {
+                                            self.compile_expr(inner)?;
+                                            self.chunk.emit(Op::SpreadPush, self.current_line);
+                                        }
+                                        _ => {
+                                            self.compile_expr(a)?;
+                                            self.chunk.emit(Op::ArrayPush, self.current_line);
+                                        }
+                                    }
+                                }
+                                self.chunk.emit(Op::CallThisSpread, self.current_line);
+                            } else {
+                                for a in args {
                                     self.compile_expr(a)?;
                                 }
+                                self.chunk
+                                    .emit(Op::CallSuper(args.len()), self.current_line);
                             }
-                            self.chunk
-                                .emit(Op::CallSuper(args.len()), self.current_line);
                             return Ok(());
                         }
                         self.compile_expr(object)?;

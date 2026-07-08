@@ -366,3 +366,16 @@ fn plain_array_destructure_still_works() {
     // Regression: arrays must still destructure by index-equivalent iteration.
     assert_eq!(run("let [a, b] = [5, 6]; a + b;"), Value::Number(11.0));
 }
+
+#[test]
+fn nested_array_binding_does_not_clobber_outer_iterator() {
+    assert_eq!(
+        run(r#"var out = [];
+               const samples = [[["b", "g"], "abc abc abc", "z"]];
+               for (const [[pattern, flags], input, replacement] of samples) {
+                 out.push(pattern + "|" + flags + "|" + input + "|" + replacement);
+               }
+               out.join(",");"#),
+        Value::String(Arc::from("b|g|abc abc abc|z"))
+    );
+}

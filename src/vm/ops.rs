@@ -1684,8 +1684,11 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let super_base = self.stack.pop().unwrap_or(Value::Undefined);
                     let receiver = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    let value = self.get_property_rx(&super_base, &key_str, receiver, 0)?;
+                    let pkey = match &key {
+                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
+                    };
+                    let value = self.get_property_key_rx(&super_base, &pkey, receiver, 0)?;
                     self.stack.push(value);
                 }
                 Op::GetElem => {
@@ -1721,15 +1724,29 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let super_base = self.stack.pop().unwrap_or(Value::Undefined);
                     let receiver = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    self.set_property_with_receiver(
+                    let (pkey, cache_key) = match &key {
+                        Value::Symbol(id) => (crate::value::PropertyKey::Symbol(*id), None),
+                        _ => {
+                            let key_str = self.to_property_key(&key)?;
+                            (
+                                crate::value::PropertyKey::from(key_str.as_str()),
+                                Some(key_str),
+                            )
+                        }
+                    };
+                    let success = self.try_set_property_key_with_receiver(
                         &super_base,
-                        &key_str,
+                        &pkey,
                         value.clone(),
                         &receiver,
                     )?;
+                    if !success && self.current_strict() {
+                        return Err(Error::type_err("Cannot assign to super property"));
+                    }
                     if let Value::Object(idx) = &receiver {
-                        self.ic_invalidate(idx.0, &key_str);
+                        if let Some(key_str) = cache_key {
+                            self.ic_invalidate(idx.0, &key_str);
+                        }
                     }
                     self.stack.push(value);
                 }
@@ -2608,9 +2625,13 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let super_proto = self.stack.pop().unwrap_or(Value::Undefined);
                     let this_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
+                    let pkey = match &key {
+                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
+                    };
                     // Look up the method on the parent prototype (and its chain).
-                    let method = self.get_property(&super_proto, &key_str)?;
+                    let method =
+                        self.get_property_key_rx(&super_proto, &pkey, this_val.clone(), 0)?;
                     let result = self.call_function(&method, &args, Some(this_val))?;
                     self.stack.push(result);
                 }

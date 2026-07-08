@@ -31,6 +31,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   returns NFC/NFD/NFKC/NFKD output through Unicode normalization. The focused
   `built-ins/String/prototype/normalize` run now closes at **11 pass / 0 fail /
   3 skip**.
+- **`String.prototype.replaceAll` and RegExp `@@replace`**:
+  `String.prototype.replaceAll` now follows the spec's observable ordering for
+  `IsRegExp`, global-flag validation, `@@replace` delegation, receiver/search
+  coercion, callable replacers, empty search strings, and `$` substitution
+  tokens. `RegExp.prototype[Symbol.replace]` is now installed for global,
+  sticky, capture, named-capture, and functional replacement paths, while
+  `RegExp.prototype.toString` observes the public `source`/`flags` getters.
+  The same slice fixes `super[Symbol.*]` method lookup/calls and nested array
+  binding temporaries uncovered by the focused test262 file. The focused
+  `built-ins/String/prototype/replaceAll` run now closes at **35 pass / 0 fail /
+  10 skip**.
 - **`RegExp.escape` static builtin**: `RegExp.escape` is now installed on each
   realm-local `RegExp` constructor with the expected own property shape,
   rejects non-string inputs without coercion, and implements the ES

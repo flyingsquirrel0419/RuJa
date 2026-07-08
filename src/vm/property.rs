@@ -120,17 +120,27 @@ impl Vm {
         receiver: Value,
         depth: usize,
     ) -> error::Result<Value> {
+        self.get_property_key_rx(obj, &crate::value::PropertyKey::from(key), receiver, depth)
+    }
+
+    pub(crate) fn get_property_key_rx(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+        receiver: Value,
+        depth: usize,
+    ) -> error::Result<Value> {
         // Bound recursion so a prototype cycle (which __proto__ assignment
         // should already reject) cannot overflow the native stack.
         if depth > 4096 {
             return Ok(Value::Undefined);
         }
+        let key_str = key.as_str();
         match obj {
             Value::Object(idx) => {
-                let pkey = crate::value::PropertyKey::from(key);
                 // Own accessor on this object?
                 if let Some(getter) = self.heap.with_obj(idx.0, |o| {
-                    o.props().lock().get(&pkey).and_then(|d| {
+                    o.props().lock().get(key).and_then(|d| {
                         if d.is_accessor {
                             d.get.clone()
                         } else {
@@ -146,47 +156,52 @@ impl Vm {
                 // Own data property?
                 let val = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Array(a) = o {
-                        if key == "length"
-                            && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
-                        {
-                            let len = a.items.lock().len();
-                            let sparse = a.sparse_max.lock().unwrap_or(0);
-                            return Some(Value::Number(len.max(sparse) as f64));
-                        }
-                        if let Some(i) = crate::value::parse_array_index(key) {
-                            if let Some(mapped) = a.arguments_map.lock().as_ref().and_then(|m| {
-                                m.names
-                                    .get(i)
-                                    .and_then(|n| n.as_ref())
-                                    .map(|n| (m.env, n.clone()))
-                            }) {
-                                if let Some(v) =
-                                    crate::environment::get(&self.heap, mapped.0, &mapped.1)
+                        if let Some(key_str) = key_str {
+                            if key_str == "length"
+                                && !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed)
+                            {
+                                let len = a.items.lock().len();
+                                let sparse = a.sparse_max.lock().unwrap_or(0);
+                                return Some(Value::Number(len.max(sparse) as f64));
+                            }
+                            if let Some(i) = crate::value::parse_array_index(key_str) {
+                                if let Some(mapped) =
+                                    a.arguments_map.lock().as_ref().and_then(|m| {
+                                        m.names
+                                            .get(i)
+                                            .and_then(|n| n.as_ref())
+                                            .map(|n| (m.env, n.clone()))
+                                    })
                                 {
-                                    return Some(v);
+                                    if let Some(v) =
+                                        crate::environment::get(&self.heap, mapped.0, &mapped.1)
+                                    {
+                                        return Some(v);
+                                    }
                                 }
-                            }
-                            if let Some(d) = a.props.lock().get(&pkey) {
-                                if !d.is_accessor {
-                                    return Some(d.value.clone());
+                                if let Some(d) = a.props.lock().get(key) {
+                                    if !d.is_accessor {
+                                        return Some(d.value.clone());
+                                    }
                                 }
-                            }
-                            if i >= crate::value::MAX_DENSE_ARRAY_LEN {
-                                let pkey = crate::value::PropertyKey::from_string(key.to_string());
-                                if let Some(d) = a.props.lock().get(&pkey) {
-                                    return Some(d.value.clone());
+                                if i >= crate::value::MAX_DENSE_ARRAY_LEN {
+                                    let pkey =
+                                        crate::value::PropertyKey::from_string(key_str.to_string());
+                                    if let Some(d) = a.props.lock().get(&pkey) {
+                                        return Some(d.value.clone());
+                                    }
+                                    return Some(Value::Undefined);
                                 }
-                                return Some(Value::Undefined);
+                                if a.is_dense_present(i) {
+                                    return Some(
+                                        a.items.lock().get(i).cloned().unwrap_or(Value::Undefined),
+                                    );
+                                }
+                                return None;
                             }
-                            if a.is_dense_present(i) {
-                                return Some(
-                                    a.items.lock().get(i).cloned().unwrap_or(Value::Undefined),
-                                );
-                            }
-                            return None;
                         }
                     }
-                    let r = o.props().lock().get(&pkey).map(|d| d.value.clone());
+                    let r = o.props().lock().get(key).map(|d| d.value.clone());
                     r
                 });
                 if let Some(v) = val {
@@ -196,12 +211,15 @@ impl Vm {
                 let p = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
                 if let Some(proto) = p {
                     if !proto.is_undefined() {
-                        return self.get_property_rx(&proto, key, receiver, depth + 1);
+                        return self.get_property_key_rx(&proto, key, receiver, depth + 1);
                     }
                 }
                 Ok(Value::Undefined)
             }
-            _ => self.get_property(obj, key),
+            _ => match key_str {
+                Some(key) => self.get_property(obj, key),
+                None => Ok(Value::Undefined),
+            },
         }
     }
 

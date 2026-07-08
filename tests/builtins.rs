@@ -2214,6 +2214,50 @@ fn string_pad_at_replaceall_substring() {
 }
 
 #[test]
+fn string_replace_all_test262_regressions() {
+    assert_eq!(
+        run(r#"'aba'.replaceAll('b', "$$-$&-$`-$'");"#),
+        Value::String(Arc::from("a$-b-a-aa"))
+    );
+    assert_eq!(
+        run(r#"'aaa'.replaceAll('a', function(m, pos, s) { return String(pos) + s.length; });"#),
+        Value::String(Arc::from("031323"))
+    );
+    assert_eq!(
+        run(r#"'abc abc abc'.replaceAll(/b/g, 'z');"#),
+        Value::String(Arc::from("azc azc azc"))
+    );
+    assert_eq!(
+        run(r#"'abcabcabcabc'.replaceAll(/a(b)(ca)/g, '$2-$1');"#),
+        Value::String(Arc::from("ca-bbcca-bbc"))
+    );
+    assert_eq!(
+        run(r#"(function(){
+                 var re = /b/g;
+                 var called = 0;
+                 re[Symbol.replace] = function(O, replaceValue) {
+                   called++;
+                   return O + "|" + replaceValue;
+                 };
+                 return "abc".replaceAll(re, "z") + "|" + called;
+               })();"#),
+        Value::String(Arc::from("abc|z|1"))
+    );
+    assert_eq!(
+        run(r#"(function(){
+                 var re = /./iyg;
+                 re[Symbol.replace] = undefined;
+                 return 'aa /./giy /./iyg /./gyi /./giy aa'.replaceAll(re, 'z');
+               })();"#),
+        Value::String(Arc::from("aa z /./iyg /./gyi z aa"))
+    );
+    assert!(
+        run_err(r#"'abc'.replaceAll(/b/, 'z');"#).contains("non-global RegExp"),
+        "replaceAll must reject non-global RegExp search values"
+    );
+}
+
+#[test]
 fn string_normalize_follows_unicode_forms_and_descriptors() {
     assert_eq!(
         run(

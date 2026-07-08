@@ -1558,6 +1558,8 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
     let sticky_getter = vm.new_native_function_in_env("get sticky", regexp_sticky_get, 0, env)?;
     let search_fn =
         vm.new_native_function_in_env("[Symbol.search]", regexp_symbol_search, 1, env)?;
+    let replace_fn =
+        vm.new_native_function_in_env("[Symbol.replace]", regexp_symbol_replace, 2, env)?;
     vm.heap.with_obj(regex_proto.0, |o| {
         if let HeapObj::Object(obj) = o {
             let mut props = obj.props.lock();
@@ -1608,6 +1610,10 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.search),
                 data_prop(Value::Object(search_fn)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.replace),
+                data_prop(Value::Object(replace_fn)),
             );
         }
     });

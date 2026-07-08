@@ -720,7 +720,7 @@ fn regexp_replace_substitution(
     )
 }
 
-fn replace_substitution(
+pub(super) fn replace_substitution(
     replacement: &str,
     input: &str,
     matched_start: usize,
@@ -1125,28 +1125,153 @@ pub(crate) fn str_replace_all(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let s = str_val(vm, &this)?;
-    let from = match args.first() {
-        Some(Value::String(p)) => p.to_string(),
-        Some(v) => vm.to_string(v)?.to_string(),
-        None => return Ok(Value::String(Arc::from(s.as_str()))),
-    };
-    let to = match args.get(1) {
-        Some(Value::String(p)) => p.to_string(),
-        Some(v) => vm.to_string(v)?.to_string(),
-        None => "undefined".to_string(),
-    };
-    if from.is_empty() {
-        let mut out = String::new();
-        let units = crate::value::utf16_from_str(&s);
-        for &u in &units {
-            out.push_str(&to);
-            out.push_str(&crate::value::utf16_to_string(&[u]));
-        }
-        out.push_str(&to);
-        return Ok(Value::String(Arc::from(out.as_str())));
+    let receiver = this.clone().unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "String.prototype method called on null or undefined",
+        ));
     }
-    Ok(Value::String(Arc::from(s.replace(&from, &to))))
+
+    let search_value = args.first().cloned().unwrap_or(Value::Undefined);
+    let replace_value = args.get(1).cloned().unwrap_or(Value::Undefined);
+
+    if !search_value.is_nullish() {
+        if is_regexp(vm, &search_value)? {
+            let flags = vm.get_property_by_key(&search_value, &PropertyKey::from("flags"))?;
+            if flags.is_nullish() {
+                return Err(Error::type_err(
+                    "RegExp flags must not be null or undefined",
+                ));
+            }
+            let flags = vm.to_string(&flags)?;
+            if !flags.contains('g') {
+                return Err(Error::type_err(
+                    "String.prototype.replaceAll called with a non-global RegExp argument",
+                ));
+            }
+        }
+
+        let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
+        let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
+        if !replacer.is_nullish() {
+            let is_callable = matches!(&replacer, Value::Object(idx) if {
+                vm.heap.with_obj(idx.0, |o| o.is_function())
+            });
+            if !is_callable {
+                return Err(Error::type_err("Symbol.replace method is not callable"));
+            }
+            return vm.call_function(&replacer, &[receiver, replace_value], Some(search_value));
+        }
+    }
+
+    let s = str_val(vm, &Some(receiver))?;
+    let search_string = vm.to_string(&search_value)?.to_string();
+    let functional_replace = matches!(&replace_value, Value::Object(idx) if {
+        vm.heap.with_obj(idx.0, |o| o.is_function())
+    });
+    let replacement_string = if functional_replace {
+        String::new()
+    } else {
+        vm.to_string(&replace_value)?.to_string()
+    };
+
+    let match_positions = replace_all_match_positions(&s, &search_string);
+    let search_len = crate::value::utf16_len(&search_string);
+    let string_len = crate::value::utf16_len(&s);
+    let mut result = String::new();
+    let mut last_end = 0;
+
+    for position in match_positions {
+        result.push_str(&crate::value::utf16_slice(&s, last_end, position));
+
+        let end = position + search_len;
+        if functional_replace {
+            let replacement = vm.call_function(
+                &replace_value,
+                &[
+                    Value::String(Arc::from(search_string.as_str())),
+                    Value::Number(position as f64),
+                    Value::String(Arc::from(s.as_str())),
+                ],
+                None,
+            )?;
+            result.push_str(vm.to_string(&replacement)?.as_ref());
+        } else {
+            result.push_str(&string_replace_substitution(
+                &replacement_string,
+                &s,
+                position,
+                end,
+                &search_string,
+            ));
+        }
+
+        last_end = end;
+    }
+
+    result.push_str(&crate::value::utf16_slice(&s, last_end, string_len));
+    Ok(Value::String(Arc::from(result.as_str())))
+}
+
+fn replace_all_match_positions(input: &str, search: &str) -> Vec<usize> {
+    let input_len = crate::value::utf16_len(input);
+    let search_len = crate::value::utf16_len(search);
+    if search_len == 0 {
+        return (0..=input_len).collect();
+    }
+
+    let mut positions = Vec::new();
+    let mut next_position = 0;
+    while let Some(position) = crate::value::utf16_index_of(input, search, next_position) {
+        positions.push(position);
+        next_position = position + search_len;
+        if next_position > input_len {
+            break;
+        }
+    }
+    positions
+}
+
+fn string_replace_substitution(
+    replacement: &str,
+    input: &str,
+    matched_start: usize,
+    matched_end: usize,
+    matched: &str,
+) -> String {
+    let input_len = crate::value::utf16_len(input);
+    let mut result = String::new();
+    let mut chars = replacement.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            result.push(ch);
+            continue;
+        }
+        let Some(next) = chars.peek().copied() else {
+            result.push('$');
+            continue;
+        };
+        match next {
+            '$' => {
+                chars.next();
+                result.push('$');
+            }
+            '&' => {
+                chars.next();
+                result.push_str(matched);
+            }
+            '`' => {
+                chars.next();
+                result.push_str(&crate::value::utf16_slice(input, 0, matched_start));
+            }
+            '\'' => {
+                chars.next();
+                result.push_str(&crate::value::utf16_slice(input, matched_end, input_len));
+            }
+            _ => result.push('$'),
+        }
+    }
+    result
 }
 
 pub(crate) fn str_normalize(
