@@ -125,14 +125,15 @@ Latest full baseline documentation check: `test262-full` 28967365155 on
 Latest improvement confirmation: `test262-full` 28968585053 on `135b01b`.
 Latest improvement confirmation: `test262-full` 28969770053 on `67c9f2b`.
 Latest improvement confirmation: `test262-full` 28970908797 on `0b0528f`.
+Latest improvement confirmation: `test262-full` 28972311361 on `a1e44db`.
 
-| Metric | Recent count / range |
-|--------|----------------------|
+| Metric | Latest confirmed count |
+|--------|------------------------|
 | Total matrix files | 48,465 |
-| Actually run | 24,133-24,135 |
-| Pass | 17,061-17,069 |
-| Fail | 7,064-7,072 |
-| Timeout | 9-11 |
+| Actually run | 24,133 reported run / 24,144 including timeouts |
+| Pass | 17,080 |
+| Fail | 7,053 |
+| Timeout | 11 |
 | Skip | 24,321 |
 | **Pass rate (of run)** | **70.7%** |
 | **Pass rate (of total)** | **35.2%** |
