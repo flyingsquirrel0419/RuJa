@@ -589,6 +589,9 @@ impl Vm {
         let Value::Object(idx) = obj else {
             return false;
         };
+        if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, key) {
+            return desc.is_some();
+        }
         self.heap.with_obj(idx.0, |o| {
             if o.props().lock().contains_key(key) {
                 return true;
@@ -622,6 +625,9 @@ impl Vm {
         let Value::Object(idx) = obj else {
             return None;
         };
+        if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, key) {
+            return desc;
+        }
         let ordinary = self
             .heap
             .with_obj(idx.0, |o| o.props().lock().get(key).cloned());
@@ -746,6 +752,9 @@ impl Vm {
     pub fn has_own_property(&self, obj: &Value, name: &str) -> bool {
         if let Value::Object(idx) = obj {
             let pkey = crate::value::PropertyKey::from(name);
+            if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, &pkey) {
+                return desc.is_some();
+            }
             self.heap
                 .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey))
         } else {
@@ -832,6 +841,9 @@ impl Vm {
     /// absent on the descriptor object.
     pub fn has_own(&self, obj: &Value, name: &str) -> bool {
         let pkey = crate::value::PropertyKey::from(name);
+        if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, &pkey) {
+            return desc.is_some();
+        }
         match obj {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {

@@ -141,6 +141,20 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   **29 pass / 2 fail / 8 skip**, and the broader
   `built-ins/TypedArrayConstructors` diagnostic moves from **419 pass / 54 fail
   / 265 skip** to **431 pass / 42 fail / 265 skip**.
+- **TypedArray integer-indexed `[[GetOwnProperty]]`**: valid canonical numeric
+  index strings on TypedArrays now synthesize spec-shaped data descriptors
+  with the element value and writable/enumerable/configurable all `true`.
+  Detached buffers and invalid canonical numeric keys such as `"-0"`,
+  fractional, negative, infinite, and out-of-bounds indexes stop ordinary
+  fallback and report no descriptor, while non-canonical keys continue through
+  ordinary properties. The same descriptor path feeds Proxy `has` and
+  `deleteProperty` invariants for non-extensible TypedArray targets. With
+  TypedArray skips temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/internals/GetOwnProperty` diagnostic now
+  reports **18 pass / 2 fail / 4 skip**; the remaining failures are
+  cross-realm detached-buffer constructor coverage. The broader
+  `built-ins/TypedArrayConstructors` diagnostic reports **429 pass / 44 fail /
+  265 skip**.
 - **Nullish computed property write/delete ordering**: simple computed
   property assignment and `delete` now reject `null`/`undefined` bases before
   observable `ToPropertyKey` coercion. Assignment still evaluates the RHS

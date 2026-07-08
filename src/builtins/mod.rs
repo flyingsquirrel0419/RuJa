@@ -2073,6 +2073,10 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
         }) {
             return object_has_own_key(vm, &target, key);
         }
+
+        if let Some(desc) = vm.typed_array_integer_index_own_property_descriptor(obj, key) {
+            return desc.is_some();
+        }
     }
 
     match obj {
@@ -3787,6 +3791,10 @@ fn own_property_descriptor_for_key(
             }
         }) {
             return own_property_descriptor_for_key(vm, &target, key);
+        }
+
+        if let Some(desc) = vm.typed_array_integer_index_own_property_descriptor(obj, key) {
+            return desc;
         }
 
         let array_descriptor = vm.heap.with_obj(idx.0, |o| {

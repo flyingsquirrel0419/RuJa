@@ -170,6 +170,21 @@ coverage. The current runner's broader `built-ins/TypedArrayConstructors`
 diagnostic moves from **419 pass / 54 fail / 265 skip** to **431 pass / 42 fail
 / 265 skip**.
 
+Focused TypedArray integer-indexed `[[GetOwnProperty]]` local check:
+valid canonical numeric index strings now synthesize descriptors from
+TypedArray element storage with writable, enumerable, and configurable all set
+to `true`. Detached buffers and invalid canonical numeric keys such as `"-0"`,
+fractional, negative, infinite, and out-of-bounds indexes report no descriptor
+without falling through to ordinary properties, while non-canonical keys such
+as `"+1"` remain ordinary. The same descriptor lookup now feeds Proxy `has` and
+`deleteProperty` invariants for non-extensible TypedArray targets. With
+TypedArray-related skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/GetOwnProperty` now reports **18
+pass / 2 fail / 4 skip**; the remaining failures are detached-buffer realm
+constructor coverage. The current runner's broader
+`built-ins/TypedArrayConstructors` diagnostic reports **429 pass / 44 fail /
+265 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

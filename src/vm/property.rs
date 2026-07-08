@@ -1277,6 +1277,74 @@ impl Vm {
         (index < len).then_some(index)
     }
 
+    pub(crate) fn typed_array_integer_index_own_property_descriptor(
+        &self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> Option<Option<crate::value::PropertyDescriptor>> {
+        let Value::Object(idx) = obj else {
+            return None;
+        };
+        let is_typed_array = self
+            .heap
+            .with_obj(idx.0, |o| matches!(o, HeapObj::TypedArray(_)));
+        if !is_typed_array {
+            return None;
+        }
+        let name = key.as_str()?;
+        let slots = self.typed_array_numeric_slots(*idx, name)?;
+        let Some(index) = self.typed_array_valid_index(&slots) else {
+            return Some(None);
+        };
+        let value = if let Some(Value::Object(buffer_idx)) = &slots.viewed_array_buffer {
+            let size = slots.kind.element_size();
+            let Some(relative_offset) = index.checked_mul(size) else {
+                return Some(None);
+            };
+            let Some(relative_end) = relative_offset.checked_add(size) else {
+                return Some(None);
+            };
+            if relative_end > slots.byte_length {
+                return Some(None);
+            }
+            let value = self.heap.with_obj(buffer_idx.0, |o| {
+                let HeapObj::ArrayBuffer(buffer) = o else {
+                    return None;
+                };
+                if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                    return None;
+                }
+                let offset = slots.byte_offset.checked_add(relative_offset)?;
+                let end = offset.checked_add(size)?;
+                let bytes = buffer.bytes.lock();
+                if end > bytes.len() {
+                    return None;
+                }
+                crate::builtins::typed_array_read_element(slots.kind, &bytes[offset..end], 0)
+            });
+            let Some(value) = value else {
+                return Some(None);
+            };
+            value
+        } else {
+            let value = self.heap.with_obj(idx.0, |o| {
+                let HeapObj::TypedArray(t) = o else {
+                    return None;
+                };
+                crate::builtins::typed_array_read_element(slots.kind, &t.buffer.lock(), index)
+            });
+            let Some(value) = value else {
+                return Some(None);
+            };
+            value
+        };
+        let mut desc = crate::value::PropertyDescriptor::data(value);
+        desc.writable = true;
+        desc.enumerable = true;
+        desc.configurable = true;
+        Some(Some(desc))
+    }
+
     fn set_typed_array_numeric_property(
         &mut self,
         idx: GcIdx,

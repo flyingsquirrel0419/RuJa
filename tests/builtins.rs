@@ -1095,6 +1095,99 @@ fn typed_array_delete_canonical_numeric_indices_follow_integer_indexed_exotic() 
 }
 
 #[test]
+fn typed_array_get_own_property_descriptor_synthesizes_integer_indices() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([42, 43]);
+            var d0 = Object.getOwnPropertyDescriptor(sample, "0");
+            var d1 = Object.getOwnPropertyDescriptor(sample, "1");
+            [
+              d0.value, d0.writable, d0.enumerable, d0.configurable,
+              d1.value, d1.writable, d1.enumerable, d1.configurable
+            ].join(",");
+        "#),
+        Value::String(Arc::from("42,true,true,true,43,true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new BigInt64Array(2);
+            sample[0] = 42n;
+            sample[1] = 43n;
+            var d0 = Object.getOwnPropertyDescriptor(sample, "0");
+            var d1 = Object.getOwnPropertyDescriptor(sample, "1");
+            [
+              d0.value === 42n, d0.writable, d0.enumerable, d0.configurable,
+              d1.value === 43n, d1.writable, d1.enumerable, d1.configurable
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true,true,true,true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(8);
+            var sample = new Uint16Array(buffer, 2, 2);
+            sample[0] = 0x1234;
+            sample[1] = 0x5678;
+            var d0 = Object.getOwnPropertyDescriptor(sample, "0");
+            var d1 = Object.getOwnPropertyDescriptor(sample, "1");
+            [d0.value, d1.value].join(",");
+        "#),
+        Value::String(Arc::from("4660,22136"))
+    );
+}
+
+#[test]
+fn typed_array_get_own_property_descriptor_rejects_invalid_integer_indices() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array(2);
+            Object.defineProperty(sample, "+1", { value: "ordinary", configurable: true });
+            [
+              Object.getOwnPropertyDescriptor(sample, "-0") === undefined,
+              Object.getOwnPropertyDescriptor(sample, "1.1") === undefined,
+              Object.getOwnPropertyDescriptor(sample, "2") === undefined,
+              Object.getOwnPropertyDescriptor(sample, "+1").value
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true,ordinary"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([7]);
+            $262.detachArrayBuffer(sample.buffer);
+            Object.getOwnPropertyDescriptor(sample, "0") === undefined;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_integer_index_descriptors_feed_proxy_invariants() {
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([1]);
+            Object.preventExtensions(sample);
+            0 in new Proxy(sample, { has: function() { return false; } });
+            "#
+        )
+        .contains("TypeError"),
+        "Proxy has must not hide a non-extensible TypedArray integer index"
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([1]);
+            Object.preventExtensions(sample);
+            Reflect.deleteProperty(new Proxy(sample, { deleteProperty: function() { return true; } }), "0");
+            "#
+        )
+        .contains("TypeError"),
+        "Proxy deleteProperty must not delete a non-extensible TypedArray integer index"
+    );
+}
+
+#[test]
 fn data_view_constructor_length_descriptor() {
     assert_eq!(
         run(r#"
