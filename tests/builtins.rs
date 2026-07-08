@@ -275,6 +275,63 @@ fn string_methods() {
 }
 
 #[test]
+fn string_constructor_observes_object_to_primitive_string_hint() {
+    assert_eq!(
+        run(r#"var old = Array.prototype.toString;
+               Array.prototype.toString = function() { return "__ARRAY__"; };
+               var result = String(new Array);
+               Array.prototype.toString = old;
+               result;"#),
+        Value::String(Arc::from("__ARRAY__"))
+    );
+}
+
+#[test]
+fn string_constructor_skips_non_callable_to_primitive_methods() {
+    assert_eq!(
+        run(r#"var oldToString = Array.prototype.toString;
+               var oldValueOf = Array.prototype.valueOf;
+               Array.prototype.toString = {};
+               Array.prototype.valueOf = function() { return 5; };
+               var result = String([]);
+               Array.prototype.toString = oldToString;
+               Array.prototype.valueOf = oldValueOf;
+               result;"#),
+        Value::String(Arc::from("5"))
+    );
+}
+
+#[test]
+fn string_exotic_indices_are_enumerable_read_only_properties() {
+    assert_eq!(
+        run(r#"var s = new String("abc");
+               var d = Object.getOwnPropertyDescriptor(s, "0");
+               s[0] = "z";
+               [
+                 s[0],
+                 d.writable,
+                 d.enumerable,
+                 d.configurable,
+                 s.propertyIsEnumerable("0"),
+                 delete s[0],
+                 s[0]
+               ].join("|");"#),
+        Value::String(Arc::from("a|false|true|false|true|false|a"))
+    );
+    assert!(
+        run_err(r#""use strict"; var s = new String("abc"); s[0] = "z";"#).contains("read only")
+    );
+}
+
+#[test]
+fn string_locale_compare_uses_canonical_equivalence() {
+    assert_eq!(
+        run(r#""o\u0308".localeCompare("\u00f6");"#),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn string_static_methods_follow_code_point_and_raw_semantics() {
     assert!(run_err("String.fromCodePoint(3.14);").contains("RangeError"));
     assert!(run_err("String.fromCodePoint(-1);").contains("RangeError"));

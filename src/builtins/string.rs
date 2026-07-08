@@ -443,6 +443,8 @@ pub(crate) fn str_locale_compare(
     let right = vm
         .to_string(args.first().unwrap_or(&Value::Undefined))?
         .to_string();
+    let left = left.nfc().collect::<String>();
+    let right = right.nfc().collect::<String>();
     let result = match left.as_str().cmp(right.as_str()) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,

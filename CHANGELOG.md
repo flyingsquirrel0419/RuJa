@@ -24,6 +24,15 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **String exotic objects and coercion**: `String(object)` now performs
+  observable `ToPrimitive` with string hint instead of bypassing overridden
+  `toString` on arrays, while `OrdinaryToPrimitive` now skips non-callable
+  `toString`/`valueOf` candidates. Boxed String numeric index properties now
+  stay read-only/enumerable exotic own properties for assignment and
+  `propertyIsEnumerable`, and `String.prototype.localeCompare` treats
+  canonically equivalent Unicode strings as equal. The focused
+  `built-ins/String` run improves from **1093 pass / 3 fail / 127 skip** to
+  **1096 pass / 0 fail / 127 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

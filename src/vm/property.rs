@@ -821,6 +821,27 @@ impl Vm {
 
                 // --- Ordinary object [[Set]] ---
                 let pkey = crate::value::PropertyKey::from(key);
+                let string_exotic_index = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::Object(od) = o {
+                        if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                            return key
+                                .parse::<usize>()
+                                .ok()
+                                .filter(|index| index.to_string() == key)
+                                .is_some_and(|index| crate::value::utf16_get(&s, index).is_some());
+                        }
+                    }
+                    false
+                });
+                if string_exotic_index {
+                    if strict {
+                        return Err(Error::type_err(format!(
+                            "Cannot assign to read only property '{}' of object",
+                            key
+                        )));
+                    }
+                    return Ok(());
+                }
 
                 // 1. Own property descriptors take precedence over inherited
                 // setters/non-writable data descriptors.

@@ -2168,6 +2168,15 @@ fn object_property_is_enumerable(
                         }
                     }
                 }
+                if let HeapObj::Object(od) = obj {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        if let Some(name) = key.as_str() {
+                            if let Ok(i) = name.parse::<usize>() {
+                                return i.to_string() == name && i < crate::value::utf16_len(&s);
+                            }
+                        }
+                    }
+                }
                 obj.props()
                     .lock()
                     .get(&key)
@@ -2178,7 +2187,7 @@ fn object_property_is_enumerable(
         Value::String(s) => {
             let enumerable = key
                 .as_str()
-                .and_then(|name| name.parse::<usize>().ok())
+                .and_then(|name| name.parse::<usize>().ok().filter(|i| i.to_string() == name))
                 .is_some_and(|i| i < crate::value::utf16_len(s));
             Ok(Value::Bool(enumerable))
         }

@@ -174,38 +174,13 @@ impl Vm {
             Value::String(s) => s.clone(),
             Value::BigInt(n) => Arc::from(n.to_string().as_str()),
             Value::Object(idx) => {
-                let is_array = self.heap.with_obj(idx.0, |obj| {
-                    matches!(obj, HeapObj::Array(a) if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
-                });
-                if is_array {
-                    // join items outside the borrow
-                    let items = self.heap.with_obj(idx.0, |obj| {
-                        if let HeapObj::Array(a) = obj {
-                            a.items.lock().clone()
-                        } else {
-                            Vec::new()
-                        }
-                    });
-                    let parts: Vec<String> = items
-                        .iter()
-                        .map(|i| {
-                            if i.is_nullish() {
-                                String::new()
-                            } else {
-                                self.to_string(i).map(|s| s.to_string()).unwrap_or_default()
-                            }
-                        })
-                        .collect();
-                    Arc::from(parts.join(",").as_str())
-                } else {
-                    let prim = self.to_primitive_hint(v, true)?;
-                    if matches!(prim, Value::Object(_)) {
-                        return Err(Error::type_err(
-                            "Cannot convert object to primitive value".to_string(),
-                        ));
-                    }
-                    return self.to_string(&prim);
+                let prim = self.to_primitive_hint(v, true)?;
+                if matches!(prim, Value::Object(_)) {
+                    return Err(Error::type_err(
+                        "Cannot convert object to primitive value".to_string(),
+                    ));
                 }
+                return self.to_string(&prim);
             }
             Value::Symbol(_) => {
                 return Err(Error::type_err(
@@ -257,7 +232,12 @@ impl Vm {
                     let tp_key =
                         crate::value::PropertyKey::Symbol(self.well_known_symbols.to_primitive);
                     let method = self.get_property_by_key(v, &tp_key)?;
-                    if matches!(method, Value::Object(_)) {
+                    if !method.is_undefined() && !method.is_null() {
+                        if !crate::builtins::is_callable(&method, &self.heap) {
+                            return Err(Error::type_err(
+                                "@@toPrimitive method is not callable".to_string(),
+                            ));
+                        }
                         let hint_str = Arc::from(hint);
                         let result = self.call_function(
                             &method,
@@ -284,39 +264,22 @@ impl Vm {
                 };
                 let effective_string_hint = string_hint || is_date_default;
 
-                // Arrays have a well-defined default toString (join with ",");
-                // honor it directly rather than looking up a method that may
-                // not be installed on Array.prototype yet.
-                let is_array = match v {
-                    Value::Object(idx) => self.heap.with_obj(idx.0, |obj| {
-                        matches!(obj, HeapObj::Array(a) if !a.is_arguments.load(std::sync::atomic::Ordering::Relaxed))
-                    }),
-                    _ => false,
-                };
                 let methods: [&str; 2] = if effective_string_hint {
                     ["toString", "valueOf"]
                 } else {
                     ["valueOf", "toString"]
                 };
-                if is_array && !effective_string_hint {
-                    // valueOf on an array returns the array (object), so skip
-                    // straight to toString to avoid a pointless call.
-                    return Ok(Value::String(self.to_string(v)?));
-                }
                 for name in methods {
                     let method = self.get_property(v, name)?;
-                    if matches!(method, Value::Object(_)) {
+                    if crate::builtins::is_callable(&method, &self.heap) {
                         let result = self.call_function(&method, &[], Some(v.clone()))?;
                         if !matches!(result, Value::Object(_)) {
                             return Ok(result);
                         }
                     }
                 }
-                // Both returned objects (or were missing): fall back to a
-                // best-effort string form.
-                // Both returned objects (or were missing): per spec
-                // OrdinaryToPrimitive throws a TypeError when neither yields
-                // a primitive.
+                // Per spec, OrdinaryToPrimitive throws when neither method
+                // yields a primitive.
                 Err(Error::type_err(
                     "Cannot convert object to primitive value".to_string(),
                 ))
