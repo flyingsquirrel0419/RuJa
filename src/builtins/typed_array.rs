@@ -532,6 +532,26 @@ fn is_detached_array_buffer(vm: &Vm, value: &Value) -> bool {
     }
 }
 
+fn is_immutable_array_buffer(vm: &Vm, value: &Value) -> bool {
+    match value {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                buffer.immutable.load(std::sync::atomic::Ordering::Relaxed)
+            } else {
+                false
+            }
+        }),
+        _ => false,
+    }
+}
+
+fn require_mutable_data_view_buffer(vm: &Vm, buffer: &Value) -> error::Result<()> {
+    if is_immutable_array_buffer(vm, buffer) {
+        return Err(Error::type_err("DataView setter on immutable buffer"));
+    }
+    Ok(())
+}
+
 fn data_view_slots(
     vm: &Vm,
     this: Option<Value>,
@@ -727,6 +747,7 @@ fn data_view_write_u8(
     name: &str,
 ) -> error::Result<Value> {
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     if is_detached_array_buffer(vm, &buffer) {
@@ -786,6 +807,7 @@ fn data_view_write_u16(
     name: &str,
 ) -> error::Result<Value> {
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
@@ -852,6 +874,7 @@ fn data_view_write_u32(
     name: &str,
 ) -> error::Result<Value> {
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
@@ -911,6 +934,7 @@ fn data_view_write_f32(
     name: &str,
 ) -> error::Result<Value> {
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
@@ -972,6 +996,7 @@ fn data_view_write_f64(
     name: &str,
 ) -> error::Result<Value> {
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
@@ -1045,6 +1070,7 @@ fn data_view_write_bigint64(
     name: &str,
 ) -> error::Result<Value> {
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
+    require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let bigint_value = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));

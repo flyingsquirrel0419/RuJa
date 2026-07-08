@@ -1452,6 +1452,38 @@ fn array_buffer_immutable_argument_helpers_match_array_like_coercions() {
 }
 
 #[test]
+fn data_view_setters_reject_immutable_backing_buffer_before_argument_coercion() {
+    assert_eq!(
+        run(r#"
+            var buffer = (new ArrayBuffer(16)).transferToImmutable();
+            var view = new DataView(buffer);
+            var calls = [];
+            var offset = { valueOf: function() { calls.push("offset"); return 0; } };
+            var numberValue = { valueOf: function() { calls.push("number"); return 1; } };
+            var bigintValue = { valueOf: function() { calls.push("bigint"); return 1n; } };
+            var names = [
+              "setInt8", "setUint8", "setInt16", "setUint16", "setInt32",
+              "setUint32", "setFloat32", "setFloat64", "setBigInt64",
+              "setBigUint64"
+            ];
+            var ok = [];
+            for (var i = 0; i < names.length; i++) {
+              try {
+                view[names[i]](offset, names[i].startsWith("setBig") ? bigintValue : numberValue, true);
+                ok.push(false);
+              } catch (e) {
+                ok.push(e instanceof TypeError);
+              }
+            }
+            ok.join(",") + "|" + calls.join(",");
+        "#),
+        Value::String(Arc::from(
+            "true,true,true,true,true,true,true,true,true,true|",
+        ))
+    );
+}
+
+#[test]
 fn array_buffer_and_data_view_prototype_accessors_validate_receivers() {
     assert_eq!(
         run(r#"

@@ -165,6 +165,13 @@ broader `built-ins/DataView` diagnostic now reports **310 pass / 11 fail /
 240 skip**; the remaining failures are concentrated in immutable-buffer
 DataView setters and `setFloat16`.
 
+Focused DataView immutable-buffer setter local check:
+the implemented numeric and BigInt DataView setters now reject immutable
+ArrayBuffer backing stores with `TypeError` before reading `byteOffset` or
+`value` arguments. With DataView-related skips temporarily lifted, the broader
+`built-ins/DataView` diagnostic improves to **320 pass / 1 fail / 240 skip**;
+the remaining failure is the unsupported `setFloat16` immutable-buffer case.
+
 | Metric | Latest confirmed count |
 |--------|------------------------|
 | Total matrix files | 47,717 |

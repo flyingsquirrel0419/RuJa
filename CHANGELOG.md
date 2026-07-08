@@ -63,6 +63,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   With DataView-related skips temporarily lifted, `built-ins/DataView/length.js`
   now passes, and the broader `built-ins/DataView` diagnostic reports
   **310 pass / 11 fail / 240 skip**.
+- **DataView immutable-buffer setters**: implemented DataView setter
+  validation for immutable ArrayBuffer backing stores. The implemented
+  numeric and BigInt setters now throw `TypeError` before reading
+  `byteOffset` or `value` arguments when the viewed buffer is immutable. With
+  DataView-related skips temporarily lifted, `built-ins/DataView` improves to
+  **320 pass / 1 fail / 240 skip**, leaving only the unsupported
+  `setFloat16` immutable-buffer case in that diagnostic.
 - **BigInt TypedArray constructor surface**: BigInt typed array constructors
   and prototypes now expose non-writable, non-enumerable, non-configurable
   `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors
