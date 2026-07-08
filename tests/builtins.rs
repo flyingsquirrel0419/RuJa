@@ -4672,6 +4672,22 @@ fn regexp_unicode_surrogate_pair_escapes_match_scalar() {
 }
 
 #[test]
+fn regexp_non_unicode_surrogate_escapes_match_code_units() {
+    assert_eq!(run("/\\udf06/.test('\\udf06');"), Value::Bool(true));
+    assert_eq!(run("/\\udf06/i.test('\\udf06');"), Value::Bool(true));
+    assert_eq!(run("/[\\udf06]/.test('\\udf06');"), Value::Bool(true));
+    assert_eq!(run("/\\udf06/.test('\\ud834\\udf06');"), Value::Bool(true));
+    assert_eq!(
+        run("var r = /\\udf06/; Object.defineProperty(r, 'unicode', { value: true }); r[Symbol.match]('\\ud834\\udf06') !== null;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var r = /\\udf06/u; Object.defineProperty(r, 'unicode', { value: false }); r[Symbol.match]('\\ud834\\udf06') === null;"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn regexp_backreferences_and_legacy_decimal_escapes_compile() {
     assert_eq!(
         run("eval('/\\\\1/').source;"),

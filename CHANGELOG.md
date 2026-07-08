@@ -68,8 +68,8 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   now falls back through an intrinsic RegExp clone, preserving RegExp source
   and flags when an own `@@match` is `undefined`. The focused
   `built-ins/RegExp/prototype/Symbol.match` run moves from **8 pass / 44 fail /
-  1 skip** to **51 pass / 1 fail / 1 skip**; the remaining failure is isolated
-  to code-unit matching inside UTF-16 surrogate pairs in the regex backend.
+  1 skip** to **52 pass / 0 fail / 1 skip** after non-Unicode surrogate escapes
+  are lowered for the Rust regex backend.
 - **RegExp boolean flag accessors**: `global`, `ignoreCase`, `multiline`,
   `dotAll`, `sticky`, `unicode`, `unicodeSets`, and `hasIndices` now enforce
   RegExp internal-slot receiver validation. Real RegExp objects still expose
@@ -492,9 +492,10 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `input`, and `groups` properties, treats a missing argument as
   `"undefined"`, reads `lastIndex` through ordinary `Get`/`ToLength` on every
   call, and reports `TypeError` when global/sticky `lastIndex` write-back
-  fails. Unicode-mode lone surrogate escapes now lower to RuJa's internal
-  surrogate sentinel so `/\udf06/u` compiles and does not match the low half
-  of a surrogate pair.
+  fails. Lone surrogate escapes now lower to RuJa's internal surrogate sentinel
+  in Unicode mode and to code-unit-aware backend atoms in non-Unicode mode, so
+  `/\udf06/u` keeps scalar semantics while `/\udf06/` can match the low half of
+  a surrogate pair.
 - **RegExp repeated capture clearing**: `RegExp.prototype.exec` now clears
   descendant captures left over from earlier iterations of quantified
   capturing and non-capturing groups when those descendants did not participate

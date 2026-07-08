@@ -198,8 +198,8 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   RegExp source/flags are preserved when an own `@@match` property is
   `undefined`. The focused
   `built-ins/String/prototype/match built-ins/RegExp/prototype/Symbol.match`
-  run now reports **98 pass / 1 fail / 5 skip**, with the remaining failure
-  isolated to surrogate-pair code-unit matching in the regex backend.
+  run now reports **99 pass / 0 fail / 5 skip** after non-Unicode surrogate
+  escapes are lowered for the regex backend using the stored RegExp flags.
 - **RegExp boolean flag accessors** —
   `global`, `ignoreCase`, `multiline`, `dotAll`, `sticky`, `unicode`,
   `unicodeSets`, and `hasIndices` now use RegExp internal-slot receiver
@@ -664,9 +664,10 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `input`, and `groups` properties, treats a missing argument as
   `"undefined"`, reads `lastIndex` through ordinary `Get`/`ToLength` on every
   call, and reports `TypeError` when global/sticky `lastIndex` write-back
-  fails. Unicode-mode lone surrogate escapes now lower to RuJa's internal
-  surrogate sentinel so `/\udf06/u` compiles and does not match the low half
-  of a surrogate pair.
+  fails. Lone surrogate escapes now lower to RuJa's internal surrogate
+  sentinel in Unicode mode and to code-unit-aware backend atoms in
+  non-Unicode mode, so `/\udf06/u` keeps scalar semantics while `/\udf06/`
+  can match the low half of a surrogate pair.
 - **RegExp repeated capture clearing** —
   `RegExp.prototype.exec` now clears descendant captures left over from
   earlier iterations of quantified capturing and non-capturing groups when

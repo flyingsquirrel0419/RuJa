@@ -412,6 +412,7 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
     let mut chars = source.chars().peekable();
     let mut in_class = false;
     let mut escaped = false;
+    let unicode_mode = flags.contains('u') || flags.contains('v');
     let protect_non_unicode_case = flags.contains('i') && !flags.contains('u');
     let mut modifier_stack = vec![RegexModifierState {
         dot_all: flags.contains('s'),
@@ -470,50 +471,51 @@ fn normalize_regex_for_backend(source: &str, flags: &str, capture_count: usize) 
                     'B' => out.push_str(r"(?-iu:\B)"),
                     _ => unreachable!(),
                 }
-            } else if flags.contains('u') && ch == 'u' {
+            } else if ch == 'u' && has_exact_hex_escape(&chars, 4) {
                 let mut lead_hex = String::new();
                 for _ in 0..4 {
-                    match chars.peek().copied() {
-                        Some(next) if next.is_ascii_hexdigit() => {
-                            lead_hex.push(chars.next().unwrap());
+                    lead_hex.push(chars.next().unwrap());
+                }
+                let lead = u32::from_str_radix(&lead_hex, 16).unwrap_or(0);
+                let mut lookahead = chars.clone();
+                let mut trail_hex = String::new();
+                let has_trail_escape =
+                    lookahead.next() == Some('\\') && lookahead.next() == Some('u');
+                if has_trail_escape {
+                    for _ in 0..4 {
+                        match lookahead.next() {
+                            Some(next) if next.is_ascii_hexdigit() => trail_hex.push(next),
+                            _ => break,
                         }
-                        _ => break,
                     }
                 }
-                if lead_hex.len() == 4 {
-                    let lead = u32::from_str_radix(&lead_hex, 16).unwrap_or(0);
-                    let mut lookahead = chars.clone();
-                    let mut trail_hex = String::new();
-                    let has_trail_escape =
-                        lookahead.next() == Some('\\') && lookahead.next() == Some('u');
-                    if has_trail_escape {
-                        for _ in 0..4 {
-                            match lookahead.next() {
-                                Some(next) if next.is_ascii_hexdigit() => trail_hex.push(next),
-                                _ => break,
-                            }
-                        }
-                    }
-                    if (0xd800..=0xdbff).contains(&lead) && trail_hex.len() == 4 {
-                        let trail = u32::from_str_radix(&trail_hex, 16).unwrap_or(0);
-                        if (0xdc00..=0xdfff).contains(&trail) {
-                            chars = lookahead;
-                            let scalar = 0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00);
-                            out.pop();
-                            out.push_str("\\u{");
-                            out.push_str(&format!("{scalar:x}"));
-                            out.push('}');
-                        } else {
-                            push_surrogate_sentinel_escape_for_backend(&mut out, lead);
-                        }
-                    } else if (0xd800..=0xdfff).contains(&lead) {
+                if (0xd800..=0xdbff).contains(&lead) && trail_hex.len() == 4 {
+                    let trail = u32::from_str_radix(&trail_hex, 16).unwrap_or(0);
+                    if (0xdc00..=0xdfff).contains(&trail) {
+                        chars = lookahead;
+                        let scalar = 0x10000 + ((lead - 0xd800) << 10) + (trail - 0xdc00);
+                        out.pop();
+                        out.push_str("\\u{");
+                        out.push_str(&format!("{scalar:x}"));
+                        out.push('}');
+                    } else if unicode_mode {
                         push_surrogate_sentinel_escape_for_backend(&mut out, lead);
                     } else {
-                        out.push('u');
-                        out.push_str(&lead_hex);
+                        push_surrogate_code_unit_escape_for_backend(&mut out, lead, in_class);
                     }
+                } else if (0xd800..=0xdfff).contains(&lead) {
+                    if unicode_mode {
+                        push_surrogate_sentinel_escape_for_backend(&mut out, lead);
+                    } else {
+                        push_surrogate_code_unit_escape_for_backend(&mut out, lead, in_class);
+                    }
+                } else if protect_non_unicode_case && !in_class && lead > 0x7f {
+                    out.pop();
+                    out.push_str("(?-i:\\u");
+                    out.push_str(&lead_hex);
+                    out.push(')');
                 } else {
-                    out.push(ch);
+                    out.push('u');
                     out.push_str(&lead_hex);
                 }
             } else if ch == '0' && !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
@@ -1095,6 +1097,43 @@ fn push_surrogate_sentinel_escape_for_backend(out: &mut String, surrogate: u32) 
     out.pop();
     out.push_str("\\u{");
     out.push_str(&format!("{sentinel:x}"));
+    out.push('}');
+}
+
+fn push_surrogate_code_unit_escape_for_backend(out: &mut String, surrogate: u32, in_class: bool) {
+    debug_assert!((0xd800..=0xdfff).contains(&surrogate));
+    out.pop();
+    if !in_class {
+        out.push('[');
+    }
+    push_surrogate_sentinel_atom_for_backend(out, surrogate);
+    if (0xd800..=0xdbff).contains(&surrogate) {
+        let high_offset = surrogate - 0xd800;
+        let start = 0x10000 + (high_offset << 10);
+        let end = start + 0x3ff;
+        push_unicode_code_point_atom_for_backend(out, start);
+        out.push('-');
+        push_unicode_code_point_atom_for_backend(out, end);
+    } else {
+        let low_offset = surrogate - 0xdc00;
+        for high_offset in 0..=0x3ff {
+            let scalar = 0x10000 + (high_offset << 10) + low_offset;
+            push_unicode_code_point_atom_for_backend(out, scalar);
+        }
+    }
+    if !in_class {
+        out.push(']');
+    }
+}
+
+fn push_surrogate_sentinel_atom_for_backend(out: &mut String, surrogate: u32) {
+    let sentinel = 0xf0000 + (surrogate - 0xd800);
+    push_unicode_code_point_atom_for_backend(out, sentinel);
+}
+
+fn push_unicode_code_point_atom_for_backend(out: &mut String, code_point: u32) {
+    out.push_str("\\u{");
+    out.push_str(&format!("{code_point:x}"));
     out.push('}');
 }
 
