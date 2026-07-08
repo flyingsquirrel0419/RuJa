@@ -1472,9 +1472,39 @@ fn math_basic() {
 
 #[test]
 fn math_round_half() {
-    assert_eq!(run("Math.round(-0.5);"), Value::Number(0.0));
+    assert_eq!(run("Object.is(Math.round(-0), -0);"), Value::Bool(true));
+    assert_eq!(run("Object.is(Math.round(-0.5), -0);"), Value::Bool(true));
+    assert_eq!(run("Object.is(Math.round(-0.25), -0);"), Value::Bool(true));
+    assert_eq!(
+        run("Object.is(Math.round(0.5 - Number.EPSILON / 4), 0);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var x = -(2 / Number.EPSILON - 1); Object.is(Math.round(x), x);"),
+        Value::Bool(true)
+    );
     assert_eq!(run("Math.round(0.5);"), Value::Number(1.0));
     assert_eq!(run("Math.round(-1.5);"), Value::Number(-1.0));
+}
+
+#[test]
+fn math_max_min_nan_and_signed_zero() {
+    assert!(matches!(run("Math.max({});"), Value::Number(n) if n.is_nan()));
+    assert!(matches!(run("Math.min({});"), Value::Number(n) if n.is_nan()));
+    assert!(matches!(run("Math.max(1, NaN, 2);"), Value::Number(n) if n.is_nan()));
+    assert!(matches!(run("Math.min(1, NaN, 2);"), Value::Number(n) if n.is_nan()));
+    assert_eq!(
+        run("var calls = 0; var n = { valueOf: function(){ calls++; } }; Math.max(NaN, n); calls;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var calls = 0; var n = { valueOf: function(){ calls++; } }; Math.min(NaN, n); calls;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(run("Object.is(Math.max(-0, -0), -0);"), Value::Bool(true));
+    assert_eq!(run("Object.is(Math.max(0, -0), 0);"), Value::Bool(true));
+    assert_eq!(run("Object.is(Math.min(-0, -0), -0);"), Value::Bool(true));
+    assert_eq!(run("Object.is(Math.min(0, -0), -0);"), Value::Bool(true));
 }
 
 #[test]

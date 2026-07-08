@@ -368,6 +368,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `Math.sign` now preserves `NaN` and `-0`. The focused
   `built-ins/Math/{cbrt,clz32,cosh,expm1,fround,imul,log10,log1p,log2,sign,sinh,tanh,trunc}`
   run now closes at **68 pass / 0 fail / 13 skip**.
+- **Math max/min/round edge semantics** —
+  `Math.max` and `Math.min` now coerce every argument before returning `NaN`,
+  propagate `NaN` after observable coercions, and apply the spec signed-zero
+  ordering where `+0` is greater than `-0`. `Math.round` now preserves `-0`
+  for `[-0.5, -0]`, returns `+0` for positive values below `0.5`, and keeps
+  already-integral large Number values unchanged. The focused
+  `built-ins/Math/{max,min,round}` run now closes at **28 pass / 0 fail / 3
+  skip**.
 - **String literal escape conformance** —
   String literal scanning now decodes UTF-8 `NonEscapeCharacter` escapes as
   source code points, permits literal U+2028/U+2029 in strings per
