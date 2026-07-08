@@ -101,18 +101,19 @@ runs: `test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`,
 `6d0f28a`; latest improvement confirmation: `test262-full` 28913345658 on
 `4cfd15e`, 28913946764 on `2be895e`, 28914775928 on `cb3ea6f`,
 28915947538 on `3b32bdf`, 28917214580 on `f6659da`, and 28918240994 on
-`2c63328`; latest baseline refresh: `test262-full` 28918450090 on `e27b922`.
+`2c63328`; latest baseline refresh: `test262-full` 28918450090 on `e27b922`;
+latest improvement confirmation: `test262-full` 28919444373 on `031e3c1`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131-24,133 |
-| Pass | 16,268-16,341 |
-| Fail | 7,790-7,863 |
+| Pass | 16,268-16,380 |
+| Fail | 7,751-7,863 |
 | Timeout | 11-13 |
 | Skip | 23,573 |
-| **Pass rate (of run)** | **67.4%-67.7%** |
-| **Pass rate (of total)** | **34.1%-34.2%** |
+| **Pass rate (of run)** | **67.4%-67.9%** |
+| **Pass rate (of total)** | **34.1%-34.3%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
