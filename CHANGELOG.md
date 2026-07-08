@@ -77,6 +77,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   diagnostic improves from **21 pass / 46 fail / 63 skip** to **46 pass / 21
   fail / 63 skip**. The remaining failures are isolated to Proxy descriptor
   conversion and define/getOwnPropertyDescriptor invariants.
+- **Reference-preserving identifier calls through `with`**: direct
+  IdentifierReference calls now retain their Reference record through the VM
+  call opcode, so `with (o) { f() }` still binds `this` to `o`, while value
+  expressions such as `(0, f)()`, `(cond ? f : f)()`, and `(f && f)()` lose
+  the object-environment `this` binding as required. Spread and optional
+  identifier calls share the same Reference-preserving path, and direct
+  `eval(...)` keeps its existing intrinsic-eval behavior. The focused
+  `language/statements/with` test262 run closes at **169 pass / 0 fail / 12
+  skip**.
 - **Map/Set zero-key canonicalization**: keyed collections now normalize
   numeric `-0` to `+0` when creating internal `MapKey`s, and the `MapKey`
   hash implementation now matches SameValueZero equality for both zero signs.

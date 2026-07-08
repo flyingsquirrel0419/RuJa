@@ -129,11 +129,6 @@ pub struct CallFrame {
     pub gen_yield: Mutex<Option<Value>>,
     pub gen_suspended: AtomicBool,
     pub gen_resume_value: Mutex<Value>,
-    /// `this` binding to use for the next `Call` when the callee was resolved
-    /// through a `with`-statement object environment record. Per ES spec,
-    /// `with(o){ foo() }` binds `this` to `o` inside `foo` when `foo` is found
-    /// as a property of `o`. Cleared after each `Call`.
-    pub pending_with_this: Mutex<Option<Value>>,
     /// When set, the generator was resumed via `throw(e)`: the next dispatch
     /// in this frame throws `e` at the suspended `yield` point instead of
     /// pushing a resume value. Consumed on first use.
@@ -192,7 +187,6 @@ impl CallFrame {
             gen_yield: Mutex::new(None),
             gen_suspended: AtomicBool::new(false),
             gen_resume_value: Mutex::new(Value::Undefined),
-            pending_with_this: Mutex::new(None),
             force_throw: Mutex::new(None),
             finally_completion_tag: AtomicU8::new(0),
             finally_completion_val: Mutex::new(Value::Undefined),
@@ -1430,7 +1424,7 @@ impl Vm {
         if cur_env.is_none() {
             let global_this = self.global_this.clone();
             if self.has_property(&global_this, &name_str)? {
-                base = crate::value::ReferenceBase::ObjectEnvironment(Box::new(global_this));
+                base = crate::value::ReferenceBase::Environment(self.global);
             }
         }
         Ok(crate::value::ReferenceRecord { base, name, strict })

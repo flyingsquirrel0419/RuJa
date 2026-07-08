@@ -818,14 +818,6 @@ impl Vm {
                     self.stack.push(Value::Undefined);
                 }
                 Op::LoadEnvName(name_idx) => {
-                    // Reset any stale `with`-this from a previous name load that
-                    // was not immediately followed by a `Call`. Only a name found
-                    // on a `with` object *and* used as a call callee should rebind
-                    // `this`; clearing here prevents leftover values from leaking
-                    // into a later, unrelated call.
-                    if let Some(f) = self.frames.last() {
-                        *f.pending_with_this.lock() = None;
-                    }
                     let name = {
                         let frame = self.current_frame()?;
                         let v = frame
@@ -844,7 +836,7 @@ impl Vm {
                     // from innermost to outermost. At each environment record:
                     //   1. Check for a binding (var/let/const) — found = use it.
                     //   2. If the environment has a `with`-object, check its
-                    //      properties — found = use it (and set pending_with_this).
+                    //      properties — found = use it.
                     //   3. Neither = continue to parent.
                     //
                     // We walk the chain manually so that a var binding in a
@@ -912,10 +904,6 @@ impl Vm {
                                         break;
                                     }
                                     let v = self.get_property(&with_obj, &name)?;
-                                    if matches!(v, Value::Object(_)) {
-                                        *self.current_frame_mut()?.pending_with_this.lock() =
-                                            Some(with_obj);
-                                    }
                                     self.stack.push(v);
                                     found = true;
                                     break;
@@ -2492,9 +2480,11 @@ impl Vm {
                     // emitted a StoreLocal for the catch param.
                 }
                 Op::Call(arg_count) => self.op_call(arg_count)?,
+                Op::CallRef(arg_count) => self.op_call_ref(arg_count)?,
                 Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
                 Op::CallMethodOpt(arg_count) => self.op_call_method_opt(arg_count)?,
                 Op::CallEval(arg_count) => self.op_call_eval(arg_count)?,
+                Op::CallEvalRef(arg_count) => self.op_call_eval_ref(arg_count)?,
                 Op::YieldValue => {
                     // Lazy generator: pop the yielded value and suspend execution.
                     // The `yield` expression's *result* (the value sent in by the
@@ -2626,7 +2616,9 @@ impl Vm {
                     self.stack.push(result);
                 }
                 Op::CallSpread => self.op_call_spread()?,
+                Op::CallRefSpread => self.op_call_ref_spread()?,
                 Op::CallEvalSpread => self.op_call_eval_spread()?,
+                Op::CallEvalRefSpread => self.op_call_eval_ref_spread()?,
                 Op::New(arg_count) => self.op_new(arg_count)?,
                 Op::NewSpread => self.op_new_spread()?,
                 Op::MakeClosure(func_idx) => self.op_make_closure(func_idx)?,
@@ -2855,8 +2847,17 @@ impl Vm {
         (a, b)
     }
 
-    /// `Op::Call(arg_count)`: pop callee + args, apply `with`-this binding if
-    /// the callee was resolved through a `with` object, and push the result.
+    fn this_value_from_reference(&self, r#ref: &Value) -> Value {
+        if let Value::Reference(record) = r#ref {
+            if let crate::value::ReferenceBase::ObjectEnvironment(base) = &record.base {
+                return *base.clone();
+            }
+        }
+        Value::Undefined
+    }
+
+    /// `Op::Call(arg_count)`: pop callee + args and call with an unbound
+    /// `this`. Direct IdentifierReference calls use `CallRef` instead.
     fn op_call(&mut self, arg_count: usize) -> error::Result<()> {
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
@@ -2864,17 +2865,24 @@ impl Vm {
         }
         args.reverse();
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
-        // If the callee was resolved through a `with`-statement object
-        // environment record, bind `this` to that object (ES spec). Otherwise
-        // use `undefined` (strict-mode-style). Take and clear the pending value
-        // so it never leaks past this call.
-        let with_this = self
-            .frames
-            .last()
-            .map(|f| f.pending_with_this.lock().take())
-            .unwrap_or(None);
-        let this = with_this.or(Some(Value::Undefined));
-        let result = self.call_function(&callee, &args, this)?;
+        let result = self.call_function(&callee, &args, Some(Value::Undefined))?;
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::CallRef(arg_count)`: direct IdentifierReference call. The callee
+    /// value has already been resolved once; the retained Reference is used
+    /// only to derive the spec this-value for object environment records.
+    fn op_call_ref(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
+        let this = self.this_value_from_reference(&r#ref);
+        let result = self.call_function(&callee, &args, Some(this))?;
         self.stack.push(result);
         Ok(())
     }
@@ -2949,15 +2957,33 @@ impl Vm {
         args.reverse();
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-        let with_this = self
-            .frames
-            .last()
-            .map(|f| f.pending_with_this.lock().take())
-            .unwrap_or(None);
         let result = if self.is_current_realm_eval(&callee, caller_env) {
             self.call_direct_eval_from_args(&args)?
         } else {
-            self.call_function(&callee, &args, with_this.or(Some(Value::Undefined)))?
+            self.call_function(&callee, &args, Some(Value::Undefined))?
+        };
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::CallEvalRef(arg_count)`: direct `eval(...)` syntactic form with
+    /// its IdentifierReference retained. Intrinsic eval stays direct; a
+    /// shadowing callable reached through `with` receives the with object as
+    /// `this`.
+    fn op_call_eval_ref(&mut self, arg_count: usize) -> error::Result<()> {
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(self.stack.pop().unwrap_or(Value::Undefined));
+        }
+        args.reverse();
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
+        let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+        let result = if self.is_current_realm_eval(&callee, caller_env) {
+            self.call_direct_eval_from_args(&args)?
+        } else {
+            let this = self.this_value_from_reference(&r#ref);
+            self.call_function(&callee, &args, Some(this))?
         };
         self.stack.push(result);
         Ok(())
@@ -3016,6 +3042,25 @@ impl Vm {
         Ok(())
     }
 
+    /// `Op::CallRefSpread`: spread form of direct IdentifierReference call.
+    fn op_call_ref_spread(&mut self) -> error::Result<()> {
+        let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
+        let mut args = Vec::new();
+        if let Value::Object(idx) = &args_arr {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    args = a.items.lock().clone();
+                }
+            });
+        }
+        let this = self.this_value_from_reference(&r#ref);
+        let result = self.call_function(&callee, &args, Some(this))?;
+        self.stack.push(result);
+        Ok(())
+    }
+
     /// `Op::CallEvalSpread`: spread form of unqualified `eval(...)`.
     fn op_call_eval_spread(&mut self) -> error::Result<()> {
         let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
@@ -3029,15 +3074,35 @@ impl Vm {
             });
         }
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-        let with_this = self
-            .frames
-            .last()
-            .map(|f| f.pending_with_this.lock().take())
-            .unwrap_or(None);
         let result = if self.is_current_realm_eval(&callee, caller_env) {
             self.call_direct_eval_from_args(&args)?
         } else {
-            self.call_function(&callee, &args, with_this.or(Some(Value::Undefined)))?
+            self.call_function(&callee, &args, Some(Value::Undefined))?
+        };
+        self.stack.push(result);
+        Ok(())
+    }
+
+    /// `Op::CallEvalRefSpread`: spread form of Reference-preserving
+    /// unqualified `eval(...)`.
+    fn op_call_eval_ref_spread(&mut self) -> error::Result<()> {
+        let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
+        let callee = self.stack.pop().unwrap_or(Value::Undefined);
+        let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
+        let mut args = Vec::new();
+        if let Value::Object(idx) = &args_arr {
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Array(a) = o {
+                    args = a.items.lock().clone();
+                }
+            });
+        }
+        let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
+        let result = if self.is_current_realm_eval(&callee, caller_env) {
+            self.call_direct_eval_from_args(&args)?
+        } else {
+            let this = self.this_value_from_reference(&r#ref);
+            self.call_function(&callee, &args, Some(this))?
         };
         self.stack.push(result);
         Ok(())

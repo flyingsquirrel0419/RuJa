@@ -185,16 +185,24 @@ pub enum Op {
     // Functions
     MakeFunction(usize),  // function index in a function table
     Call(usize),          // arg count
+    CallRef(usize),       // arg count; stack [ref, callee, args...]
     CallMethod(usize),    // arg count (method call: this is on stack)
     CallMethodOpt(usize), // arg count (optional method call: skip if method is nullish)
     CallSpread,           // callee + args-array on stack; spread array into call args
+    CallRefSpread,        // ref + callee + args-array on stack
     /// Unqualified `eval(...)`: call directly only if the resolved callee is
     /// the current Realm's intrinsic eval function; otherwise call normally.
     /// Stack: [callee, args...].
     CallEval(usize), // arg count
+    /// Reference-preserving unqualified `eval(...)`.
+    /// Stack: [ref, callee, args...].
+    CallEvalRef(usize), // arg count
     /// Spread form of unqualified `eval(...)`.
     /// Stack: [callee, argsArray].
     CallEvalSpread,
+    /// Reference-preserving spread form of unqualified `eval(...)`.
+    /// Stack: [ref, callee, argsArray].
+    CallEvalRefSpread,
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
     CallSuperCtorSpread,  // super(...args): stack [this, superCtor, argsArray]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]

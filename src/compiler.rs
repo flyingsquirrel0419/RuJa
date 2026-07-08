@@ -2994,6 +2994,67 @@ impl Compiler {
                     return Ok(());
                 }
                 match callee.as_ref() {
+                    Expr::Ident(name) => {
+                        let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
+                        let is_eval_call = !*call_opt && &**name == "eval";
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
+                        let mut jend = 0usize;
+                        if *call_opt {
+                            // `f?.(args)`: keep the identifier Reference
+                            // solely for this-binding if the call proceeds,
+                            // but discard it with the callee on the nullish
+                            // short-circuit path.
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            let jskip = self.chunk.code.len();
+                            self.chunk.emit(Op::JumpIfNotNullish(0), self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                            self.chunk.emit(Op::Undefined, self.current_line);
+                            jend = self.chunk.code.len();
+                            self.chunk.emit(Op::Jump(0), self.current_line);
+                            self.chunk.patch_jump(jskip, self.chunk.code.len());
+                        }
+                        if has_spread {
+                            self.chunk.emit(Op::NewArray(0), self.current_line);
+                            for a in args {
+                                match a {
+                                    Expr::Spread(inner) => {
+                                        self.compile_expr(inner)?;
+                                        self.chunk.emit(Op::SpreadPush, self.current_line);
+                                    }
+                                    _ => {
+                                        self.compile_expr(a)?;
+                                        self.chunk.emit(Op::ArrayPush, self.current_line);
+                                    }
+                                }
+                            }
+                            if is_eval_call {
+                                self.chunk.emit(Op::CallEvalRefSpread, self.current_line);
+                            } else {
+                                self.chunk.emit(Op::CallRefSpread, self.current_line);
+                            }
+                        } else {
+                            for a in args {
+                                if let Expr::Spread(_) = a {
+                                } else {
+                                    self.compile_expr(a)?;
+                                }
+                            }
+                            if is_eval_call {
+                                self.chunk
+                                    .emit(Op::CallEvalRef(args.len()), self.current_line);
+                            } else {
+                                self.chunk.emit(Op::CallRef(args.len()), self.current_line);
+                            }
+                        }
+                        if *call_opt {
+                            let end = self.chunk.code.len();
+                            self.chunk.patch_jump(jend, end);
+                        }
+                    }
                     // `obj.#method(args)`: call a private method with this=obj.
                     Expr::PrivateGet { object, name } => {
                         self.compile_expr(object)?; // [obj]

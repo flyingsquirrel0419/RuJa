@@ -836,6 +836,42 @@ fn with_this_function_reads_property_via_this() {
 }
 
 #[test]
+fn with_sequence_callee_loses_object_environment_this() {
+    // The comma operator applies GetValue to its operands, so the final call is
+    // not a direct IdentifierReference call and must not inherit the with-object
+    // this binding.
+    let src = r#"
+        let o = { tag: "with", f: function() { return this === o ? "bad" : "ok"; } };
+        with (o) {
+            (0, f)();
+        }
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("ok")));
+}
+
+#[test]
+fn with_conditional_callee_loses_object_environment_this() {
+    let src = r#"
+        let o = { tag: "with", f: function() { return this === o ? "bad" : "ok"; } };
+        with (o) {
+            (true ? f : f)();
+        }
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("ok")));
+}
+
+#[test]
+fn with_logical_callee_loses_object_environment_this() {
+    let src = r#"
+        let o = { tag: "with", f: function() { return this === o ? "bad" : "ok"; } };
+        with (o) {
+            (f && f)();
+        }
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("ok")));
+}
+
+#[test]
 fn with_statement_normal_completion_value() {
     assert_eq!(run("1; with ({}) { }"), Value::Undefined);
     assert_eq!(run("2; with ({}) { 3; }"), Value::Number(3.0));

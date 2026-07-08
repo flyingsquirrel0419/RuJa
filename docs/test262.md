@@ -193,6 +193,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   diagnostic improves from **21 pass / 46 fail / 63 skip** to **46 pass / 21
   fail / 63 skip**. Remaining failures in that broader probe are descriptor
   conversion and define/getOwnPropertyDescriptor invariants.
+- **Reference-preserving identifier calls through `with`** —
+  direct IdentifierReference calls now carry their Reference record into the
+  VM call opcode. `with (o) { f() }` still binds `this` to `o` when `f` is
+  resolved from the object environment, while value-producing callee
+  expressions such as `(0, f)()`, `(cond ? f : f)()`, and `(f && f)()` lose
+  that binding. Spread and optional identifier calls use the same
+  Reference-preserving path, and unqualified `eval(...)` keeps direct eval
+  behavior only for the intrinsic eval function. The focused
+  `language/statements/with` run closes at **169 pass / 0 fail / 12 skip**.
 - **Map/Set zero-key canonicalization** —
   Internal `MapKey` creation now canonicalizes numeric `-0` to `+0`, and its
   hash implementation now agrees with SameValueZero equality for both zero
