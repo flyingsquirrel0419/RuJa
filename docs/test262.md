@@ -99,14 +99,15 @@ a small number of tests can cross the timeout boundary. Baseline confirmation
 runs: `test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`,
 28908649991 on `40d9102`, 28909686737 on `605ed5e`, and 28910870657 on
 `6d0f28a`; latest improvement confirmation: `test262-full` 28913345658 on
-`4cfd15e`, 28913946764 on `2be895e`, and 28914775928 on `cb3ea6f`.
+`4cfd15e`, 28913946764 on `2be895e`, 28914775928 on `cb3ea6f`, and
+28915947538 on `3b32bdf`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131-24,133 |
-| Pass | 16,268-16,290 |
-| Fail | 7,842-7,863 |
+| Pass | 16,268-16,293 |
+| Fail | 7,838-7,863 |
 | Timeout | 11-13 |
 | Skip | 23,573 |
 | **Pass rate (of run)** | **67.4%-67.5%** |
