@@ -453,13 +453,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   of a surrogate pair.
 - **RegExp repeated capture clearing** —
   `RegExp.prototype.exec` now clears descendant captures left over from
-  earlier iterations of a quantified capture group when those descendants did
-  not participate in the final iteration. This matches ES repeated-capture
-  semantics for quantified capturing-group cases like
+  earlier iterations of quantified capturing and non-capturing groups when
+  those descendants did not participate in the final iteration. This matches
+  ES repeated-capture semantics for cases like
   `/(z)((a+)?(b+)?(c))*/`, where the final optional `(b+)` capture must be
-  `undefined` instead of the previous iteration's `"bbb"`.
-  The focused `built-ins/RegExp/prototype/exec` diagnostic now improves from
-  **37 pass / 38 fail / 4 skip** to **75 pass / 0 fail / 4 skip**.
+  `undefined` instead of the previous iteration's `"bbb"`, and
+  `/(?:(a)|(b))*/`, where `(a)` must be cleared after the final `(b)`
+  iteration. The same clearing now feeds `String.prototype.match` and function
+  replacement callbacks. The focused `built-ins/RegExp/prototype/exec`
+  diagnostic is **75 pass / 0 fail / 4 skip**; the broader
+  `built-ins/String/prototype/{match,replace}` diagnostic is **56 pass / 44
+  fail / 6 skip**, with remaining failures outside this capture-clearing edge.
 - **RegExp backreferences and identity escapes** —
   RegExp compilation now keeps ordinary patterns on the existing Rust regex
   fast path, uses a backtracking-capable backend only for true numeric

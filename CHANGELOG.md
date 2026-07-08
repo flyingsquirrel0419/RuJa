@@ -308,14 +308,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   surrogate sentinel so `/\udf06/u` compiles and does not match the low half
   of a surrogate pair.
 - **RegExp repeated capture clearing**: `RegExp.prototype.exec` now clears
-  descendant captures left over from earlier iterations of a quantified
-  capture group when those descendants did not participate in the final
-  iteration. This matches ES repeated-capture semantics for quantified
-  capturing-group cases like
-  `/(z)((a+)?(b+)?(c))*/`, where the final optional `(b+)` capture must be
-  `undefined` instead of the previous iteration's `"bbb"`.
-  The focused `built-ins/RegExp/prototype/exec` diagnostic now improves from
-  **37 pass / 38 fail / 4 skip** to **75 pass / 0 fail / 4 skip**.
+  descendant captures left over from earlier iterations of quantified
+  capturing and non-capturing groups when those descendants did not participate
+  in the final iteration. This matches ES repeated-capture semantics for cases
+  like `/(z)((a+)?(b+)?(c))*/`, where the final optional `(b+)` capture must be
+  `undefined` instead of the previous iteration's `"bbb"`, and
+  `/(?:(a)|(b))*/`, where `(a)` must be cleared after the final `(b)`
+  iteration. The same clearing now feeds `String.prototype.match` and function
+  replacement callbacks. The focused `built-ins/RegExp/prototype/exec`
+  diagnostic is **75 pass / 0 fail / 4 skip**; the broader
+  `built-ins/String/prototype/{match,replace}` diagnostic is **56 pass / 44
+  fail / 6 skip**, with remaining failures outside this capture-clearing edge.
 - **RegExp backreferences and identity escapes**: RegExp compilation now keeps
   the existing Rust regex fast path for ordinary patterns while routing true
   numeric backreferences through a backtracking-capable backend. Non-Unicode

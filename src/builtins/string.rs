@@ -432,7 +432,7 @@ pub(crate) fn str_replace(
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
-                for caps in re.captures_iter(&s)? {
+                for caps in re.captures_iter_ecma(&s, &source, &flags_str)? {
                     let m = caps.get(0).unwrap();
                     result.push_str(&s[last_end..m.start()]);
                     let mut cap_args = vec![Value::String(Arc::from(m.as_str()))];
@@ -602,7 +602,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                         make_value_array(vm, items)
                     }
                 } else {
-                    match re.captures(&s)? {
+                    match re.captures_ecma(&s, &source, &flags_str)? {
                         Some(caps) => {
                             let items: Vec<Value> = caps
                                 .iter()

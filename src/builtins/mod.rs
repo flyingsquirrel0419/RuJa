@@ -81,10 +81,26 @@ impl<'t> CompiledCaptures<'t> {
         self.groups.get(index).copied().flatten()
     }
 
-    fn apply_ecmascript_capture_clearing(&mut self, source: &str) {
+    fn apply_ecmascript_capture_clearing(&mut self, source: &str, flags: &str, input: &str) {
         let rules = regex_repeated_capture_clear_rules(source);
         if rules.quantified_groups.is_empty() {
             return;
+        }
+        let Some(full_match) = self.get(0) else {
+            return;
+        };
+        let mut quantified_spans = Vec::new();
+        for group in &rules.quantified_groups {
+            let span = match group.capture_index {
+                Some(capture_index) => self
+                    .groups
+                    .get(capture_index)
+                    .copied()
+                    .flatten()
+                    .map(|m| (m.start(), m.end())),
+                None => regex_final_iteration_span(&group.body, flags, input, full_match),
+            };
+            quantified_spans.push((group.group_id, span));
         }
         for capture_index in 1..self.groups.len() {
             let Some(capture) = self.groups[capture_index] else {
@@ -96,18 +112,11 @@ impl<'t> CompiledCaptures<'t> {
                 .into_iter()
                 .flatten()
                 .any(|ancestor| {
-                    let Some(parent_index) = ancestor.capture_index else {
-                        return false;
-                    };
-                    rules.quantified_groups.contains(&ancestor.group_id)
-                        && self
-                            .groups
-                            .get(parent_index)
-                            .copied()
-                            .flatten()
-                            .is_some_and(|parent| {
-                                capture.start < parent.start || capture.end > parent.end
-                            })
+                    quantified_spans
+                        .iter()
+                        .find(|(group_id, _)| *group_id == ancestor.group_id)
+                        .and_then(|(_, span)| *span)
+                        .is_some_and(|(start, end)| capture.start < start || capture.end > end)
                 });
             if should_clear {
                 self.groups[capture_index] = None;
@@ -211,6 +220,15 @@ impl CompiledRegex {
         self.captures_at(input, 0)
     }
 
+    fn captures_ecma<'t>(
+        &self,
+        input: &'t str,
+        source: &str,
+        flags: &str,
+    ) -> error::Result<Option<CompiledCaptures<'t>>> {
+        self.captures_at_ecma(input, 0, source, flags)
+    }
+
     fn captures_at<'t>(
         &self,
         input: &'t str,
@@ -223,6 +241,20 @@ impl CompiledRegex {
                 .map(|caps| caps.map(CompiledCaptures::from))
                 .map_err(regex_runtime_error),
         }
+    }
+
+    fn captures_at_ecma<'t>(
+        &self,
+        input: &'t str,
+        start: usize,
+        source: &str,
+        flags: &str,
+    ) -> error::Result<Option<CompiledCaptures<'t>>> {
+        let mut captures = self.captures_at(input, start)?;
+        if let Some(caps) = captures.as_mut() {
+            caps.apply_ecmascript_capture_clearing(source, flags, input);
+        }
+        Ok(captures)
     }
 
     fn captures_iter<'t>(&self, input: &'t str) -> error::Result<Vec<CompiledCaptures<'t>>> {
@@ -258,6 +290,19 @@ impl CompiledRegex {
                 Ok(captures)
             }
         }
+    }
+
+    fn captures_iter_ecma<'t>(
+        &self,
+        input: &'t str,
+        source: &str,
+        flags: &str,
+    ) -> error::Result<Vec<CompiledCaptures<'t>>> {
+        let mut captures = self.captures_iter(input)?;
+        for caps in &mut captures {
+            caps.apply_ecmascript_capture_clearing(source, flags, input);
+        }
+        Ok(captures)
     }
 
     fn replace<'t>(&self, input: &'t str, replacement: &str) -> error::Result<Cow<'t, str>> {
@@ -661,18 +706,24 @@ fn regex_capture_count(source: &str) -> usize {
 
 struct RegexCaptureClearRules {
     ancestors: Vec<Vec<RegexGroupAncestor>>,
-    quantified_groups: Vec<usize>,
+    quantified_groups: Vec<RegexQuantifiedGroup>,
 }
 
 #[derive(Clone, Copy)]
 struct RegexGroupAncestor {
     group_id: usize,
+}
+
+struct RegexQuantifiedGroup {
+    group_id: usize,
     capture_index: Option<usize>,
+    body: String,
 }
 
 struct RegexGroupFrame {
     group_id: usize,
     capture_index: Option<usize>,
+    body_start: usize,
 }
 
 fn regex_repeated_capture_clear_rules(source: &str) -> RegexCaptureClearRules {
@@ -705,7 +756,6 @@ fn regex_repeated_capture_clear_rules(source: &str) -> RegexCaptureClearRules {
                         .iter()
                         .map(|frame| RegexGroupAncestor {
                             group_id: frame.group_id,
-                            capture_index: frame.capture_index,
                         })
                         .collect();
                     ancestors.push(group_ancestors);
@@ -716,12 +766,17 @@ fn regex_repeated_capture_clear_rules(source: &str) -> RegexCaptureClearRules {
                 stack.push(RegexGroupFrame {
                     group_id,
                     capture_index,
+                    body_start: regex_group_body_start_chars(&chars, i),
                 });
             }
             ')' if !in_class => {
                 if let Some(frame) = stack.pop() {
                     if regex_quantifier_starts_at_chars(&chars, i + 1) {
-                        quantified_groups.push(frame.group_id);
+                        quantified_groups.push(RegexQuantifiedGroup {
+                            group_id: frame.group_id,
+                            capture_index: frame.capture_index,
+                            body: chars[frame.body_start..i].iter().collect(),
+                        });
                     }
                 }
             }
@@ -743,6 +798,62 @@ fn regex_group_is_capturing_chars(chars: &[char], idx: usize) -> bool {
         return true;
     }
     chars.get(idx + 2) == Some(&'<') && !matches!(chars.get(idx + 3), Some('=' | '!'))
+}
+
+fn regex_group_body_start_chars(chars: &[char], idx: usize) -> usize {
+    if chars.get(idx) != Some(&'(') {
+        return idx;
+    }
+    if chars.get(idx + 1) != Some(&'?') {
+        return idx + 1;
+    }
+    match chars.get(idx + 2) {
+        Some(':') | Some('=') | Some('!') => idx + 3,
+        Some('<') if matches!(chars.get(idx + 3), Some('=' | '!')) => idx + 4,
+        Some('<') => {
+            let mut cursor = idx + 3;
+            while cursor < chars.len() {
+                if chars[cursor] == '>' {
+                    return cursor + 1;
+                }
+                cursor += 1;
+            }
+            idx + 2
+        }
+        _ => {
+            let mut cursor = idx + 2;
+            while cursor < chars.len() {
+                match chars[cursor] {
+                    ':' => return cursor + 1,
+                    ')' => break,
+                    _ => cursor += 1,
+                }
+            }
+            idx + 2
+        }
+    }
+}
+
+fn regex_final_iteration_span(
+    body: &str,
+    flags: &str,
+    input: &str,
+    full_match: CompiledMatch<'_>,
+) -> Option<(usize, usize)> {
+    if body.is_empty() {
+        return None;
+    }
+    let re = compile_regex(body, flags).ok()?;
+    let mut last = None;
+    for m in re.find_iter(input).ok()? {
+        if m.start() >= full_match.start()
+            && m.end() <= full_match.end()
+            && (m.start() != m.end() || last.is_none())
+        {
+            last = Some((m.start(), m.end()));
+        }
+    }
+    last
 }
 
 fn regex_quantifier_starts_at_chars(chars: &[char], idx: usize) -> bool {

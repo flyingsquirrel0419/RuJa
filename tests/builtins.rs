@@ -3547,6 +3547,42 @@ fn regexp_repeated_capture_clears_nonparticipating_groups() {
         run("var m = /((a)|(b))*/.exec('ab'); [m[0], m[1], String(m[2]), m[3]].join('|');"),
         Value::String(Arc::from("ab|b|undefined|b"))
     );
+    assert_eq!(
+        run("var m = /(?:(a)|(b))*/.exec('ab'); [m[0], String(m[1]), m[2]].join('|');"),
+        Value::String(Arc::from("ab|undefined|b"))
+    );
+    assert_eq!(
+        run("var m = /(?:(a)(b)|(c)(d))*/.exec('abcd'); [m[0], String(m[1]), String(m[2]), m[3], m[4]].join('|');"),
+        Value::String(Arc::from("abcd|undefined|undefined|c|d"))
+    );
+    assert_eq!(
+        run("var m = /(?:(a)?(b))*/.exec('abb'); [m[0], String(m[1]), m[2]].join('|');"),
+        Value::String(Arc::from("abb|undefined|b"))
+    );
+    assert_eq!(
+        run("var m = /(x)(?:(a)|(b))*(y)/.exec('xaby'); [m[1], String(m[2]), m[3], m[4]].join('|');"),
+        Value::String(Arc::from("x|undefined|b|y"))
+    );
+    assert_eq!(
+        run("var m = /(?:(a)|(b))+/.exec('ab'); [m[0], String(m[1]), m[2]].join('|');"),
+        Value::String(Arc::from("ab|undefined|b"))
+    );
+    assert_eq!(
+        run("var m = /(?:(a)|(b)){2}/.exec('ab'); [m[0], String(m[1]), m[2]].join('|');"),
+        Value::String(Arc::from("ab|undefined|b"))
+    );
+    assert_eq!(
+        run("var m = 'ab'.match(/(?:(a)|(b))*/); [m[0], String(m[1]), m[2]].join('|');"),
+        Value::String(Arc::from("ab|undefined|b"))
+    );
+    assert_eq!(
+        run("'ab'.replace(/(?:(a)|(b))*/, function(m, a, b){ return m + '|' + String(a) + '|' + b; });"),
+        Value::String(Arc::from("ab|undefined|b"))
+    );
+    assert_eq!(
+        run("'ab xa'.replace(/(?:(a)|(b))+/g, function(m, a, b, offset){ return '[' + String(a) + '|' + String(b) + '|' + offset + ']'; });"),
+        Value::String(Arc::from("[undefined|b|0] x[a|undefined|4]"))
+    );
 }
 
 #[test]
