@@ -76,6 +76,11 @@ struct CompiledCaptures<'t> {
     groups: Vec<Option<CompiledMatch<'t>>>,
 }
 
+struct RegexCaptureName {
+    name: Arc<str>,
+    index: usize,
+}
+
 impl<'t> CompiledCaptures<'t> {
     fn get(&self, index: usize) -> Option<CompiledMatch<'t>> {
         self.groups.get(index).copied().flatten()
@@ -702,6 +707,91 @@ fn regex_capture_count(source: &str) -> usize {
         }
     }
     count
+}
+
+fn regex_capture_names(source: &str) -> Vec<RegexCaptureName> {
+    let mut names = Vec::new();
+    let mut capture_index = 0;
+    let mut chars = source.chars().peekable();
+    let mut in_class = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            '(' if !in_class => {
+                if chars.peek() != Some(&'?') {
+                    capture_index += 1;
+                    continue;
+                }
+                let mut lookahead = chars.clone();
+                lookahead.next();
+                if lookahead.next() == Some('<') && !matches!(lookahead.peek(), Some('=' | '!')) {
+                    capture_index += 1;
+                    let mut name = String::new();
+                    for next in lookahead.by_ref() {
+                        if next == '>' {
+                            break;
+                        }
+                        name.push(next);
+                    }
+                    if !name.is_empty() {
+                        names.push(RegexCaptureName {
+                            name: Arc::from(name.as_str()),
+                            index: capture_index,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn named_capture_index(names: &[RegexCaptureName], name: &str) -> Option<usize> {
+    names
+        .iter()
+        .find(|capture| capture.name.as_ref() == name)
+        .map(|capture| capture.index)
+}
+
+fn make_regexp_groups_object(
+    vm: &mut Vm,
+    caps: &CompiledCaptures<'_>,
+    names: &[RegexCaptureName],
+) -> error::Result<Value> {
+    if names.is_empty() {
+        return Ok(Value::Undefined);
+    }
+    let obj_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(None),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Object")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.heap.with_obj(obj_idx, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        for capture in names {
+            let value = caps
+                .get(capture.index)
+                .map(|m| Value::String(Arc::from(m.as_str())))
+                .unwrap_or(Value::Undefined);
+            props.insert(
+                PropertyKey::from(capture.name.clone()),
+                PropertyDescriptor::data(value),
+            );
+        }
+    });
+    Ok(Value::Object(GcIdx(obj_idx)))
 }
 
 struct RegexCaptureClearRules {

@@ -482,6 +482,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   that JS exposes through string indexing. The focused
   `built-ins/String/prototype/replace` diagnostic remains **38 pass / 15 fail
   / 2 skip**.
+- **RegExp named capture groups** —
+  Named captures now feed the shared match result surface:
+  `RegExp.prototype.exec` and non-global `String.prototype.match` expose a
+  null-prototype `groups` object, RegExp function replacements receive that
+  groups object as their final argument, and replacement strings expand
+  `$<name>` using the same capture metadata. The focused
+  `built-ins/RegExp/prototype/exec built-ins/String/prototype/{match,replace}`
+  diagnostic is **131 pass / 44 fail / 10 skip**; the remaining String
+  failures are outside this named-capture edge.
 - **RegExp backreferences and identity escapes** —
   RegExp compilation now keeps ordinary patterns on the existing Rust regex
   fast path, uses a backtracking-capable backend only for true numeric

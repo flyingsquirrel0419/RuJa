@@ -3512,6 +3512,18 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
     );
     assert_eq!(run("/b/.exec('abc').groups;"), Value::Undefined);
     assert_eq!(
+        run("var m = /(?<x>b)(c)?/.exec('abc'); [m[0], m[1], m[2], m.groups.x, Object.getPrototypeOf(m.groups) === null, Object.keys(m.groups).join(',')].join('|');"),
+        Value::String(Arc::from("bc|b|c|b|true|x"))
+    );
+    assert_eq!(
+        run("var m = /(?<x>a)|(?<y>b)/.exec('b'); String(m.groups.x) + '|' + m.groups.y;"),
+        Value::String(Arc::from("undefined|b"))
+    );
+    assert_eq!(
+        run("var m = 'abc'.match(/(?<x>b)(c)?/); [m[0], m[1], m[2], m.index, m.input, m.groups.x, Object.getPrototypeOf(m.groups) === null, Object.keys(m).join(',')].join('|');"),
+        Value::String(Arc::from("bc|b|c|1|abc|b|true|0,1,2,index,input,groups"))
+    );
+    assert_eq!(
         run("/undefined/.exec()[0];"),
         Value::String(Arc::from("undefined"))
     );
@@ -3991,6 +4003,16 @@ fn string_replace_with_regex() {
     assert_eq!(
         run(r#""abc".replace(/b/, "$x|$<x>");"#),
         Value::String(Arc::from("a$x|$<x>c"))
+    );
+    assert_eq!(
+        run(r#""abc".replace(/(?<x>b)(c)?/, "<$<x>|$<missing>|$1|$2>");"#),
+        Value::String(Arc::from("a<b||b|c>"))
+    );
+    assert_eq!(
+        run(
+            r#""abc".replace(/(?<x>b)/, function(m, x, offset, s, groups){ return m + "|" + x + "|" + offset + "|" + s + "|" + groups.x; });"#
+        ),
+        Value::String(Arc::from("ab|b|1|abc|bc"))
     );
     assert_eq!(
         run(r#""😀a".replace(/a/, function(m, offset){ return offset; });"#),

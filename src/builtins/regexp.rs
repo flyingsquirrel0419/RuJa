@@ -281,6 +281,7 @@ pub(crate) fn regexp_exec(
     let flags = read_regexp_flags(vm, &this).unwrap_or_default();
     let re = compile_regex(&source, &flags)
         .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+    let capture_names = regex_capture_names(&source);
     let global = flags.contains('g');
     let sticky = flags.contains('y');
     let this_value = match &this {
@@ -351,7 +352,8 @@ pub(crate) fn regexp_exec(
                 .map(|mch| crate::value::utf16_len(&input[..mch.start()]))
                 .unwrap_or(start);
             let result = make_value_array(vm, items)?;
-            add_regexp_exec_result_props(vm, &result, match_start, &input)?;
+            let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
+            add_regexp_exec_result_props(vm, &result, match_start, &input, groups)?;
             Ok(result)
         }
         None => {
@@ -389,11 +391,12 @@ fn enumerable_data_prop(value: Value) -> PropertyDescriptor {
     }
 }
 
-fn add_regexp_exec_result_props(
+pub(crate) fn add_regexp_exec_result_props(
     vm: &mut Vm,
     result: &Value,
     match_start: usize,
     input: &str,
+    groups: Value,
 ) -> error::Result<()> {
     let Value::Object(idx) = result else {
         return Ok(());
@@ -409,10 +412,7 @@ fn add_regexp_exec_result_props(
             PropertyKey::from("input"),
             enumerable_data_prop(Value::String(Arc::from(input))),
         );
-        props.insert(
-            PropertyKey::from("groups"),
-            enumerable_data_prop(Value::Undefined),
-        );
+        props.insert(PropertyKey::from("groups"), enumerable_data_prop(groups));
     });
     Ok(())
 }

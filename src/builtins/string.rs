@@ -429,6 +429,7 @@ pub(crate) fn str_replace(
             let global = flags_str.contains('g');
             let re = compile_regex(&source, &flags_str)
                 .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+            let capture_names = regex_capture_names(&source);
             if is_fn {
                 let mut result = String::new();
                 let mut last_end = 0;
@@ -447,6 +448,10 @@ pub(crate) fn str_replace(
                         crate::value::utf16_len(&s[..m.start()]) as f64
                     ));
                     cap_args.push(Value::String(Arc::from(s.as_str())));
+                    let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
+                    if !groups.is_undefined() {
+                        cap_args.push(groups);
+                    }
                     let r = vm.call_function(&replacement, &cap_args, None)?;
                     result.push_str(vm.to_string(&r)?.as_ref());
                     last_end = m.end();
@@ -465,7 +470,12 @@ pub(crate) fn str_replace(
                     continue;
                 };
                 result.push_str(&s[last_end..m.start()]);
-                result.push_str(&regexp_replace_substitution(&to_str, &s, &caps));
+                result.push_str(&regexp_replace_substitution(
+                    &to_str,
+                    &s,
+                    &caps,
+                    &capture_names,
+                ));
                 last_end = m.end();
                 replaced = true;
                 if !global {
@@ -509,6 +519,7 @@ fn regexp_replace_substitution(
     replacement: &str,
     input: &str,
     caps: &CompiledCaptures<'_>,
+    capture_names: &[RegexCaptureName],
 ) -> String {
     let Some(matched) = caps.get(0) else {
         return replacement.to_string();
@@ -541,6 +552,27 @@ fn regexp_replace_substitution(
             '\'' => {
                 chars.next();
                 result.push_str(&input[matched.end()..]);
+            }
+            '<' if !capture_names.is_empty() => {
+                let name_start = next_index + next.len_utf8();
+                if let Some(close_offset) = replacement[name_start..].find('>') {
+                    let name_end = name_start + close_offset;
+                    let name = &replacement[name_start..name_end];
+                    if let Some(capture_index) = named_capture_index(capture_names, name) {
+                        if let Some(capture) = caps.get(capture_index) {
+                            result.push_str(capture.as_str());
+                        }
+                    }
+                    chars.next();
+                    while chars
+                        .peek()
+                        .is_some_and(|(index, _)| *index < name_end + '>'.len_utf8())
+                    {
+                        chars.next();
+                    }
+                } else {
+                    result.push('$');
+                }
             }
             '0'..='9' => {
                 let first = next.to_digit(10).unwrap() as usize;
@@ -678,6 +710,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                 let flags_str = read_regexp_flags(vm, &regexp).unwrap_or_default();
                 let re = compile_regex(&source, &flags_str)
                     .map_err(|e| Error::syntax(format!("Invalid regex: {}", e)))?;
+                let capture_names = regex_capture_names(&source);
                 let global = flags_str.contains('g');
                 if global {
                     // Collect all matches (full-match substrings).
@@ -701,7 +734,14 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
                                     None => Value::Undefined,
                                 })
                                 .collect();
-                            make_value_array(vm, items)
+                            let match_start = caps
+                                .get(0)
+                                .map(|m| crate::value::utf16_len(&s[..m.start()]))
+                                .unwrap_or(0);
+                            let groups = make_regexp_groups_object(vm, &caps, &capture_names)?;
+                            let result = make_value_array(vm, items)?;
+                            add_regexp_exec_result_props(vm, &result, match_start, &s, groups)?;
+                            Ok(result)
                         }
                         None => Ok(Value::Null),
                     }
