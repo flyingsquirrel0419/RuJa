@@ -98,17 +98,18 @@ top-level `language` directory is not re-run. Counts can vary slightly because
 a small number of tests can cross the timeout boundary. Baseline confirmation
 runs: `test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`,
 28908649991 on `40d9102`, 28909686737 on `605ed5e`, and 28910870657 on
-`6d0f28a`.
+`6d0f28a`; latest improvement confirmation: `test262-full` 28913345658 on
+`4cfd15e`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
 | Total matrix files | 47,717 |
 | Actually run | 24,131-24,133 |
-| Pass | 16,268-16,273 |
-| Fail | 7,860-7,863 |
+| Pass | 16,268-16,282 |
+| Fail | 7,849-7,863 |
 | Timeout | 11-13 |
 | Skip | 23,573 |
-| **Pass rate (of run)** | **67.4%** |
+| **Pass rate (of run)** | **67.4%-67.5%** |
 | **Pass rate (of total)** | **34.1%** |
 
 This number is dominated by tests for features RuJa does not support.
