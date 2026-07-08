@@ -4153,6 +4153,69 @@ fn regex_source_flags() {
 }
 
 #[test]
+fn regexp_escape_is_static_builtin_with_expected_attrs() {
+    assert_eq!(
+        run(
+            r#"var d = Object.getOwnPropertyDescriptor(RegExp, "escape");
+               [
+                 typeof RegExp.escape,
+                 "escape" in RegExp.prototype,
+                 d.writable,
+                 d.enumerable,
+                 d.configurable,
+                 RegExp.escape.length,
+                 RegExp.escape.name
+               ].join("|");"#
+        ),
+        Value::String(Arc::from("function|false|true|false|true|1|escape"))
+    );
+}
+
+#[test]
+fn regexp_escape_escapes_literal_pattern_text() {
+    assert_eq!(
+        run(r#"[
+                 RegExp.escape("") === "",
+                 RegExp.escape("foo") === "\\x66oo",
+                 RegExp.escape("1+1") === "\\x31\\+1",
+                 RegExp.escape("/.") === "\\/\\.",
+                 RegExp.escape(" ,-") === "\\x20\\x2c\\x2d",
+                 RegExp.escape("\t\n\v\f\r") === "\\t\\n\\v\\f\\r",
+                 RegExp.escape("\u2028\u2029") === "\\u2028\\u2029",
+                 RegExp.escape("\uFEFF\u00A0\u202F") === "\\ufeff\\xa0\\u202f",
+                 RegExp.escape(String.fromCharCode(0xD800)) === "\\ud800",
+                 RegExp.escape(String.fromCharCode(0xD83D, 0xDE00)) === String.fromCharCode(0xD83D, 0xDE00)
+               ].join("|");"#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|true"
+        ))
+    );
+}
+
+#[test]
+fn regexp_escape_rejects_non_strings_without_coercion() {
+    assert!(run_err("RegExp.escape(undefined);").contains("TypeError"));
+    assert!(run_err("RegExp.escape(123);").contains("TypeError"));
+    assert_eq!(
+        run(r#"var called = false;
+               try {
+                 RegExp.escape({ toString: function() { called = true; return "x"; } });
+               } catch (e) {}
+               called;"#),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn regexp_escape_is_installed_in_created_realms() {
+    assert_eq!(
+        run(r#"var other = $262.createRealm().global;
+               [typeof other.RegExp.escape, other.RegExp.escape("foo")].join("|");"#),
+        Value::String(Arc::from("function|\\x66oo"))
+    );
+}
+
+#[test]
 fn regexp_modifiers_empty_remove_list_compiles() {
     assert_eq!(run("/(?s-:^.$)/.test('\\n');"), Value::Bool(true));
     assert_eq!(

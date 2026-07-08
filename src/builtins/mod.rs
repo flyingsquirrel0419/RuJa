@@ -1613,8 +1613,13 @@ fn make_regexp_constructor_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(GcI
     });
     let regexp_species_getter =
         vm.new_native_function_in_env("get [Symbol.species]", promise_species_get, 0, env)?;
+    let regexp_escape_fn = vm.new_native_function_in_env("escape", regexp_escape, 1, env)?;
     vm.heap.with_obj(regex_ctor.0, |o| {
         if let HeapObj::Function(f) = o {
+            f.props.lock().insert(
+                PropertyKey::from("escape"),
+                data_prop(Value::Object(regexp_escape_fn)),
+            );
             f.props.lock().insert(
                 PropertyKey::from("__proto__"),
                 data_prop(Value::Object(regex_proto)),

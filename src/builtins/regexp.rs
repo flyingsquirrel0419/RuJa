@@ -1,4 +1,5 @@
 use super::*;
+use std::fmt::Write as _;
 
 // RegExp
 // =========================================================================
@@ -59,6 +60,21 @@ pub(crate) fn regexp_constructor(
     };
     let regex_proto_val = native_constructor_prototype(vm, regex_proto_val)?;
     create_regexp_object(vm, pattern, flags, regex_proto_val)
+}
+
+pub(crate) fn regexp_escape(
+    _vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(Value::String(input)) = args.first() else {
+        return Err(Error::type_err(
+            "RegExp.escape requires a string".to_string(),
+        ));
+    };
+    Ok(Value::String(Arc::from(
+        regexp_escape_string(input).as_str(),
+    )))
 }
 
 pub(crate) fn regexp_create_intrinsic(vm: &mut Vm, pattern: &Value) -> error::Result<Value> {
@@ -626,6 +642,121 @@ fn escape_regexp_source_for_accessor(source: &str) -> String {
         }
     }
     out
+}
+
+fn regexp_escape_string(source: &str) -> String {
+    let units = crate::value::utf16_from_str(source);
+    let mut out = String::new();
+    let mut i = 0;
+    let mut first = true;
+
+    while i < units.len() {
+        let unit = units[i];
+        let code_units = if (0xD800..=0xDBFF).contains(&unit) && i + 1 < units.len() {
+            let low = units[i + 1];
+            if (0xDC00..=0xDFFF).contains(&low) {
+                i += 2;
+                &units[i - 2..i]
+            } else {
+                i += 1;
+                &units[i - 1..i]
+            }
+        } else {
+            i += 1;
+            &units[i - 1..i]
+        };
+
+        let code_point = regexp_escape_code_point_value(code_units);
+        if first && is_ascii_letter_or_decimal_digit(code_point) {
+            push_hex_escape(&mut out, code_point);
+        } else {
+            push_encoded_regexp_escape(&mut out, code_point, code_units);
+        }
+        first = false;
+    }
+
+    out
+}
+
+fn regexp_escape_code_point_value(units: &[u16]) -> u32 {
+    debug_assert!(!units.is_empty());
+    if units.len() == 2 {
+        let high = units[0] as u32;
+        let low = units[1] as u32;
+        0x10000 + (((high - 0xD800) << 10) | (low - 0xDC00))
+    } else {
+        units[0] as u32
+    }
+}
+
+fn is_ascii_letter_or_decimal_digit(code_point: u32) -> bool {
+    matches!(code_point, 0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A)
+}
+
+fn push_encoded_regexp_escape(out: &mut String, code_point: u32, units: &[u16]) {
+    match code_point {
+        0x09 => out.push_str("\\t"),
+        0x0A => out.push_str("\\n"),
+        0x0B => out.push_str("\\v"),
+        0x0C => out.push_str("\\f"),
+        0x0D => out.push_str("\\r"),
+        0x5E | 0x24 | 0x5C | 0x2E | 0x2A | 0x2B | 0x3F | 0x28 | 0x29 | 0x5B | 0x5D | 0x7B
+        | 0x7D | 0x7C | 0x2F => {
+            out.push('\\');
+            out.push(char::from_u32(code_point).unwrap());
+        }
+        _ if is_regexp_escape_other_punctuator(code_point)
+            || is_regexp_escape_whitespace_or_lineterminator(code_point)
+            || (0xD800..=0xDFFF).contains(&code_point) =>
+        {
+            if code_point <= 0xFF {
+                push_hex_escape(out, code_point);
+            } else {
+                for unit in units {
+                    push_unicode_escape(out, *unit);
+                }
+            }
+        }
+        _ => out.push_str(&crate::value::utf16_to_string(units)),
+    }
+}
+
+fn is_regexp_escape_other_punctuator(code_point: u32) -> bool {
+    matches!(
+        code_point,
+        0x2C | 0x2D
+            | 0x3D
+            | 0x3C
+            | 0x3E
+            | 0x23
+            | 0x26
+            | 0x21
+            | 0x25
+            | 0x3A
+            | 0x3B
+            | 0x40
+            | 0x7E
+            | 0x27
+            | 0x60
+            | 0x22
+    )
+}
+
+fn is_regexp_escape_whitespace_or_lineterminator(code_point: u32) -> bool {
+    matches!(
+        code_point,
+        0x0009 | 0x000A | 0x000B | 0x000C | 0x000D | 0x0020 | 0x00A0 | 0x1680 | 0x2000
+            ..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF
+    )
+}
+
+fn push_hex_escape(out: &mut String, code_point: u32) {
+    debug_assert!(code_point <= 0xFF);
+    write!(out, "\\x{code_point:02x}").unwrap();
+}
+
+fn push_unicode_escape(out: &mut String, unit: u16) {
+    write!(out, "\\u{unit:04x}").unwrap();
 }
 
 fn is_current_realm_regexp_prototype(vm: &mut Vm, value: GcIdx) -> bool {

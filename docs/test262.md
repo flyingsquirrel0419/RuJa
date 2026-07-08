@@ -242,6 +242,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   observes public `global`/`sticky`/other property overrides through normal
   `Get` semantics. Internal slot keys use non-identifier names so subclass
   `#private` fields cannot collide with them.
+- **`RegExp.escape` static builtin** —
+  `RegExp.escape` is now installed on every realm-local `RegExp` constructor
+  with spec-shaped `name`, `length`, descriptor, and non-constructor behavior.
+  It rejects non-string inputs without `ToString`, escapes initial ASCII
+  letters/digits with `\xNN`, handles syntax characters, `/`, control escapes,
+  other punctuators, whitespace/line terminators, and preserves RuJa's UTF-16
+  string model by escaping lone surrogates as `\uNNNN`. The focused
+  `built-ins/RegExp/escape` run now closes at **19 pass / 0 fail / 1 skip**.
 - **Reference-preserving identifier calls through `with`** —
   direct IdentifierReference calls now carry their Reference record into the
   VM call opcode. `with (o) { f() }` still binds `this` to `o` when `f` is

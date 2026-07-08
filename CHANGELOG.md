@@ -24,6 +24,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
 
+- **`RegExp.escape` static builtin**: `RegExp.escape` is now installed on each
+  realm-local `RegExp` constructor with the expected own property shape,
+  rejects non-string inputs without coercion, and implements the ES
+  `EncodeForRegExpEscape` rules for initial ASCII alphanumerics, syntax
+  characters, `/`, control escapes, whitespace/line terminators, other
+  punctuators, and lone UTF-16 surrogates. The focused
+  `built-ins/RegExp/escape` run now closes at **19 pass / 0 fail / 1 skip**.
 - **Object integrity for arrays, arguments, functions, and Proxy traps**:
   `Object.seal`/`Object.freeze` now route through the Proxy-aware
   `[[PreventExtensions]]` path so false Proxy traps throw for the `Object.*`
