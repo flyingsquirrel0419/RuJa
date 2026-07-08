@@ -431,6 +431,21 @@ fn update_member_evaluates_computed_key_once() {
 }
 
 #[test]
+fn update_member_preserves_symbol_computed_key() {
+    assert_eq!(
+        run(r#"
+            var s = Symbol("update");
+            var base = {};
+            base[s] = 1;
+            var pre = ++base[s];
+            var post = base[s]++;
+            [pre, post, base[s], Object.getOwnPropertySymbols(base).length].join(":");
+            "#),
+        Value::String(Arc::from("2:2:3:1"))
+    );
+}
+
+#[test]
 fn update_preserves_bigint_numeric_type() {
     assert_eq!(
         run(r#"
@@ -491,6 +506,21 @@ fn compound_element() {
     assert_eq!(
         run("var a = [10,20,30]; a[1] += 5; a[1];"),
         Value::Number(25.0)
+    );
+}
+
+#[test]
+fn compound_member_preserves_symbol_computed_key() {
+    assert_eq!(
+        run(r#"
+            var s = Symbol("compound");
+            var base = {};
+            base[s] = 7;
+            base[s] += 2;
+            base[s] *= 3;
+            [base[s], Object.getOwnPropertySymbols(base).length].join(":");
+            "#),
+        Value::String(Arc::from("27:1"))
     );
 }
 
@@ -646,6 +676,24 @@ fn logical_assign_member_short_circuit_keeps_expression_result() {
     assert_eq!(
         run("var o = { a: 1 }; var y = (o.a ??= 2); y + ':' + o.a;"),
         Value::String(Arc::from("1:1"))
+    );
+}
+
+#[test]
+fn logical_assign_member_preserves_symbol_computed_key() {
+    assert_eq!(
+        run(r#"
+            var a = Symbol("or");
+            var b = Symbol("and");
+            var c = Symbol("nullish");
+            var base = {};
+            base[a] ||= 5;
+            base[b] = 1;
+            base[b] &&= 6;
+            base[c] ??= 7;
+            [base[a], base[b], base[c], Object.getOwnPropertySymbols(base).length].join(":");
+            "#),
+        Value::String(Arc::from("5:6:7:3"))
     );
 }
 

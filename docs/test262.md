@@ -203,6 +203,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Reference-preserving path, and unqualified `eval(...)` keeps direct eval
   behavior only for the intrinsic eval function. The focused
   `language/statements/with` run closes at **169 pass / 0 fail / 12 skip**.
+- **Symbol computed keys for member assignments** —
+  computed member update, numeric/bitwise compound assignment, and logical
+  assignment now coerce computed keys with `ToPropertyKey` instead of
+  `ToString`, so Symbol property keys survive the read/write pair while base,
+  key, and right-hand-side evaluation order stays unchanged. The focused
+  `language/expressions/{compound-assignment,logical-assignment,
+  prefix-increment,postfix-increment}` run closes at **532 pass / 0 fail / 71
+  skip**.
 - **Map/Set zero-key canonicalization** —
   Internal `MapKey` creation now canonicalizes numeric `-0` to `+0`, and its
   hash implementation now agrees with SameValueZero equality for both zero

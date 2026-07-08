@@ -2549,7 +2549,7 @@ impl Compiler {
                         if *computed {
                             self.compile_expr(property)?;
                             self.chunk.emit(Op::CheckNullBase, self.current_line);
-                            self.chunk.emit(Op::ToString, self.current_line);
+                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
                         } else {
                             self.chunk.emit(Op::CheckNullBase, self.current_line);
                             let key = if let Expr::String(s) = property.as_ref() {
@@ -4347,9 +4347,9 @@ impl Compiler {
                     // Per spec: ToObject(base) is called AFTER key evaluation
                     // but BEFORE ToPropertyKey. So: evaluate base, evaluate
                     // key, check base for null/undefined (ToObject), then
-                    // ToPropertyKey (ToString).
+                    // ToPropertyKey.
                     self.chunk.emit(Op::CheckNullBase, self.current_line);
-                    self.chunk.emit(Op::ToString, self.current_line);
+                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
                 } else {
                     // Non-computed: check base for null/undefined after
                     // evaluating the key constant.
@@ -4469,10 +4469,9 @@ impl Compiler {
                     // ToObject(base) happens after evaluating the property
                     // expression but before ToPropertyKey.
                     self.chunk.emit(Op::CheckNullBase, self.current_line);
-                    // Convert the key to a property key string ONCE, so that
-                    // ToPropertyKey (and thus toString) is called only once
-                    // per spec. Both GetElem and SetElem use this string.
-                    self.chunk.emit(Op::ToString, self.current_line);
+                    // Convert the key to a property key ONCE, preserving
+                    // Symbol keys. Both GetElem and SetElem use this key.
+                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
                 } else {
                     let key = if let Expr::String(s) = property.as_ref() {
                         s.to_string()

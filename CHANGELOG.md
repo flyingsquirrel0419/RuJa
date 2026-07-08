@@ -86,6 +86,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `eval(...)` keeps its existing intrinsic-eval behavior. The focused
   `language/statements/with` test262 run closes at **169 pass / 0 fail / 12
   skip**.
+- **Symbol computed keys for member assignments**: computed member update,
+  numeric/bitwise compound assignment, and logical assignment now coerce keys
+  with `ToPropertyKey` instead of `ToString`, preserving Symbol property keys
+  while still evaluating the base, key, and right-hand side in spec order. The
+  focused `language/expressions/{compound-assignment,logical-assignment,
+  prefix-increment,postfix-increment}` test262 run closes at **532 pass / 0
+  fail / 71 skip**.
 - **Map/Set zero-key canonicalization**: keyed collections now normalize
   numeric `-0` to `+0` when creating internal `MapKey`s, and the `MapKey`
   hash implementation now matches SameValueZero equality for both zero signs.
