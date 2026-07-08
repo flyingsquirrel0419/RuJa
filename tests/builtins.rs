@@ -804,6 +804,40 @@ fn typed_array_constructors_create_array_buffer_backed_views() {
 }
 
 #[test]
+fn typed_array_bigint_constructors_expose_element_size_and_validate_receivers() {
+    assert_eq!(
+        run(r#"
+            var ctorDesc = Object.getOwnPropertyDescriptor(BigInt64Array, "BYTES_PER_ELEMENT");
+            var protoDesc = Object.getOwnPropertyDescriptor(BigUint64Array.prototype, "BYTES_PER_ELEMENT");
+            var bufferGetter = Object.getOwnPropertyDescriptor(BigInt64Array.prototype, "buffer").get;
+            var lengthGetter = Object.getOwnPropertyDescriptor(BigInt64Array.prototype, "length").get;
+            var ta = new BigInt64Array(2);
+            var throwsOnProto = false;
+            var throwsOnObject = false;
+            try { BigInt64Array.prototype.buffer; } catch (e) { throwsOnProto = e instanceof TypeError; }
+            try { bufferGetter.call({}); } catch (e) { throwsOnObject = e instanceof TypeError; }
+            [
+              ctorDesc.value,
+              ctorDesc.writable,
+              ctorDesc.enumerable,
+              ctorDesc.configurable,
+              protoDesc.value,
+              protoDesc.writable,
+              protoDesc.enumerable,
+              protoDesc.configurable,
+              bufferGetter.call(ta) instanceof ArrayBuffer,
+              lengthGetter.call(ta),
+              throwsOnProto,
+              throwsOnObject
+            ].join(",");
+            "#),
+        Value::String(Arc::from(
+            "8,false,false,false,8,false,false,false,true,2,true,true",
+        ))
+    );
+}
+
+#[test]
 fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
     assert_eq!(
         run(r#"

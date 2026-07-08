@@ -1466,6 +1466,7 @@ fn install_typed_array_constructor(
     vm: &mut Vm,
     name: &str,
     constructor: NativeFn,
+    kind: crate::value::TypedArrayKind,
 ) -> error::Result<()> {
     let ctor_idx = vm.new_native_function(name, constructor, 1)?;
     let proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
@@ -1485,11 +1486,47 @@ fn install_typed_array_constructor(
             );
         }
     });
+    let element_size = Value::Number(kind.element_size() as f64);
+    let buffer_getter = vm.new_native_function("get buffer", typed_array_buffer_get, 0)?;
+    let byte_length_getter =
+        vm.new_native_function("get byteLength", typed_array_byte_length_get, 0)?;
+    let byte_offset_getter =
+        vm.new_native_function("get byteOffset", typed_array_byte_offset_get, 0)?;
+    let length_getter = vm.new_native_function("get length", typed_array_length_get, 0)?;
     vm.heap.with_obj(proto_idx.0, |o| {
-        o.props().lock().insert(
+        let mut props = o.props().lock();
+        props.insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(ctor_idx)),
         );
+        props.insert(
+            PropertyKey::from("BYTES_PER_ELEMENT"),
+            const_prop(element_size.clone()),
+        );
+        props.insert(
+            PropertyKey::from("buffer"),
+            accessor_get_prop(Value::Object(buffer_getter)),
+        );
+        props.insert(
+            PropertyKey::from("byteLength"),
+            accessor_get_prop(Value::Object(byte_length_getter)),
+        );
+        props.insert(
+            PropertyKey::from("byteOffset"),
+            accessor_get_prop(Value::Object(byte_offset_getter)),
+        );
+        props.insert(
+            PropertyKey::from("length"),
+            accessor_get_prop(Value::Object(length_getter)),
+        );
+    });
+    vm.heap.with_obj(ctor_idx.0, |o| {
+        if let HeapObj::Function(f) = o {
+            f.props.lock().insert(
+                PropertyKey::from("BYTES_PER_ELEMENT"),
+                const_prop(element_size),
+            );
+        }
     });
     define_global(vm, name, Value::Object(ctor_idx));
     Ok(())
@@ -4675,23 +4712,64 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "DataView", Value::Object(data_view_ctor));
 
-    for (name, constructor) in [
-        ("Int8Array", int8array_constructor as NativeFn),
-        ("Uint8Array", uint8array_constructor as NativeFn),
+    for (name, constructor, kind) in [
+        (
+            "Int8Array",
+            int8array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Int8,
+        ),
+        (
+            "Uint8Array",
+            uint8array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint8,
+        ),
         (
             "Uint8ClampedArray",
             uint8clampedarray_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint8Clamped,
         ),
-        ("Int16Array", int16array_constructor as NativeFn),
-        ("Uint16Array", uint16array_constructor as NativeFn),
-        ("Int32Array", int32array_constructor as NativeFn),
-        ("Uint32Array", uint32array_constructor as NativeFn),
-        ("Float32Array", float32array_constructor as NativeFn),
-        ("Float64Array", float64array_constructor as NativeFn),
-        ("BigInt64Array", bigint64array_constructor as NativeFn),
-        ("BigUint64Array", biguint64array_constructor as NativeFn),
+        (
+            "Int16Array",
+            int16array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Int16,
+        ),
+        (
+            "Uint16Array",
+            uint16array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint16,
+        ),
+        (
+            "Int32Array",
+            int32array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Int32,
+        ),
+        (
+            "Uint32Array",
+            uint32array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint32,
+        ),
+        (
+            "Float32Array",
+            float32array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Float32,
+        ),
+        (
+            "Float64Array",
+            float64array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Float64,
+        ),
+        (
+            "BigInt64Array",
+            bigint64array_constructor as NativeFn,
+            crate::value::TypedArrayKind::BigInt64,
+        ),
+        (
+            "BigUint64Array",
+            biguint64array_constructor as NativeFn,
+            crate::value::TypedArrayKind::BigUint64,
+        ),
     ] {
-        install_typed_array_constructor(vm, name, constructor)?;
+        install_typed_array_constructor(vm, name, constructor, kind)?;
     }
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with(

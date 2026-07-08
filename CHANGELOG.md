@@ -58,6 +58,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   only after the observable `byteOffset` coercion. The focused
   `built-ins/DataView` run improves from **266 pass / 2 fail / 293 skip** to
   **268 pass / 0 fail / 293 skip**.
+- **BigInt TypedArray constructor surface**: BigInt typed array constructors
+  and prototypes now expose non-writable, non-enumerable, non-configurable
+  `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors
+  reject non-typed-array receivers. The focused
+  `built-ins/TypedArrayConstructors` run improves from **10 pass / 6 fail /
+  722 skip** to **16 pass / 0 fail / 722 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

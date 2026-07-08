@@ -963,6 +963,73 @@ pub(crate) fn data_view_set_biguint64(
     data_view_write_bigint64(vm, args, this, "setBigUint64")
 }
 
+fn typed_array_slots(
+    vm: &Vm,
+    this: Option<Value>,
+    name: &str,
+) -> error::Result<(crate::value::TypedArrayKind, Option<Value>, usize, usize)> {
+    let this =
+        this.ok_or_else(|| Error::type_err(format!("TypedArray {name} getter needs this")))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::TypedArray(array) = o {
+                    Some((
+                        array.kind,
+                        array.viewed_array_buffer.clone(),
+                        array.byte_offset,
+                        array.byte_length,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::type_err(format!("TypedArray {name} getter on non-TypedArray"))),
+        _ => Err(Error::type_err(format!(
+            "TypedArray {name} getter on non-object"
+        ))),
+    }
+}
+
+pub(crate) fn typed_array_buffer_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (_, buffer, _, _) = typed_array_slots(vm, this, "buffer")?;
+    Ok(buffer.unwrap_or(Value::Undefined))
+}
+
+pub(crate) fn typed_array_byte_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (_, _, _, byte_length) = typed_array_slots(vm, this, "byteLength")?;
+    Ok(Value::Number(byte_length as f64))
+}
+
+pub(crate) fn typed_array_byte_offset_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (_, _, byte_offset, _) = typed_array_slots(vm, this, "byteOffset")?;
+    Ok(Value::Number(byte_offset as f64))
+}
+
+pub(crate) fn typed_array_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (kind, _, _, byte_length) = typed_array_slots(vm, this, "length")?;
+    Ok(Value::Number(
+        typed_array_element_count(kind, byte_length) as f64
+    ))
+}
+
 pub(crate) fn to_uint8_element(n: f64) -> u8 {
     if !n.is_finite() || n == 0.0 {
         return 0;
