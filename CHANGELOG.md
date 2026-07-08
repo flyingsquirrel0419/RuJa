@@ -109,6 +109,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   key expression before the nullish-base failure. The focused
   `language/expressions/{assignment,delete,member-expression}` run remains
   **273 pass / 0 fail / 282 skip**.
+- **Array destructuring assignment IteratorClose ordering**: array assignment
+  patterns now close unfinished iterators on normal partial completion,
+  evaluate rest assignment target references before draining rest values, and
+  close iterators when rest-target or rest-iterator evaluation completes
+  abruptly. The focused `language/expressions/assignment/dstr` run closes at
+  **90 pass / 0 fail / 278 skip**, and the broader Reference-adjacent cluster
+  `language/expressions/assignment language/expressions/compound-assignment
+  language/expressions/logical-assignment language/expressions/update
+  language/statements/with` remains **835 pass / 0 fail / 363 skip**.
 - **`%ThrowTypeError%` intrinsic**: restricted function and arguments
   accessors now use an anonymous, frozen, non-extensible `%ThrowTypeError%`
   function per Realm. Strict and non-simple-parameter unmapped arguments reuse

@@ -284,6 +284,14 @@ pub enum Op {
         inner_continue: Option<usize>,
         ignore_close_errors: bool,
     },
+    /// Close an iterator on normal completion when its done binding is not
+    /// true. Used by array destructuring assignment, whose iterator must be
+    /// closed even after a successful partial pattern.
+    IteratorClose {
+        iter: usize,
+        done: usize,
+        ignore_close_errors: bool,
+    },
     /// Build a tagged-template object: pop or look up the cached template
     /// object for this source site. Operands are indices into the chunk's
     /// constants for the cooked and raw string arrays. The resulting object

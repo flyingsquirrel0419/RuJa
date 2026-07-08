@@ -2064,39 +2064,70 @@ impl Compiler {
                 self.chunk.emit(Op::GetIterator, self.current_line);
                 let iter_idx = self.intern("#arr-assign-iter");
                 self.chunk.emit(Op::DeclareEnv(iter_idx), self.current_line);
+                let done_idx = self.intern("#arr-assign-done");
+                self.chunk.emit(Op::False, self.current_line);
+                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                let finally_guard_ip = self.chunk.code.len();
+                self.chunk.emit(Op::PushFinally(0), self.current_line);
                 for el in elems {
                     match el {
                         Expr::ArrayHole => {
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line);
                         }
                         Expr::Spread(inner) => {
+                            let target_temp =
+                                self.compile_assign_target_temp(Self::assignment_target(inner))?;
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
                             let rest_idx = self.intern("#arr-assign-rest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
-                            self.compile_assign_value_to_target(inner, rest_idx, None)?;
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            self.compile_assign_value_to_target(inner, rest_idx, target_temp)?;
                         }
                         _ => {
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(el))?;
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
-                            let done_idx = self.intern("#arr-assign-done");
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             let elem_idx = self.intern("#arr-assign-elem");
                             self.chunk.emit(Op::DeclareEnv(elem_idx), self.current_line);
-                            self.compile_assign_value_guarded_by_iterator(
-                                el,
-                                elem_idx,
-                                iter_idx,
-                                done_idx,
-                                target_temp,
-                            )?;
+                            self.compile_assign_value_to_target(el, elem_idx, target_temp)?;
                         }
                     }
                 }
+                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(
+                    Op::IteratorClose {
+                        iter: iter_idx,
+                        done: done_idx,
+                        ignore_close_errors: false,
+                    },
+                    self.current_line,
+                );
+                let jump_after_finally = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), self.current_line);
+                let finally_start = self.chunk.code.len();
+                if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
+                    *target = finally_start;
+                }
+                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(
+                    Op::IteratorCloseIfAbrupt {
+                        iter: iter_idx,
+                        done: done_idx,
+                        inner_continue: None,
+                        ignore_close_errors: true,
+                    },
+                    self.current_line,
+                );
+                self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
+                let after_finally = self.chunk.code.len();
+                self.chunk.patch_jump(jump_after_finally, after_finally);
             }
             Expr::Object(props) => {
                 for p in props {
@@ -2189,40 +2220,6 @@ impl Compiler {
         } else {
             expr
         }
-    }
-
-    fn compile_assign_value_guarded_by_iterator(
-        &mut self,
-        target: &Expr,
-        value_idx: usize,
-        iter_idx: usize,
-        done_idx: usize,
-        target_temp: Option<AssignTargetTemp>,
-    ) -> error::Result<()> {
-        let finally_guard_ip = self.chunk.code.len();
-        self.chunk.emit(Op::PushFinally(0), self.current_line);
-        self.compile_assign_value_to_target(target, value_idx, target_temp)?;
-        self.chunk.emit(Op::PopFinally, self.current_line);
-        let jump_after_finally = self.chunk.code.len();
-        self.chunk.emit(Op::Jump(0), self.current_line);
-        let finally_start = self.chunk.code.len();
-        if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
-            *target = finally_start;
-        }
-        self.chunk.emit(Op::PopFinally, self.current_line);
-        self.chunk.emit(
-            Op::IteratorCloseIfAbrupt {
-                iter: iter_idx,
-                done: done_idx,
-                inner_continue: None,
-                ignore_close_errors: true,
-            },
-            self.current_line,
-        );
-        self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
-        let after_finally = self.chunk.code.len();
-        self.chunk.patch_jump(jump_after_finally, after_finally);
-        Ok(())
     }
 
     fn compile_assign_value_to_target(

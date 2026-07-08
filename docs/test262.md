@@ -137,6 +137,16 @@ Latest improvement confirmation: `test262-full` 28973435387 on `1394ad3`.
 Latest improvement confirmation: `test262-full` 28975444046 on `dc133c1`.
 Latest improvement confirmation: `test262-full` 28977306579 on `2c6f617`.
 
+Focused destructuring assignment IteratorClose local check:
+`language/expressions/assignment/dstr` closes at **90 pass / 0 fail / 278
+skip** after array assignment patterns close unfinished iterators on normal
+partial completion, evaluate rest assignment target references before draining
+rest values, and close on abrupt rest-target or rest-iterator completion. The
+broader Reference-adjacent cluster
+`language/expressions/assignment language/expressions/compound-assignment
+language/expressions/logical-assignment language/expressions/update
+language/statements/with` remains **835 pass / 0 fail / 363 skip**.
+
 | Metric | Latest confirmed count |
 |--------|------------------------|
 | Total matrix files | 47,717 |
@@ -197,6 +207,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   assignment throws `TypeError`, and `delete undefined` returns `false`. The
   focused `built-ins/global built-ins/undefined` run improves from **33 pass /
   4 fail / 0 skip** to **37 pass / 0 fail / 0 skip**.
+- **Array destructuring assignment IteratorClose ordering** —
+  Array assignment patterns now close unfinished iterators on normal partial
+  completion, evaluate rest assignment target references before draining rest
+  values, and close iterators when rest-target or rest-iterator evaluation
+  completes abruptly. The focused `language/expressions/assignment/dstr` run
+  closes at **90 pass / 0 fail / 278 skip**, and the broader
+  Reference-adjacent cluster remains **835 pass / 0 fail / 363 skip**.
 - **Proxy `[[Construct]]` semantics** —
   Constructable Proxy objects now inherit constructability from their target,
   dispatch `construct` traps with a current-Realm argument array, validate trap

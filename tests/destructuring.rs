@@ -39,6 +39,61 @@ fn array_assign_with_holes() {
 }
 
 #[test]
+fn array_assign_empty_pattern_closes_iterator_without_stepping() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                return { done: true };
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            var result = [] = iterable;
+            [nextCount, returnCount, result === iterable].join(":");
+            "#),
+        Value::String(Arc::from("0:1:true"))
+    );
+}
+
+#[test]
+fn array_assign_partial_pattern_closes_unfinished_iterator() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var thisIsIterator = false;
+            var argCount = -1;
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                return { value: 7, done: false };
+              },
+              return: function() {
+                returnCount += 1;
+                thisIsIterator = this === iterator;
+                argCount = arguments.length;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            var x;
+            [x] = iterable;
+            [nextCount, returnCount, x, thisIsIterator, argCount].join(":");
+            "#),
+        Value::String(Arc::from("1:1:7:true:0"))
+    );
+}
+
+#[test]
 fn array_assign_rest() {
     assert_eq!(
         run("var head=0, rest=0; [head, ...rest] = [1, 2, 3]; head + rest.length;"),
@@ -143,6 +198,70 @@ fn array_assign_closes_iterator_on_default_throw_preserving_original_throw() {
         log.join(",");
     "#;
     assert_eq!(run(src), Value::String(Arc::from("return-get,true")));
+}
+
+#[test]
+fn array_assign_rest_target_error_closes_before_iterator_step() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var caught = "";
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                return { done: true };
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            var thrower = function() {
+              throw "target";
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            try {
+              0, [...{}[thrower()]] = iterable;
+            } catch (e) {
+              caught = e;
+            }
+            [nextCount, returnCount, caught].join(":");
+            "#),
+        Value::String(Arc::from("0:1:target"))
+    );
+}
+
+#[test]
+fn array_assign_rest_iterator_error_closes_iterator() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var caught = "";
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                throw "next";
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            var rest;
+            try {
+              [...rest] = iterable;
+            } catch (e) {
+              caught = e;
+            }
+            [nextCount, returnCount, caught].join(":");
+            "#),
+        Value::String(Arc::from("1:1:next"))
+    );
 }
 
 #[test]
