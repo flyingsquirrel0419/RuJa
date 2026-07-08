@@ -4023,6 +4023,39 @@ fn regex_source_flags() {
         Value::String(Arc::from("\\n"))
     );
     assert_eq!(
+        run("Object.getOwnPropertyNames(/a/g).join(',');"),
+        Value::String(Arc::from("lastIndex"))
+    );
+    assert_eq!(
+        run("[
+               Object.getOwnPropertyDescriptor(/a/g, 'global'),
+               Object.getOwnPropertyDescriptor(/a/g, '__regexp_source__')
+             ].map(String).join(',');"),
+        Value::String(Arc::from("undefined,undefined"))
+    );
+    assert_eq!(
+        run(r#"var r = /a/gy;
+               Object.defineProperty(r, 'a', { value: 1 });
+               Object.getOwnPropertyNames(Object.getOwnPropertyDescriptors(r)).join(',');"#),
+        Value::String(Arc::from("lastIndex,a"))
+    );
+    assert_eq!(
+        run(r#"var r = /a/gy;
+               Object.defineProperty(r, 'global', { value: false });
+               [r.source, r.global, r.sticky, r.flags].join('|');"#),
+        Value::String(Arc::from("a|false|true|y"))
+    );
+    assert_eq!(
+        run(r#"class S extends RegExp {
+                 #__regexp_source__ = 1;
+                 #__regexp_global__ = 2;
+                 values() { return [this.#__regexp_source__, this.#__regexp_global__].join(','); }
+               }
+               var r = new S('a', 'g');
+               [r.source, r.global, r.flags, r.values()].join('|');"#),
+        Value::String(Arc::from("a|true|g|1,2"))
+    );
+    assert_eq!(
         run(r#"
             var get = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get;
             var other = $262.createRealm().global;

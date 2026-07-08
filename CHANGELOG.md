@@ -92,8 +92,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   descriptor materialization instead of being bypassed through target storage.
   With `Proxy`/`Reflect`/`Symbol` skips temporarily lifted, focused
   `built-ins/Object/{values,entries,getOwnPropertyDescriptors}` now runs at
-  **58 pass / 1 fail / 0 skip**; the remaining failure is isolated to
-  RegExp internal bookkeeping keys.
+  **59 pass / 0 fail / 0 skip** after the separate RegExp internal-slot
+  exposure fix.
+- **RegExp internal slots hidden from own keys**: RegExp instances now keep
+  source, flags, and derived flag bits in non-observable internal storage
+  rather than ordinary own properties, leaving `lastIndex` as the only default
+  own string key. The public `RegExp.prototype.flags` getter still observes
+  `global`/`sticky`/other property overrides through normal `Get` semantics,
+  while the individual flag getters read the internal slots. This fixes
+  `Object.getOwnPropertyNames`, `Reflect.ownKeys`, and
+  `Object.getOwnPropertyDescriptors` order for RegExp instances without
+  colliding with subclass `#private` fields.
 - **Reference-preserving identifier calls through `with`**: direct
   IdentifierReference calls now retain their Reference record through the VM
   call opcode, so `with (o) { f() }` still binds `this` to `o`, while value

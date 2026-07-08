@@ -222,9 +222,18 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `getOwnPropertyDescriptor` traps are observable before enumerable filtering,
   value reads, and descriptor materialization. With `Proxy`/`Reflect`/`Symbol`
   skips temporarily lifted, focused
-  `built-ins/Object/{values,entries,getOwnPropertyDescriptors}` runs at **58
-  pass / 1 fail / 0 skip**; the remaining failure is the separate RegExp
-  internal-key exposure case.
+  `built-ins/Object/{values,entries,getOwnPropertyDescriptors}` runs at **59
+  pass / 0 fail / 0 skip** after the separate RegExp internal-slot exposure
+  fix.
+- **RegExp internal slots hidden from own keys** —
+  RegExp instances now store source, flags, and derived flag bits in
+  non-observable internal storage instead of ordinary own properties, so
+  `lastIndex` remains the only default own string key and user-defined keys
+  keep spec insertion order in descriptor helpers. The individual flag
+  accessors read those internal slots, while `RegExp.prototype.flags` still
+  observes public `global`/`sticky`/other property overrides through normal
+  `Get` semantics. Internal slot keys use non-identifier names so subclass
+  `#private` fields cannot collide with them.
 - **Reference-preserving identifier calls through `with`** —
   direct IdentifierReference calls now carry their Reference record into the
   VM call opcode. `with (o) { f() }` still binds `this` to `o` when `f` is

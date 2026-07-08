@@ -8,8 +8,16 @@ fn regexp_last_index_prop(value: Value) -> PropertyDescriptor {
     desc
 }
 
-const REGEXP_SOURCE_SLOT: &str = "__regexp_source__";
-const REGEXP_FLAGS_SLOT: &str = "__regexp_flags__";
+const REGEXP_SOURCE_SLOT: &str = "[[RegExpSource]]";
+const REGEXP_FLAGS_SLOT: &str = "[[RegExpFlags]]";
+const REGEXP_HAS_INDICES_SLOT: &str = "[[RegExpHasIndices]]";
+const REGEXP_GLOBAL_SLOT: &str = "[[RegExpGlobal]]";
+const REGEXP_IGNORE_CASE_SLOT: &str = "[[RegExpIgnoreCase]]";
+const REGEXP_MULTILINE_SLOT: &str = "[[RegExpMultiline]]";
+const REGEXP_DOT_ALL_SLOT: &str = "[[RegExpDotAll]]";
+const REGEXP_UNICODE_SLOT: &str = "[[RegExpUnicode]]";
+const REGEXP_UNICODE_SETS_SLOT: &str = "[[RegExpUnicodeSets]]";
+const REGEXP_STICKY_SLOT: &str = "[[RegExpSticky]]";
 
 pub(crate) fn regexp_constructor(
     vm: &mut Vm,
@@ -81,51 +89,52 @@ fn create_regexp_object(
     }))?;
     let mut props = IndexMap::new();
     props.insert(
-        PropertyKey::from(REGEXP_SOURCE_SLOT),
-        data_prop(Value::String(Arc::from(pattern.as_str()))),
-    );
-    props.insert(
-        PropertyKey::from(REGEXP_FLAGS_SLOT),
-        data_prop(Value::String(Arc::from(flags.as_str()))),
-    );
-    props.insert(
-        PropertyKey::from("hasIndices"),
-        data_prop(Value::Bool(flags.contains('d'))),
-    );
-    props.insert(
-        PropertyKey::from("global"),
-        data_prop(Value::Bool(flags.contains('g'))),
-    );
-    props.insert(
-        PropertyKey::from("ignoreCase"),
-        data_prop(Value::Bool(flags.contains('i'))),
-    );
-    props.insert(
-        PropertyKey::from("multiline"),
-        data_prop(Value::Bool(flags.contains('m'))),
-    );
-    props.insert(
-        PropertyKey::from("dotAll"),
-        data_prop(Value::Bool(flags.contains('s'))),
-    );
-    props.insert(
-        PropertyKey::from("unicode"),
-        data_prop(Value::Bool(flags.contains('u'))),
-    );
-    props.insert(
-        PropertyKey::from("unicodeSets"),
-        data_prop(Value::Bool(flags.contains('v'))),
-    );
-    props.insert(
-        PropertyKey::from("sticky"),
-        data_prop(Value::Bool(flags.contains('y'))),
-    );
-    props.insert(
         PropertyKey::from("lastIndex"),
         regexp_last_index_prop(Value::Number(0.0)),
     );
     vm.heap.with_obj(obj_idx, |o| {
         if let HeapObj::Object(obj) = o {
+            let mut private_fields = obj.private_fields.lock();
+            private_fields.insert(
+                Arc::from(REGEXP_SOURCE_SLOT),
+                crate::value::PrivateSlot::Value(Value::String(Arc::from(pattern.as_str()))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_FLAGS_SLOT),
+                crate::value::PrivateSlot::Value(Value::String(Arc::from(flags.as_str()))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_HAS_INDICES_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('d'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_GLOBAL_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('g'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_IGNORE_CASE_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('i'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_MULTILINE_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('m'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_DOT_ALL_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('s'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_UNICODE_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('u'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_UNICODE_SETS_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('v'))),
+            );
+            private_fields.insert(
+                Arc::from(REGEXP_STICKY_SLOT),
+                crate::value::PrivateSlot::Value(Value::Bool(flags.contains('y'))),
+            );
             *obj.props.lock() = props;
         }
     });
@@ -258,16 +267,12 @@ pub(crate) fn regexp_flags_get(
 fn regexp_bool_field_get(vm: &mut Vm, this: Option<Value>, field: &str) -> error::Result<Value> {
     match this {
         Some(Value::Object(idx)) => {
-            let value = vm.heap.with_obj(idx.0, |o| {
-                o.props()
-                    .lock()
-                    .get(&PropertyKey::from(field))
-                    .map(|d| d.value.clone())
-            });
-            Ok(match value {
-                Some(Value::Bool(v)) => Value::Bool(v),
-                _ => Value::Bool(false),
-            })
+            let Some(slot_name) = regexp_bool_slot_name(field) else {
+                return Ok(Value::Bool(false));
+            };
+            Ok(Value::Bool(
+                read_regexp_private_bool(vm, idx, slot_name).unwrap_or(false),
+            ))
         }
         _ => Err(Error::type_err(
             "RegExp getter called on incompatible receiver",
@@ -532,19 +537,18 @@ pub(crate) fn read_regexp_field(
     this: &Option<Value>,
     field: &str,
 ) -> error::Result<String> {
-    let storage_field = match field {
-        "source" => REGEXP_SOURCE_SLOT,
-        "flags" => REGEXP_FLAGS_SLOT,
-        other => other,
-    };
     match this {
         Some(Value::Object(idx)) => {
-            let s = vm.heap.with_obj(idx.0, |o| {
-                o.props()
-                    .lock()
-                    .get(&crate::value::PropertyKey::from(storage_field))
-                    .map(|d| d.value.clone())
-            });
+            let s = match field {
+                "source" => read_regexp_private_string(vm, *idx, REGEXP_SOURCE_SLOT),
+                "flags" => read_regexp_private_string(vm, *idx, REGEXP_FLAGS_SLOT),
+                other => vm.heap.with_obj(idx.0, |o| {
+                    o.props()
+                        .lock()
+                        .get(&crate::value::PropertyKey::from(other))
+                        .map(|d| d.value.clone())
+                }),
+            };
             match s {
                 Some(Value::String(s)) => Ok(s.to_string()),
                 _ => {
@@ -558,6 +562,52 @@ pub(crate) fn read_regexp_field(
         }
         _ => Err(Error::type_err("not a RegExp".to_string())),
     }
+}
+
+fn regexp_bool_slot_name(field: &str) -> Option<&'static str> {
+    match field {
+        "hasIndices" => Some(REGEXP_HAS_INDICES_SLOT),
+        "global" => Some(REGEXP_GLOBAL_SLOT),
+        "ignoreCase" => Some(REGEXP_IGNORE_CASE_SLOT),
+        "multiline" => Some(REGEXP_MULTILINE_SLOT),
+        "dotAll" => Some(REGEXP_DOT_ALL_SLOT),
+        "unicode" => Some(REGEXP_UNICODE_SLOT),
+        "unicodeSets" => Some(REGEXP_UNICODE_SETS_SLOT),
+        "sticky" => Some(REGEXP_STICKY_SLOT),
+        _ => None,
+    }
+}
+
+fn read_regexp_private_string(vm: &mut Vm, idx: GcIdx, slot_name: &str) -> Option<Value> {
+    vm.heap.with_obj(idx.0, |o| {
+        let HeapObj::Object(obj) = o else {
+            return None;
+        };
+        obj.private_fields
+            .lock()
+            .get(slot_name)
+            .and_then(|slot| match slot {
+                crate::value::PrivateSlot::Value(value @ Value::String(_)) => Some(value.clone()),
+                crate::value::PrivateSlot::Value(_)
+                | crate::value::PrivateSlot::Accessor { .. } => None,
+            })
+    })
+}
+
+fn read_regexp_private_bool(vm: &mut Vm, idx: GcIdx, slot_name: &str) -> Option<bool> {
+    vm.heap.with_obj(idx.0, |o| {
+        let HeapObj::Object(obj) = o else {
+            return None;
+        };
+        obj.private_fields
+            .lock()
+            .get(slot_name)
+            .and_then(|slot| match slot {
+                crate::value::PrivateSlot::Value(Value::Bool(value)) => Some(*value),
+                crate::value::PrivateSlot::Value(_)
+                | crate::value::PrivateSlot::Accessor { .. } => None,
+            })
+    })
 }
 
 fn escape_regexp_source_for_accessor(source: &str) -> String {
