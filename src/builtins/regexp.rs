@@ -857,10 +857,16 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     });
     let map_species_getter =
         vm.new_native_function("get [Symbol.species]", promise_species_get, 0)?;
+    let map_group_by_fn = vm.new_native_function("groupBy", map_group_by, 2)?;
     vm.heap.with_obj(map_ctor.0, |obj| {
-        obj.props().lock().insert(
+        let mut props = obj.props().lock();
+        props.insert(
             PropertyKey::Symbol(vm.well_known_symbols.species),
             accessor_get_prop(Value::Object(map_species_getter)),
+        );
+        props.insert(
+            PropertyKey::from("groupBy"),
+            data_prop(Value::Object(map_group_by_fn)),
         );
     });
     // Map.prototype[Symbol.iterator] === Map.prototype.entries

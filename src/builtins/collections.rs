@@ -487,6 +487,61 @@ fn map_set_direct(vm: &mut Vm, idx: GcIdx, key: Value, value: Value) {
     });
 }
 
+pub(crate) fn map_group_by(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let items = args.first().cloned().unwrap_or(Value::Undefined);
+    if items.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err("Map.groupBy callback must be callable"));
+    }
+
+    let iterator = vm.make_iterator(&items)?;
+    let mut groups: IndexMap<MapKey, Vec<Value>> = IndexMap::new();
+    let mut index = 0usize;
+    loop {
+        let (value, done) = vm.iterator_next(&iterator)?;
+        if done {
+            break;
+        }
+        let key = match vm.call_function(
+            &callback,
+            &[value.clone(), Value::Number(index as f64)],
+            Some(Value::Undefined),
+        ) {
+            Ok(value) => MapKey::new(value),
+            Err(err) => {
+                vm.iterator_close(&iterator)?;
+                return Err(err);
+            }
+        };
+        groups.entry(key).or_default().push(value);
+        index += 1;
+    }
+
+    let map_idx = vm.heap.allocate(HeapObj::Map(MapData {
+        entries: Mutex::new(IndexMap::new()),
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.map_proto.clone())),
+    }))?;
+    for (key, values) in groups {
+        let array = make_value_array(vm, values)?;
+        vm.heap.with_obj(map_idx, |obj| {
+            if let HeapObj::Map(map) = obj {
+                map.entries.lock().insert(key, array);
+            }
+        });
+    }
+    Ok(Value::Object(GcIdx(map_idx)))
+}
+
 fn close_iterator_preserving_completion(vm: &mut Vm, it: &Value) {
     let _ = vm.iterator_close(it);
 }

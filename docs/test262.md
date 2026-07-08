@@ -332,6 +332,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   exposed with SameValueZero key canonicalization and computed-callback
   overwrite semantics. The focused `built-ins/Map built-ins/Set` run now
   closes at **449 pass / 0 fail / 138 skip**.
+- **`Map.groupBy` static grouping** —
+  `Map.groupBy` is now exposed as a static built-in, iterates arbitrary sync
+  iterables, calls the grouping callback with `(value, index)`, stores group
+  keys with SameValueZero Map-key semantics rather than `ToPropertyKey`,
+  returns a real Map instance, and closes custom iterators when the callback
+  abruptly completes. This closes the focused `built-ins/Map/groupBy` run at
+  **14 pass / 0 fail / 0 skip**.
 - **Reflect.construct `newTarget` semantics** —
   `Reflect.construct` now validates constructor-ness in spec order, creates
   its argument list through ordinary array-like `length` and indexed property

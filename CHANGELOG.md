@@ -188,6 +188,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   SameValueZero key canonicalization and computed-callback overwrite
   semantics. The focused `built-ins/Map built-ins/Set` run now closes at
   **449 pass / 0 fail / 138 skip**.
+- **`Map.groupBy` static grouping**: `Map.groupBy` is now exposed as a static
+  built-in, iterates arbitrary sync iterables, calls the grouping callback with
+  `(value, index)`, stores group keys with SameValueZero Map-key semantics
+  instead of `ToPropertyKey`, returns a real Map instance, and closes custom
+  iterators when the callback abruptly completes. The focused
+  `built-ins/Map/groupBy` run now closes at **14 pass / 0 fail / 0 skip**.
 - **Reflect.construct `newTarget` semantics**: `Reflect.construct` now
   validates constructor-ness in spec order, builds its argument list through
   ordinary array-like property access, forwards the optional `newTarget` into

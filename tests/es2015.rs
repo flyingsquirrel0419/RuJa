@@ -688,6 +688,22 @@ fn map_basic() {
         run("let m = new Map([['foo', 0], ['bar', 1]]); let out = []; m.forEach(function(v, k){ if (k === 'foo') { m.delete('foo'); m.set('foo', 2); } out.push(k + ':' + v); }); out.join('|');"),
         Value::String(Arc::from("foo:0|bar:1|foo:2"))
     );
+    assert_eq!(
+        run("let m = Map.groupBy([1,2,3], function(v, i){ return i % 2 ? 'odd-index' : 'even-index'; }); [m instanceof Map, Array.from(m.keys()).join('|'), m.get('even-index').join(','), m.get('odd-index').join(',')].join(';');"),
+        Value::String(Arc::from("true;even-index|odd-index;1,3;2"))
+    );
+    assert_eq!(
+        run("let key = { toString(){ throw new Error('no-toPropertyKey'); } }; let m = Map.groupBy([1, '1', key], function(v){ return v; }); [m.get(1).join(','), m.get('1').join(','), m.get(key)[0] === key].join('|');"),
+        Value::String(Arc::from("1|1|true"))
+    );
+    assert_eq!(
+        run("let m = Map.groupBy([-0, +0], function(v){ return v; }); [m.size, Object.is(m.keys().next().value, -0), m.get(0).length].join('|');"),
+        Value::String(Arc::from("1|false|2"))
+    );
+    assert_eq!(
+        run("let closed = 0; let iterable = {}; iterable[Symbol.iterator] = function(){ let i = 0; return { next(){ return { value: ++i, done: false }; }, return(){ closed++; return {}; } }; }; try { Map.groupBy(iterable, function(v){ if (v === 2) throw new Error('stop'); return 'k'; }); } catch (e) {} closed;"),
+        Value::Number(1.0)
+    );
     assert!(run_err("Map();").contains("TypeError"));
     assert!(run_err("Map([]);").contains("TypeError"));
     assert_eq!(
