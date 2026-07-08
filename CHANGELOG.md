@@ -329,6 +329,12 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/String/prototype/replace` diagnostic remains **38 pass / 15 fail
   / 2 skip**, with the remaining failures outside this substitution-token
   edge.
+- **String replace callback offsets**: Function replacements for both
+  RegExp and string search values now receive the match offset as a UTF-16
+  code-unit index instead of a Rust UTF-8 byte offset, so matches after
+  supplementary characters report the same offset that JS exposes through
+  string indexing. The focused `built-ins/String/prototype/replace`
+  diagnostic remains **38 pass / 15 fail / 2 skip**.
 - **RegExp backreferences and identity escapes**: RegExp compilation now keeps
   the existing Rust regex fast path for ordinary patterns while routing true
   numeric backreferences through a backtracking-capable backend. Non-Unicode

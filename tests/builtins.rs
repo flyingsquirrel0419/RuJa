@@ -3992,6 +3992,18 @@ fn string_replace_with_regex() {
         run(r#""abc".replace(/b/, "$x|$<x>");"#),
         Value::String(Arc::from("a$x|$<x>c"))
     );
+    assert_eq!(
+        run(r#""😀a".replace(/a/, function(m, offset){ return offset; });"#),
+        Value::String(Arc::from("😀2"))
+    );
+    assert_eq!(
+        run(r#""😀a".replace("a", function(m, offset){ return offset; });"#),
+        Value::String(Arc::from("😀2"))
+    );
+    assert_eq!(
+        run(r#""𝌆ab".replace(/b/, function(m, offset){ return offset; });"#),
+        Value::String(Arc::from("𝌆a3"))
+    );
 }
 
 #[test]

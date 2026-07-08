@@ -443,7 +443,9 @@ pub(crate) fn str_replace(
                             None => cap_args.push(Value::Undefined),
                         }
                     }
-                    cap_args.push(Value::Number(m.start() as f64));
+                    cap_args.push(Value::Number(
+                        crate::value::utf16_len(&s[..m.start()]) as f64
+                    ));
                     cap_args.push(Value::String(Arc::from(s.as_str())));
                     let r = vm.call_function(&replacement, &cap_args, None)?;
                     result.push_str(vm.to_string(&r)?.as_ref());
@@ -485,7 +487,7 @@ pub(crate) fn str_replace(
         if let Some(pos) = s.find(&from) {
             let cap_args = vec![
                 Value::String(Arc::from(from.as_str())),
-                Value::Number(pos as f64),
+                Value::Number(crate::value::utf16_len(&s[..pos]) as f64),
                 Value::String(Arc::from(s.as_str())),
             ];
             let r = vm.call_function(&replacement, &cap_args, None)?;

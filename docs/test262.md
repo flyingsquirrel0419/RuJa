@@ -475,6 +475,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/String/prototype/replace` diagnostic remains **38 pass / 15 fail
   / 2 skip**, with the remaining failures outside this substitution-token
   edge.
+- **String replace callback offsets** —
+  Function replacements for both RegExp and string search values now receive
+  the match offset as a UTF-16 code-unit index instead of a Rust UTF-8 byte
+  offset, so matches after supplementary characters report the same offset
+  that JS exposes through string indexing. The focused
+  `built-ins/String/prototype/replace` diagnostic remains **38 pass / 15 fail
+  / 2 skip**.
 - **RegExp backreferences and identity escapes** —
   RegExp compilation now keeps ordinary patterns on the existing Rust regex
   fast path, uses a backtracking-capable backend only for true numeric
