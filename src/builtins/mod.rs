@@ -1270,7 +1270,11 @@ pub(crate) fn is_array(value: &Value, heap: &Heap) -> bool {
 
 pub(crate) fn is_callable(value: &Value, heap: &Heap) -> bool {
     match value {
-        Value::Object(idx) => heap.with_obj(idx.0, |obj| obj.is_function()),
+        Value::Object(idx) => heap.with_obj(idx.0, |obj| match obj {
+            HeapObj::Function(_) => true,
+            HeapObj::Proxy(proxy) => is_callable(&proxy.target, heap),
+            _ => false,
+        }),
         _ => false,
     }
 }

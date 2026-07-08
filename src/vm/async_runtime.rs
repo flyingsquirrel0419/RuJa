@@ -401,6 +401,34 @@ impl Vm {
                 )))
             }
         };
+        let proxy_call = self.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Proxy(proxy) = obj {
+                if *proxy.revoked.lock() {
+                    return Some(Err(Error::type_err(
+                        "Cannot perform 'apply' on a proxy that has been revoked",
+                    )));
+                }
+                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+            } else {
+                None
+            }
+        });
+        if let Some(result) = proxy_call {
+            let (target, handler) = result?;
+            if !crate::builtins::is_callable(&target, &self.heap) {
+                return Err(Error::type_err("not a function".to_string()));
+            }
+            let trap = self.get_property(&handler, "apply")?;
+            if trap.is_undefined() || trap.is_null() {
+                return self.call_function(&target, args, this);
+            }
+            if !crate::builtins::is_callable(&trap, &self.heap) {
+                return Err(Error::type_err("Proxy apply trap is not callable"));
+            }
+            let this_arg = this.unwrap_or(Value::Undefined);
+            let arg_array = crate::builtins::make_value_array(self, args.to_vec())?;
+            return self.call_function(&trap, &[target, this_arg, arg_array], Some(handler));
+        }
         // read function kind without holding borrow
         let kind_info = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {

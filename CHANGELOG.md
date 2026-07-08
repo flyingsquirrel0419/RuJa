@@ -82,9 +82,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   spec-shaped own `length` and `name` properties in the expected order, while
   keeping the associated proxy in a non-observable private slot rather than an
   ordinary own property. With `Proxy`/`Reflect`/`Symbol` skips temporarily
-  lifted, `built-ins/Proxy/revocable` now runs at **13 pass / 1 fail / 4
-  skip**; the remaining failure requires callable Proxy support for function
-  targets.
+  lifted, `built-ins/Proxy/revocable` now runs at **17 pass / 0 fail / 1
+  skip** after callable Proxy support for function targets.
+- **Callable Proxy `[[Call]]` support**: Proxy objects whose target is
+  callable are now treated as callable by `typeof`, `IsCallable` checks, and
+  ordinary function calls. Proxy calls throw on revoked proxies, forward to the
+  target when `handler.apply` is nullish, and invoke callable `apply` traps
+  with `(target, thisArgument, argumentsList)`. With Proxy-related skips
+  temporarily lifted, `built-ins/Proxy/apply` now runs at **13 pass / 0 fail /
+  1 skip**.
 - **Object descriptor helpers observe Proxy descriptors**: `Object.values`,
   `Object.entries`, and `Object.getOwnPropertyDescriptors` now use the
   Proxy-aware `[[GetOwnProperty]]` path for each snapshotted key, so

@@ -212,9 +212,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   function helper, giving the closure spec-shaped own `length` and `name`
   properties in insertion order while keeping the associated proxy in a
   non-observable private slot. With `Proxy`/`Reflect`/`Symbol` skips
-  temporarily lifted, `built-ins/Proxy/revocable` runs at **13 pass / 1 fail /
-  4 skip**; the remaining failure is callable Proxy support for function
-  targets.
+  temporarily lifted, `built-ins/Proxy/revocable` runs at **17 pass / 0 fail /
+  1 skip** after callable Proxy support for function targets.
+- **Callable Proxy `[[Call]]` support** —
+  Proxy objects whose target is callable now report as callable for `typeof`
+  and `IsCallable` checks. Ordinary calls to callable proxies reject revoked
+  proxies, forward through nested callable proxy targets when `handler.apply`
+  is nullish, and call callable `apply` traps with `(target, thisArgument,
+  argumentsList)`. With Proxy-related skips temporarily lifted,
+  `built-ins/Proxy/apply` now runs at **13 pass / 0 fail / 1 skip**.
 - **Object descriptor helpers observe Proxy descriptors** —
   `Object.values`, `Object.entries`, and
   `Object.getOwnPropertyDescriptors` now revalidate each snapshotted key

@@ -2009,6 +2009,49 @@ fn proxy_revocable_revoke_function_has_spec_own_properties() {
 }
 
 #[test]
+fn callable_proxy_follows_target_callability_and_apply_trap() {
+    assert_eq!(
+        run(r#"
+            function target(a, b) { return this.base + a + b; }
+            var proxy = new Proxy(target, {});
+            [typeof proxy, proxy.call({ base: 1 }, 2, 3)].join("|");
+            "#),
+        Value::String(Arc::from("function|6"))
+    );
+    assert_eq!(
+        run(r#"
+            function target() { return "target"; }
+            var seen = [];
+            var proxy = new Proxy(target, {
+              apply: function(t, thisArg, args) {
+                seen.push(t === target, thisArg.tag, args.length, args[0], args[1]);
+                return "trap";
+              }
+            });
+            [typeof proxy, proxy.call({ tag: "this" }, "a", "b"), seen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from("function|trap|true,this,2,a,b"))
+    );
+    assert_eq!(
+        run(r#"
+            var revocableTarget = Proxy.revocable(function() {}, {});
+            revocableTarget.revoke();
+            var revocable = Proxy.revocable(revocableTarget.proxy, {});
+            typeof revocable.proxy;
+            "#),
+        Value::String(Arc::from("function"))
+    );
+    assert!(run_err(
+        r#"
+            var pair = Proxy.revocable(function() {}, {});
+            pair.revoke();
+            pair.proxy();
+            "#,
+    )
+    .contains("TypeError"));
+}
+
+#[test]
 fn for_in_insertion_order() {
     let src = "var o = {a:1,b:2,c:3,d:4,e:5}; var k=[]; for (var x in o) k.push(x); k.join(',');";
     assert_eq!(run(src), Value::String(Arc::from("a,b,c,d,e")));

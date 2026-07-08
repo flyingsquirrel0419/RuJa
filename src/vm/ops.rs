@@ -2646,7 +2646,7 @@ impl Vm {
                 Op::TypeOf => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
                     let t = if let Value::Object(idx) = &v {
-                        if self.heap.with_obj(idx.0, |o| o.is_function()) {
+                        if crate::builtins::is_callable(&Value::Object(*idx), &self.heap) {
                             "function"
                         } else {
                             "object"
@@ -2696,7 +2696,7 @@ impl Vm {
                     };
                     let t = if let Some(v) = val {
                         if let Value::Object(idx) = &v {
-                            if self.heap.with_obj(idx.0, |o| o.is_function()) {
+                            if crate::builtins::is_callable(&Value::Object(*idx), &self.heap) {
                                 "function"
                             } else {
                                 "object"
