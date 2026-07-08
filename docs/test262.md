@@ -23,7 +23,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | Entire test262 tree (excl. intl402/staging) — includes thousands of tests for features RuJa does not support | 33.6% of all matrix files; 67.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 34.1% of all matrix files; 67.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -92,22 +92,23 @@ tests are not reported as false failure buckets.
 
 ## Full-suite baseline
 
-The `test262-full` CI workflow runs the entire test262 tree (excluding
-`intl402`/`staging`) in parallel. Counts can vary slightly because a small
-number of tests can cross the timeout boundary. Baseline confirmation runs:
-`test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`, and
-28908649991 on `40d9102`.
+The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
+excluding `harness`, `intl402`, and `staging`, and expanding `language/*` so the
+top-level `language` directory is not re-run. Counts can vary slightly because
+a small number of tests can cross the timeout boundary. Baseline confirmation
+runs: `test262-full` 28907207537 on `2385b02`, 28907533009 on `2c6c08f`,
+28908649991 on `40d9102`, and 28909686737 on `605ed5e`.
 
 | Metric | Recent count / range |
 |--------|----------------------|
-| Total matrix files | 48,465 |
+| Total matrix files | 47,717 |
 | Actually run | 24,131-24,133 |
-| Pass | 16,268-16,271 |
+| Pass | 16,268-16,272 |
 | Fail | 7,860-7,863 |
 | Timeout | 11-13 |
-| Skip | 24,321 |
+| Skip | 23,573 |
 | **Pass rate (of run)** | **67.4%** |
-| **Pass rate (of total)** | **33.6%** |
+| **Pass rate (of total)** | **34.1%** |
 
 This number is dominated by tests for features RuJa does not support.
 It is published for transparency and regression tracking, not as a
