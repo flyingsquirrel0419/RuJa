@@ -37,6 +37,7 @@ fn print_value(vm: &mut Vm, v: &Value) {
             Err(_) => println!("[object Object]"),
         },
         Value::Symbol(_) => println!("Symbol()"),
+        Value::PrivateName(key) => println!("[private #{}]", key.description),
         Value::Reference(_) => println!("[reference]"),
     }
 }

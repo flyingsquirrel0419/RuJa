@@ -20,6 +20,10 @@ const REGEXP_UNICODE_SLOT: &str = "[[RegExpUnicode]]";
 const REGEXP_UNICODE_SETS_SLOT: &str = "[[RegExpUnicodeSets]]";
 const REGEXP_STICKY_SLOT: &str = "[[RegExpSticky]]";
 
+fn regexp_internal_slot_key(name: &str) -> crate::value::PrivateSlotKey {
+    crate::value::PrivateSlotKey::Internal(Arc::from(name))
+}
+
 pub(crate) fn regexp_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -138,43 +142,43 @@ fn create_regexp_object(
         if let HeapObj::Object(obj) = o {
             let mut private_fields = obj.private_fields.lock();
             private_fields.insert(
-                Arc::from(REGEXP_SOURCE_SLOT),
+                regexp_internal_slot_key(REGEXP_SOURCE_SLOT),
                 crate::value::PrivateSlot::Value(Value::String(Arc::from(pattern.as_str()))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_FLAGS_SLOT),
+                regexp_internal_slot_key(REGEXP_FLAGS_SLOT),
                 crate::value::PrivateSlot::Value(Value::String(Arc::from(flags.as_str()))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_HAS_INDICES_SLOT),
+                regexp_internal_slot_key(REGEXP_HAS_INDICES_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('d'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_GLOBAL_SLOT),
+                regexp_internal_slot_key(REGEXP_GLOBAL_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('g'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_IGNORE_CASE_SLOT),
+                regexp_internal_slot_key(REGEXP_IGNORE_CASE_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('i'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_MULTILINE_SLOT),
+                regexp_internal_slot_key(REGEXP_MULTILINE_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('m'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_DOT_ALL_SLOT),
+                regexp_internal_slot_key(REGEXP_DOT_ALL_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('s'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_UNICODE_SLOT),
+                regexp_internal_slot_key(REGEXP_UNICODE_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('u'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_UNICODE_SETS_SLOT),
+                regexp_internal_slot_key(REGEXP_UNICODE_SETS_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('v'))),
             );
             private_fields.insert(
-                Arc::from(REGEXP_STICKY_SLOT),
+                regexp_internal_slot_key(REGEXP_STICKY_SLOT),
                 crate::value::PrivateSlot::Value(Value::Bool(flags.contains('y'))),
             );
             *obj.props.lock() = props;
@@ -1019,9 +1023,10 @@ fn read_regexp_private_string(vm: &mut Vm, idx: GcIdx, slot_name: &str) -> Optio
         let HeapObj::Object(obj) = o else {
             return None;
         };
+        let key = regexp_internal_slot_key(slot_name);
         obj.private_fields
             .lock()
-            .get(slot_name)
+            .get(&key)
             .and_then(|slot| match slot {
                 crate::value::PrivateSlot::Value(value @ Value::String(_)) => Some(value.clone()),
                 crate::value::PrivateSlot::Value(_)
@@ -1036,9 +1041,10 @@ fn read_regexp_private_bool(vm: &mut Vm, idx: GcIdx, slot_name: &str) -> Option<
         let HeapObj::Object(obj) = o else {
             return None;
         };
+        let key = regexp_internal_slot_key(slot_name);
         obj.private_fields
             .lock()
-            .get(slot_name)
+            .get(&key)
             .and_then(|slot| match slot {
                 crate::value::PrivateSlot::Value(Value::Bool(value)) => Some(*value),
                 crate::value::PrivateSlot::Value(_)

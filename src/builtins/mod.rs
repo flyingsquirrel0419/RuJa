@@ -1902,6 +1902,9 @@ fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
                 return vm.to_object(first);
             }
             Value::Object(_) => return Ok(first.clone()),
+            Value::PrivateName(_) => {
+                return Err(Error::type_err("Private name is not an object".to_string()))
+            }
             Value::Reference(_) => {
                 return Err(Error::type_err("Reference is not an object".to_string()))
             }
@@ -1926,6 +1929,7 @@ fn object_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error
         | Value::Symbol(_)
         | Value::BigInt(_) => vm.to_object(first),
         Value::Object(_) => Ok(first.clone()),
+        Value::PrivateName(_) => Err(Error::type_err("Private name is not an object".to_string())),
         Value::Reference(_) => Err(Error::type_err("Reference is not an object".to_string())),
     }
 }

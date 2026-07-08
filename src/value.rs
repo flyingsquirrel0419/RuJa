@@ -154,6 +154,9 @@ pub enum Value {
     String(Arc<str>),
     Object(GcIdx),
     Symbol(u32),
+    /// Internal-only class private name identity. These values are stored in
+    /// class lexical environments and are never exposed to user code.
+    PrivateName(PrivateNameKey),
     /// An ES Reference record (spec 6.2.4). Used for LHS evaluation so that
     /// `GetValue`/`PutValue` can preserve the original binding even if it is
     /// deleted/recreated between the two steps (e.g. `with` + compound-assignment
@@ -162,6 +165,18 @@ pub enum Value {
     /// referenced name; `strict` controls whether unresolved puts throw
     /// ReferenceError.
     Reference(Box<ReferenceRecord>),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct PrivateNameKey {
+    pub id: u64,
+    pub description: Arc<str>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum PrivateSlotKey {
+    Private(PrivateNameKey),
+    Internal(Arc<str>),
 }
 
 /// A spec Reference record (6.2.4 The Reference Specification Type).
@@ -229,7 +244,7 @@ impl Value {
             Value::Number(n) => *n != 0.0 && !n.is_nan(),
             Value::BigInt(n) => !n.is_zero(),
             Value::String(s) => !s.is_empty(),
-            Value::Object(_) | Value::Symbol(_) => true,
+            Value::Object(_) | Value::Symbol(_) | Value::PrivateName(_) => true,
             // References should be resolved via GetValue before reaching here.
             Value::Reference(_) => true,
         }
@@ -245,6 +260,7 @@ impl Value {
             Value::String(_) => "string",
             Value::Object(_) => "object",
             Value::Symbol(_) => "symbol",
+            Value::PrivateName(_) => "object",
             Value::Reference(_) => "object",
         }
     }
@@ -261,6 +277,7 @@ impl PartialEq for Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Object(a), Value::Object(b)) => a == b,
             (Value::Symbol(a), Value::Symbol(b)) => a == b,
+            (Value::PrivateName(a), Value::PrivateName(b)) => a == b,
             _ => false,
         }
     }
@@ -331,8 +348,12 @@ impl std::hash::Hash for MapKey {
                 7u8.hash(state);
                 id.hash(state);
             }
-            Value::Reference(_) => {
+            Value::PrivateName(key) => {
                 8u8.hash(state);
+                key.hash(state);
+            }
+            Value::Reference(_) => {
+                9u8.hash(state);
             }
         }
     }
@@ -355,6 +376,7 @@ pub fn value_to_debug_string(v: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Undefined => "undefined".to_string(),
         Value::Null => "null".to_string(),
+        Value::PrivateName(key) => format!("[private #{}]", key.description),
         _ => format!("{:?}", v),
     }
 }
@@ -370,6 +392,7 @@ impl fmt::Debug for Value {
             Value::BigInt(n) => write!(f, "{}n", n),
             Value::Object(_) => write!(f, "[object]"),
             Value::Symbol(_) => write!(f, "[symbol]"),
+            Value::PrivateName(key) => write!(f, "[private #{}]", key.description),
             Value::Reference(r) => write!(f, "[reference {:?}]", r),
         }
     }
@@ -482,7 +505,7 @@ pub struct ObjectData {
     pub class_name: Option<Arc<str>>,
     /// Private slot storage: `#name` -> field/method/accessor data. Isolated
     /// from normal props (not enumerable, not accessible via [] or for...in).
-    pub private_fields: Mutex<std::collections::HashMap<Arc<str>, PrivateSlot>>,
+    pub private_fields: Mutex<std::collections::HashMap<PrivateSlotKey, PrivateSlot>>,
     /// Wrapped primitive for boxed primitives created via `new Boolean(x)`,
     /// `new Number(x)`, `new String(x)`, or `Object(x)`. `None` for ordinary
     /// objects. `valueOf()` returns this so `new Number(5) + 1 === 6`.
@@ -571,7 +594,7 @@ pub struct FunctionData {
     pub proto: Mutex<Option<Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub extensible: AtomicBool,
-    pub private_fields: Mutex<std::collections::HashMap<Arc<str>, PrivateSlot>>,
+    pub private_fields: Mutex<std::collections::HashMap<PrivateSlotKey, PrivateSlot>>,
 }
 
 pub enum FunctionKind {

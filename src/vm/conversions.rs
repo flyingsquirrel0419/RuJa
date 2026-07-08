@@ -122,6 +122,11 @@ impl Vm {
                     "Cannot convert Symbol to number".to_string(),
                 ));
             }
+            Value::PrivateName(_) => {
+                return Err(Error::type_err(
+                    "Cannot convert private name to number".to_string(),
+                ));
+            }
             Value::Reference(_) => f64::NAN,
         })
     }
@@ -147,7 +152,11 @@ impl Vm {
             Value::Bool(b) => Ok(num_bigint::BigInt::from(if b { 1 } else { 0 })),
             Value::String(s) => Self::string_to_bigint(&s)
                 .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s))),
-            Value::Undefined | Value::Null | Value::Number(_) | Value::Symbol(_) => {
+            Value::Undefined
+            | Value::Null
+            | Value::Number(_)
+            | Value::Symbol(_)
+            | Value::PrivateName(_) => {
                 Err(Error::type_err("Cannot convert to a BigInt".to_string()))
             }
             Value::Object(_) | Value::Reference(_) => {
@@ -201,6 +210,11 @@ impl Vm {
             Value::Symbol(_) => {
                 return Err(Error::type_err(
                     "Cannot convert Symbol to string".to_string(),
+                ));
+            }
+            Value::PrivateName(_) => {
+                return Err(Error::type_err(
+                    "Cannot convert private name to string".to_string(),
                 ));
             }
             Value::Reference(_) => Arc::from("[reference]"),

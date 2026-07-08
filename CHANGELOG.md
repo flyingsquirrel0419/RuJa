@@ -33,6 +33,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   improves from **1045 pass / 587 fail / 1330 skip** to **1085 pass / 547 fail
   / 1330 skip**. The remaining same-spelling cross-class failures require
   per-evaluation private-name identity instead of textual `#name` keys.
+- **Per-evaluation private-name identity**: class evaluation now allocates a
+  fresh opaque private-name key for each private field/method/accessor name and
+  stores it in the class lexical environment captured by constructors and
+  methods. Private slots use those opaque keys, while RegExp and Proxy internal
+  slots use a separate internal-key namespace. Same-spelling private names from
+  different class evaluations or from superclass/subclass bodies no longer
+  share brands. With private class feature skips temporarily lifted, the
+  focused `language/{statements,expressions}/class/elements` probe improves from
+  **1085 pass / 547 fail / 1330 skip** to **1096 pass / 536 fail / 1330 skip**.
 - **`String.prototype.matchAll` and RegExp `@@matchAll`**:
   `String.prototype.matchAll` is now exposed with spec-shaped builtin
   properties, validates non-global RegExp arguments before delegation, calls

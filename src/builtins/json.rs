@@ -201,7 +201,7 @@ fn stringify_value(
                 .replace('\n', "\\n")
                 .replace('\t', "\\t")
         )),
-        Value::Symbol(_) => None,
+        Value::Symbol(_) | Value::PrivateName(_) => None,
         Value::Reference(_) => None,
         Value::Object(idx) => {
             // Check for toJSON method before any other processing.

@@ -182,7 +182,7 @@ pub(crate) fn global_bigint(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
         Value::String(s) => Vm::string_to_bigint(&s)
             .map(Value::BigInt)
             .ok_or_else(|| Error::syntax(format!("Cannot convert {} to a BigInt", s))),
-        Value::Undefined | Value::Null | Value::Symbol(_) => {
+        Value::Undefined | Value::Null | Value::Symbol(_) | Value::PrivateName(_) => {
             Err(Error::type_err("Cannot convert to a BigInt".to_string()))
         }
         Value::Object(_) | Value::Reference(_) => {

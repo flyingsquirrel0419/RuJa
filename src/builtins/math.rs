@@ -387,6 +387,7 @@ pub(crate) fn format_for_console(vm: &mut Vm, v: &Value, depth: usize) -> error:
             }
         }
         Value::Symbol(_) => Ok("Symbol()".to_string()),
+        Value::PrivateName(key) => Ok(format!("[private #{}]", key.description)),
         Value::Reference(_) => Ok("[reference]".to_string()),
         Value::Object(idx) => {
             let (is_array, is_func, items, pairs) = vm.heap.with_obj(idx.0, |o| {

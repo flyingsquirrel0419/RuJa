@@ -158,6 +158,17 @@ for the current commit.)
 Key test262-driven bug fixes that raised the supported-subset rate from
 ~56% to 100.0%:
 
+- **Class private-name identity** —
+  Class evaluation now allocates a fresh opaque private-name key for each
+  private field, method, and accessor name and stores the key in the class
+  lexical environment captured by constructors and methods. Private slots use
+  those opaque keys instead of textual `#name` strings, while RegExp and Proxy
+  internal slots use a separate internal-key namespace. Same-spelling private
+  names across separate class evaluations or superclass/subclass bodies now have
+  distinct brands. With private class feature skips temporarily lifted, the
+  focused `language/{statements,expressions}/class/elements` diagnostic improves
+  from **1085 pass / 547 fail / 1330 skip** to **1096 pass / 536 fail / 1330
+  skip**.
 - **String.prototype.matchAll and RegExp `@@matchAll`** —
   `String.prototype.matchAll` now performs the observable RegExp global-flag
   validation before custom `@@matchAll` delegation, preserves the uncoerced

@@ -173,6 +173,7 @@ fn value_to_message(v: &Value, heap: &crate::gc::Heap) -> String {
             message.unwrap_or_else(|| "[object Object]".to_string())
         }
         Value::Symbol(_) => "Symbol".to_string(),
+        Value::PrivateName(key) => format!("[private #{}]", key.description),
         Value::Reference(_) => "[reference]".to_string(),
     }
 }

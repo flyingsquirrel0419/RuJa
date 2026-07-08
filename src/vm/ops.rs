@@ -17,6 +17,39 @@ enum DeleteBindingStatus {
 }
 
 impl Vm {
+    fn private_name_binding_name(name: &str) -> String {
+        format!("#private_name:{}", name)
+    }
+
+    fn private_slot_key_from_name(
+        &self,
+        name_idx: usize,
+    ) -> error::Result<crate::value::PrivateSlotKey> {
+        let (name, env) = {
+            let frame = self.current_frame()?;
+            let name = match &frame.chunk.constants[name_idx] {
+                Value::String(s) => s.to_string(),
+                _ => String::new(),
+            };
+            (name, frame.env)
+        };
+        let binding_name = Self::private_name_binding_name(&name);
+        match crate::environment::get_checked(&self.heap, env, &binding_name) {
+            Ok(Some(Value::PrivateName(key))) => Ok(crate::value::PrivateSlotKey::Private(key)),
+            Ok(Some(_)) => Err(Error::internal(
+                "private name binding is not a private name",
+            )),
+            Ok(None) | Err(false) => Err(Error::reference(format!(
+                "Private name #{} is not defined",
+                name
+            ))),
+            Err(true) => Err(Error::reference(format!(
+                "Cannot access private name #{} before initialization",
+                name
+            ))),
+        }
+    }
+
     fn discard_catches_inside_finally(frame: &mut CallFrame, finally_seq: u32) {
         while frame
             .catch_stack
@@ -2168,20 +2201,14 @@ impl Vm {
                     self.stack.push(result);
                 }
                 Op::GetPrivate(name_idx) => {
-                    let name = {
-                        let frame = self.current_frame()?;
-                        match &frame.chunk.constants[name_idx] {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
-                        }
-                    };
+                    let key = self.private_slot_key_from_name(name_idx)?;
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let slot = if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Object(od) = o {
-                                od.private_fields.lock().get(name.as_str()).cloned()
+                                od.private_fields.lock().get(&key).cloned()
                             } else if let HeapObj::Function(f) = o {
-                                f.private_fields.lock().get(name.as_str()).cloned()
+                                f.private_fields.lock().get(&key).cloned()
                             } else {
                                 None
                             }
@@ -2202,14 +2229,24 @@ impl Vm {
                     };
                     self.stack.push(v);
                 }
-                Op::InitPrivate(name_idx) => {
-                    let name = {
+                Op::CreatePrivateName(name_idx) => {
+                    let description = {
                         let frame = self.current_frame()?;
                         match &frame.chunk.constants[name_idx] {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
+                            Value::String(s) => s.clone(),
+                            _ => Arc::from(""),
                         }
                     };
+                    let id = self.next_private_name_id;
+                    self.next_private_name_id = self.next_private_name_id.saturating_add(1);
+                    self.stack
+                        .push(Value::PrivateName(crate::value::PrivateNameKey {
+                            id,
+                            description,
+                        }));
+                }
+                Op::InitPrivate(name_idx) => {
+                    let key = self.private_slot_key_from_name(name_idx)?;
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
@@ -2229,10 +2266,7 @@ impl Vm {
                                     "Cannot add private field to non-extensible object",
                                 ));
                             }
-                            fields.insert(
-                                Arc::from(name.as_str()),
-                                crate::value::PrivateSlot::Value(value.clone()),
-                            );
+                            fields.insert(key, crate::value::PrivateSlot::Value(value.clone()));
                             Ok(())
                         })?;
                     } else {
@@ -2241,13 +2275,7 @@ impl Vm {
                     self.stack.push(value);
                 }
                 Op::InitPrivateMethod(name_idx) => {
-                    let name = {
-                        let frame = self.current_frame()?;
-                        match &frame.chunk.constants[name_idx] {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
-                        }
-                    };
+                    let key = self.private_slot_key_from_name(name_idx)?;
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
@@ -2267,10 +2295,7 @@ impl Vm {
                                     "Cannot add private field to non-extensible object",
                                 ));
                             }
-                            fields.insert(
-                                Arc::from(name.as_str()),
-                                crate::value::PrivateSlot::Method(value.clone()),
-                            );
+                            fields.insert(key, crate::value::PrivateSlot::Method(value.clone()));
                             Ok(())
                         })?;
                     } else {
@@ -2279,20 +2304,14 @@ impl Vm {
                     self.stack.push(value);
                 }
                 Op::SetPrivate(name_idx) => {
-                    let name = {
-                        let frame = self.current_frame()?;
-                        match &frame.chunk.constants[name_idx] {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
-                        }
-                    };
+                    let key = self.private_slot_key_from_name(name_idx)?;
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
                         let setter = self.heap.with_obj(idx.0, |o| {
                             if let HeapObj::Object(od) = o {
                                 let mut fields = od.private_fields.lock();
-                                match fields.get(name.as_str()) {
+                                match fields.get(&key) {
                                     Some(crate::value::PrivateSlot::Accessor {
                                         set: Some(setter),
                                         ..
@@ -2302,7 +2321,7 @@ impl Vm {
                                     }) => Err(Error::type_err("Private accessor has no setter")),
                                     Some(crate::value::PrivateSlot::Value(_)) => {
                                         fields.insert(
-                                            Arc::from(name.as_str()),
+                                            key.clone(),
                                             crate::value::PrivateSlot::Value(value.clone()),
                                         );
                                         Ok(None)
@@ -2315,7 +2334,7 @@ impl Vm {
                             } else {
                                 if let HeapObj::Function(f) = o {
                                     let mut fields = f.private_fields.lock();
-                                    match fields.get(name.as_str()) {
+                                    match fields.get(&key) {
                                         Some(crate::value::PrivateSlot::Accessor {
                                             set: Some(setter),
                                             ..
@@ -2328,7 +2347,7 @@ impl Vm {
                                         }
                                         Some(crate::value::PrivateSlot::Value(_)) => {
                                             fields.insert(
-                                                Arc::from(name.as_str()),
+                                                key.clone(),
                                                 crate::value::PrivateSlot::Value(value.clone()),
                                             );
                                             Ok(None)
@@ -2354,13 +2373,7 @@ impl Vm {
                     self.stack.push(value);
                 }
                 Op::DefinePrivateAccessor(name_idx) => {
-                    let name = {
-                        let frame = self.current_frame()?;
-                        match &frame.chunk.constants[name_idx] {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
-                        }
-                    };
+                    let key = self.private_slot_key_from_name(name_idx)?;
                     let setter = self.stack.pop().unwrap_or(Value::Undefined);
                     let getter = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
@@ -2372,19 +2385,18 @@ impl Vm {
                                 _ => return Ok(()),
                             };
                             let mut fields = fields.lock();
-                            if !fields.contains_key(name.as_str())
-                                && !extensible.load(Ordering::Relaxed)
-                            {
+                            if !fields.contains_key(&key) && !extensible.load(Ordering::Relaxed) {
                                 return Err(Error::type_err(
                                     "Cannot add private field to non-extensible object",
                                 ));
                             }
-                            let entry = fields.entry(Arc::from(name.as_str())).or_insert(
-                                crate::value::PrivateSlot::Accessor {
-                                    get: None,
-                                    set: None,
-                                },
-                            );
+                            let entry =
+                                fields
+                                    .entry(key)
+                                    .or_insert(crate::value::PrivateSlot::Accessor {
+                                        get: None,
+                                        set: None,
+                                    });
                             match entry {
                                 crate::value::PrivateSlot::Accessor { get, set } => {
                                     if !getter.is_undefined() {
@@ -2423,19 +2435,13 @@ impl Vm {
                     }
                     args.reverse();
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = {
-                        let frame = self.current_frame()?;
-                        match &frame.chunk.constants[name_idx] {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
-                        }
-                    };
+                    let key = self.private_slot_key_from_name(name_idx)?;
                     let method = if let Value::Object(idx) = &obj {
                         self.heap.with_obj(idx.0, |o| {
                             let method = if let HeapObj::Object(od) = o {
                                 od.private_fields
                                     .lock()
-                                    .get(name.as_str())
+                                    .get(&key)
                                     .and_then(|slot| match slot {
                                         crate::value::PrivateSlot::Value(value)
                                         | crate::value::PrivateSlot::Method(value) => {
@@ -2447,7 +2453,7 @@ impl Vm {
                             } else if let HeapObj::Function(f) = o {
                                 f.private_fields
                                     .lock()
-                                    .get(name.as_str())
+                                    .get(&key)
                                     .and_then(|slot| match slot {
                                         crate::value::PrivateSlot::Value(value)
                                         | crate::value::PrivateSlot::Method(value) => {

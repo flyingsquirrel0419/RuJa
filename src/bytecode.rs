@@ -234,6 +234,8 @@ pub enum Op {
     CallThisSpread,
     /// Push a private field value from `this`. arg = name constant idx.
     GetPrivate(usize),
+    /// Create a fresh class private-name identity. arg = description constant idx.
+    CreatePrivateName(usize),
     /// Initialize a private field/method slot. arg = name constant idx.
     /// Stack: [obj, value]. Only class element initialization should emit this.
     InitPrivate(usize),

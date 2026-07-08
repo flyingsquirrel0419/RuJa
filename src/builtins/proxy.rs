@@ -56,8 +56,9 @@ pub(crate) fn proxy_revocable(
     // Keep the associated proxy off the revoke function's observable own keys.
     vm.heap.with_obj(revoke_fn_idx.0, |o| {
         if let HeapObj::Function(f) = o {
+            let key = crate::value::PrivateSlotKey::Internal(Arc::from("__proxy_idx__"));
             f.private_fields.lock().insert(
-                Arc::from("__proxy_idx__"),
+                key,
                 crate::value::PrivateSlot::Value(Value::Number(proxy_idx as f64)),
             );
         }
@@ -86,9 +87,10 @@ fn proxy_revoke(vm: &mut Vm, _args: &[Value], _this: Option<Value>) -> error::Re
     if let Some(Value::Object(idx)) = vm.current_native_callee.clone() {
         let proxy_idx = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
+                let key = crate::value::PrivateSlotKey::Internal(Arc::from("__proxy_idx__"));
                 f.private_fields
                     .lock()
-                    .get("__proxy_idx__")
+                    .get(&key)
                     .and_then(|slot| match slot {
                         crate::value::PrivateSlot::Value(value) => Some(value),
                         crate::value::PrivateSlot::Method(_)

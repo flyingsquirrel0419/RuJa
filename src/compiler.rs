@@ -92,6 +92,10 @@ type LoopFrame = (usize, Vec<usize>, Vec<usize>, Option<Arc<str>>, bool, usize);
 pub type GlobalDeclarationNames = (Vec<Arc<str>>, Vec<Arc<str>>, Vec<Arc<str>>);
 
 impl Compiler {
+    fn private_name_binding_name(name: &Arc<str>) -> Arc<str> {
+        Arc::from(format!("#private_name:{}", name).as_str())
+    }
+
     fn private_method_function_name(name: &Arc<str>, kind: PropKind) -> Arc<str> {
         match kind {
             PropKind::Get => Arc::from(format!("get #{}", name).as_str()),
@@ -3525,6 +3529,26 @@ impl Compiler {
                     let name_idx = self.intern(name);
                     self.chunk
                         .emit(Op::DeclareConstUninit(name_idx), self.current_line);
+                }
+                let mut private_names: Vec<Arc<str>> = Vec::new();
+                for pf in &cls.private_fields {
+                    if !private_names.iter().any(|name| name == &pf.name) {
+                        private_names.push(pf.name.clone());
+                    }
+                }
+                for method in cls.methods.iter().filter(|method| method.is_private) {
+                    if !private_names.iter().any(|name| name == &method.name) {
+                        private_names.push(method.name.clone());
+                    }
+                }
+                for private_name in private_names {
+                    let desc_idx = self.chunk.add_constant(Value::String(private_name.clone()));
+                    self.chunk
+                        .emit(Op::CreatePrivateName(desc_idx), self.current_line);
+                    let binding = Self::private_name_binding_name(&private_name);
+                    let binding_idx = self.intern(&binding);
+                    self.chunk
+                        .emit(Op::DeclareEnvConst(binding_idx), self.current_line);
                 }
                 // Build a constructor function from the class.
                 // Methods become prototype properties (or static on the constructor).

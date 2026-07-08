@@ -429,6 +429,86 @@ fn private_brand_checks_reject_missing_slots() {
 }
 
 #[test]
+fn private_names_are_unique_per_class_evaluation() {
+    assert_eq!(
+        run(r#"
+            function factory() {
+              return class {
+                #x = 1;
+                read(o) { return o.#x; }
+              };
+            }
+            var C1 = factory();
+            var C2 = factory();
+            var c1 = new C1();
+            var c2 = new C2();
+            var ok = c1.read(c1) === 1 && c2.read(c2) === 1;
+            try { c1.read(c2); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            try { c2.read(c1); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            ok;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            function make() {
+              class C {
+                #m() { return "ok"; }
+                access(o) { return o.#m(); }
+              }
+              return new C();
+            }
+            var c1 = make();
+            var c2 = make();
+            var ok = c1.access(c1) === "ok" && c2.access(c2) === "ok";
+            try { c1.access(c2); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            try { c2.access(c1); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            ok;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            function make() {
+              class C {
+                get #x() { return "get"; }
+                read(o) { return o.#x; }
+              }
+              return new C();
+            }
+            var c1 = make();
+            var c2 = make();
+            var ok = c1.read(c1) === "get" && c2.read(c2) === "get";
+            try { c1.read(c2); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            try { c2.read(c1); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            ok;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn private_names_with_same_spelling_coexist_across_inheritance() {
+    assert_eq!(
+        run(r#"
+            class Base {
+              #x = "base";
+              readBase(o) { return o.#x; }
+            }
+            class Sub extends Base {
+              #x = "sub";
+              readSub(o) { return o.#x; }
+            }
+            var s = new Sub();
+            s.readBase(s) + ":" + s.readSub(s);
+        "#),
+        Value::String(Arc::from("base:sub"))
+    );
+}
+
+#[test]
 fn private_methods_are_not_writable() {
     assert_eq!(
         run("class C{#m(){}set(){this.#m=1;}}try{new C().set();false;}catch(e){e instanceof TypeError;}"),

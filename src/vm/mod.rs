@@ -70,6 +70,7 @@ pub struct Vm {
     /// legacy fallback path). Lazy generators use per-frame gen-state instead.
     pub(crate) current_yields: Vec<Value>,
     pub(crate) next_symbol_id: u32,
+    pub(crate) next_private_name_id: u64,
     pub(crate) symbol_registry: HashMap<Arc<str>, u32>,
     pub(crate) symbol_descriptions: HashMap<u32, Option<Arc<str>>>,
     pub(crate) well_known_symbols: WellKnownSymbols,
@@ -332,6 +333,7 @@ impl Vm {
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
             next_symbol_id: 14,
+            next_private_name_id: 1,
             symbol_registry: HashMap::new(),
             symbol_descriptions: HashMap::new(),
             well_known_symbols: WellKnownSymbols {
