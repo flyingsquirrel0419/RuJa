@@ -78,6 +78,14 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   with ordinary object rest semantics. The focused
   `language/expressions/{assignment,destructuring}` run remains closed at
   **203 pass / 0 fail / 282 skip**.
+- **Class field anonymous function names**: public and private class field
+  initializers now apply `SetFunctionName` to anonymous function, arrow, and
+  class values before defining the field. This gives static and instance field
+  initializers names such as `"field"` and `"#field"` without changing
+  non-anonymous initializer values. With class field skips temporarily lifted,
+  `static-field-anonymous-function-name.js` now reports **2 pass / 0 fail / 0
+  skip** across declaration and expression forms; the broader class-elements
+  diagnostic reports **1491 pass / 173 fail / 1298 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This

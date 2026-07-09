@@ -169,6 +169,8 @@ pub enum Op {
     /// Peek `[.., key, fn]` and apply SetFunctionName. Prefix: 0 none, 1 get,
     /// 2 set.
     SetFunctionNameFromKey(u8),
+    /// Peek `[.., fn]` and apply SetFunctionName using a string constant.
+    SetFunctionNameConst(usize),
     DefineAccessor(u8),      // pop [fn, key, obj]; define getter(0)/setter(1)
     DefineClassAccessor(u8), // same but enumerable=false (for class methods)
     GetProp,

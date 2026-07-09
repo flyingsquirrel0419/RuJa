@@ -295,6 +295,24 @@ fn static_field_initializers_bind_this_to_constructor() {
 }
 
 #[test]
+fn class_field_initializers_infer_anonymous_function_names() {
+    assert_eq!(
+        run(r#"
+            class C {
+                static #sf = () => 1;
+                static sf = function() {};
+                #if = class {};
+                inf = () => 2;
+                static readStatic() { return this.#sf.name + ":" + this.sf.name; }
+                readInstance() { return this.#if.name + ":" + this.inf.name; }
+            }
+            C.readStatic() + ":" + new C().readInstance();
+        "#),
+        Value::String(Arc::from("#sf:sf:#if:inf"))
+    );
+}
+
+#[test]
 fn static_block_await_identifier_contexts() {
     assert_eq!(
         run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),

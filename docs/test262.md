@@ -239,6 +239,18 @@ enumerable Symbol properties. This keeps string and Symbol forms of
 fail / 278 skip**; `language/expressions/{assignment,destructuring}` reports
 **203 pass / 0 fail / 282 skip**.
 
+Focused class field anonymous function-name local check:
+public and private class field initializers now apply `SetFunctionName` to
+anonymous function, arrow, and class initializer values before defining the
+field. This gives field initializer functions names derived from public field
+keys and private names such as `#field`. With static public/private class field
+skips temporarily lifted, the
+`language/{statements,expressions}/class/elements/static-field-anonymous-function-name.js`
+cluster reports **2 pass / 0 fail / 0 skip**. With class field, private method,
+Proxy, Reflect, and Symbol skips temporarily lifted, the broader
+`language/{statements,expressions}/class/elements` diagnostic reports **1491
+pass / 173 fail / 1298 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

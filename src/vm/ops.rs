@@ -47,10 +47,14 @@ impl Vm {
         key: &crate::value::PropertyKey,
         prefix: Option<&str>,
     ) {
+        let name = self.function_name_from_property_key(key, prefix);
+        self.set_empty_function_name(value, name);
+    }
+
+    fn set_empty_function_name(&self, value: &Value, name: Arc<str>) {
         let Value::Object(idx) = value else {
             return;
         };
-        let name = self.function_name_from_property_key(key, prefix);
         self.heap.with_obj(idx.0, |obj| {
             let HeapObj::Function(function) = obj else {
                 return;
@@ -1632,6 +1636,19 @@ impl Vm {
                         _ => None,
                     };
                     self.set_empty_function_name_from_property_key(&value, &pkey, prefix);
+                }
+                Op::SetFunctionNameConst(name_idx) => {
+                    let Some(value) = self.stack.last().cloned() else {
+                        continue;
+                    };
+                    let name = {
+                        let frame = self.current_frame()?;
+                        match &frame.chunk.constants[name_idx] {
+                            Value::String(s) => s.clone(),
+                            _ => Arc::from(""),
+                        }
+                    };
+                    self.set_empty_function_name(&value, name);
                 }
                 Op::DefineAccessor(kind) => {
                     // stack: [obj, key, fn]; define getter(0) or setter(1).

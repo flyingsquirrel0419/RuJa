@@ -110,6 +110,10 @@ impl Compiler {
         }
     }
 
+    fn private_field_function_name(name: &Arc<str>) -> Arc<str> {
+        Arc::from(format!("#{}", name).as_str())
+    }
+
     fn public_method_function_name(name: &Arc<str>, kind: PropKind) -> Arc<str> {
         match kind {
             PropKind::Get => Arc::from(format!("get {}", name).as_str()),
@@ -4221,6 +4225,10 @@ impl Compiler {
                     self.chunk.emit(Op::PopScope, self.current_line);
                     self.pop_scope();
                     init_result?;
+                    if Self::is_anonymous_function_definition(&init) {
+                        self.chunk
+                            .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                    }
                     self.chunk.emit(Op::DefineDataProperty, self.current_line);
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                 }
@@ -4237,6 +4245,13 @@ impl Compiler {
                     self.pop_scope();
                     init_result?;
                     let name_idx = self.chunk.add_constant(Value::String(pf.name.clone()));
+                    if Self::is_anonymous_function_definition(&init) {
+                        let fn_name = self.chunk.add_constant(Value::String(
+                            Self::private_field_function_name(&pf.name),
+                        ));
+                        self.chunk
+                            .emit(Op::SetFunctionNameConst(fn_name), self.current_line);
+                    }
                     self.chunk
                         .emit(Op::InitPrivate(name_idx), self.current_line);
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
@@ -4374,6 +4389,13 @@ impl Compiler {
                     self.chunk
                         .emit(Op::InitPrivateMethod(name_idx), self.current_line);
                 } else {
+                    if Self::is_anonymous_function_definition(value) {
+                        let fn_name = self
+                            .chunk
+                            .add_constant(Value::String(Self::private_field_function_name(name)));
+                        self.chunk
+                            .emit(Op::SetFunctionNameConst(fn_name), self.current_line);
+                    }
                     self.chunk
                         .emit(Op::InitPrivate(name_idx), self.current_line);
                 }
@@ -4414,6 +4436,10 @@ impl Compiler {
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                 }
                 self.compile_expr(value)?;
+                if Self::is_anonymous_function_definition(value) {
+                    self.chunk
+                        .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                }
                 self.chunk.emit(Op::DefineDataProperty, self.current_line);
             }
             Expr::Sequence(exprs) => {
