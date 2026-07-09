@@ -124,6 +124,7 @@ latest full baseline documentation check: `test262-full` 28937391393 on
 28960087423 on `500fd9a`, and 28961595128 on `2625301`.
 Latest improvement confirmation: `test262-full` 28962802017 on `6d6328e`.
 Latest improvement confirmation: `test262-full` 28964634961 on `05173b6`.
+Latest improvement confirmation: `test262-full` 29010097608 on `7ac8ba5`.
 
 Focused public class fields local check:
 `language/{statements,expressions}/class/elements` now parses public instance
@@ -150,6 +151,18 @@ receiver. With public class field and Proxy skips temporarily lifted,
 private, and Proxy gates temporarily lifted reports **1460 pass / 184 fail /
 1318 skip**. The default supported subset remains **5099 pass / 0 fail /
 15339 skip**.
+
+Focused static class field initializer `this` local check:
+static public and private field initializers now run with `this` bound to the
+class constructor, matching `DefineField(receiver, fieldRecord)` for direct
+`this` reads and arrows created inside the initializer. With static
+public/private class field skips temporarily lifted,
+`static-field-init-with-this.js` and
+`static-field-init-this-inside-arrow-function.js` in both statement and
+expression class-element directories report **4 pass / 0 fail / 0 skip**. The
+`language/statements/class/elements` diagnostic improves from **466 pass / 90
+fail / 978 skip** to **469 pass / 87 fail / 978 skip**. The default supported
+subset remains **5099 pass / 0 fail / 15339 skip**.
 
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of

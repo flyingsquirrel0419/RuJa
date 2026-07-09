@@ -4167,18 +4167,38 @@ impl Compiler {
                         let key_idx = self.chunk.add_constant(Value::String(field.name.clone()));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);
                     }
+                    self.push_scope_with_runtime(false, true);
+                    self.chunk.emit(Op::PushScope, self.current_line);
+                    let key_tmp_idx = self.intern("#static_field_key");
+                    self.chunk
+                        .emit(Op::DeclareEnv(key_tmp_idx), self.current_line);
+                    let this_idx = self.intern("this");
+                    self.chunk.emit(Op::Dup, self.current_line);
+                    self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
+                    self.chunk.emit(Op::LoadEnv(key_tmp_idx), self.current_line);
                     let init = field
                         .init
                         .clone()
                         .unwrap_or_else(|| Box::new(Expr::Undefined));
-                    self.compile_expr(&init)?;
+                    let init_result = self.compile_expr(&init);
+                    self.chunk.emit(Op::PopScope, self.current_line);
+                    self.pop_scope();
+                    init_result?;
                     self.chunk.emit(Op::DefineDataProperty, self.current_line);
                     self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                 }
                 for pf in cls.private_fields.iter().filter(|pf| pf.is_static) {
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                    self.push_scope_with_runtime(false, true);
+                    self.chunk.emit(Op::PushScope, self.current_line);
+                    let this_idx = self.intern("this");
+                    self.chunk.emit(Op::Dup, self.current_line);
+                    self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
                     let init = pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
-                    self.compile_expr(&init)?;
+                    let init_result = self.compile_expr(&init);
+                    self.chunk.emit(Op::PopScope, self.current_line);
+                    self.pop_scope();
+                    init_result?;
                     let name_idx = self.chunk.add_constant(Value::String(pf.name.clone()));
                     self.chunk
                         .emit(Op::InitPrivate(name_idx), self.current_line);

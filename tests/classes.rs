@@ -283,6 +283,18 @@ fn static_block_allows_super_property() {
 }
 
 #[test]
+fn static_field_initializers_bind_this_to_constructor() {
+    assert_eq!(
+        run("class C{static f='test';static g=this.f+'262';static h=(()=>this.g)()+'test';}C.g+':'+C.h;"),
+        Value::String(Arc::from("test262:test262test"))
+    );
+    assert_eq!(
+        run("class C{static #self=this;static ok(){return this.#self===C;}}C.ok();"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn static_block_await_identifier_contexts() {
     assert_eq!(
         run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),

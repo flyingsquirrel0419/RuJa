@@ -41,6 +41,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Static class field initializer `this` binding**: static public and private
+  field initializers now run with `this` bound to the class constructor, so
+  `static g = this.f` and arrows created inside static initializers see the
+  same receiver that `DefineField` passes to the initializer. With static
+  public/private field skips temporarily lifted, the focused
+  `static-field-init-with-this.js` and
+  `static-field-init-this-inside-arrow-function.js` statement/expression
+  tests now report **4 pass / 0 fail / 0 skip**. The
+  `language/statements/class/elements` diagnostic improves from **466 pass /
+  90 fail / 978 skip** to **469 pass / 87 fail / 978 skip**. The default
+  supported subset remains **5099 pass / 0 fail / 0 timeout**.
 - **Public class field `[[DefineOwnProperty]]` semantics**: public field
   initialization now routes through `CreateDataPropertyOrThrow` instead of
   raw property-map insertion. Fields therefore fail with `TypeError` when a
