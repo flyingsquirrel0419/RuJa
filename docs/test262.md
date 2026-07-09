@@ -8,8 +8,8 @@ and `compareArray.js`) rather than a hand-rolled stub, so tests relying on
 parses `negative:` metadata so a test that expects a `SyntaxError`/
 `TypeError` (parse or runtime phase) passes when RuJa raises the matching
 error, honors `flags: [raw]` by running those files without any harness
-prelude, and keeps narrow path-scoped exceptions for Symbol coverage that RuJa
-already supports.
+prelude, and keeps narrow path-scoped exceptions for feature-tagged coverage
+that RuJa already supports.
 
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5099 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5106 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -351,15 +351,24 @@ rest values, and close on abrupt rest-target or rest-iterator completion. The
 broader Reference-adjacent cluster
 `language/expressions/assignment language/expressions/compound-assignment
 language/expressions/logical-assignment language/expressions/update
-language/statements/with` remains **835 pass / 0 fail / 363 skip**.
+language/statements/with` remained **835 pass / 0 fail / 363 skip** before the
+subsequent `with` Proxy/Reflect admission.
+
+Focused `with` Proxy/Reflect admission local check:
+`language/statements/with` now admits Proxy/Reflect-tagged tests for object
+environment binding resolution without opening broader Proxy/Reflect coverage.
+The path reports **176 pass / 0 fail / 5 skip**, and the broader
+Reference-adjacent cluster
+`language/expressions/assignment language/expressions/compound-assignment
+language/expressions/logical-assignment language/expressions/update
+language/statements/with` rises to **842 pass / 0 fail / 356 skip**.
 
 Focused for-of iterator protocol local check:
 `language/statements/for-of` now reports **113 pass / 0 fail / 638 skip**
 after for-of caches iterator `next` at `GetIterator` time, rejects non-object
 iterator results, applies `ToBoolean` to `done`, validates `return()` results
 during `IteratorClose`, preserves the original throw when close also throws,
-and keeps hidden iterator-close state alive across labeled `continue`. The
-supported subset rises to **5099 pass / 0 fail / 15339 skip**.
+and keeps hidden iterator-close state alive across labeled `continue`.
 
 Focused TypedArray static `from`/`of` local check:
 `built-ins/TypedArrayConstructors/{from,from/BigInt,of,of/BigInt}` closes at

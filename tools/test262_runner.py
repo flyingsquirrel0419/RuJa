@@ -119,6 +119,15 @@ ERROR_STACK_FEATURES = {
     "Reflect.construct",
 }
 
+WITH_STATEMENT_PREFIXES = (
+    "language/statements/with/",
+)
+
+WITH_STATEMENT_FEATURES = {
+    "Proxy",
+    "Reflect",
+}
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -200,6 +209,14 @@ def error_stack_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(ERROR_STACK_PREFIXES)
 
+def with_statement_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(WITH_STATEMENT_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -216,6 +233,8 @@ def should_skip(meta, path=None):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and error_stack_path(path):
         feats.difference_update(ERROR_STACK_FEATURES)
+    if path is not None and with_statement_path(path):
+        feats.difference_update(WITH_STATEMENT_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
