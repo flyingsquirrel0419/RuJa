@@ -1360,6 +1360,19 @@ impl Vm {
         Some(Some(desc))
     }
 
+    pub(crate) fn typed_array_integer_index_has_property(
+        &self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+    ) -> Option<bool> {
+        let Value::Object(idx) = obj else {
+            return None;
+        };
+        let name = key.as_str()?;
+        let slots = self.typed_array_numeric_slots(*idx, name)?;
+        Some(self.is_valid_typed_array_numeric_index(&slots))
+    }
+
     fn set_typed_array_numeric_property(
         &mut self,
         idx: GcIdx,

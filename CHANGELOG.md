@@ -117,6 +117,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   the other realm's intrinsic prototype. Focused `proto-from-ctor-realm`
   checks now pass at **13 pass / 0 fail / 0 skip** across
   `TypedArrayConstructors`, `ArrayBuffer`, `DataView`, and `RegExp`.
+- **TypedArray integer-indexed `[[HasProperty]]`**: canonical numeric index
+  property checks on TypedArrays now follow Integer-Indexed exotic semantics:
+  valid in-bounds indexes report present, while detached, out-of-bounds,
+  `"-0"`, fractional, negative, and infinite canonical numeric strings return
+  `false` without falling through to ordinary prototype lookup. Non-canonical
+  keys such as `"+1"` still use ordinary lookup. With TypedArray, ArrayBuffer,
+  DataView, Reflect, and `Reflect.construct` skips temporarily lifted, focused
+  `built-ins/TypedArrayConstructors/internals/HasProperty` improves from
+  **14 pass / 10 fail / 8 skip** to **22 pass / 2 fail / 8 skip**; the
+  remaining failures are the missing `%TypedArray%.prototype.subarray` method.
+  Under the same expanded diagnostic, broader `built-ins/TypedArrayConstructors`
+  improves to **584 pass / 9 fail / 145 skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

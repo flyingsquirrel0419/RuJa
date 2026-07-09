@@ -1321,6 +1321,57 @@ fn typed_array_integer_index_descriptors_feed_proxy_invariants() {
 }
 
 #[test]
+fn typed_array_has_property_canonical_numeric_indices_follow_integer_indexed_exotic() {
+    assert_eq!(
+        run(r#"
+            var TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+            Object.defineProperty(TypedArrayPrototype, "2", {
+              value: "inherited",
+              configurable: true
+            });
+            Object.defineProperty(TypedArrayPrototype, "-1", {
+              value: "inherited",
+              configurable: true
+            });
+            Object.defineProperty(TypedArrayPrototype, "1.1", {
+              value: "inherited",
+              configurable: true
+            });
+            Object.defineProperty(TypedArrayPrototype, "+1", {
+              value: "ordinary",
+              configurable: true
+            });
+            try {
+              var sample = new Uint8Array([7, 8]);
+              [
+                Reflect.has(sample, "0"),
+                Reflect.has(sample, "1"),
+                Reflect.has(sample, "2"),
+                Reflect.has(sample, "-1"),
+                Reflect.has(sample, "1.1"),
+                Reflect.has(sample, "-0"),
+                Reflect.has(sample, "+1")
+              ].join(",");
+            } finally {
+              delete TypedArrayPrototype["2"];
+              delete TypedArrayPrototype["-1"];
+              delete TypedArrayPrototype["1.1"];
+              delete TypedArrayPrototype["+1"];
+            }
+        "#),
+        Value::String(Arc::from("true,true,false,false,false,false,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([7]);
+            $262.detachArrayBuffer(sample.buffer);
+            [Reflect.has(sample, "0"), Reflect.has(sample, "1")].join(",");
+        "#),
+        Value::String(Arc::from("false,false"))
+    );
+}
+
+#[test]
 fn typed_array_get_canonical_numeric_indices_follow_integer_indexed_exotic() {
     assert_eq!(
         run(r#"

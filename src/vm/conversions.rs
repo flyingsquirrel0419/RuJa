@@ -747,6 +747,9 @@ impl Vm {
                 }
                 return self.has_property_key(&target, key);
             }
+            if let Some(has_index) = self.typed_array_integer_index_has_property(obj, key) {
+                return Ok(has_index);
+            }
         }
         self.has_property_key_ordinary(obj, key)
     }

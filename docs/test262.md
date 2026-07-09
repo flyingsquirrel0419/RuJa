@@ -256,6 +256,19 @@ ArrayBuffer, DataView, Reflect, and `Reflect.construct` skips temporarily
 lifted for the targeted files, `proto-from-ctor-realm` checks now report **13
 pass / 0 fail / 0 skip**.
 
+Focused TypedArray integer-indexed `[[HasProperty]]` local check:
+canonical numeric index property checks now return `true` only for valid
+in-bounds TypedArray indexes and return `false` for detached buffers,
+out-of-bounds indexes, `"-0"`, fractional, negative, and infinite canonical
+numeric strings without consulting ordinary prototype properties. Non-canonical
+keys still use ordinary lookup. With TypedArray, ArrayBuffer, DataView,
+Reflect, and `Reflect.construct` skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/HasProperty` improves from **14
+pass / 10 fail / 8 skip** to **22 pass / 2 fail / 8 skip**; the remaining
+failures are the missing `%TypedArray%.prototype.subarray` method. Under the
+same expanded diagnostic, broader `built-ins/TypedArrayConstructors` reports
+**584 pass / 9 fail / 145 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,
