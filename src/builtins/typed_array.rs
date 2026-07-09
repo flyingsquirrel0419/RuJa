@@ -2030,38 +2030,44 @@ fn typed_array_constructor_with_kind(
         }
         Some(Value::Object(idx)) => {
             let array_like = Value::Object(*idx);
-            let array_buffer_len = vm.heap.with_obj(idx.0, |o| {
-                if let HeapObj::ArrayBuffer(buffer) = o {
-                    if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Some(Err(Error::type_err("TypedArray buffer is detached")));
-                    }
-                    return Some(Ok(buffer.bytes.lock().len()));
-                }
-                None
-            });
-            if let Some(len_result) = array_buffer_len {
-                let buffer_len = len_result?;
+            let is_array_buffer = vm
+                .heap
+                .with_obj(idx.0, |o| matches!(o, HeapObj::ArrayBuffer(_)));
+            if is_array_buffer {
                 let byte_offset = match args.get(1) {
                     Some(Value::Undefined) | None => 0,
                     Some(value) => to_index_length(vm, value, "TypedArray byteOffset")?,
                 };
-                if byte_offset > buffer_len || byte_offset % kind.element_size() != 0 {
+                if byte_offset % kind.element_size() != 0 {
                     return Err(Error::range("Invalid TypedArray byteOffset"));
                 }
-                let byte_length = match args.get(2) {
-                    Some(Value::Undefined) | None => {
+                let element_length = match args.get(2) {
+                    Some(Value::Undefined) | None => None,
+                    Some(value) => Some(to_index_length(vm, value, "TypedArray length")?),
+                };
+                let buffer_len = vm.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::ArrayBuffer(buffer) = o {
+                        if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err(Error::type_err("TypedArray buffer is detached"));
+                        }
+                        return Ok(buffer.bytes.lock().len());
+                    }
+                    Err(Error::type_err("TypedArray buffer is not an ArrayBuffer"))
+                })?;
+                let byte_length = match element_length {
+                    None => {
+                        if byte_offset > buffer_len {
+                            return Err(Error::range("Invalid TypedArray length"));
+                        }
                         let remaining = buffer_len - byte_offset;
                         if remaining % kind.element_size() != 0 {
                             return Err(Error::range("Invalid TypedArray length"));
                         }
                         remaining
                     }
-                    Some(value) => {
-                        let element_length = to_index_length(vm, value, "TypedArray length")?;
-                        element_length
-                            .checked_mul(kind.element_size())
-                            .ok_or_else(|| Error::range("Invalid TypedArray length"))?
-                    }
+                    Some(element_length) => element_length
+                        .checked_mul(kind.element_size())
+                        .ok_or_else(|| Error::range("Invalid TypedArray length"))?,
                 };
                 if byte_offset
                     .checked_add(byte_length)

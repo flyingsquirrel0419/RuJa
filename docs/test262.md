@@ -223,6 +223,19 @@ remaining failures are detached-buffer realm constructor coverage. The current
 runner's broader `built-ins/TypedArrayConstructors` diagnostic improves to
 **459 pass / 14 fail / 265 skip**.
 
+Focused TypedArray ArrayBuffer constructor-ordering local check:
+ArrayBuffer-backed TypedArray construction now performs `byteOffset` ToIndex,
+byte-offset alignment, and explicit `length` ToIndex before rechecking whether
+the backing buffer was detached and reading its current byte length. This
+rejects buffers detached during offset/length conversion instead of creating a
+view from stale length data. With TypedArray-related skips temporarily lifted,
+`built-ins/TypedArrayConstructors/ctors/buffer-arg
+built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg` now reports **44 pass
+/ 0 fail / 62 skip**. The current runner's broader
+`built-ins/TypedArrayConstructors` diagnostic improves to **463 pass / 10 fail
+/ 265 skip**; the remaining failures are detached-buffer realm constructor
+coverage.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

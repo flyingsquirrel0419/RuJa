@@ -92,6 +92,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   improves from **15 pass / 8 fail / 30 skip** to **21 pass / 2 fail / 30
   skip**; the remaining failures are detached-buffer realm constructor
   coverage.
+- **TypedArray ArrayBuffer constructor ordering**: TypedArray constructors
+  taking an ArrayBuffer now coerce `byteOffset` and explicit `length` before
+  rechecking whether the backing buffer was detached, while still applying
+  byte-offset alignment before length coercion. This prevents views from being
+  created over buffers detached during argument conversion. With
+  TypedArray-related skips temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/{ctors,ctors-bigint}/buffer-arg` run
+  reports **44 pass / 0 fail / 62 skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

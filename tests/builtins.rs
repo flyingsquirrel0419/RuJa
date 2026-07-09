@@ -804,6 +804,86 @@ fn typed_array_constructors_create_array_buffer_backed_views() {
 }
 
 #[test]
+fn typed_array_array_buffer_constructor_validates_detach_after_coercions() {
+    assert_eq!(
+        run(r#"
+            function thrownName(fn) {
+              try {
+                fn();
+              } catch (e) {
+                return e.name;
+              }
+              return "none";
+            }
+            var log = [];
+            var preOffset = new ArrayBuffer(8);
+            $262.detachArrayBuffer(preOffset);
+            var r1 = thrownName(function() {
+              new Uint8Array(preOffset, {
+                valueOf: function() {
+                  log.push("pre-offset");
+                  return 0;
+                }
+              });
+            });
+            var preLength = new ArrayBuffer(8);
+            $262.detachArrayBuffer(preLength);
+            var r2 = thrownName(function() {
+              new Uint8Array(preLength, 0, {
+                valueOf: function() {
+                  log.push("pre-length");
+                  return 1;
+                }
+              });
+            });
+            var detachOffset = new ArrayBuffer(8);
+            var r3 = thrownName(function() {
+              new Uint8Array(detachOffset, {
+                valueOf: function() {
+                  log.push("detach-offset");
+                  $262.detachArrayBuffer(detachOffset);
+                  return 0;
+                }
+              });
+            });
+            var detachLength = new ArrayBuffer(8);
+            var r4 = thrownName(function() {
+              new Uint8Array(detachLength, 0, {
+                valueOf: function() {
+                  log.push("detach-length");
+                  $262.detachArrayBuffer(detachLength);
+                  return 1;
+                }
+              });
+            });
+            var bigintOffset = new ArrayBuffer(16);
+            var r5 = thrownName(function() {
+              new BigInt64Array(bigintOffset, {
+                valueOf: function() {
+                  log.push("bigint-offset");
+                  $262.detachArrayBuffer(bigintOffset);
+                  return 0;
+                }
+              });
+            });
+            var rangeLength = new ArrayBuffer(8);
+            var r6 = thrownName(function() {
+              new Uint8Array(rangeLength, 99, {
+                valueOf: function() {
+                  log.push("range-length");
+                  return 1;
+                }
+              });
+            });
+            [r1, r2, r3, r4, r5, r6, log.join("|")].join(",");
+        "#),
+        Value::String(Arc::from(
+            "TypeError,TypeError,TypeError,TypeError,TypeError,RangeError,pre-offset|pre-length|detach-offset|detach-length|bigint-offset|range-length",
+        ))
+    );
+}
+
+#[test]
 fn typed_array_bigint_constructors_expose_element_size_and_validate_receivers() {
     assert_eq!(
         run(r#"
