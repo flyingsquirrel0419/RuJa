@@ -801,9 +801,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   uses that Realm's original intrinsic Error prototypes rather than mutable
   global `TypeError`/`Error` bindings. `$262.createRealm()` now builds
   Realm-local Error and NativeError constructor/prototype chains for those
-  cross-Realm stack checks. The focused `built-ins/Error/prototype/stack` run
-  closes at **27 pass / 0 fail / 8 skip**, and the broader `built-ins/Error`
-  diagnostic closes at **74 pass / 0 fail / 19 skip**.
+  cross-Realm stack checks. `tools/test262_runner.py` and
+  `tools/test262_analyze.py` now admit this implemented stack coverage with a
+  path-scoped exception for the Error stack accessor, Proxy, Reflect, and
+  `Reflect.construct` gates. The focused
+  `built-ins/Error/prototype/stack` run closes at **35 pass / 0 fail / 0
+  skip**, and the broader `built-ins/Error` runner reports **83 pass / 0 fail
+  / 10 skip**.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

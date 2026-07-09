@@ -30,6 +30,10 @@
   implemented `built-ins/DataView/` coverage by lifting only the DataView,
   ArrayBuffer, Float16Array, Reflect, and typed-array helper feature gates
   needed by that path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `built-ins/Error/prototype/stack/` coverage by lifting only the
+  Error stack accessor, Proxy, Reflect, and `Reflect.construct` feature gates
+  needed by that path.
 - `tools/test262_analyze.py` now mirrors the runner's unsupported-feature
   boundary exactly, and `tools/analyze_failures.py` passes test paths into
   `should_skip()`, so path-scoped feature exceptions are not hidden during
@@ -46,6 +50,11 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Error stack accessor runner admission**: the
+  `built-ins/Error/prototype/stack/` path exception now admits the
+  already-implemented stack accessor coverage, including Proxy receivers and
+  `Reflect.construct` constructor checks. The normal `built-ins/Error` runner
+  now reports **83 pass / 0 fail / 10 skip**.
 - **ArrayBuffer `@@toStringTag` descriptor**: `%ArrayBuffer.prototype%` now
   exposes a non-writable, non-enumerable, configurable
   `Symbol.toStringTag` data property with value `"ArrayBuffer"`. The focused
@@ -599,9 +608,9 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   instead of mutable global `TypeError`/`Error` bindings. `$262.createRealm()`
   now builds Realm-local Error and NativeError constructor/prototype chains for
   those cross-Realm checks. The
-  focused `built-ins/Error/prototype/stack` run closes at **27 pass / 0 fail /
-  8 skip**, and the broader `built-ins/Error` diagnostic closes at **74 pass /
-  0 fail / 19 skip**.
+  focused `built-ins/Error/prototype/stack` run closes at **35 pass / 0 fail /
+  0 skip**, and the broader `built-ins/Error` runner now reports **83 pass /
+  0 fail / 10 skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,
