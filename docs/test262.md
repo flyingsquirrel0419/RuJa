@@ -2882,6 +2882,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   **27 pass / 0 fail / 6 skip**, and `language/statements/for-of/dstr`
   improves to **417 pass / 32 fail / 120 skip** while the default supported
   subset remains green.
+- **For-of assignment-pattern cover defaults** — non-declaration `for-of`
+  heads now keep object shorthand defaults and nested object defaults in cover
+  grammar until the `of` decision is known, so assignment patterns such as
+  `for ({ x = 1 } of values)` and `for ([{ x = yield }] of values)` parse and
+  execute through the destructuring assignment path. With only the
+  `destructuring-binding` skip lifted for diagnostics,
+  `language/statements/for-of/dstr` improves to **433 pass / 16 fail / 120
+  skip** while the default supported subset remains green.
 
 ## Why the full-suite rate is not higher
 

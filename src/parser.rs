@@ -1631,7 +1631,7 @@ impl Parser {
             }
             self.no_in = true;
             let lhs_start = self.pos;
-            let e = self.parse_assign()?;
+            let e = self.with_deferred_object_proto_duplicate_check(|p| p.parse_assign())?;
             self.no_in = false;
             if self.check(&TokenKind::In) {
                 // Validate that the LHS is a valid assignment target.
@@ -1681,6 +1681,8 @@ impl Parser {
                 }));
             }
             // Not for-in/for-of: regular for-loop with expression init.
+            Self::reject_object_literal_assignment_cover(&e)?;
+            Self::reject_duplicate_proto_object_literal(&e)?;
             // The expression may contain a comma sequence.
             let mut e = e;
             if self.check(&TokenKind::Comma) {
@@ -6464,6 +6466,10 @@ mod tests {
 
         assert!(Parser::parse("for ([...x] in {}) {}").is_ok());
         assert!(Parser::parse("for ([...x] of []) {}").is_ok());
+        assert!(Parser::parse("for ({ x = 1 } of [{}]) {}").is_ok());
+        assert!(Parser::parse("for ({ fn = function() {} } of [{}]) {}").is_ok());
+        assert!(Parser::parse("for ({ x = 1 }; ; ) {}").is_err());
+        assert!(Parser::parse("for ({ __proto__: null, __proto__: null }; ; ) {}").is_err());
     }
 
     #[test]

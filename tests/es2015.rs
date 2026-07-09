@@ -583,6 +583,18 @@ fn for_of_assignment_destructure() {
         Value::String(Arc::from("0:1"))
     );
     assert_eq!(run("var x; for ({x} of [{x:2}]) {} x;"), Value::Number(2.0));
+    assert_eq!(
+        run("var x, c = 0; for ({x = 1} of [{}]) { c += x; } x + ':' + c;"),
+        Value::String(Arc::from("1:1"))
+    );
+    assert_eq!(
+        run("var fn; for ({fn = function(){}} of [{}]) {} fn.name;"),
+        Value::String(Arc::from("fn"))
+    );
+    assert_eq!(
+        run("var yield = 3, x; for ([{x = yield}] of [[{}]]) {} x;"),
+        Value::Number(3.0)
+    );
 }
 
 #[test]
