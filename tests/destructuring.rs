@@ -134,6 +134,18 @@ fn array_assign_rest_pattern_early_errors() {
 }
 
 #[test]
+fn array_assign_nested_object_default_allows_sloppy_yield_identifier() {
+    assert_eq!(
+        run("var yield = 2; var x; var vals = [{}]; var result; result = [{ x = yield }] = vals; x + ':' + (result === vals);"),
+        Value::String(Arc::from("2:true"))
+    );
+    assert_eq!(
+        run("var yield = 2; var x; var vals = [{}]; var result; result = [...{ x = yield }] = vals; x + ':' + (result === vals);"),
+        Value::String(Arc::from("2:true"))
+    );
+}
+
+#[test]
 fn array_assign_uses_iterator_protocol_and_defaults() {
     let src = r#"
         var a = 0, b = 0;
@@ -486,6 +498,8 @@ fn object_assignment_shorthand_default_keeps_existing_function_names() {
 fn object_literal_rejects_assignment_shorthand_defaults() {
     assert!(run_err("var x = 0; ({x = 1});").contains("SyntaxError"));
     assert!(run_err("var x = 0; var o = {x = 1};").contains("SyntaxError"));
+    assert!(run_err("var x = 0; [{x = 1}];").contains("SyntaxError"));
+    assert!(run_err("var x = 0; [...{x = 1}];").contains("SyntaxError"));
     assert!(run_err("var x = 0; ({x = 1}) += {};").contains("SyntaxError"));
 }
 

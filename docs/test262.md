@@ -2858,6 +2858,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `destructuring-binding` skip lifted for diagnostics, the focused
   `language/expressions/assignment/dstr` run improves to **258 pass / 2 fail /
   108 skip** while the default supported subset remains green.
+- **Array cover grammar for nested object assignment defaults** — array
+  literals that may become assignment patterns now defer nested object-literal
+  shorthand initializer early errors until the outer assignment decision is
+  known. This lets sloppy nested object defaults such as `[{ x = yield }] =
+  vals` and `[...{ x = yield }] = vals` treat `yield` as an identifier in
+  assignment patterns while ordinary array literals still reject `{x = ...}`.
+  With only the `destructuring-binding` skip lifted for diagnostics, the
+  focused `language/expressions/assignment/dstr` run now closes at **260 pass /
+  0 fail / 108 skip**.
 
 ## Why the full-suite rate is not higher
 

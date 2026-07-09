@@ -3138,9 +3138,13 @@ impl Parser {
             }
             if self.check(&TokenKind::Spread) {
                 self.advance();
-                elements.push(Expr::Spread(Box::new(self.parse_assign()?)));
+                let element =
+                    self.with_deferred_object_proto_duplicate_check(|p| p.parse_assign())?;
+                elements.push(Expr::Spread(Box::new(element)));
             } else {
-                elements.push(self.parse_assign()?);
+                let element =
+                    self.with_deferred_object_proto_duplicate_check(|p| p.parse_assign())?;
+                elements.push(element);
             }
             if !self.eat(&TokenKind::Comma) {
                 break;
