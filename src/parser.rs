@@ -158,6 +158,7 @@ impl Parser {
         super_allowed: bool,
         super_call_allowed: bool,
         new_target_allowed: bool,
+        inherited_private_names: &[Arc<str>],
     ) -> error::Result<Program> {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
@@ -172,7 +173,7 @@ impl Parser {
             p.super_call_depth = 1;
         }
         p.new_target_allowed = new_target_allowed;
-        p.parse_program()
+        p.parse_program_with_private_names(inherited_private_names)
     }
 
     fn peek(&self) -> &TokenKind {
@@ -554,6 +555,13 @@ impl Parser {
     }
 
     fn parse_program(&mut self) -> error::Result<Program> {
+        self.parse_program_with_private_names(&[])
+    }
+
+    fn parse_program_with_private_names(
+        &mut self,
+        inherited_private_names: &[Arc<str>],
+    ) -> error::Result<Program> {
         // Surface any lexer-level error (e.g. an invalid escape
         // sequence in a string literal) as a SyntaxError before parsing.
         for t in &self.tokens {
@@ -578,7 +586,7 @@ impl Parser {
             self.is_strict_context,
             StatementListScope::Script,
         )?;
-        Self::validate_private_names_statement_list(&body, &[])?;
+        Self::validate_private_names_statement_list(&body, inherited_private_names)?;
         Ok(Program {
             body,
             is_strict: self.is_strict_context,

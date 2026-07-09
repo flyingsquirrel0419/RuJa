@@ -806,12 +806,15 @@ impl Vm {
         let super_allowed = crate::environment::has(&self.heap, ctx.caller_env, "#super");
         let super_call_allowed = !ctx.in_class_field_initializer
             && crate::environment::has(&self.heap, ctx.caller_env, "#superctor");
+        let inherited_private_names =
+            crate::environment::private_names_in_scope(&self.heap, ctx.caller_env);
         let program = crate::parser::Parser::parse_direct_eval_inherited(
             src,
             ctx.caller_strict,
             super_allowed,
             super_call_allowed,
             ctx.new_target_allowed,
+            &inherited_private_names,
         )?;
         if ctx.in_class_field_initializer {
             crate::parser::Parser::reject_class_field_initializer_program_contains_arguments(

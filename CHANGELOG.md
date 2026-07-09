@@ -60,6 +60,10 @@
   method, and async generator method coverage on
   `language/{statements,expressions}/class/elements/` without lifting those
   features outside the class-elements paths.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the 12
+  implemented private-name direct-eval visibility files under
+  `language/statements/class/elements/` without lifting private class-element
+  feature gates more broadly.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -84,8 +88,18 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **6415 pass / 0 fail / 14023 skip / 0 timeout**.
+Current supported subset count: **6427 pass / 0 fail / 14011 skip / 0 timeout**.
 
+- **Private-name direct eval visibility**: direct eval parsing now inherits
+  private names visible through the caller's class environment, so
+  `eval("this.#m")` is accepted in class methods, instance field
+  initializers, private accessors, private methods, and static private
+  elements while preserving runtime private-name identity checks. The runner
+  now admits the 12 implemented
+  `language/statements/class/elements/private-*-visible-to-direct-eval*.js`
+  files. The focused `language/{statements,expressions}/class/elements` run
+  now reports **521 pass / 0 fail / 2441 skip**, and the supported subset
+  rises to **6427 pass / 0 fail / 14011 skip**.
 - **Class special-method constructor early errors**: class parsing now rejects
   instance `async constructor()`, `* constructor()`, and
   `async * constructor()` methods as `SyntaxError`, while still allowing static

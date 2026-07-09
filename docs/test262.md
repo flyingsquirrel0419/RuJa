@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (6415 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (6427 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -209,6 +209,17 @@ method coverage on `language/{statements,expressions}/class/elements` without
 lifting those features outside the class-elements paths. The focused
 class-elements run reports **509 pass / 0 fail / 2453 skip**, and the
 supported subset rises to **6415 pass / 0 fail / 14023 skip**.
+
+Focused private-name direct eval visibility local check:
+direct eval parsing now inherits private names visible through the caller's
+class environment, so `eval("this.#m")` is accepted in class methods, instance
+field initializers, private accessors, private methods, and static private
+elements while preserving runtime private-name identity checks for unrelated
+classes with the same spelling. The runner now admits only the 12 implemented
+`language/statements/class/elements/private-*-visible-to-direct-eval*.js`
+files by lifting private class-element feature gates on those exact paths. The
+focused class-elements run reports **521 pass / 0 fail / 2441 skip**, and the
+supported subset rises to **6427 pass / 0 fail / 14011 skip**.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference

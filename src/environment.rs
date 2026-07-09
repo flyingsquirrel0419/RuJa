@@ -567,6 +567,33 @@ pub fn has(heap: &Heap, env: GcIdx, name: &str) -> bool {
     false
 }
 
+pub fn private_names_in_scope(heap: &Heap, env: GcIdx) -> Vec<Arc<str>> {
+    const PREFIX: &str = "#private_name:";
+    let mut names = Vec::new();
+    let mut cur = Some(env);
+    while let Some(e_idx) = cur {
+        let (own_names, parent) = heap.with_obj(e_idx.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                let own_names = e
+                    .vars
+                    .lock()
+                    .keys()
+                    .filter_map(|name| name.strip_prefix(PREFIX).map(Arc::<str>::from))
+                    .collect::<Vec<_>>();
+                return (own_names, *e.parent.lock());
+            }
+            (Vec::new(), None)
+        });
+        for name in own_names {
+            if !names.iter().any(|existing| existing == &name) {
+                names.push(name);
+            }
+        }
+        cur = parent;
+    }
+    names
+}
+
 pub fn has_own_binding(heap: &Heap, env: GcIdx, name: &str) -> bool {
     heap.with_obj(env.0, |obj| {
         if let HeapObj::Environment(e) = obj {

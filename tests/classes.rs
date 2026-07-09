@@ -966,6 +966,76 @@ fn private_names_with_same_spelling_coexist_across_inheritance() {
 }
 
 #[test]
+fn private_names_are_visible_to_direct_eval_in_class_contexts() {
+    assert_eq!(
+        run(r#"
+            class Field {
+              #m = 44;
+              read(o) { return eval("o.#m"); }
+            }
+            class Other { #m = 44; }
+            var field = new Field();
+            var ok = field.read(field) === 44;
+            try { field.read(new Other()); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            ok;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            class Initializer {
+              #m = 41;
+              value = eval("this.#m + 1");
+            }
+            new Initializer().value;
+        "#),
+        Value::Number(42.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            class Methods {
+              #m() { return "method"; }
+              get #g() { return "get"; }
+              set #s(v) { this.value = v; }
+              read() {
+                eval("this.#s = this.#m() + ':' + this.#g");
+                return this.value;
+              }
+            }
+            new Methods().read();
+        "#),
+        Value::String(Arc::from("method:get"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class StaticElements {
+              static #f = 1;
+              static #m() { return 2; }
+              static get #g() { return 3; }
+              static set #s(v) { this.value = v; }
+              static read() {
+                eval("this.#s = this.#f + this.#m() + this.#g");
+                return this.value;
+              }
+            }
+            class Other {
+              static #f = 1;
+              static #m() { return 2; }
+              static get #g() { return 3; }
+              static set #s(v) { this.value = v; }
+            }
+            var ok = StaticElements.read() === 6;
+            try { StaticElements.read.call(Other); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+            ok;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_methods_are_not_writable() {
     assert_eq!(
         run("class C{#m(){}set(){this.#m=1;}}try{new C().set();false;}catch(e){e instanceof TypeError;}"),
