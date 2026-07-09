@@ -740,8 +740,9 @@ pub(crate) fn date_constructor(
     // ES TimeValue: values outside +/-8.64e15 ms become Invalid Date (NaN).
     let ts = date_time_clip(ts);
     if let Some(Value::Object(idx)) = &this {
-        vm.heap.with_obj(idx.0, |o| {
+        vm.heap.with_obj_mut(idx.0, |o| {
             if let HeapObj::Object(o) = o {
+                o.class_name = Some(Arc::from("Date"));
                 o.props
                     .lock()
                     .insert(PropertyKey::from("__time__"), data_prop(Value::Number(ts)));
@@ -752,23 +753,36 @@ pub(crate) fn date_constructor(
         Ok(Value::String(Arc::from(format!("{}", ts as i64).as_str())))
     }
 }
+
+fn date_this_time_value(vm: &Vm, this: Option<Value>) -> error::Result<(GcIdx, f64)> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err("Date method called on non-Date receiver"));
+    };
+    let (is_date, ts) = vm.heap.with_obj(idx.0, |obj| {
+        let ts = obj
+            .props()
+            .lock()
+            .get(&PropertyKey::from("__time__"))
+            .and_then(|d| match &d.value {
+                Value::Number(n) => Some(*n),
+                _ => None,
+            })
+            .unwrap_or(f64::NAN);
+        (obj.class_name() == "Date", ts)
+    });
+    if !is_date {
+        return Err(Error::type_err("Date method called on non-Date receiver"));
+    }
+    Ok((idx, ts))
+}
+
 pub(crate) fn date_get_time(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = &this {
-        let ts = vm.heap.with_obj(idx.0, |o| {
-            o.props()
-                .lock()
-                .get(&PropertyKey::from("__time__"))
-                .map(|d| d.value.clone())
-        });
-        if let Some(Value::Number(n)) = ts {
-            return Ok(Value::Number(n));
-        }
-    }
-    Ok(Value::Number(f64::NAN))
+    let (_, ts) = date_this_time_value(vm, this)?;
+    Ok(Value::Number(ts))
 }
 
 pub(crate) fn date_get_component(
@@ -803,20 +817,19 @@ pub(crate) fn date_set_component(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    let (idx, _) = date_this_time_value(vm, this)?;
     let value = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => f64::NAN,
     };
-    if let Some(Value::Object(idx)) = &this {
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Object(o) = o {
-                o.props.lock().insert(
-                    PropertyKey::from("__time__"),
-                    data_prop(Value::Number(value)),
-                );
-            }
-        });
-    }
+    vm.heap.with_obj(idx.0, |o| {
+        if let HeapObj::Object(o) = o {
+            o.props.lock().insert(
+                PropertyKey::from("__time__"),
+                data_prop(Value::Number(value)),
+            );
+        }
+    });
     Ok(Value::Number(value))
 }
 

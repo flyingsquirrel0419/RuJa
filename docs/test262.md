@@ -436,6 +436,15 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   arguments, while detached ArrayBuffer validation runs after observable
   `byteOffset` coercion. The focused `built-ins/DataView` run improves from
   **266 pass / 2 fail / 293 skip** to **268 pass / 0 fail / 293 skip**.
+- **Date component getter receiver validation** —
+  Date component getters now use a `thisTimeValue`-style receiver check, so
+  ordinary objects, arrays, arguments objects, primitives, and objects spoofing
+  RuJa's internal `__time__` property throw `TypeError` instead of being read
+  as Invalid Date. `%Date.prototype%` is no longer Date-branded, while
+  constructed Date and Date subclass instances still expose the Date brand.
+  The focused Date component getter run improves from **80 pass / 16 fail / 32
+  skip** to **96 pass / 0 fail / 32 skip**; the broader `built-ins/Date`
+  diagnostic now reports **309 pass / 173 fail / 112 skip**.
 - **BigInt TypedArray constructor surface** —
   BigInt typed array constructors and prototypes now expose
   `BYTES_PER_ELEMENT` as own non-writable, non-enumerable, non-configurable

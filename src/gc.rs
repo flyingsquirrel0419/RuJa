@@ -454,4 +454,25 @@ impl Heap {
         }
         result
     }
+
+    pub fn with_obj_mut<R>(&self, idx: usize, f: impl FnOnce(&mut HeapObj) -> R) -> R {
+        // Mirrors `with_obj`, but allows narrow metadata updates such as
+        // initializing internal brands during native construction.
+        let (mut obj, owned) = {
+            let cells = self.cells.lock();
+            let cell = &cells[idx];
+            let mut slot = cell.obj.lock();
+            match slot.take() {
+                Some(o) => (o, true),
+                None => (crate::value::HeapObj::placeholder(), false),
+            }
+        };
+        let result = f(&mut obj);
+        if owned {
+            let cells = self.cells.lock();
+            let cell = &cells[idx];
+            *cell.obj.lock() = Some(obj);
+        }
+        result
+    }
 }

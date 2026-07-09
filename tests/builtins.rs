@@ -7065,6 +7065,40 @@ fn date_subclass_instances_keep_date_components() {
         run("class D extends Date{};let d=new D(-3474558000000);d.getUTCFullYear()+','+d.getUTCMonth()+','+d.getUTCDate();"),
         Value::String(Arc::from("1859,10,24"))
     );
+    assert_eq!(
+        run("class D extends Date{};Object.prototype.toString.call(new D(0));"),
+        Value::String(Arc::from("[object Date]"))
+    );
+}
+
+#[test]
+fn date_prototype_methods_require_date_receivers() {
+    assert_eq!(
+        run(r#"
+            [
+              Date.prototype.getFullYear.call(new Date(NaN)),
+              Date.prototype.getUTCMonth.call(new Date(0)),
+              Date.prototype.getUTCDate.call(new Date(0)),
+              Object.prototype.toString.call(Date.prototype),
+              Object.prototype.toString.call(new Date(0))
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("NaN|0|1|[object Object]|[object Date]"))
+    );
+    for src in [
+        "Date.prototype.getTime.call(Date.prototype);",
+        "Date.prototype.getTime.call({ __time__: 0 });",
+        "Date.prototype.getDate.call({});",
+        "Date.prototype.getUTCFullYear.call([]);",
+        "Date.prototype.setFullYear.call(Date.prototype, 2012);",
+        "Date.prototype.setTime.call({ __time__: 0 }, 1);",
+        "Date.prototype.setUTCFullYear.call({}, { valueOf: function() { throw new Error('coerced'); } });",
+    ] {
+        assert!(
+            run_err(src).contains("TypeError"),
+            "expected TypeError for {src}"
+        );
+    }
 }
 
 #[test]

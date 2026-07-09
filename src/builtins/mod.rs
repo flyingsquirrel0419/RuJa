@@ -5084,7 +5084,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         )?;
     }
     // Date (minimal: now() and constructor returning a timestamp wrapper)
-    let (date_ctor, date_proto) = make_builtin_constructor_with(
+    let (date_ctor, date_proto) = make_builtin_constructor_with_proto_class(
         vm,
         "Date",
         7,
@@ -5134,6 +5134,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toJSON", date_to_string, 1),
             ("getTimezoneOffset", date_get_timezone_offset, 0),
         ],
+        None,
     )?;
     vm.date_proto = Value::Object(date_proto);
     define_global(vm, "Date", Value::Object(date_ctor));

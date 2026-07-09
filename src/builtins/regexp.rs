@@ -1602,7 +1602,15 @@ pub(crate) fn make_builtin_constructor_with(
     ctor: NativeFn,
     methods: &[(&str, NativeFn, usize)],
 ) -> error::Result<(GcIdx, GcIdx)> {
-    make_builtin_constructor_with_in_env(vm, name, length, ctor, methods, vm.global)
+    make_builtin_constructor_with_proto_class_in_env(
+        vm,
+        name,
+        length,
+        ctor,
+        methods,
+        vm.global,
+        Some(name),
+    )
 }
 
 pub(crate) fn make_builtin_constructor_with_in_env(
@@ -1613,6 +1621,45 @@ pub(crate) fn make_builtin_constructor_with_in_env(
     methods: &[(&str, NativeFn, usize)],
     env: GcIdx,
 ) -> error::Result<(GcIdx, GcIdx)> {
+    make_builtin_constructor_with_proto_class_in_env(
+        vm,
+        name,
+        length,
+        ctor,
+        methods,
+        env,
+        Some(name),
+    )
+}
+
+pub(crate) fn make_builtin_constructor_with_proto_class(
+    vm: &mut Vm,
+    name: &str,
+    length: usize,
+    ctor: NativeFn,
+    methods: &[(&str, NativeFn, usize)],
+    proto_class_name: Option<&str>,
+) -> error::Result<(GcIdx, GcIdx)> {
+    make_builtin_constructor_with_proto_class_in_env(
+        vm,
+        name,
+        length,
+        ctor,
+        methods,
+        vm.global,
+        proto_class_name,
+    )
+}
+
+fn make_builtin_constructor_with_proto_class_in_env(
+    vm: &mut Vm,
+    name: &str,
+    length: usize,
+    ctor: NativeFn,
+    methods: &[(&str, NativeFn, usize)],
+    env: GcIdx,
+    proto_class_name: Option<&str>,
+) -> error::Result<(GcIdx, GcIdx)> {
     let mut method_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     for (n, f, len) in methods {
         let func_idx = vm.new_native_function_in_env(n, *f, *len, env)?;
@@ -1622,7 +1669,7 @@ pub(crate) fn make_builtin_constructor_with_in_env(
         props: Mutex::new(method_props),
         proto: Mutex::new(Some(vm.object_proto.clone())),
         extensible: AtomicBool::new(true),
-        class_name: Some(Arc::from(name)),
+        class_name: proto_class_name.map(Arc::from),
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     });
