@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5003 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5017 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -884,6 +884,11 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   returns a real Map instance, and closes custom iterators when the callback
   abruptly completes. This closes the focused `built-ins/Map/groupBy` run at
   **14 pass / 0 fail / 0 skip**.
+- **Map/Set feature lift** —
+  `Map` and `Set` are removed from the test262 unsupported-feature skip list
+  after the expanded `built-ins/Map built-ins/Set` diagnostic verifies at
+  **473 pass / 0 fail / 114 skip**. The supported subset remains green while
+  increasing to **5017 pass / 0 fail / 0 timeout**.
 - **String well-formed Unicode methods** —
   `String.prototype.isWellFormed` and `String.prototype.toWellFormed` now
   apply UTF-16 surrogate-pair rules through RuJa's internal lone-surrogate

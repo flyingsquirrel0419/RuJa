@@ -22,7 +22,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5017 pass / 0 fail / 0 timeout**.
 
 - **String exotic objects and coercion**: `String(object)` now performs
   observable `ToPrimitive` with string hint instead of bypassing overridden
@@ -677,6 +677,11 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   instead of `ToPropertyKey`, returns a real Map instance, and closes custom
   iterators when the callback abruptly completes. The focused
   `built-ins/Map/groupBy` run now closes at **14 pass / 0 fail / 0 skip**.
+- **Map/Set feature lift**: `Map` and `Set` are removed from the test262
+  unsupported-feature skip list after the expanded `built-ins/Map
+  built-ins/Set` diagnostic verifies at **473 pass / 0 fail / 114 skip**.
+  The supported subset remains green while increasing to **5017 pass / 0 fail
+  / 0 timeout**.
 - **String well-formed Unicode methods**: `String.prototype.isWellFormed`
   and `String.prototype.toWellFormed` now follow UTF-16 surrogate-pair
   semantics, reject nullish receivers, preserve valid internal surrogate-pair
