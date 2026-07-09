@@ -468,6 +468,32 @@ fn destructure_rest() {
 }
 
 #[test]
+fn object_rest_destructuring_assignment_targets() {
+    assert_eq!(
+        run("var holder = {}, a; ({ a, ...holder.rest } = { a: 1, b: 2 }); a + ':' + holder.rest.b;"),
+        Value::String(Arc::from("1:2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var target = {};
+            var proxy = new Proxy(target, {
+              set: function(t, k, v, r) {
+                calls.push(k + ":" + v.b + ":" + (r === proxy));
+                t[k] = v;
+                return true;
+              }
+            });
+            var a;
+            ({ a, ...proxy.rest } = { a: 1, b: 2 });
+            a + ":" + target.rest.b + ":" + calls.join("|");
+        "#),
+        Value::String(Arc::from("1:2:rest:2:true"))
+    );
+}
+
+#[test]
 fn for_of_destructure() {
     assert_eq!(
         run("let s=0; for(let [k,v] of [['a',1]]){s+=v;} s;"),

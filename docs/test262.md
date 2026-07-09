@@ -221,6 +221,15 @@ Symbol keys and Proxy `set` receiver identity. The focused
 skip**; adding `language/expressions/member-expression` reports **192 pass / 0
 fail / 675 skip**.
 
+Focused object rest destructuring assignment-target local check:
+object rest assignment patterns now validate the `PropertyKey::Spread` target
+itself and compile rest targets through the destructuring assignment target
+path. This accepts `({ a, ...holder.rest } = rhs)` and keeps member rest
+targets aligned with `PutValue`/Proxy receiver semantics. The focused
+`language/expressions/assignment/dstr` run remains closed at **90 pass / 0
+fail / 278 skip**; `language/expressions/{assignment,destructuring}` reports
+**203 pass / 0 fail / 282 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

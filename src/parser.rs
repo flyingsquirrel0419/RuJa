@@ -2110,7 +2110,7 @@ impl Parser {
                     return false;
                 }
                 match &prop.key {
-                    PropertyKey::Spread(_) => Self::is_assignment_pattern(&prop.value),
+                    PropertyKey::Spread(expr) => Self::is_assignment_pattern(expr),
                     _ => Self::is_assignment_pattern(&prop.value),
                 }
             }),

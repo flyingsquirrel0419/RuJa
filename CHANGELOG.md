@@ -64,6 +64,13 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   Symbol keys and Proxy `set` receiver identity for loop-head assignment. The
   focused `language/statements/{for-in,for-of}` run reports **191 pass / 0 fail
   / 675 skip**.
+- **Object rest destructuring assignment targets**: object rest assignment
+  patterns such as `({ a, ...holder.rest } = rhs)` now validate the actual rest
+  target and compile it through the destructuring assignment target path. Rest
+  targets can now be identifiers or member expressions, including Proxy-backed
+  member targets that rely on `PutValue` receiver identity. The focused
+  `language/expressions/assignment/dstr` run remains closed at **90 pass / 0
+  fail / 278 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This

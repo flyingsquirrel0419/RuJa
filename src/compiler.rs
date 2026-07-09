@@ -2162,10 +2162,12 @@ impl Compiler {
                 self.chunk.patch_jump(jump_after_finally, after_finally);
             }
             Expr::Object(props) => {
+                let mut bound_keys: Vec<Arc<str>> = Vec::new();
                 for p in props {
                     let mut new_path = path.to_vec();
                     match &p.key {
                         PropertyKey::Ident(s) | PropertyKey::String(s) => {
+                            bound_keys.push(s.clone());
                             new_path.push(PathStep::Prop(s.clone()));
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
@@ -2175,6 +2177,8 @@ impl Compiler {
                             self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
                         }
                         PropertyKey::Number(n) => {
+                            let ks = crate::value::num_to_string(*n);
+                            bound_keys.push(Arc::from(ks.as_str()));
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
                             let key = self
@@ -2203,10 +2207,23 @@ impl Compiler {
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
                             self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
                         }
-                        PropertyKey::Spread(_) => {
-                            return Err(error::Error::syntax(
-                                "spread in assignment target object".to_string(),
-                            ));
+                        PropertyKey::Spread(rest_target) => {
+                            let target_temp = self
+                                .compile_assign_target_temp(Self::assignment_target(rest_target))?;
+                            self.load_path(temp_idx, path);
+                            for k in &bound_keys {
+                                let k_idx = self.chunk.add_constant(Value::String(k.clone()));
+                                self.chunk.emit(Op::Const(k_idx), self.current_line);
+                            }
+                            self.chunk
+                                .emit(Op::ObjRest(bound_keys.len()), self.current_line);
+                            let rest_idx = self.intern("#drest");
+                            self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
+                            self.compile_assign_value_to_target(
+                                rest_target,
+                                rest_idx,
+                                target_temp,
+                            )?;
                         }
                     }
                 }
