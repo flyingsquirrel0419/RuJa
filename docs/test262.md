@@ -323,6 +323,14 @@ skip** after adding fixed-buffer `transfer`, `transferToFixedLength`,
 `transferToImmutable`, `sliceToImmutable`, and the `immutable` accessor, then
 pinning interpreted return values across VM GC safe points so
 `sliceToImmutable` argument coercion keeps freshly returned buffers alive.
+
+Focused ArrayBuffer `@@toStringTag` local check: `%ArrayBuffer.prototype%` now
+exposes `Symbol.toStringTag` as a non-writable, non-enumerable, configurable
+data property with value `"ArrayBuffer"`. The focused
+`built-ins/ArrayBuffer/prototype` run now reports **72 pass / 0 fail / 100
+skip**, and the broader `built-ins/ArrayBuffer` run closes at **92 pass / 0
+fail / 129 skip**.
+
 Latest improvement confirmation: `test262-full` 28965977305 on `576ba07`.
 Latest improvement confirmation: `test262-full` 28966918564 on `2256c6a`.
 Latest full baseline documentation check: `test262-full` 28967365155 on

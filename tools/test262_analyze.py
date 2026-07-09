@@ -12,9 +12,8 @@ HARNESS = Path(TEST262) / "harness"
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "DataView", "FinalizationRegistry",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
-    "Int32Array", "Intl", "Map", "Promise", "Set", "SharedArrayBuffer",
-    "Symbol", "Symbol.asyncIterator", "Symbol.hasInstance", "Symbol.iterator",
-    "Symbol.toPrimitive", "Symbol.toStringTag",
+    "Int32Array", "Intl", "Promise", "SharedArrayBuffer",
+    "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
     "WeakSet", "arraybuffer", "async-functions", "async-iteration", "atomics",
@@ -51,6 +50,12 @@ SYMBOL_FUNCTION_NAME_PREFIXES = (
 
 FOR_OF_SYMBOL_ITERATOR_PREFIXES = (
     "language/statements/for-of/",
+)
+
+OBJECT_SPREAD_SYMBOL_PREFIXES = (
+    "language/expressions/array/spread-obj-",
+    "language/expressions/call/spread-obj-",
+    "language/expressions/new/spread-obj-",
 )
 
 TYPED_ARRAY_CONSTRUCTORS_PREFIXES = (
@@ -143,6 +148,14 @@ def for_of_symbol_iterator_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(FOR_OF_SYMBOL_ITERATOR_PREFIXES)
 
+def object_spread_symbol_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(OBJECT_SPREAD_SYMBOL_PREFIXES)
+
 def typed_array_constructors_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -164,6 +177,8 @@ def should_skip(meta, path=None):
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
+        feats.discard("Symbol")
+    if path is not None and object_spread_symbol_path(path):
         feats.discard("Symbol")
     if path is not None and for_of_symbol_iterator_path(path):
         feats.discard("Symbol.iterator")

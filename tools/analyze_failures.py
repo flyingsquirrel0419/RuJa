@@ -10,7 +10,7 @@ from test262_runner import build_source, should_skip, RUJA, TEST262
 
 def run_test_capture(path):
     full, meta = build_source(path)
-    if should_skip(meta):
+    if should_skip(meta, path):
         return 'skip', ''
     try:
         import tempfile

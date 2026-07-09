@@ -1766,6 +1766,18 @@ fn install_array_buffer_constructor_in_env(
                 PropertyKey::from("immutable"),
                 accessor_get_prop(Value::Object(array_buffer_immutable_getter)),
             );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyDescriptor {
+                    value: Value::String(Arc::from("ArrayBuffer")),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
         });
     }
     if let Some(global) = global {

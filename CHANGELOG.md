@@ -29,6 +29,10 @@
   implemented `built-ins/DataView/` coverage by lifting only the DataView,
   ArrayBuffer, Float16Array, Reflect, and typed-array helper feature gates
   needed by that path.
+- `tools/test262_analyze.py` now mirrors the runner's unsupported-feature
+  boundary exactly, and `tools/analyze_failures.py` passes test paths into
+  `should_skip()`, so path-scoped feature exceptions are not hidden during
+  focused diagnostics.
 
 ### Runtime hardening
 
@@ -41,6 +45,10 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **ArrayBuffer `@@toStringTag` descriptor**: `%ArrayBuffer.prototype%` now
+  exposes a non-writable, non-enumerable, configurable
+  `Symbol.toStringTag` data property with value `"ArrayBuffer"`. The focused
+  `built-ins/ArrayBuffer` run closes at **92 pass / 0 fail / 129 skip**.
 - **Mapped arguments object index writes**: property-Reference writes to sloppy
   mapped arguments objects now update the linked parameter binding, including
   writes after `Object.defineProperty(arguments, "0", ...)`. Dense arguments

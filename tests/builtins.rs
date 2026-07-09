@@ -2114,6 +2114,7 @@ fn array_buffer_static_surface_matches_intrinsics() {
         run(r#"
             var isViewDesc = Object.getOwnPropertyDescriptor(ArrayBuffer, "isView");
             var speciesDesc = Object.getOwnPropertyDescriptor(ArrayBuffer, Symbol.species);
+            var tagDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, Symbol.toStringTag);
             var ab = new ArrayBuffer(4);
             var ta = new Uint8Array(ab);
             var dv = new DataView(ab);
@@ -2135,6 +2136,10 @@ fn array_buffer_static_surface_matches_intrinsics() {
               speciesDesc.enumerable,
               speciesDesc.configurable,
               speciesDesc.get.call(receiver) === receiver,
+              tagDesc.value,
+              tagDesc.writable,
+              tagDesc.enumerable,
+              tagDesc.configurable,
               (function() {
                 function F() {}
                 F.prototype = null;
@@ -2148,7 +2153,7 @@ fn array_buffer_static_surface_matches_intrinsics() {
             ].join(",");
             "#),
         Value::String(Arc::from(
-            "1,isView,true,false,true,true,true,false,false,false,0,get [Symbol.species],true,false,true,true,true,true",
+            "1,isView,true,false,true,true,true,false,false,false,0,get [Symbol.species],true,false,true,true,ArrayBuffer,false,false,true,true,true",
         ))
     );
 }
