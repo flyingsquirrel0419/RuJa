@@ -170,6 +170,17 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   diagnostic, broader `built-ins/TypedArrayConstructors` improves to **592
   pass / 1 fail / 145 skip**; the remaining failure is the
   typed-array-argument validation ordering case.
+- **TypedArray constructor `newTarget.prototype` ordering**:
+  TypedArray construction now defers observable `newTarget.prototype` lookup
+  until allocation, after argument validation and conversion have completed.
+  `Reflect.construct(TA, [Symbol()], newTarget)` now reports the required
+  `ToIndex` `TypeError` without touching a throwing custom prototype getter.
+  Focused `built-ins/TypedArrayConstructors/ctors/typedarray-arg` improves
+  from **12 pass / 1 fail / 1 skip** to **13 pass / 0 fail / 1 skip** with
+  TypedArray, ArrayBuffer, DataView, Reflect, and `Reflect.construct` skips
+  temporarily lifted. Under the same expanded diagnostic, broader
+  `built-ins/TypedArrayConstructors` closes at **593 pass / 0 fail / 145
+  skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

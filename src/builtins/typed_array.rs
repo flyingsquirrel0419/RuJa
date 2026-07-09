@@ -2102,16 +2102,6 @@ fn typed_array_constructor_with_kind(
             "TypedArray constructor requires new".to_string(),
         ));
     }
-    let fallback_proto = vm
-        .current_native_callee
-        .clone()
-        .and_then(|callee| {
-            vm.get_property_by_key(&callee, &PropertyKey::from("prototype"))
-                .ok()
-        })
-        .filter(|proto| matches!(proto, Value::Object(_)))
-        .unwrap_or_else(|| vm.object_proto.clone());
-    let proto = native_constructor_prototype_with_default(vm, kind.name(), fallback_proto)?;
     let buffer = match args.first() {
         None => Vec::new(),
         Some(Value::Undefined) => Vec::new(),
@@ -2170,6 +2160,7 @@ fn typed_array_constructor_with_kind(
                 {
                     return Err(Error::range("Invalid TypedArray length"));
                 }
+                let proto = typed_array_constructor_prototype(vm, kind)?;
                 return allocate_typed_array_view(
                     vm,
                     kind,
@@ -2195,6 +2186,7 @@ fn typed_array_constructor_with_kind(
                     || (!iterator_method.is_undefined() && !iterator_method.is_null())
                 {
                     let buffer = typed_array_iterable_to_bytes(vm, kind, &array_like)?;
+                    let proto = typed_array_constructor_prototype(vm, kind)?;
                     return allocate_typed_array_from_bytes(vm, kind, proto, buffer);
                 }
             }
@@ -2221,7 +2213,24 @@ fn typed_array_constructor_with_kind(
         }
     };
 
+    let proto = typed_array_constructor_prototype(vm, kind)?;
     allocate_typed_array_from_bytes(vm, kind, proto, buffer)
+}
+
+fn typed_array_constructor_prototype(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+) -> error::Result<Value> {
+    let fallback_proto = vm
+        .current_native_callee
+        .clone()
+        .and_then(|callee| {
+            vm.get_property_by_key(&callee, &PropertyKey::from("prototype"))
+                .ok()
+        })
+        .filter(|proto| matches!(proto, Value::Object(_)))
+        .unwrap_or_else(|| vm.object_proto.clone());
+    native_constructor_prototype_with_default(vm, kind.name(), fallback_proto)
 }
 
 pub(crate) fn uint8array_constructor(

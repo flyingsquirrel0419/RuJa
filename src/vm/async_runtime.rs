@@ -907,6 +907,31 @@ impl Vm {
         self.construct_with_new_target(constructor, args, constructor)
     }
 
+    fn is_typed_array_native_constructor(&self, idx: GcIdx) -> bool {
+        self.heap.with_obj(idx.0, |obj| {
+            let HeapObj::Function(f) = obj else {
+                return false;
+            };
+            if !matches!(f.kind, FunctionKind::Native { .. }) {
+                return false;
+            }
+            matches!(
+                f.name.as_deref(),
+                Some("Int8Array")
+                    | Some("Uint8Array")
+                    | Some("Uint8ClampedArray")
+                    | Some("Int16Array")
+                    | Some("Uint16Array")
+                    | Some("Int32Array")
+                    | Some("Uint32Array")
+                    | Some("Float32Array")
+                    | Some("Float64Array")
+                    | Some("BigInt64Array")
+                    | Some("BigUint64Array")
+            )
+        })
+    }
+
     pub fn construct_with_new_target(
         &mut self,
         constructor: &Value,
@@ -951,6 +976,11 @@ impl Vm {
         }
         if !self.is_constructor_value(new_target) {
             return Err(Error::type_err("newTarget is not a constructor"));
+        }
+        if self.is_typed_array_native_constructor(idx) {
+            self.pending_new_target = Some(new_target.clone());
+            self.pending_new_target_prototype = None;
+            return self.call_function(constructor, args, Some(Value::Undefined));
         }
         // GetPrototypeFromConstructor reads the observable `.prototype`;
         // non-object values, including explicit null, use %Object.prototype%.

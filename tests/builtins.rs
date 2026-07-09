@@ -765,6 +765,32 @@ fn typed_array_constructors_read_array_like_objects_observably() {
 }
 
 #[test]
+fn typed_array_constructor_toindex_errors_before_newtarget_prototype() {
+    assert_eq!(
+        run(r#"
+            var newTarget = function() {}.bind(null);
+            Object.defineProperty(newTarget, "prototype", {
+              get: function() { throw new Error("prototype"); }
+            });
+            var log = [];
+            for (var i = 0; i < 2; i++) {
+              var C = i === 0 ? Uint8Array : BigInt64Array;
+              try {
+                Reflect.construct(C, [Symbol()], newTarget);
+                log.push("none");
+              } catch (e) {
+                log.push(e.name + ":" + e.message);
+              }
+            }
+            log.join("|");
+        "#),
+        Value::String(Arc::from(
+            "TypeError:Cannot convert Symbol to number|TypeError:Cannot convert Symbol to number"
+        ))
+    );
+}
+
+#[test]
 fn typed_array_constructors_create_array_buffer_backed_views() {
     assert_eq!(
         run(r#"

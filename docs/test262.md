@@ -312,6 +312,18 @@ diagnostic, broader `built-ins/TypedArrayConstructors` reports **592 pass / 1
 fail / 145 skip**; the remaining failure is the typed-array-argument
 validation ordering case.
 
+Focused TypedArray typed-array-argument ordering local check:
+TypedArray constructors now defer observable `newTarget.prototype` lookup
+until allocation, so primitive argument validation and conversion can throw
+first. In particular, `Reflect.construct(TA, [Symbol()], newTarget)` no longer
+touches a throwing custom `newTarget.prototype` getter before reporting the
+required `ToIndex` `TypeError`. With TypedArray, ArrayBuffer, DataView,
+Reflect, and `Reflect.construct` skips temporarily lifted,
+`built-ins/TypedArrayConstructors/ctors/typedarray-arg` improves from **12
+pass / 1 fail / 1 skip** to **13 pass / 0 fail / 1 skip**. Under the same
+expanded diagnostic, broader `built-ins/TypedArrayConstructors` now closes at
+**593 pass / 0 fail / 145 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,
