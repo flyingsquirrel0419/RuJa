@@ -137,6 +137,20 @@ supported subset remains **5099 pass / 0 fail / 15339 skip** because full
 public-field coverage still needs direct-eval, computed-name ordering, and
 static-initializer follow-ups before the runner can lift those features.
 
+Focused public class field `[[DefineOwnProperty]]` local check:
+public field initialization now uses `CreateDataPropertyOrThrow` semantics
+instead of raw property-map insertion. A later field fails with `TypeError`
+when an earlier initializer freezes the receiver, and derived-class field
+initializers invoke Proxy `defineProperty` traps when `super()` returns a Proxy
+receiver. With public class field and Proxy skips temporarily lifted,
+`class-field-on-frozen-objects.js` and
+`public-class-field-initialization-is-visible-to-proxy.js` now report **2 pass
+/ 0 fail / 0 skip**. The broader
+`language/{statements,expressions}/class/elements` diagnostic with public,
+private, and Proxy gates temporarily lifted reports **1460 pass / 184 fail /
+1318 skip**. The default supported subset remains **5099 pass / 0 fail /
+15339 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

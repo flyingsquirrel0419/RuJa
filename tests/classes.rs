@@ -130,6 +130,30 @@ fn public_class_fields_define_own_data_properties() {
 }
 
 #[test]
+fn public_class_fields_use_define_own_property_semantics() {
+    assert_eq!(
+        run("class C{f=Object.freeze(this);g=1;}try{new C();false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            var called = false;
+            function Base() {
+              return new Proxy(this, {
+                defineProperty(target, key, desc) {
+                  called = key === "f" && desc.value === 1;
+                  throw new Error("define");
+                }
+              });
+            }
+            class C extends Base { f = 1; }
+            try { new C(); false; } catch (e) { called && e.message === "define"; }
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn public_static_fields_and_static_name_ambiguity() {
     let src = r#"
         class A {

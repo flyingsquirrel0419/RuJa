@@ -41,6 +41,19 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Public class field `[[DefineOwnProperty]]` semantics**: public field
+  initialization now routes through `CreateDataPropertyOrThrow` instead of
+  raw property-map insertion. Fields therefore fail with `TypeError` when a
+  previous initializer freezes the receiver and invoke Proxy `defineProperty`
+  traps when a derived constructor returns a Proxy receiver. With public class
+  field and Proxy skips temporarily lifted, the focused
+  `class-field-on-frozen-objects.js` and
+  `public-class-field-initialization-is-visible-to-proxy.js` tests now run at
+  **2 pass / 0 fail / 0 skip**. The broader
+  `language/{statements,expressions}/class/elements` diagnostic with public,
+  private, and Proxy gates temporarily lifted reports **1460 pass / 184 fail /
+  1318 skip**. The default supported subset remains **5099 pass / 0 fail / 0
+  timeout**.
 - **Private element duplicate initialization**: private field, private method,
   and private accessor initialization now rejects attempts to add the same
   class private name to the same receiver twice instead of overwriting the

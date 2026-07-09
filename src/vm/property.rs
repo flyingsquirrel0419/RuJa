@@ -440,18 +440,7 @@ impl Vm {
         key: crate::value::PropertyKey,
         value: Value,
     ) -> error::Result<()> {
-        if let Value::Object(idx) = obj {
-            self.heap.with_obj(idx.0, |o| {
-                o.props()
-                    .lock()
-                    .insert(key, crate::value::PropertyDescriptor::data(value));
-            });
-            Ok(())
-        } else {
-            Err(Error::type_err(
-                "Cannot set property of primitive".to_string(),
-            ))
-        }
+        self.define_own_property_or_throw(obj, key, crate::value::PropertyDescriptor::data(value))
     }
 
     pub(crate) fn define_own_property_or_throw(
@@ -461,6 +450,39 @@ impl Vm {
         desc: crate::value::PropertyDescriptor,
     ) -> error::Result<()> {
         if let Value::Object(idx) = obj {
+            let proxy_info = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Proxy(proxy) = o {
+                    if *proxy.revoked.lock() {
+                        return Some(Err(Error::type_err(
+                            "Cannot perform 'defineProperty' on a proxy that has been revoked",
+                        )));
+                    }
+                    Some(Ok((proxy.target.clone(), proxy.handler.clone())))
+                } else {
+                    None
+                }
+            });
+            if let Some(result) = proxy_info {
+                let (target, handler) = result?;
+                let trap = self.get_property(&handler, "defineProperty")?;
+                if trap.is_undefined() || trap.is_null() {
+                    return self.define_own_property_or_throw(&target, key, desc);
+                }
+                let key_value = match &key {
+                    crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
+                    crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
+                };
+                let desc_obj = self.property_descriptor_object(&desc)?;
+                let trap_result = self.call_function(
+                    &trap,
+                    &[target.clone(), key_value, desc_obj],
+                    Some(handler),
+                )?;
+                if !self.to_boolean(&trap_result) {
+                    return Err(Error::type_err("Proxy defineProperty trap returned false"));
+                }
+                return Ok(());
+            }
             let current = self
                 .heap
                 .with_obj(idx.0, |o| o.props().lock().get(&key).cloned());
@@ -523,6 +545,50 @@ impl Vm {
                 "Cannot define property of primitive".to_string(),
             ))
         }
+    }
+
+    fn property_descriptor_object(
+        &mut self,
+        desc: &crate::value::PropertyDescriptor,
+    ) -> error::Result<Value> {
+        let desc_idx = self.new_object()?;
+        let desc_obj = Value::Object(desc_idx);
+        self.heap.with_obj(desc_idx.0, |o| {
+            let props = o.props();
+            let mut props = props.lock();
+            if desc.is_accessor {
+                props.insert(
+                    crate::value::PropertyKey::from("get"),
+                    crate::value::PropertyDescriptor::data(
+                        desc.get.clone().unwrap_or(Value::Undefined),
+                    ),
+                );
+                props.insert(
+                    crate::value::PropertyKey::from("set"),
+                    crate::value::PropertyDescriptor::data(
+                        desc.set.clone().unwrap_or(Value::Undefined),
+                    ),
+                );
+            } else {
+                props.insert(
+                    crate::value::PropertyKey::from("value"),
+                    crate::value::PropertyDescriptor::data(desc.value.clone()),
+                );
+                props.insert(
+                    crate::value::PropertyKey::from("writable"),
+                    crate::value::PropertyDescriptor::data(Value::Bool(desc.writable)),
+                );
+            }
+            props.insert(
+                crate::value::PropertyKey::from("enumerable"),
+                crate::value::PropertyDescriptor::data(Value::Bool(desc.enumerable)),
+            );
+            props.insert(
+                crate::value::PropertyKey::from("configurable"),
+                crate::value::PropertyDescriptor::data(Value::Bool(desc.configurable)),
+            );
+        });
+        Ok(desc_obj)
     }
 
     pub(crate) fn prevent_extensions(&mut self, obj: &Value) -> error::Result<bool> {
