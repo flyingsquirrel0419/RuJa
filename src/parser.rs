@@ -2839,6 +2839,7 @@ impl Parser {
                     TokenKind::Semicolon
                         | TokenKind::RBrace
                         | TokenKind::RParen
+                        | TokenKind::RBracket
                         | TokenKind::Comma
                         | TokenKind::Eof
                 ) {
@@ -3473,6 +3474,17 @@ impl Parser {
                 }
                 // Shorthand property: `{x}` is equivalent to `{x: x}`.
                 let value = if let PropertyKey::Ident(s) = &key {
+                    if s.as_ref() == "yield" && !self.yield_as_identifier_allowed() {
+                        return Err(error::Error::syntax(
+                            "'yield' cannot be used as a shorthand property name in a generator"
+                                .to_string(),
+                        ));
+                    }
+                    if s.as_ref() == "await" && !self.await_as_identifier_allowed() {
+                        return Err(error::Error::syntax(
+                            "'await' cannot be used as a shorthand property name here".to_string(),
+                        ));
+                    }
                     if Self::is_reserved_identifier_reference_word(s) || Self::is_future_reserved(s)
                     {
                         return Err(error::Error::syntax(format!(

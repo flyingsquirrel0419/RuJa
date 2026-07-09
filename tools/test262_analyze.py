@@ -197,6 +197,33 @@ ASSIGNMENT_EXPRESSION_FEATURES = {
     "Symbol.iterator",
 }
 
+ASSIGNMENT_EXPRESSION_GENERATOR_FILES = {
+    "language/expressions/assignment/dstr/array-elem-init-fn-name-gen.js",
+    "language/expressions/assignment/dstr/array-elem-init-yield-expr.js",
+    "language/expressions/assignment/dstr/array-elem-iter-rtrn-close.js",
+    "language/expressions/assignment/dstr/array-elem-nested-array-yield-expr.js",
+    "language/expressions/assignment/dstr/array-elem-nested-obj-yield-expr.js",
+    "language/expressions/assignment/dstr/array-elem-target-yield-expr.js",
+    "language/expressions/assignment/dstr/array-elem-trlg-iter-list-rtrn-close.js",
+    "language/expressions/assignment/dstr/array-elem-trlg-iter-rest-rtrn-close.js",
+    "language/expressions/assignment/dstr/array-iteration.js",
+    "language/expressions/assignment/dstr/array-rest-iter-rtrn-close.js",
+    "language/expressions/assignment/dstr/array-rest-iteration.js",
+    "language/expressions/assignment/dstr/array-rest-nested-array-yield-expr.js",
+    "language/expressions/assignment/dstr/array-rest-nested-obj-yield-expr.js",
+    "language/expressions/assignment/dstr/array-rest-yield-expr.js",
+    "language/expressions/assignment/dstr/obj-id-identifier-yield-expr.js",
+    "language/expressions/assignment/dstr/obj-id-init-fn-name-gen.js",
+    "language/expressions/assignment/dstr/obj-id-init-yield-expr.js",
+    "language/expressions/assignment/dstr/obj-prop-elem-init-fn-name-gen.js",
+    "language/expressions/assignment/dstr/obj-prop-elem-init-yield-expr.js",
+    "language/expressions/assignment/dstr/obj-prop-elem-target-yield-expr.js",
+    "language/expressions/assignment/dstr/obj-prop-nested-array-yield-expr.js",
+    "language/expressions/assignment/dstr/obj-prop-nested-obj-yield-expr.js",
+    "language/expressions/assignment/fn-name-gen.js",
+    "language/expressions/assignment/target-cover-yieldexpr.js",
+}
+
 REFERENCE_PRIVATE_EXPRESSION_PREFIXES = (
     "language/expressions/compound-assignment/",
     "language/expressions/logical-assignment/",
@@ -328,6 +355,13 @@ def assignment_expression_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(ASSIGNMENT_EXPRESSION_PREFIXES)
 
+def assignment_expression_generator_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in ASSIGNMENT_EXPRESSION_GENERATOR_FILES
+
 def reference_private_expression_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -364,6 +398,8 @@ def should_skip(meta, path=None):
         feats.difference_update(WITH_STATEMENT_FEATURES)
     if path is not None and assignment_expression_path(path):
         feats.difference_update(ASSIGNMENT_EXPRESSION_FEATURES)
+    if path is not None and assignment_expression_generator_path(path):
+        feats.discard("generators")
     if path is not None and reference_private_expression_path(path):
         feats.difference_update(REFERENCE_PRIVATE_EXPRESSION_FEATURES)
     if feats & SKIP_FEATURES:

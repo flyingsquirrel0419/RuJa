@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5915 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5939 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -125,6 +125,18 @@ latest full baseline documentation check: `test262-full` 28937391393 on
 Latest improvement confirmation: `test262-full` 28962802017 on `6d6328e`.
 Latest improvement confirmation: `test262-full` 28964634961 on `05173b6`.
 Latest improvement confirmation: `test262-full` 29010097608 on `7ac8ba5`.
+
+Focused generator assignment destructuring local check:
+generator assignment destructuring now treats `yield]` as a bare
+`YieldExpression` before the closing array pattern bracket, so default
+initializers and rest-target computed keys can suspend and resume in generator
+assignment patterns. Generator shorthand `{ yield }` assignment targets are
+now rejected as syntax errors. The runner admits only the 24 generator-tagged
+`language/expressions/assignment/` files that pass, keeping the remaining
+iterator-close runtime cases skipped. The focused assignment path reports
+**477 pass / 0 fail / 8 skip**, the broader Reference-adjacent cluster
+reports **1190 pass / 0 fail / 8 skip**, and the supported subset rises to
+**5939 pass / 0 fail / 14499 skip**.
 
 Focused public class fields local check:
 `language/{statements,expressions}/class/elements` now parses public instance

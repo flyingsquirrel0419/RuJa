@@ -75,7 +75,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5915 pass / 0 fail / 14523 skip / 0 timeout**.
+Current supported subset count: **5939 pass / 0 fail / 14499 skip / 0 timeout**.
 
 - **For-of runner admission**: the `language/statements/for-of/` path
   exception now admits implemented destructuring-binding, object-rest,
@@ -111,6 +111,14 @@ Current supported subset count: **5915 pass / 0 fail / 14523 skip / 0 timeout**.
   when iterator stepping itself throws while still closing for target/default
   abrupt completions. `language/expressions/assignment` reports **453 pass / 0
   fail / 32 skip**.
+- **Generator assignment destructuring parser coverage**: generator assignment
+  destructuring now parses bare `yield` before a closing array pattern bracket
+  as a `YieldExpression`, and rejects generator shorthand `{ yield }`
+  assignment targets as syntax errors. The runner now admits only the 24
+  generator-tagged `language/expressions/assignment/` files that pass, leaving
+  the remaining iterator-close runtime cases skipped. The focused assignment
+  path reports **477 pass / 0 fail / 8 skip**, and the broader
+  Reference-adjacent cluster reports **1190 pass / 0 fail / 8 skip**.
 - **Private-field Reference runner admission**: compound and logical assignment
   paths now admit the already-implemented private-field Reference coverage
   without opening private class fields more broadly. The combined

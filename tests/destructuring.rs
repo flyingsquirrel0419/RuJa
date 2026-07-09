@@ -370,6 +370,59 @@ fn array_assign_elision_iterator_error_skips_iterator_close() {
 }
 
 #[test]
+fn array_assign_generator_default_allows_bare_yield_before_bracket() {
+    assert_eq!(
+        run(r#"
+            var x;
+            var iter = (function*() {
+              var vals = [];
+              [x = yield] = vals;
+              return x;
+            })();
+            var first = iter.next();
+            var second = iter.next(86);
+            [
+              first.value === undefined,
+              first.done,
+              second.value,
+              second.done,
+              x
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,false,86,true,86"))
+    );
+}
+
+#[test]
+fn array_assign_generator_rest_target_allows_bare_yield_before_bracket() {
+    assert_eq!(
+        run(r#"
+            var target = {};
+            var iter = (function*() {
+              var vals = [33, 44, 55];
+              [...target[yield]] = vals;
+              return target.prop.length + ":" + target.prop[0] + ":" + target.prop[2];
+            })();
+            var first = iter.next();
+            var second = iter.next("prop");
+            [
+              first.value === undefined,
+              first.done,
+              second.value,
+              second.done
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,false,3:33:55,true"))
+    );
+}
+
+#[test]
+fn object_assign_generator_rejects_yield_shorthand_target() {
+    let err = run_err("(function*() { 0, { yield } = {}; });");
+    assert!(err.contains("SyntaxError"), "{err}");
+}
+
+#[test]
 fn array_assign_closes_iterator_on_target_throw_preserving_original_throw() {
     let src = r#"
         var log = [];
