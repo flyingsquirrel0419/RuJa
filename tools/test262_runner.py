@@ -52,6 +52,12 @@ SYMBOL_FUNCTION_NAME_PREFIXES = (
     "language/statements/class/definition/fn-name-",
 )
 
+OBJECT_SPREAD_SYMBOL_PREFIXES = (
+    "language/expressions/array/spread-obj-",
+    "language/expressions/call/spread-obj-",
+    "language/expressions/new/spread-obj-",
+)
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -93,11 +99,21 @@ def symbol_function_name_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(SYMBOL_FUNCTION_NAME_PREFIXES)
 
+def object_spread_symbol_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(OBJECT_SPREAD_SYMBOL_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
+        feats.discard("Symbol")
+    if path is not None and object_spread_symbol_path(path):
         feats.discard("Symbol")
     if feats & SKIP_FEATURES:
         return True

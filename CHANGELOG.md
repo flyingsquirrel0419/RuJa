@@ -15,6 +15,9 @@
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   Symbol-key function-name inference tests without unskipping broader Symbol
   iterator coverage, keeping the unsupported-feature boundary narrow.
+- `tools/test262_runner.py` now admits the Symbol-backed object-spread
+  generated tests in array/call/new expression contexts without unskipping
+  broader Symbol iterator coverage.
 
 ### Runtime hardening
 
@@ -25,8 +28,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5070 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5079 pass / 0 fail / 0 timeout**.
 
+- **Object spread Symbol keys**: `{...source}` now copies enumerable own Symbol
+  properties and follows `[[OwnPropertyKeys]]` order for integer index keys,
+  string keys, then Symbol keys. It also re-checks each property descriptor at
+  copy time and propagates Proxy `ownKeys` failures instead of falling back to
+  the target. The focused
+  `language/expressions/{array,call,new}/spread-obj-{spread-order,symbol-property,with-overrides}.js`
+  cluster now runs at **9 pass / 0 fail**, and the supported subset increases
+  to **5079 pass / 0 fail / 0 timeout**.
 - **Symbol-key `SetFunctionName`**: object literal methods, anonymous
   function/arrow/class property values, and public class methods/accessors now
   infer function `name` properties from runtime Symbol property keys, using

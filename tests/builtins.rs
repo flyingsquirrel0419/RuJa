@@ -3266,6 +3266,82 @@ fn object_assign_copies_symbols_after_strings() {
 }
 
 #[test]
+fn object_spread_copies_symbols_in_own_property_key_order() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var sym = Symbol("foo");
+            var hidden = Symbol("hidden");
+            var source = {
+              get z() { calls.push("z"); return 2; },
+              get a() { calls.push("a"); return 3; }
+            };
+            Object.defineProperty(source, "1", {
+              enumerable: true,
+              get: function() { calls.push("1"); return 1; }
+            });
+            Object.defineProperty(source, sym, {
+              enumerable: true,
+              get: function() { calls.push("s"); return 4; }
+            });
+            Object.defineProperty(source, hidden, {
+              enumerable: false,
+              value: 5
+            });
+            var out = { ...source };
+            [
+              calls.join(","),
+              out[1],
+              out.z,
+              out.a,
+              out[sym],
+              out[hidden] === undefined,
+              Object.keys(out).join(","),
+              Object.getOwnPropertySymbols(out).length
+            ].join("|");
+        "#),
+        Value::String(Arc::from("1,z,a,s|1|2|3|4|true|1,z,a|1"))
+    );
+}
+
+#[test]
+fn object_spread_rechecks_descriptors_and_propagates_proxy_own_keys() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var sym = Symbol("s");
+            var source = {};
+            Object.defineProperty(source, "a", {
+              enumerable: true,
+              get: function() {
+                log.push("a");
+                Object.defineProperty(source, sym, { value: 2, enumerable: false });
+                return 1;
+              }
+            });
+            Object.defineProperty(source, sym, {
+              value: 2,
+              enumerable: true,
+              configurable: true
+            });
+            var out = { ...source };
+            [log.join(","), out.a, out[sym] === undefined, Object.getOwnPropertySymbols(out).length].join("|");
+        "#),
+        Value::String(Arc::from("a|1|true|0"))
+    );
+
+    assert!(run_err(
+        r#"
+            var proxy = new Proxy({ a: 1 }, {
+              ownKeys: function() { throw new Error("boom"); }
+            });
+            ({ ...proxy });
+        "#
+    )
+    .contains("boom"));
+}
+
+#[test]
 fn object_property_is_enumerable() {
     assert_eq!(run("({a:1}).propertyIsEnumerable('a');"), Value::Bool(true));
     assert_eq!(

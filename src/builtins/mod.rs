@@ -3875,7 +3875,7 @@ fn is_proxy_value(vm: &Vm, obj: &Value) -> bool {
     matches!(obj, Value::Object(idx) if vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Proxy(_))))
 }
 
-fn own_property_keys_or_throw(
+pub(crate) fn own_property_keys_or_throw(
     vm: &mut Vm,
     obj: &Value,
     enumerable_only: bool,
@@ -4413,7 +4413,7 @@ fn property_descriptor_from_object(vm: &mut Vm, desc: &Value) -> error::Result<P
     })
 }
 
-fn own_property_descriptor_for_key_or_throw(
+pub(crate) fn own_property_descriptor_for_key_or_throw(
     vm: &mut Vm,
     obj: &Value,
     key: &PropertyKey,

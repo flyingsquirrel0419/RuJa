@@ -1539,34 +1539,20 @@ impl Vm {
                     // stack: [dest, src]; copy src's enumerable own props into dest.
                     let src = self.stack.pop().unwrap_or(Value::Undefined);
                     let dest = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&dest, &src) {
-                        let _ = dest_idx;
-                        // Collect (key, value) pairs from src's own enumerable props.
-                        let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
-                            let mut out = Vec::new();
-                            if let HeapObj::Array(a) = o {
-                                for (i, v) in a.items.lock().iter().enumerate() {
-                                    out.push((Arc::from(i.to_string().as_str()), v.clone()));
-                                }
+                    if matches!((&dest, &src), (Value::Object(_), Value::Object(_))) {
+                        let keys = crate::builtins::own_property_keys_or_throw(
+                            self, &src, false, true, true,
+                        )?;
+                        for key in keys {
+                            if !crate::builtins::own_property_descriptor_for_key_or_throw(
+                                self, &src, &key,
+                            )?
+                            .is_some_and(|desc| desc.enumerable)
+                            {
+                                continue;
                             }
-                            for (k, desc) in o.props().lock().iter() {
-                                if desc.enumerable {
-                                    if let crate::value::PropertyKey::Str(s) = k {
-                                        out.push((s.clone(), Value::Undefined));
-                                    }
-                                }
-                            }
-                            out
-                        });
-                        for (k, mut v) in pairs {
-                            if v.is_undefined() {
-                                v = self.get_property(&src, &k)?;
-                            }
-                            self.define_data_property(
-                                &dest,
-                                crate::value::PropertyKey::Str(k.clone()),
-                                v,
-                            )?;
+                            let v = self.get_property_by_key(&src, &key)?;
+                            self.define_data_property(&dest, key, v)?;
                         }
                     }
                     self.stack.push(dest);
