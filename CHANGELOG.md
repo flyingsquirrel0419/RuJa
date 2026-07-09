@@ -45,7 +45,7 @@
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `language/expressions/assignment/` destructuring assignment
   coverage by lifting only the `destructuring-binding`, `object-rest`, Symbol,
-  and Proxy gates on that path.
+  `Symbol.iterator`, and Proxy gates on that path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented private-field Reference coverage for
   `language/expressions/compound-assignment/` and
@@ -75,7 +75,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5869 pass / 0 fail / 14569 skip / 0 timeout**.
+Current supported subset count: **5915 pass / 0 fail / 14523 skip / 0 timeout**.
 
 - **For-of runner admission**: the `language/statements/for-of/` path
   exception now admits implemented destructuring-binding, object-rest,
@@ -106,9 +106,11 @@ Current supported subset count: **5869 pass / 0 fail / 14569 skip / 0 timeout**.
 - **Assignment destructuring runner admission**: the
   `language/expressions/assignment/` path exception now admits the implemented
   destructuring assignment, object rest, optional-chaining parse-negative,
-  Symbol-key, and Proxy coverage without opening `Symbol.iterator` or
-  generator coverage more broadly. `language/expressions/assignment` reports
-  **407 pass / 0 fail / 78 skip**.
+  Symbol-key, `Symbol.iterator`, and Proxy coverage without opening generator
+  coverage more broadly. Array assignment patterns now skip `IteratorClose`
+  when iterator stepping itself throws while still closing for target/default
+  abrupt completions. `language/expressions/assignment` reports **453 pass / 0
+  fail / 32 skip**.
 - **Private-field Reference runner admission**: compound and logical assignment
   paths now admit the already-implemented private-field Reference coverage
   without opening private class fields more broadly. The combined
@@ -117,7 +119,7 @@ Current supported subset count: **5869 pass / 0 fail / 14569 skip / 0 timeout**.
   skip**. The Reference-adjacent cluster
   `language/expressions/assignment language/expressions/compound-assignment
   language/expressions/logical-assignment language/expressions/update
-  language/statements/with` reports **1120 pass / 0 fail / 78 skip**.
+  language/statements/with` reports **1166 pass / 0 fail / 32 skip**.
 - **Error `cause` semantics**: `Error` and NativeError constructors now perform
   observable `HasProperty(options, "cause")` followed by `Get`, after installing
   the message property. `AggregateError` now uses its `(errors, message,

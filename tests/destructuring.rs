@@ -278,7 +278,7 @@ fn array_assign_rest_target_error_closes_before_iterator_step() {
 }
 
 #[test]
-fn array_assign_rest_iterator_error_closes_iterator() {
+fn array_assign_rest_iterator_error_skips_iterator_close() {
     assert_eq!(
         run(r#"
             var nextCount = 0;
@@ -304,7 +304,68 @@ fn array_assign_rest_iterator_error_closes_iterator() {
             }
             [nextCount, returnCount, caught].join(":");
             "#),
-        Value::String(Arc::from("1:1:next"))
+        Value::String(Arc::from("1:0:next"))
+    );
+}
+
+#[test]
+fn array_assign_element_iterator_error_skips_iterator_close() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var caught = "";
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                throw "next";
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            var x;
+            try {
+              [x] = iterable;
+            } catch (e) {
+              caught = e;
+            }
+            [nextCount, returnCount, caught].join(":");
+            "#),
+        Value::String(Arc::from("1:0:next"))
+    );
+}
+
+#[test]
+fn array_assign_elision_iterator_error_skips_iterator_close() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var caught = "";
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                throw "next";
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            try {
+              [,] = iterable;
+            } catch (e) {
+              caught = e;
+            }
+            [nextCount, returnCount, caught].join(":");
+            "#),
+        Value::String(Arc::from("1:0:next"))
     );
 }
 

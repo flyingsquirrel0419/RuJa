@@ -2218,10 +2218,8 @@ impl Compiler {
                 for el in elems {
                     match el {
                         Expr::ArrayHole => {
-                            if close_mode == AssignmentIteratorCloseMode::SkipIteratorAbrupt {
-                                self.chunk.emit(Op::True, self.current_line);
-                                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
-                            }
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
@@ -2230,10 +2228,8 @@ impl Compiler {
                         Expr::Spread(inner) => {
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(inner))?;
-                            if close_mode == AssignmentIteratorCloseMode::SkipIteratorAbrupt {
-                                self.chunk.emit(Op::True, self.current_line);
-                                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
-                            }
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
                             let rest_idx = self.intern("#arr-assign-rest");
@@ -2250,10 +2246,8 @@ impl Compiler {
                         _ => {
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(el))?;
-                            if close_mode == AssignmentIteratorCloseMode::SkipIteratorAbrupt {
-                                self.chunk.emit(Op::True, self.current_line);
-                                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
-                            }
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);

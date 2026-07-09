@@ -194,6 +194,7 @@ ASSIGNMENT_EXPRESSION_FEATURES = {
     "optional-chaining",
     "Proxy",
     "Symbol",
+    "Symbol.iterator",
 }
 
 REFERENCE_PRIVATE_EXPRESSION_PREFIXES = (
