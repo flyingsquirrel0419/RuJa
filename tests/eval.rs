@@ -377,6 +377,43 @@ fn test262_create_realm_exposes_typed_array_constructors() {
 }
 
 #[test]
+fn test262_create_realm_constructor_fallback_uses_new_target_realm() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        var C = new other.Function();
+        C.prototype = null;
+        var names = [
+          "Int8Array",
+          "Uint8Array",
+          "Uint8ClampedArray",
+          "Int16Array",
+          "Uint16Array",
+          "Int32Array",
+          "Uint32Array",
+          "Float32Array",
+          "Float64Array",
+          "BigInt64Array",
+          "BigUint64Array"
+        ];
+        var ok = true;
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          var args = name.indexOf("Big") === 0 ? [[1n]] : [[1]];
+          var sample = Reflect.construct(globalThis[name], args, C);
+          ok = ok && Object.getPrototypeOf(sample) === other[name].prototype;
+        }
+        var buffer = Reflect.construct(ArrayBuffer, [8], C);
+        var view = Reflect.construct(DataView, [buffer], C);
+        var re = Reflect.construct(RegExp, ["a"], C);
+        ok = ok && Object.getPrototypeOf(buffer) === other.ArrayBuffer.prototype;
+        ok = ok && Object.getPrototypeOf(view) === other.DataView.prototype;
+        ok = ok && Object.getPrototypeOf(re) === other.RegExp.prototype;
+        ok;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
+#[test]
 fn cross_realm_non_constructor_native_throws_current_realm_type_error() {
     let src = r#"
         var otherParseInt = $262.createRealm().global.parseInt;

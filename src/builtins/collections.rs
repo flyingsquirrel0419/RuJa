@@ -1017,7 +1017,7 @@ pub(crate) fn map_constructor(
     if vm.current_native_new_target.is_none() {
         return Err(Error::type_err("Map constructor must be called with new"));
     }
-    let proto = native_constructor_prototype(vm, vm.map_proto.clone())?;
+    let proto = native_constructor_prototype_with_default(vm, "Map", vm.map_proto.clone())?;
     let obj_idx = vm.heap.allocate(HeapObj::Map(MapData {
         entries: Mutex::new(IndexMap::new()),
         props: Mutex::new(IndexMap::new()),
@@ -1470,7 +1470,7 @@ pub(crate) fn set_constructor(
     if vm.current_native_new_target.is_none() {
         return Err(Error::type_err("Set constructor must be called with new"));
     }
-    let proto = native_constructor_prototype(vm, vm.set_proto.clone())?;
+    let proto = native_constructor_prototype_with_default(vm, "Set", vm.set_proto.clone())?;
     let obj_idx = vm.heap.allocate(HeapObj::Set(SetData {
         items: Mutex::new(IndexSet::new()),
         props: Mutex::new(IndexMap::new()),
@@ -1621,7 +1621,7 @@ pub(crate) fn promise_constructor(
     if !is_callable(&executor, &vm.heap) {
         return Err(Error::type_err("Promise resolver is not a function"));
     }
-    let proto = native_constructor_prototype(vm, vm.promise_proto.clone())?;
+    let proto = native_constructor_prototype_with_default(vm, "Promise", vm.promise_proto.clone())?;
     let p_idx = vm
         .heap
         .allocate(HeapObj::Promise(crate::value::PromiseData {

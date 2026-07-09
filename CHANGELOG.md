@@ -109,6 +109,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   integer-indexed behavior. With TypedArray-related skips temporarily lifted,
   the broader `built-ins/TypedArrayConstructors` diagnostic improves from
   **463 pass / 10 fail / 265 skip** to **473 pass / 0 fail / 265 skip**.
+- **Constructor realm prototype fallback**: `GetPrototypeFromConstructor`
+  fallback now uses the active `newTarget` function realm's intrinsic
+  prototype instead of always falling back to the current VM realm. This lets
+  `Reflect.construct()` with a cross-realm `newTarget` whose `.prototype` is
+  non-object allocate TypedArrays, ArrayBuffers, DataViews, and RegExps with
+  the other realm's intrinsic prototype. Focused `proto-from-ctor-realm`
+  checks now pass at **13 pass / 0 fail / 0 skip** across
+  `TypedArrayConstructors`, `ArrayBuffer`, `DataView`, and `RegExp`.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

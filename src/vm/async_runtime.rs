@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::error::{self, Error};
-use crate::value::HeapObj;
+use crate::value::{FunctionKind, HeapObj, PropertyKey};
 use crate::value::{GcIdx, PromiseReactionCapability, PromiseStatus, Value};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
@@ -283,6 +283,48 @@ impl Vm {
                 None
             }
         })
+    }
+
+    pub(crate) fn constructor_realm(&self, constructor: &Value) -> Option<GcIdx> {
+        let mut current = constructor.clone();
+        for _ in 0..32 {
+            let Value::Object(idx) = current else {
+                return None;
+            };
+            let next = self.heap.with_obj(idx.0, |obj| match obj {
+                HeapObj::Function(f) => match &f.kind {
+                    FunctionKind::Bound { target, .. } => Err(Value::Object(*target)),
+                    _ => Ok(f.closure),
+                },
+                HeapObj::Proxy(proxy) => Err(proxy.target.clone()),
+                _ => Ok(self.global),
+            });
+            match next {
+                Ok(realm) => return Some(realm),
+                Err(next) => current = next,
+            }
+        }
+        None
+    }
+
+    pub(crate) fn constructor_realm_default_prototype(
+        &mut self,
+        constructor: &Value,
+        intrinsic: &str,
+        fallback: Value,
+    ) -> error::Result<Value> {
+        let Some(realm) = self.constructor_realm(constructor) else {
+            return Ok(fallback);
+        };
+        let Some(intrinsic_ctor) = env::get(&self.heap, realm, intrinsic) else {
+            return Ok(fallback);
+        };
+        let proto = self.get_property_by_key(&intrinsic_ctor, &PropertyKey::from("prototype"))?;
+        if matches!(proto, Value::Object(_)) {
+            Ok(proto)
+        } else {
+            Ok(fallback)
+        }
     }
 
     pub(crate) fn is_constructor_value(&self, value: &Value) -> bool {
@@ -917,7 +959,11 @@ impl Vm {
         let proto = if matches!(proto, Value::Object(_)) {
             proto
         } else {
-            self.object_proto.clone()
+            self.constructor_realm_default_prototype(
+                new_target,
+                "Object",
+                self.object_proto.clone(),
+            )?
         };
         let class_name = self.heap.with_obj(idx.0, |obj| {
             if let HeapObj::Function(f) = obj {

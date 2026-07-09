@@ -246,6 +246,16 @@ realm tests while keeping concrete constructors linked to that realm's
 broader `built-ins/TypedArrayConstructors` diagnostic now reports **473 pass /
 0 fail / 265 skip**.
 
+Focused constructor-realm prototype fallback local check:
+`GetPrototypeFromConstructor` fallback now derives the default intrinsic
+prototype from the active `newTarget` function realm when `.prototype` is not
+an object. This closes cross-realm `Reflect.construct()` fallback coverage for
+TypedArrays, ArrayBuffers, DataViews, and RegExps without changing the
+observable `.prototype` lookup ordering. With the relevant TypedArray,
+ArrayBuffer, DataView, Reflect, and `Reflect.construct` skips temporarily
+lifted for the targeted files, `proto-from-ctor-realm` checks now report **13
+pass / 0 fail / 0 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

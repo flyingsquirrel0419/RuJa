@@ -54,7 +54,7 @@ pub(crate) fn array_buffer_constructor(
     } else {
         vm.object_proto.clone()
     };
-    let proto = native_constructor_prototype(vm, fallback_proto)?;
+    let proto = native_constructor_prototype_with_default(vm, "ArrayBuffer", fallback_proto)?;
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
@@ -383,7 +383,7 @@ pub(crate) fn data_view_constructor(
         return Err(Error::range("Invalid DataView byteLength"));
     }
 
-    let proto = native_constructor_prototype(vm, vm.object_proto.clone())?;
+    let proto = native_constructor_prototype_with_default(vm, "DataView", vm.object_proto.clone())?;
     let idx = vm
         .heap
         .allocate(HeapObj::DataView(crate::value::DataViewData {
@@ -2016,7 +2016,7 @@ fn typed_array_constructor_with_kind(
         })
         .filter(|proto| matches!(proto, Value::Object(_)))
         .unwrap_or_else(|| vm.object_proto.clone());
-    let proto = native_constructor_prototype(vm, fallback_proto)?;
+    let proto = native_constructor_prototype_with_default(vm, kind.name(), fallback_proto)?;
     let buffer = match args.first() {
         None => Vec::new(),
         Some(Value::Undefined) => Vec::new(),

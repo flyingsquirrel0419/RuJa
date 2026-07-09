@@ -1365,7 +1365,7 @@ pub(crate) fn array_constructor(
         (args.to_vec(), None)
     };
     let default_proto = vm.array_proto.clone();
-    let proto = native_constructor_prototype(vm, default_proto)?;
+    let proto = native_constructor_prototype_with_default(vm, "Array", default_proto)?;
     let arr = if let Some(len) = holes_len {
         HeapObj::Array(ArrayData::new_holes(len, Some(proto)))
     } else {

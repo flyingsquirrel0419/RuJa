@@ -62,7 +62,7 @@ pub(crate) fn regexp_constructor(
             _ => vm.object_proto.clone(),
         }
     };
-    let regex_proto_val = native_constructor_prototype(vm, regex_proto_val)?;
+    let regex_proto_val = native_constructor_prototype_with_default(vm, "RegExp", regex_proto_val)?;
     create_regexp_object(vm, pattern, flags, regex_proto_val)
 }
 

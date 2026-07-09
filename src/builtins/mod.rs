@@ -1309,6 +1309,14 @@ pub(crate) fn install_symbol_static_properties(
 }
 
 pub(crate) fn native_constructor_prototype(vm: &mut Vm, fallback: Value) -> error::Result<Value> {
+    native_constructor_prototype_with_default(vm, "Object", fallback)
+}
+
+pub(crate) fn native_constructor_prototype_with_default(
+    vm: &mut Vm,
+    intrinsic: &str,
+    fallback: Value,
+) -> error::Result<Value> {
     if let Some(proto) = vm.current_native_new_target_prototype.clone() {
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
@@ -1318,6 +1326,9 @@ pub(crate) fn native_constructor_prototype(vm: &mut Vm, fallback: Value) -> erro
         if matches!(proto, Value::Object(_)) {
             return Ok(proto);
         }
+    }
+    if let Some(new_target) = vm.current_native_new_target.clone() {
+        return vm.constructor_realm_default_prototype(&new_target, intrinsic, fallback);
     }
     Ok(fallback)
 }
