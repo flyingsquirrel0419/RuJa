@@ -577,6 +577,45 @@ fn for_in_member_lhs_array_prototype_setter() {
 }
 
 #[test]
+fn for_in_of_member_lhs_uses_property_reference() {
+    assert_eq!(
+        run(r#"
+            var s = Symbol("slot");
+            var calls = [];
+            var target = {};
+            var proxy = new Proxy(target, {
+              set: function(t, k, v, r) {
+                calls.push((k === s) + ":" + v + ":" + (r === proxy));
+                t[k] = v;
+                return true;
+              }
+            });
+            for (proxy[s] in { name: 1 }) {}
+            calls.join("|") + ";" + target[s] + ";" + proxy[s];
+        "#),
+        Value::String(Arc::from("true:name:true;name;name"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var s = Symbol("slot");
+            var calls = [];
+            var target = {};
+            var proxy = new Proxy(target, {
+              set: function(t, k, v, r) {
+                calls.push((k === s) + ":" + v + ":" + (r === proxy));
+                t[k] = v;
+                return true;
+              }
+            });
+            for (proxy[s] of ["value"]) {}
+            calls.join("|") + ";" + target[s] + ";" + proxy[s];
+        "#),
+        Value::String(Arc::from("true:value:true;value;value"))
+    );
+}
+
+#[test]
 fn define_property_redefinition_validation_edges() {
     assert_eq!(
         run("var obj = Object.freeze({ x: 1 }); var threw = false; try { Object.defineProperty(obj, 'x', { value: 2 }); } catch (e) { threw = true; } threw + ':' + obj.x;"),

@@ -57,6 +57,13 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   primitive sloppy no-op semantics for member targets nested inside object and
   array assignment patterns. The focused `language/expressions/assignment/dstr`
   run remains closed at **90 pass / 0 fail / 278 skip**.
+- **Property Reference records for `for-in`/`for-of` member heads**:
+  non-declaration loop heads such as `for (obj[key] in source)` and
+  `for (obj[key] of iterable)` now store through the property Reference
+  `PutValue` path instead of direct `SetElem`/`SetProp` opcodes. This preserves
+  Symbol keys and Proxy `set` receiver identity for loop-head assignment. The
+  focused `language/statements/{for-in,for-of}` run reports **191 pass / 0 fail
+  / 675 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This

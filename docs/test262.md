@@ -212,6 +212,15 @@ behavior, and primitive sloppy no-op semantics. The focused
 fail / 278 skip**; `language/expressions/{assignment,destructuring}` reports
 **203 pass / 0 fail / 282 skip**.
 
+Focused property Reference `for-in`/`for-of` member-head local check:
+non-declaration loop heads now store member targets through
+`MakePropertyRefForSet` and `PutValue`. This keeps `for (obj[key] in source)`
+and `for (obj[key] of iterable)` aligned with ordinary member assignment for
+Symbol keys and Proxy `set` receiver identity. The focused
+`language/statements/{for-in,for-of}` run reports **191 pass / 0 fail / 675
+skip**; adding `language/expressions/member-expression` reports **192 pass / 0
+fail / 675 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

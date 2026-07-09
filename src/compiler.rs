@@ -1557,8 +1557,8 @@ impl Compiler {
                 // the iterator value is on the stack. For a simple identifier
                 // we can use StoreEnvName/StoreGlobal directly (they pop the
                 // value). For a member expression we need to evaluate obj+key
-                // first, then the value is already on the stack in the right
-                // position for SetProp ([obj, key, value]).
+                // first, then store through the same property Reference path
+                // as ordinary assignment.
                 if let StmtNode::ExprStmt(expr) = &left.node {
                     match expr {
                         Expr::Ident(name) => self.store_identifier_target_value(name),
@@ -1568,9 +1568,9 @@ impl Compiler {
                             computed,
                             ..
                         } => {
-                            // Stack: [value]. We need [obj, key, value] for
-                            // SetProp/SetElem. Evaluate obj, swap value below
-                            // it, then evaluate key, swap again.
+                            // Stack: [value]. Build [obj, key, value] for
+                            // MakePropertyRefForSet. Evaluate obj, swap value
+                            // below it, then evaluate key, swap again.
                             self.compile_expr(object)?;
                             // [value, obj] -> [obj, value]
                             self.chunk.emit(Op::Swap, self.current_line);
@@ -1578,7 +1578,6 @@ impl Compiler {
                                 self.compile_expr(property)?;
                                 // [obj, value, key] -> [obj, key, value]
                                 self.chunk.emit(Op::Swap, self.current_line);
-                                self.chunk.emit(Op::SetElem, self.current_line);
                             } else {
                                 let key = if let Expr::String(s) = property.as_ref() {
                                     s.to_string()
@@ -1591,8 +1590,10 @@ impl Compiler {
                                 self.chunk.emit(Op::Const(key_idx), self.current_line);
                                 // [obj, value, key] -> [obj, key, value]
                                 self.chunk.emit(Op::Swap, self.current_line);
-                                self.chunk.emit(Op::SetProp, self.current_line);
                             }
+                            self.chunk
+                                .emit(Op::MakePropertyRefForSet, self.current_line);
+                            self.chunk.emit(Op::PutValue, self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line);
                         }
                         Expr::Array(_) | Expr::Object(_) => {
