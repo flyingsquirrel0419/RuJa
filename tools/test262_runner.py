@@ -58,6 +58,10 @@ OBJECT_SPREAD_SYMBOL_PREFIXES = (
     "language/expressions/new/spread-obj-",
 )
 
+FOR_OF_SYMBOL_ITERATOR_PREFIXES = (
+    "language/statements/for-of/",
+)
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -107,6 +111,14 @@ def object_spread_symbol_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(OBJECT_SPREAD_SYMBOL_PREFIXES)
 
+def for_of_symbol_iterator_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(FOR_OF_SYMBOL_ITERATOR_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -115,6 +127,8 @@ def should_skip(meta, path=None):
         feats.discard("Symbol")
     if path is not None and object_spread_symbol_path(path):
         feats.discard("Symbol")
+    if path is not None and for_of_symbol_iterator_path(path):
+        feats.discard("Symbol.iterator")
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

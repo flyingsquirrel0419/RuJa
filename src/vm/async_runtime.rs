@@ -1255,6 +1255,7 @@ impl Vm {
             items: Mutex::new(items),
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
+            lazy_next: Mutex::new(None),
             generator: Mutex::new(None),
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
@@ -1268,10 +1269,15 @@ impl Vm {
     /// user-defined `Symbol.iterator` method). Each `next()` call invokes the
     /// JS object's `next()` method and reads its `value`/`done` properties.
     pub(crate) fn new_lazy_iterator(&mut self, iter_obj: Value) -> error::Result<Value> {
+        let next = self.get_property(&iter_obj, "next")?;
+        if !crate::builtins::is_callable(&next, &self.heap) {
+            return Err(Error::type_err("Iterator next is not callable"));
+        }
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(Some(iter_obj)),
+            lazy_next: Mutex::new(Some(next)),
             generator: Mutex::new(None),
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
@@ -1289,6 +1295,7 @@ impl Vm {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
+            lazy_next: Mutex::new(None),
             generator: Mutex::new(Some(gen)),
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
@@ -1303,6 +1310,7 @@ impl Vm {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
+            lazy_next: Mutex::new(None),
             generator: Mutex::new(None),
             array_like: Mutex::new(Some(source)),
             for_in_source: Mutex::new(None),
@@ -1322,6 +1330,7 @@ impl Vm {
             items: Mutex::new(keys.into_iter().map(Value::String).collect()),
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
+            lazy_next: Mutex::new(None),
             generator: Mutex::new(None),
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(Some(source)),
@@ -1357,7 +1366,10 @@ impl Vm {
         if !crate::builtins::is_callable(&return_method, &self.heap) {
             return Err(Error::type_err("Iterator return is not callable"));
         }
-        let _ = self.call_function(&return_method, &[], Some(iter_obj))?;
+        let result = self.call_function(&return_method, &[], Some(iter_obj))?;
+        if !matches!(result, Value::Object(_)) {
+            return Err(Error::type_err("Iterator return result is not an object"));
+        }
         self.mark_iterator_done(it);
         Ok(())
     }
@@ -1577,27 +1589,28 @@ impl Vm {
         }
         if lazy {
             // Call the JS iterator object's next() method and read {value, done}.
-            let iter_obj = self.heap.with_obj(
+            let (iter_obj, next_fn) = self.heap.with_obj(
                 match it {
                     Value::Object(idx) => idx.0,
                     _ => return Err(Error::type_err("not an iterator".to_string())),
                 },
                 |o| {
                     if let HeapObj::Iterator(it) = o {
-                        it.lazy_iter.lock().clone()
+                        (it.lazy_iter.lock().clone(), it.lazy_next.lock().clone())
                     } else {
-                        None
+                        (None, None)
                     }
                 },
             );
             let iter_obj =
                 iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
-            let next_fn = self.get_property(&iter_obj, "next")?;
+            let next_fn =
+                next_fn.ok_or_else(|| Error::type_err("Iterator next is not callable"))?;
             let result = self.call_function(&next_fn, &[resume], Some(iter_obj))?;
-            let done = match self.get_property(&result, "done")? {
-                Value::Bool(b) => b,
-                _ => false,
-            };
+            if !matches!(result, Value::Object(_)) {
+                return Err(Error::type_err("Iterator result is not an object"));
+            }
+            let done = self.get_property(&result, "done")?.is_truthy();
             if done {
                 if let Value::Object(idx) = it {
                     self.heap.with_obj(idx.0, |o| {
@@ -1654,30 +1667,36 @@ impl Vm {
         if lazy_or_gen {
             // Resolve the iterator object whose `next()` we call: either the
             // wrapped JS async iterator or the generator itself.
-            let iter_obj = if let Value::Object(idx) = it {
+            let (iter_obj, next_fn) = if let Value::Object(idx) = it {
                 self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::Iterator(i) = o {
-                        i.lazy_iter
-                            .lock()
-                            .clone()
-                            .or_else(|| i.generator.lock().clone())
+                        (
+                            i.lazy_iter
+                                .lock()
+                                .clone()
+                                .or_else(|| i.generator.lock().clone()),
+                            i.lazy_next.lock().clone(),
+                        )
                     } else {
-                        None
+                        (None, None)
                     }
                 })
             } else {
-                None
+                (None, None)
             };
             let iter_obj =
                 iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
-            let next_fn = self.get_property(&iter_obj, "next")?;
+            let next_fn = match next_fn {
+                Some(next_fn) => next_fn,
+                None => self.get_property(&iter_obj, "next")?,
+            };
             let result = self.call_function(&next_fn, &[], Some(iter_obj))?;
             // Await: if it's a Promise, drain microtasks and read the settled value.
             let result = self.await_value(result)?;
-            let done = match self.get_property(&result, "done")? {
-                Value::Bool(b) => b,
-                _ => false,
-            };
+            if !matches!(result, Value::Object(_)) {
+                return Err(Error::type_err("Iterator result is not an object"));
+            }
+            let done = self.get_property(&result, "done")?.is_truthy();
             if done {
                 if let Value::Object(idx) = it {
                     self.heap.with_obj(idx.0, |o| {

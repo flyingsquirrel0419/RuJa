@@ -1167,6 +1167,160 @@ fn for_of_closes_iterator_on_abrupt_completion() {
 }
 
 #[test]
+fn for_of_iterator_protocol_edges() {
+    assert_eq!(
+        run(r#"
+            var iterator = {};
+            var loadNextCount = 0;
+            var iterationCount = 0;
+            function next() {
+              return iterationCount ? { done: true } : { value: 45, done: false };
+            }
+            Object.defineProperty(iterator, "next", {
+              get: function() { loadNextCount++; return next; },
+              configurable: true
+            });
+            var iterable = {};
+            iterable[Symbol.iterator] = function() { return iterator; };
+            for (var x of iterable) {
+              Object.defineProperty(iterator, "next", {
+                get: function() { throw new Error("next-reloaded"); }
+              });
+              iterationCount++;
+            }
+            [iterationCount, loadNextCount].join("|");
+        "#),
+        Value::String(Arc::from("1|1"))
+    );
+
+    assert!(run_err(
+        r#"
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return { next: function() { return 1; } };
+            };
+            for (var x of iterable) {}
+        "#
+    )
+    .contains("TypeError"));
+
+    assert_eq!(
+        run(r#"
+            var count = 0;
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              var first = true;
+              return {
+                next: function() {
+                  if (first) { first = false; return { value: 1, done: 0 }; }
+                  return { value: 2, done: "done" };
+                }
+              };
+            };
+            for (var x of iterable) count++;
+            count;
+        "#),
+        Value::Number(1.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var returnCount = 0;
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return {
+                next: function() { throw new Error("next"); },
+                return: function() { returnCount++; return {}; }
+              };
+            };
+            try { for (var x of iterable) {} } catch (e) {}
+            returnCount;
+        "#),
+        Value::Number(0.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var returnCount = 0;
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return {
+                next: function() {
+                  return { done: false, get value() { throw new Error("value"); } };
+                },
+                return: function() { returnCount++; return {}; }
+              };
+            };
+            try { for (var x of iterable) {} } catch (e) {}
+            returnCount;
+        "#),
+        Value::Number(0.0)
+    );
+
+    assert!(run_err(
+        r#"
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return {
+                next: function() { return { value: 1, done: false }; },
+                return: function() { return 1; }
+              };
+            };
+            for (var x of iterable) break;
+        "#
+    )
+    .contains("TypeError"));
+
+    assert!(run_err(
+        r#"
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return {
+                next: function() { return { value: 1, done: false }; },
+                get return() { throw new Error("close"); }
+              };
+            };
+            for (var x of iterable) break;
+        "#
+    )
+    .contains("close"));
+
+    assert!(run_err(
+        r#"
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return {
+                next: function() { return { value: 1, done: false }; },
+                get return() { throw new Error("close"); }
+              };
+            };
+            for (var x of iterable) throw new Error("body");
+        "#
+    )
+    .contains("body"));
+
+    assert_eq!(
+        run(r#"
+            var returnCount = 0;
+            var iterable = {};
+            iterable[Symbol.iterator] = function() {
+              return {
+                next: function() { return { value: 1, done: false }; },
+                return: function() { returnCount++; return {}; }
+              };
+            };
+            L: do {
+              for (var x of iterable) {
+                continue L;
+              }
+            } while (false);
+            returnCount;
+        "#),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
 fn array_for_of_observes_live_length_changes() {
     assert_eq!(
         run("var a=[0,1]; var out=''; for (var v of a) { out += v; a.pop(); } out;"),

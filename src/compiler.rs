@@ -1001,16 +1001,19 @@ impl Compiler {
                     // GetIterator pops the iterable, pushes an iterator object.
                     self.chunk.emit(Op::GetIterator, self.current_line);
                 }
-                let it_name_idx = self.intern("#iter");
+                let it_name_idx = self.fresh_temp("#iter");
                 self.chunk
-                    .emit(Op::DeclareEnv(it_name_idx), self.current_line);
-                let done_name_idx = self.intern("#iterDone");
+                    .emit(Op::HoistVar(it_name_idx), self.current_line);
+                self.chunk
+                    .emit(Op::StoreEnv(it_name_idx), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                let done_name_idx = self.fresh_temp("#iterDone");
+                self.chunk
+                    .emit(Op::HoistVar(done_name_idx), self.current_line);
                 self.chunk.emit(Op::False, self.current_line);
                 self.chunk
-                    .emit(Op::DeclareEnv(done_name_idx), self.current_line);
-                let finally_guard_ip = self.chunk.code.len();
-                self.chunk.emit(Op::PushFinally(0), self.current_line);
-                self.finally_stack.push(Vec::new());
+                    .emit(Op::StoreEnv(done_name_idx), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
                 let loop_start = self.chunk.code.len();
                 self.begin_loop(loop_start);
                 self.chunk.emit(Op::LoadEnv(it_name_idx), self.current_line);
@@ -1020,9 +1023,16 @@ impl Compiler {
                     // IteratorNext pops the iterator, pushes [value, done(bool)].
                     self.chunk.emit(Op::IteratorNext, self.current_line);
                 }
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk
+                    .emit(Op::StoreEnv(done_name_idx), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
                 // JumpIfTrue pops `done`; when true (done==true), jump past the body.
                 let done_jump = self.chunk.code.len();
                 self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
+                let finally_guard_ip = self.chunk.code.len();
+                self.chunk.emit(Op::PushFinally(0), self.current_line);
+                self.finally_stack.push(Vec::new());
                 // Bind the value into the loop variable, then run the body.
                 if let Some((kind, names)) = &lexical_head {
                     let bindings = Self::lexical_bindings_from_names(*kind, names);
@@ -1038,12 +1048,8 @@ impl Compiler {
                     self.compile_stmt(body)?;
                 }
                 self.chunk.emit(Op::Pop, self.current_line); // discard body's expr result
+                self.chunk.emit(Op::PopFinally, self.current_line);
                 self.chunk.emit(Op::Jump(loop_start), self.current_line);
-                let end = self.chunk.code.len();
-                self.chunk.patch_jump(done_jump, end);
-                self.end_loop(end);
-                // When done, the stale value is still on the stack; drop it.
-                self.chunk.emit(Op::Pop, self.current_line);
                 let finally_start = self.chunk.code.len();
                 if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
                     *target = finally_start;
@@ -1061,6 +1067,11 @@ impl Compiler {
                     self.current_line,
                 );
                 self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
+                let end = self.chunk.code.len();
+                self.chunk.patch_jump(done_jump, end);
+                self.end_loop(end);
+                // When done, the stale value is still on the stack; drop it.
+                self.chunk.emit(Op::Pop, self.current_line);
                 self.pop_scope();
             }
             StmtNode::ForIn { left, right, body } => self.compile_for_in(left, right, body)?,

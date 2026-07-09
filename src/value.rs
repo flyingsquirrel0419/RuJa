@@ -810,6 +810,8 @@ pub struct IteratorData {
     /// pull. When `Some`, `items`/`index` are ignored. `done` is set once the
     /// JS `next()` reports `done: true`.
     pub lazy_iter: Mutex<Option<Value>>,
+    /// Cached `next` method for `lazy_iter`, captured by GetIterator.
+    pub lazy_next: Mutex<Option<Value>>,
     /// Lazy mode: a generator object to pull via `resume_generator` on each
     /// `next()`. Mutually exclusive with `lazy_iter`. Preserves the
     /// generator's return value (used by `yield*`).

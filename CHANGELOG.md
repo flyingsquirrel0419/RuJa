@@ -18,6 +18,9 @@
 - `tools/test262_runner.py` now admits the Symbol-backed object-spread
   generated tests in array/call/new expression contexts without unskipping
   broader Symbol iterator coverage.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
+  `Symbol.iterator`-tagged `language/statements/for-of/` tests without
+  unskipping broader Symbol iterator coverage.
 
 ### Runtime hardening
 
@@ -28,8 +31,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5079 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **For-of iterator protocol edges**: `for...of` now caches the iterator
+  `next` method at `GetIterator` time, rejects non-object iterator results,
+  applies `ToBoolean` to `done`, validates `return()` results during
+  `IteratorClose`, preserves original throws when close also throws, and keeps
+  hidden iterator-close state alive across labeled `continue`. The focused
+  `language/statements/for-of` run now reports **113 pass / 0 fail / 638
+  skip**, and the supported subset increases to **5099 pass / 0 fail / 0
+  timeout**.
 - **Object spread Symbol keys**: `{...source}` now copies enumerable own Symbol
   properties and follows `[[OwnPropertyKeys]]` order for integer index keys,
   string keys, then Symbol keys. It also re-checks each property descriptor at

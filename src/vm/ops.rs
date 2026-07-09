@@ -2927,7 +2927,7 @@ impl Vm {
                                 crate::environment::get_checked(&self.heap, env, &iter_name)
                             {
                                 let result = self.iterator_close(&iterator);
-                                if !ignore_close_errors {
+                                if !ignore_close_errors && completion_tag != 4 {
                                     result?;
                                 }
                             }

@@ -49,6 +49,10 @@ SYMBOL_FUNCTION_NAME_PREFIXES = (
     "language/statements/class/definition/fn-name-",
 )
 
+FOR_OF_SYMBOL_ITERATOR_PREFIXES = (
+    "language/statements/for-of/",
+)
+
 def parse_meta(src):
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
     if not m:
@@ -86,12 +90,22 @@ def symbol_function_name_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(SYMBOL_FUNCTION_NAME_PREFIXES)
 
+def for_of_symbol_iterator_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(FOR_OF_SYMBOL_ITERATOR_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
         feats.discard("Symbol")
+    if path is not None and for_of_symbol_iterator_path(path):
+        feats.discard("Symbol.iterator")
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
