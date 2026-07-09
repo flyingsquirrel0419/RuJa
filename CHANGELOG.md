@@ -105,6 +105,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   The focused time-setter run improves from **28 pass / 68 fail / 12 skip** to
   **96 pass / 0 fail / 12 skip**; the broader `built-ins/Date` diagnostic now
   reports **394 pass / 88 fail / 112 skip**.
+- **Date date-component setters**: `setDate`, `setMonth`, `setFullYear`, and
+  their UTC variants now preserve the existing time within day, coerce optional
+  arguments left to right, avoid the constructor-only 1900 offset for
+  `setFullYear(0..99)`, and apply the distinct Invalid Date semantics for
+  date/month setters versus full-year setters. The focused date-setter run
+  improves from **23 pass / 41 fail / 9 skip** to **64 pass / 0 fail / 9
+  skip**; the broader `built-ins/Date` diagnostic now reports **435 pass / 47
+  fail / 112 skip**.
 - **BigInt TypedArray constructor surface**: BigInt typed array constructors
   and prototypes now expose non-writable, non-enumerable, non-configurable
   `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors

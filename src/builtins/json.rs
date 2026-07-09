@@ -616,6 +616,9 @@ const MS_PER_MINUTE: f64 = 60.0 * MS_PER_SECOND;
 const MS_PER_HOUR: f64 = 60.0 * MS_PER_MINUTE;
 const MS_PER_DAY: f64 = 24.0 * MS_PER_HOUR;
 const MAX_TIME_VALUE: f64 = 8.64e15;
+const MAKE_DAY_YEAR_LIMIT: f64 = 1_000_000_000.0;
+const MAKE_DAY_MONTH_LIMIT: f64 = 12_000_000_000.0;
+const MAKE_DAY_DATE_LIMIT: f64 = 1_000_000_000_000.0;
 
 fn date_time_clip(ts: f64) -> f64 {
     if ts.is_nan() || ts.is_infinite() || ts.abs() > MAX_TIME_VALUE {
@@ -642,6 +645,31 @@ fn date_days_from_civil(year: i64, month_one_based: i64, day: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
+fn date_days_from_civil_i128(year: i128, month_one_based: i128, day: i128) -> Option<i128> {
+    let year = year.checked_sub(i128::from(month_one_based <= 2))?;
+    let era = if year >= 0 {
+        year
+    } else {
+        year.checked_sub(399)?
+    } / 400;
+    let yoe = year.checked_sub(era.checked_mul(400)?)?;
+    let month = month_one_based.checked_add(if month_one_based > 2 { -3 } else { 9 })?;
+    let doy = 153_i128
+        .checked_mul(month)?
+        .checked_add(2)?
+        .checked_div(5)?
+        .checked_add(day)?
+        .checked_sub(1)?;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    era.checked_mul(146097)?
+        .checked_add(doe)?
+        .checked_sub(719468)
+}
+
 fn date_civil_from_days(days: i64) -> (i64, i64, i64) {
     let days = days + 719468;
     let era = if days >= 0 { days } else { days - 146096 } / 146097;
@@ -656,19 +684,55 @@ fn date_civil_from_days(days: i64) -> (i64, i64, i64) {
     (year, month, day)
 }
 
+fn date_limited_integer(value: f64, limit: f64) -> Option<i128> {
+    let value = value.trunc();
+    if value.abs() > limit {
+        None
+    } else {
+        Some(value as i128)
+    }
+}
+
 fn date_make_day(year: f64, month: f64, date: f64) -> f64 {
     if !year.is_finite() || !month.is_finite() || !date.is_finite() {
         return f64::NAN;
     }
-    let mut year = year.trunc() as i64;
-    if (0..=99).contains(&year) {
-        year += 1900;
+    let Some(year) = date_limited_integer(year, MAKE_DAY_YEAR_LIMIT) else {
+        return f64::NAN;
+    };
+    let Some(month) = date_limited_integer(month, MAKE_DAY_MONTH_LIMIT) else {
+        return f64::NAN;
+    };
+    let Some(date) = date_limited_integer(date, MAKE_DAY_DATE_LIMIT) else {
+        return f64::NAN;
+    };
+    let Some(year) = year.checked_add(month.div_euclid(12)) else {
+        return f64::NAN;
+    };
+    if (year as f64).abs() > MAKE_DAY_YEAR_LIMIT {
+        return f64::NAN;
     }
-    let month = month.trunc() as i64;
-    let date = date.trunc() as i64;
-    let year = year + month.div_euclid(12);
     let month_zero_based = month.rem_euclid(12);
-    date_days_from_civil(year, month_zero_based + 1, 1) as f64 + (date - 1) as f64
+    let Some(day) = date_days_from_civil_i128(year, month_zero_based + 1, 1)
+        .and_then(|day| day.checked_add(date.checked_sub(1)?))
+    else {
+        return f64::NAN;
+    };
+    day as f64
+}
+
+fn date_make_day_with_year_offset(year: f64, month: f64, date: f64) -> f64 {
+    let year = if year.is_finite() {
+        let int_year = year.trunc();
+        if (0.0..=99.0).contains(&int_year) {
+            int_year + 1900.0
+        } else {
+            year
+        }
+    } else {
+        year
+    };
+    date_make_day(year, month, date)
 }
 
 fn date_make_time(hour: f64, min: f64, sec: f64, ms: f64) -> f64 {
@@ -701,6 +765,19 @@ fn date_time_components(ts: f64) -> (f64, f64, f64, f64, f64) {
     let second = ((time % MS_PER_MINUTE) / MS_PER_SECOND).floor();
     let ms = time % MS_PER_SECOND;
     (day, hour, minute, second, ms)
+}
+
+fn date_components(ts: f64) -> (f64, f64, f64, f64, f64) {
+    let day = date_day(ts);
+    let (year, month_one_based, date) = date_civil_from_days(day);
+    let time = date_time_within_day(ts);
+    (
+        year as f64,
+        (month_one_based - 1) as f64,
+        date as f64,
+        day as f64,
+        time,
+    )
 }
 
 fn active_native_name(vm: &mut Vm) -> Option<Arc<str>> {
@@ -750,7 +827,7 @@ pub(crate) fn date_constructor(
             None => 0.0,
         };
         date_make_date(
-            date_make_day(year, month, date),
+            date_make_day_with_year_offset(year, month, date),
             date_make_time(hour, minute, second, ms),
         )
     };
@@ -848,9 +925,15 @@ pub(crate) fn date_set_component(
         "setSeconds" | "setUTCSeconds" => date_set_time_component(vm, args, ts, value, 2)?,
         "setMinutes" | "setUTCMinutes" => date_set_time_component(vm, args, ts, value, 3)?,
         "setHours" | "setUTCHours" => date_set_time_component(vm, args, ts, value, 4)?,
+        "setDate" | "setUTCDate" => date_set_date_component(vm, args, ts, value, 1)?,
+        "setMonth" | "setUTCMonth" => date_set_date_component(vm, args, ts, value, 2)?,
+        "setFullYear" | "setUTCFullYear" => date_set_date_component(vm, args, ts, value, 3)?,
         _ => value,
     };
-    if value.is_nan() && !matches!(name.as_ref(), "setTime") && ts.is_nan() {
+    if value.is_nan()
+        && !matches!(name.as_ref(), "setTime" | "setFullYear" | "setUTCFullYear")
+        && ts.is_nan()
+    {
         return Ok(Value::Number(f64::NAN));
     }
     vm.heap.with_obj(idx.0, |o| {
@@ -915,6 +998,46 @@ fn date_set_time_component(
     Ok(date_time_clip(date_make_date(
         day,
         date_make_time(hour, minute, second, ms),
+    )))
+}
+
+fn date_set_date_component(
+    vm: &mut Vm,
+    args: &[Value],
+    ts: f64,
+    first: f64,
+    arity: usize,
+) -> error::Result<f64> {
+    let base = if arity == 3 && ts.is_nan() { 0.0 } else { ts };
+    let (old_year, old_month, old_date, _, time) = date_components(base);
+    let (year, month, date) = match arity {
+        1 => (old_year, old_month, first),
+        2 => {
+            let date = match args.get(1) {
+                Some(v) => vm.to_number(v)?,
+                None => old_date,
+            };
+            (old_year, first, date)
+        }
+        3 => {
+            let month = match args.get(1) {
+                Some(v) => vm.to_number(v)?,
+                None => old_month,
+            };
+            let date = match args.get(2) {
+                Some(v) => vm.to_number(v)?,
+                None => old_date,
+            };
+            (first, month, date)
+        }
+        _ => unreachable!(),
+    };
+    if ts.is_nan() && arity != 3 {
+        return Ok(f64::NAN);
+    }
+    Ok(date_time_clip(date_make_date(
+        date_make_day(year, month, date),
+        time,
     )))
 }
 
@@ -990,7 +1113,7 @@ pub(crate) fn date_utc(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
         None => 0.0,
     };
     let time = date_make_date(
-        date_make_day(year, month, date),
+        date_make_day_with_year_offset(year, month, date),
         date_make_time(hour, minute, second, ms),
     );
     Ok(Value::Number(date_time_clip(time)))

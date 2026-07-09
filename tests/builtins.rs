@@ -7089,6 +7089,7 @@ fn date_utc_and_time_clip_follow_spec() {
         run("var d = new Date(0); d.setTime(8640000000000001);"),
         Value::Number(n) if n.is_nan()
     ));
+    assert!(matches!(run("Date.UTC(1e100, 0);"), Value::Number(n) if n.is_nan()));
 }
 
 #[test]
@@ -7130,6 +7131,73 @@ fn date_time_setters_update_components_and_lengths() {
             result + ":" + d.getTime();
         "#),
         Value::String(Arc::from("NaN:0"))
+    );
+}
+
+#[test]
+fn date_date_setters_update_components_and_lengths() {
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1, 2, 3, 4, 5)); d.setUTCDate(15); d.getTime();"),
+        Value::Number(1468548184005.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1, 2, 3, 4, 5)); d.setDate(15); d.getTime();"),
+        Value::Number(1468548184005.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1, 2, 3, 4, 5)); d.setUTCMonth(8, 20); d.getTime();"),
+        Value::Number(1474336984005.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1, 2, 3, 4, 5)); d.setUTCFullYear(2020, 1, 29); d.getTime();"),
+        Value::Number(1582941784005.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1)); d.setUTCFullYear(2, 0, 1); d.getUTCFullYear() + ':' + d.getTime();"),
+        Value::String(Arc::from("2:-62104060800000"))
+    );
+    assert_eq!(
+        run("Date.prototype.setDate.length + ':' + Date.prototype.setUTCDate.length + ':' + Date.prototype.setMonth.length + ':' + Date.prototype.setUTCMonth.length + ':' + Date.prototype.setFullYear.length + ':' + Date.prototype.setUTCFullYear.length;"),
+        Value::String(Arc::from("1:1:2:2:3:3"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(NaN);
+            var log = "";
+            var result = d.setUTCDate({
+              valueOf: function() { log += "date"; d.setTime(0); return 1; }
+            });
+            log + ":" + result + ":" + d.getTime();
+        "#),
+        Value::String(Arc::from("date:NaN:0"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(NaN);
+            var log = "";
+            var result = d.setUTCMonth(
+              { valueOf: function() { log += "month"; d.setTime(0); return 1; } },
+              { valueOf: function() { log += "date"; return 1; } }
+            );
+            log + ":" + result + ":" + d.getTime();
+        "#),
+        Value::String(Arc::from("monthdate:NaN:0"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(NaN);
+            var result = d.setUTCFullYear(2016);
+            result + ":" + d.getTime();
+        "#),
+        Value::String(Arc::from("1451606400000:1451606400000"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(0);
+            var result = d.setUTCFullYear(1e100);
+            (result !== result) + ":" + (d.getTime() !== d.getTime());
+        "#),
+        Value::String(Arc::from("true:true"))
     );
 }
 
