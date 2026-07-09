@@ -110,6 +110,17 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   and the broader class-elements diagnostic reports **1582 pass / 82 fail /
   1298 skip**. Remaining failures include full ordered class-element evaluation
   across computed methods and static blocks.
+- **Ordered class element evaluation**: class parsing now preserves source
+  order across methods, fields, and static blocks, and class compilation uses
+  that order for public computed method names, public field computed names, and
+  static element initialization. This fixes field-before-method computed-name
+  ordering, allows computed method names to read the initialized inner class
+  binding, and runs static block bodies and static field initializers in source
+  order after all element names have been evaluated. With public/static class
+  field and computed-name gates temporarily lifted, the generated
+  `cpn-class-*-fields-methods-*` cluster reports **60 pass / 0 fail / 2
+  skip**, and the broader class-elements diagnostic reports **1583 pass / 81
+  fail / 1298 skip**.
 - **TypedArray `[[HasProperty]]` prototype delegation**: ordinary property keys
   missing from a TypedArray now continue through the prototype's real
   `[[HasProperty]]` operation instead of raw own-property lookup. This preserves

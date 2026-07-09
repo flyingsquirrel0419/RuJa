@@ -2498,6 +2498,333 @@ impl Compiler {
         self.pop_scope();
     }
 
+    fn compile_class_public_method(&mut self, method: &ClassMethod) -> error::Result<()> {
+        if method.is_constructor || method.is_private {
+            return Ok(());
+        }
+        let computed_method = method.computed_name.is_some();
+        let method_function_name = if computed_method {
+            None
+        } else {
+            Some(Self::public_method_function_name(&method.name, method.kind))
+        };
+        let m_fn = FunctionExpr {
+            name: method_function_name.clone(),
+            params: method.params.clone(),
+            param_defaults: method.param_defaults.clone(),
+            rest_param: method.rest_param.clone(),
+            body: method.body.clone(),
+            is_arrow: false,
+            is_async: method.is_async,
+            is_generator: method.is_generator,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: true,
+            has_name_binding: false,
+        };
+        let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
+        let m_idx = self.funcs.len();
+        let mdef = crate::function::FunctionDef {
+            name: method_function_name,
+            params: method.params.clone(),
+            param_slots: m_slots,
+            rest_param: method.rest_param.clone(),
+            chunk: Arc::new(m_chunk),
+            num_locals: method.params.len() + 16,
+            is_arrow: false,
+            is_async: method.is_async,
+            is_generator: method.is_generator,
+            has_parameter_expressions: Self::has_parameter_expressions(&m_fn),
+            length: Self::fn_length(&m_fn),
+            is_method: true,
+            has_name_binding: false,
+            is_derived: false,
+        };
+        self.funcs.push(Arc::new(mdef));
+        let is_accessor = matches!(
+            method.kind,
+            crate::ast::PropKind::Get | crate::ast::PropKind::Set
+        );
+        let akind = if matches!(method.kind, crate::ast::PropKind::Get) {
+            0u8
+        } else {
+            1u8
+        };
+        if is_accessor {
+            if method.is_static {
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                let static_super_idx = self.intern("#static_super");
+                self.chunk
+                    .emit(Op::DeclareEnv(static_super_idx), self.current_line);
+                if let Some(ce) = &method.computed_name {
+                    self.compile_expr(ce)?;
+                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                } else {
+                    let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                }
+                self.chunk
+                    .emit(Op::LoadEnv(static_super_idx), self.current_line);
+                self.emit_make_closure_capturing_super_from_stack(m_idx);
+                self.chunk
+                    .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
+                self.chunk
+                    .emit(Op::DefineClassAccessor(akind), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            } else {
+                self.chunk.emit(Op::Dup, self.current_line);
+                let proto_key = self
+                    .chunk
+                    .add_constant(Value::String(Arc::from("prototype")));
+                self.chunk.emit(Op::Const(proto_key), self.current_line);
+                self.chunk.emit(Op::GetProp, self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                let instance_super_idx = self.intern("#instance_super");
+                self.chunk
+                    .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                if let Some(ce) = &method.computed_name {
+                    self.compile_expr(ce)?;
+                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                } else {
+                    let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                }
+                self.chunk
+                    .emit(Op::LoadEnv(instance_super_idx), self.current_line);
+                self.emit_make_closure_capturing_super_from_stack(m_idx);
+                self.chunk
+                    .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
+                self.chunk
+                    .emit(Op::DefineClassAccessor(akind), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+        } else if method.is_static {
+            self.chunk.emit(Op::Dup, self.current_line);
+            self.chunk.emit(Op::Dup, self.current_line);
+            let static_super_idx = self.intern("#static_super");
+            self.chunk
+                .emit(Op::DeclareEnv(static_super_idx), self.current_line);
+            if let Some(ce) = &method.computed_name {
+                self.compile_expr(ce)?;
+                self.chunk.emit(Op::ToPropertyKey, self.current_line);
+            } else {
+                let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                self.chunk.emit(Op::Const(key_idx), self.current_line);
+            }
+            self.chunk
+                .emit(Op::LoadEnv(static_super_idx), self.current_line);
+            self.emit_make_closure_capturing_super_from_stack(m_idx);
+            if method.computed_name.is_some() {
+                self.chunk
+                    .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+            }
+            self.chunk.emit(Op::DefineMethod, self.current_line);
+            self.chunk.emit(Op::Pop, self.current_line);
+        } else {
+            self.chunk.emit(Op::Dup, self.current_line);
+            let proto_key = self
+                .chunk
+                .add_constant(Value::String(Arc::from("prototype")));
+            self.chunk.emit(Op::Const(proto_key), self.current_line);
+            self.chunk.emit(Op::GetProp, self.current_line);
+            self.chunk.emit(Op::Dup, self.current_line);
+            let instance_super_idx = self.intern("#instance_super");
+            self.chunk
+                .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
+            if let Some(ce) = &method.computed_name {
+                self.compile_expr(ce)?;
+                self.chunk.emit(Op::ToPropertyKey, self.current_line);
+            } else {
+                let key_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                self.chunk.emit(Op::Const(key_idx), self.current_line);
+            }
+            self.chunk
+                .emit(Op::LoadEnv(instance_super_idx), self.current_line);
+            self.emit_make_closure_capturing_super_from_stack(m_idx);
+            if method.computed_name.is_some() {
+                self.chunk
+                    .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+            }
+            self.chunk.emit(Op::DefineMethod, self.current_line);
+            self.chunk.emit(Op::Pop, self.current_line);
+        }
+        Ok(())
+    }
+
+    fn compile_class_static_public_field(
+        &mut self,
+        field: &PublicFieldDecl,
+        computed_key_temp: Option<&Arc<str>>,
+    ) -> error::Result<()> {
+        if !field.is_static {
+            return Ok(());
+        }
+        self.chunk.emit(Op::Dup, self.current_line);
+        if let Some(temp_name) = computed_key_temp {
+            let temp_idx = self.intern(temp_name);
+            self.chunk.emit(Op::LoadEnv(temp_idx), self.current_line);
+        } else {
+            let key_idx = self.chunk.add_constant(Value::String(field.name.clone()));
+            self.chunk.emit(Op::Const(key_idx), self.current_line);
+        }
+        self.push_scope_with_runtime(false, true);
+        self.chunk.emit(Op::PushScope, self.current_line);
+        let key_tmp_idx = self.intern("#static_field_key");
+        self.chunk
+            .emit(Op::DeclareEnv(key_tmp_idx), self.current_line);
+        let this_idx = self.intern("this");
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
+        self.chunk.emit(Op::LoadEnv(key_tmp_idx), self.current_line);
+        let init = field
+            .init
+            .clone()
+            .unwrap_or_else(|| Box::new(Expr::Undefined));
+        let init_result = self.compile_expr(&init);
+        self.chunk.emit(Op::PopScope, self.current_line);
+        self.pop_scope();
+        init_result?;
+        if Self::is_anonymous_function_definition(&init) {
+            self.chunk
+                .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+        }
+        self.chunk.emit(Op::DefineDataProperty, self.current_line);
+        self.chunk.emit(Op::Pop, self.current_line);
+        Ok(())
+    }
+
+    fn compile_class_static_private_field(
+        &mut self,
+        field: &PrivateFieldDecl,
+    ) -> error::Result<()> {
+        if !field.is_static {
+            return Ok(());
+        }
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.push_scope_with_runtime(false, true);
+        self.chunk.emit(Op::PushScope, self.current_line);
+        let this_idx = self.intern("this");
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
+        let init = field
+            .init
+            .clone()
+            .unwrap_or_else(|| Box::new(Expr::Undefined));
+        let init_result = self.compile_expr(&init);
+        self.chunk.emit(Op::PopScope, self.current_line);
+        self.pop_scope();
+        init_result?;
+        let name_idx = self.chunk.add_constant(Value::String(field.name.clone()));
+        if Self::is_anonymous_function_definition(&init) {
+            let fn_name =
+                self.chunk
+                    .add_constant(Value::String(Self::private_field_function_name(
+                        &field.name,
+                    )));
+            self.chunk
+                .emit(Op::SetFunctionNameConst(fn_name), self.current_line);
+        }
+        self.chunk
+            .emit(Op::InitPrivate(name_idx), self.current_line);
+        self.chunk.emit(Op::Pop, self.current_line);
+        Ok(())
+    }
+
+    fn compile_class_static_private_method(&mut self, method: &ClassMethod) -> error::Result<()> {
+        if !method.is_private || !method.is_static {
+            return Ok(());
+        }
+        let m_fn = Expr::Function(FunctionExpr {
+            name: Some(Self::private_method_function_name(
+                &method.name,
+                method.kind,
+            )),
+            params: method.params.clone(),
+            param_defaults: method.param_defaults.clone(),
+            rest_param: method.rest_param.clone(),
+            body: method.body.clone(),
+            is_arrow: false,
+            is_async: method.is_async,
+            is_generator: method.is_generator,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        });
+        self.chunk.emit(Op::Dup, self.current_line);
+        match method.kind {
+            crate::ast::PropKind::Get => {
+                self.compile_expr(&m_fn)?;
+                self.chunk.emit(Op::Undefined, self.current_line);
+                let name_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                self.chunk
+                    .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+            }
+            crate::ast::PropKind::Set => {
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.compile_expr(&m_fn)?;
+                let name_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                self.chunk
+                    .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+            }
+            _ => {
+                self.compile_expr(&m_fn)?;
+                let name_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+                self.chunk
+                    .emit(Op::InitPrivateMethod(name_idx), self.current_line);
+            }
+        }
+        self.chunk.emit(Op::Pop, self.current_line);
+        Ok(())
+    }
+
+    fn compile_class_static_block(&mut self, block: &[Stmt]) -> error::Result<()> {
+        let sb_fn = FunctionExpr {
+            name: None,
+            params: Vec::new(),
+            param_defaults: Vec::new(),
+            rest_param: None,
+            body: block.to_vec(),
+            is_arrow: false,
+            is_async: false,
+            is_generator: false,
+            param_decls: Vec::new(),
+            is_strict: true,
+            is_method: false,
+            has_name_binding: false,
+        };
+        let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
+        let sb_idx = self.funcs.len();
+        let sbdef = crate::function::FunctionDef {
+            name: None,
+            params: Vec::new(),
+            param_slots: sb_slots,
+            rest_param: None,
+            chunk: Arc::new(sb_chunk),
+            num_locals: 16,
+            is_arrow: false,
+            is_async: false,
+            is_generator: false,
+            has_parameter_expressions: false,
+            length: 0,
+            is_method: false,
+            has_name_binding: false,
+            is_derived: false,
+        };
+        self.funcs.push(Arc::new(sbdef));
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.emit_make_closure_capturing_super_from_stack(sb_idx);
+        self.chunk.emit(Op::CallThis(0), self.current_line);
+        self.chunk.emit(Op::Pop, self.current_line);
+        Ok(())
+    }
+
     /// Rest binding for assignment patterns: `...rest` collects temp[i..].
     fn bind_assign_rest(
         &mut self,
@@ -3744,123 +4071,123 @@ impl Compiler {
                                 }
                             })
                             .unwrap_or_default();
-                        // Prepend private field initializers.
-                        // Private methods are stored as private fields whose
-                        // value is a function expression, so `this.#m()`
-                        // resolves via PrivateGet like a field.
-                        let public_field_stmts: Vec<Stmt> = cls
-                            .public_fields
-                            .iter()
-                            .zip(public_field_computed_key_temps.iter())
-                            .filter(|(field, _)| !field.is_static)
-                            .map(|(field, computed_key_temp)| {
-                                let init = field
-                                    .init
-                                    .clone()
-                                    .unwrap_or_else(|| Box::new(Expr::Undefined));
-                                Stmt {
-                                    line: 0,
-                                    node: StmtNode::ExprStmt(Expr::PublicFieldInit {
-                                        object: Box::new(Expr::This),
-                                        name: field.name.clone(),
-                                        computed_name: computed_key_temp
-                                            .as_ref()
-                                            .map(|name| Box::new(Expr::Ident(name.clone()))),
-                                        value: init,
-                                    }),
-                                }
-                            })
-                            .collect();
-                        let pm_fields: Vec<crate::ast::PrivateFieldDecl> = cls
-                            .methods
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, m)| m.is_private && !m.is_static)
-                            .filter(|(_, m)| matches!(m.kind, crate::ast::PropKind::Method))
-                            .map(|(idx, m)| {
-                                let binding = instance_private_method_bindings
-                                    .iter()
-                                    .find(|(method_idx, _)| *method_idx == idx)
-                                    .map(|(_, binding)| binding.clone())
-                                    .unwrap_or_else(|| {
-                                        Arc::from(
-                                            format!("#private_method_{}_{}", idx, m.name).as_str(),
-                                        )
+                        let mut init_stmts = Vec::new();
+                        for element in &cls.elements {
+                            match element {
+                                crate::ast::ClassElement::PublicField(idx) => {
+                                    let field = &cls.public_fields[*idx];
+                                    if field.is_static {
+                                        continue;
+                                    }
+                                    let init = field
+                                        .init
+                                        .clone()
+                                        .unwrap_or_else(|| Box::new(Expr::Undefined));
+                                    init_stmts.push(Stmt {
+                                        line: 0,
+                                        node: StmtNode::ExprStmt(Expr::PublicFieldInit {
+                                            object: Box::new(Expr::This),
+                                            name: field.name.clone(),
+                                            computed_name: public_field_computed_key_temps[*idx]
+                                                .as_ref()
+                                                .map(|name| Box::new(Expr::Ident(name.clone()))),
+                                            value: init,
+                                        }),
                                     });
-                                crate::ast::PrivateFieldDecl {
-                                    name: m.name.clone(),
-                                    init: Some(Box::new(Expr::Ident(binding))),
-                                    is_static: false,
-                                    kind: crate::ast::PropKind::Method,
                                 }
-                            })
-                            .collect();
-                        let private_accessors: Vec<Stmt> = cls
-                            .methods
-                            .iter()
-                            .filter(|m| m.is_private && !m.is_static)
-                            .filter(|m| {
-                                matches!(
-                                    m.kind,
-                                    crate::ast::PropKind::Get | crate::ast::PropKind::Set
-                                )
-                            })
-                            .map(|m| {
-                                let fn_expr = Expr::Function(FunctionExpr {
-                                    name: Some(Self::private_method_function_name(&m.name, m.kind)),
-                                    params: m.params.clone(),
-                                    param_defaults: m.param_defaults.clone(),
-                                    rest_param: m.rest_param.clone(),
-                                    body: m.body.clone(),
-                                    is_arrow: false,
-                                    is_async: m.is_async,
-                                    is_generator: false,
-                                    param_decls: Vec::new(),
-                                    is_strict: true,
-                                    is_method: false,
-                                    has_name_binding: false,
-                                });
-                                Stmt {
-                                    line: 0,
-                                    node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
-                                        object: Box::new(Expr::This),
-                                        name: m.name.clone(),
-                                        get: if matches!(m.kind, crate::ast::PropKind::Get) {
-                                            Some(Box::new(fn_expr.clone()))
-                                        } else {
-                                            None
-                                        },
-                                        set: if matches!(m.kind, crate::ast::PropKind::Set) {
-                                            Some(Box::new(fn_expr))
-                                        } else {
-                                            None
-                                        },
-                                    }),
+                                crate::ast::ClassElement::PrivateField(idx) => {
+                                    let field = &cls.private_fields[*idx];
+                                    if field.is_static {
+                                        continue;
+                                    }
+                                    let init = field
+                                        .init
+                                        .clone()
+                                        .unwrap_or_else(|| Box::new(Expr::Undefined));
+                                    init_stmts.push(Stmt {
+                                        line: 0,
+                                        node: StmtNode::ExprStmt(Expr::PrivateInit {
+                                            object: Box::new(Expr::This),
+                                            name: field.name.clone(),
+                                            value: init,
+                                            kind: field.kind,
+                                        }),
+                                    });
                                 }
-                            })
-                            .collect();
-                        let pf_stmts: Vec<Stmt> = cls
-                            .private_fields
-                            .iter()
-                            .filter(|pf| !pf.is_static)
-                            .chain(pm_fields.iter())
-                            .map(|pf| {
-                                let init =
-                                    pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
-                                Stmt {
-                                    line: 0,
-                                    node: StmtNode::ExprStmt(Expr::PrivateInit {
-                                        object: Box::new(Expr::This),
-                                        name: pf.name.clone(),
-                                        value: init,
-                                        kind: pf.kind,
-                                    }),
+                                crate::ast::ClassElement::Method(idx) => {
+                                    let method = &cls.methods[*idx];
+                                    if !method.is_private || method.is_static {
+                                        continue;
+                                    }
+                                    if matches!(method.kind, crate::ast::PropKind::Method) {
+                                        let binding = instance_private_method_bindings
+                                            .iter()
+                                            .find(|(method_idx, _)| *method_idx == *idx)
+                                            .map(|(_, binding)| binding.clone())
+                                            .unwrap_or_else(|| {
+                                                Arc::from(
+                                                    format!(
+                                                        "#private_method_{}_{}",
+                                                        idx, method.name
+                                                    )
+                                                    .as_str(),
+                                                )
+                                            });
+                                        init_stmts.push(Stmt {
+                                            line: 0,
+                                            node: StmtNode::ExprStmt(Expr::PrivateInit {
+                                                object: Box::new(Expr::This),
+                                                name: method.name.clone(),
+                                                value: Box::new(Expr::Ident(binding)),
+                                                kind: method.kind,
+                                            }),
+                                        });
+                                    } else {
+                                        let fn_expr = Expr::Function(FunctionExpr {
+                                            name: Some(Self::private_method_function_name(
+                                                &method.name,
+                                                method.kind,
+                                            )),
+                                            params: method.params.clone(),
+                                            param_defaults: method.param_defaults.clone(),
+                                            rest_param: method.rest_param.clone(),
+                                            body: method.body.clone(),
+                                            is_arrow: false,
+                                            is_async: method.is_async,
+                                            is_generator: false,
+                                            param_decls: Vec::new(),
+                                            is_strict: true,
+                                            is_method: false,
+                                            has_name_binding: false,
+                                        });
+                                        init_stmts.push(Stmt {
+                                            line: 0,
+                                            node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
+                                                object: Box::new(Expr::This),
+                                                name: method.name.clone(),
+                                                get: if matches!(
+                                                    method.kind,
+                                                    crate::ast::PropKind::Get
+                                                ) {
+                                                    Some(Box::new(fn_expr.clone()))
+                                                } else {
+                                                    None
+                                                },
+                                                set: if matches!(
+                                                    method.kind,
+                                                    crate::ast::PropKind::Set
+                                                ) {
+                                                    Some(Box::new(fn_expr))
+                                                } else {
+                                                    None
+                                                },
+                                            }),
+                                        });
+                                    }
                                 }
-                            })
-                            .collect();
-                        let mut init_stmts = public_field_stmts;
-                        init_stmts.extend(pf_stmts);
-                        init_stmts.extend(private_accessors);
+                                crate::ast::ClassElement::StaticBlock(_) => {}
+                            }
+                        }
                         if cls.superclass.is_some() {
                             let mut combined = Vec::new();
                             let mut inserted = false;
@@ -4041,354 +4368,58 @@ impl Compiler {
                     self.chunk
                         .emit(Op::DeclareEnv(binding_idx), self.current_line);
                 }
-                // assign each non-constructor method to prototype (or constructor if static)
-                for method in &cls.methods {
-                    if method.is_constructor {
-                        continue;
-                    }
-                    // Private methods/accessors are installed into private
-                    // slots, not as public properties.
-                    if method.is_private {
-                        continue;
-                    }
-                    let computed_method = method.computed_name.is_some();
-                    let method_function_name = if computed_method {
-                        None
-                    } else {
-                        Some(Self::public_method_function_name(&method.name, method.kind))
-                    };
-                    let m_fn = FunctionExpr {
-                        name: method_function_name.clone(),
-                        params: method.params.clone(),
-                        param_defaults: method.param_defaults.clone(),
-                        rest_param: method.rest_param.clone(),
-                        body: method.body.clone(),
-                        is_arrow: false,
-                        is_async: method.is_async,
-                        is_generator: method.is_generator,
-                        param_decls: Vec::new(),
-                        is_strict: true, // class methods are always strict
-                        is_method: true,
-                        has_name_binding: false,
-                    };
-                    let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
-                    let m_idx = self.funcs.len();
-                    let mdef = crate::function::FunctionDef {
-                        name: method_function_name,
-                        params: method.params.clone(),
-                        param_slots: m_slots,
-                        rest_param: method.rest_param.clone(),
-                        chunk: Arc::new(m_chunk),
-                        num_locals: method.params.len() + 16,
-                        is_arrow: false,
-                        is_async: method.is_async,
-                        is_generator: method.is_generator,
-                        has_parameter_expressions: Self::has_parameter_expressions(&m_fn),
-                        length: Self::fn_length(&m_fn),
-                        is_method: true,
-                        has_name_binding: false,
-                        is_derived: false,
-                    };
-                    self.funcs.push(Arc::new(mdef));
-                    let is_accessor = matches!(
-                        method.kind,
-                        crate::ast::PropKind::Get | crate::ast::PropKind::Set
-                    );
-                    let akind = if matches!(method.kind, crate::ast::PropKind::Get) {
-                        0u8
-                    } else {
-                        1u8
-                    };
-                    // Each branch leaves [ctor] on the stack.
-                    if is_accessor {
-                        if method.is_static {
-                            // [ctor] -> define accessor on ctor
-                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
-                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor, ctor]
-                            let static_super_idx = self.intern("#static_super");
-                            self.chunk
-                                .emit(Op::DeclareEnv(static_super_idx), self.current_line);
-                            if let Some(ce) = &method.computed_name {
-                                self.compile_expr(ce)?;
-                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
-                            } else {
-                                let key_idx =
-                                    self.chunk.add_constant(Value::String(method.name.clone()));
-                                self.chunk.emit(Op::Const(key_idx), self.current_line);
-                            }
-                            self.chunk
-                                .emit(Op::LoadEnv(static_super_idx), self.current_line);
-                            self.emit_make_closure_capturing_super_from_stack(m_idx);
-                            self.chunk
-                                .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
-                            self.chunk
-                                .emit(Op::DefineClassAccessor(akind), self.current_line);
-                            self.chunk.emit(Op::Pop, self.current_line); // [ctor, ctor]
-                            self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                        } else {
-                            // [ctor] -> get proto, define accessor on proto
-                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                            let proto_key = self
-                                .chunk
-                                .add_constant(Value::String(Arc::from("prototype")));
-                            self.chunk.emit(Op::Const(proto_key), self.current_line);
-                            self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
-                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
-                            let instance_super_idx = self.intern("#instance_super");
-                            self.chunk
-                                .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
-                            self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
-                            if let Some(ce) = &method.computed_name {
-                                self.compile_expr(ce)?;
-                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
-                            } else {
-                                let key_idx =
-                                    self.chunk.add_constant(Value::String(method.name.clone()));
-                                self.chunk.emit(Op::Const(key_idx), self.current_line);
-                            }
-                            self.chunk
-                                .emit(Op::LoadEnv(instance_super_idx), self.current_line);
-                            self.emit_make_closure_capturing_super_from_stack(m_idx);
-                            self.chunk
-                                .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
-                            self.chunk
-                                .emit(Op::DefineClassAccessor(akind), self.current_line);
-                            self.chunk.emit(Op::Pop, self.current_line); // [ctor, proto]
-                            self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                        }
-                    } else if method.is_static {
-                        // Constructor.method = fn (non-enumerable)
-                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
-                        let static_super_idx = self.intern("#static_super");
-                        self.chunk
-                            .emit(Op::DeclareEnv(static_super_idx), self.current_line);
-                        if let Some(ce) = &method.computed_name {
-                            self.compile_expr(ce)?;
-                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
-                        } else {
-                            let key_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk.emit(Op::Const(key_idx), self.current_line);
-                        }
-                        self.chunk
-                            .emit(Op::LoadEnv(static_super_idx), self.current_line);
-                        self.emit_make_closure_capturing_super_from_stack(m_idx);
-                        if method.computed_name.is_some() {
-                            self.chunk
-                                .emit(Op::SetFunctionNameFromKey(0), self.current_line);
-                        }
-                        self.chunk.emit(Op::DefineMethod, self.current_line);
-                        self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                    } else {
-                        // Constructor.prototype.method = fn (non-enumerable)
-                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                        let proto_key = self
-                            .chunk
-                            .add_constant(Value::String(Arc::from("prototype")));
-                        self.chunk.emit(Op::Const(proto_key), self.current_line);
-                        self.chunk.emit(Op::GetProp, self.current_line); // [ctor, proto]
-                        self.chunk.emit(Op::Dup, self.current_line); // [ctor, proto, proto]
-                        let instance_super_idx = self.intern("#instance_super");
-                        self.chunk
-                            .emit(Op::DeclareEnv(instance_super_idx), self.current_line);
-                        if let Some(ce) = &method.computed_name {
-                            self.compile_expr(ce)?;
-                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
-                        } else {
-                            let key_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk.emit(Op::Const(key_idx), self.current_line);
-                        }
-                        self.chunk
-                            .emit(Op::LoadEnv(instance_super_idx), self.current_line);
-                        self.emit_make_closure_capturing_super_from_stack(m_idx);
-                        if method.computed_name.is_some() {
-                            self.chunk
-                                .emit(Op::SetFunctionNameFromKey(0), self.current_line);
-                        }
-                        self.chunk.emit(Op::DefineMethod, self.current_line);
-                        self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                    }
-                }
                 // Initialize the explicit class-name binding captured by the
-                // constructor, methods, and static blocks (but keep ctor on stack).
+                // constructor, computed class elements, and static blocks.
                 if let Some(name) = &cls.name {
                     let name_idx = self.intern(name);
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     self.chunk
                         .emit(Op::InitEnvConst(name_idx), self.current_line); // [ctor]
                 }
-                for (field, computed_key_temp) in cls
-                    .public_fields
-                    .iter()
-                    .zip(public_field_computed_key_temps.iter())
-                {
-                    if let (Some(computed_name), Some(temp_name)) =
-                        (&field.computed_name, computed_key_temp)
-                    {
-                        self.compile_expr(computed_name)?;
-                        self.chunk.emit(Op::ToPropertyKey, self.current_line);
-                        let temp_idx = self.intern(temp_name);
-                        self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
-                    }
-                }
-                for (field, computed_key_temp) in cls
-                    .public_fields
-                    .iter()
-                    .zip(public_field_computed_key_temps.iter())
-                    .filter(|(field, _)| field.is_static)
-                {
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    if let Some(temp_name) = computed_key_temp {
-                        let temp_idx = self.intern(temp_name);
-                        self.chunk.emit(Op::LoadEnv(temp_idx), self.current_line);
-                    } else {
-                        let key_idx = self.chunk.add_constant(Value::String(field.name.clone()));
-                        self.chunk.emit(Op::Const(key_idx), self.current_line);
-                    }
-                    self.push_scope_with_runtime(false, true);
-                    self.chunk.emit(Op::PushScope, self.current_line);
-                    let key_tmp_idx = self.intern("#static_field_key");
-                    self.chunk
-                        .emit(Op::DeclareEnv(key_tmp_idx), self.current_line);
-                    let this_idx = self.intern("this");
-                    self.chunk.emit(Op::Dup, self.current_line);
-                    self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
-                    self.chunk.emit(Op::LoadEnv(key_tmp_idx), self.current_line);
-                    let init = field
-                        .init
-                        .clone()
-                        .unwrap_or_else(|| Box::new(Expr::Undefined));
-                    let init_result = self.compile_expr(&init);
-                    self.chunk.emit(Op::PopScope, self.current_line);
-                    self.pop_scope();
-                    init_result?;
-                    if Self::is_anonymous_function_definition(&init) {
-                        self.chunk
-                            .emit(Op::SetFunctionNameFromKey(0), self.current_line);
-                    }
-                    self.chunk.emit(Op::DefineDataProperty, self.current_line);
-                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                }
-                for pf in cls.private_fields.iter().filter(|pf| pf.is_static) {
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    self.push_scope_with_runtime(false, true);
-                    self.chunk.emit(Op::PushScope, self.current_line);
-                    let this_idx = self.intern("this");
-                    self.chunk.emit(Op::Dup, self.current_line);
-                    self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
-                    let init = pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
-                    let init_result = self.compile_expr(&init);
-                    self.chunk.emit(Op::PopScope, self.current_line);
-                    self.pop_scope();
-                    init_result?;
-                    let name_idx = self.chunk.add_constant(Value::String(pf.name.clone()));
-                    if Self::is_anonymous_function_definition(&init) {
-                        let fn_name = self.chunk.add_constant(Value::String(
-                            Self::private_field_function_name(&pf.name),
-                        ));
-                        self.chunk
-                            .emit(Op::SetFunctionNameConst(fn_name), self.current_line);
-                    }
-                    self.chunk
-                        .emit(Op::InitPrivate(name_idx), self.current_line);
-                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                }
-                for method in cls.methods.iter().filter(|m| m.is_private && m.is_static) {
-                    let m_fn = Expr::Function(FunctionExpr {
-                        name: Some(Self::private_method_function_name(
-                            &method.name,
-                            method.kind,
-                        )),
-                        params: method.params.clone(),
-                        param_defaults: method.param_defaults.clone(),
-                        rest_param: method.rest_param.clone(),
-                        body: method.body.clone(),
-                        is_arrow: false,
-                        is_async: method.is_async,
-                        is_generator: method.is_generator,
-                        param_decls: Vec::new(),
-                        is_strict: true,
-                        is_method: false,
-                        has_name_binding: false,
-                    });
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    match method.kind {
-                        crate::ast::PropKind::Get => {
-                            self.compile_expr(&m_fn)?;
-                            self.chunk.emit(Op::Undefined, self.current_line);
-                            let name_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk
-                                .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+
+                // ClassElementEvaluation: public methods are defined and
+                // public field computed names are captured in source order.
+                for element in &cls.elements {
+                    match element {
+                        crate::ast::ClassElement::Method(idx) => {
+                            self.compile_class_public_method(&cls.methods[*idx])?;
                         }
-                        crate::ast::PropKind::Set => {
-                            self.chunk.emit(Op::Undefined, self.current_line);
-                            self.compile_expr(&m_fn)?;
-                            let name_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk
-                                .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+                        crate::ast::ClassElement::PublicField(idx) => {
+                            let field = &cls.public_fields[*idx];
+                            if let (Some(computed_name), Some(temp_name)) =
+                                (&field.computed_name, &public_field_computed_key_temps[*idx])
+                            {
+                                self.compile_expr(computed_name)?;
+                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                                let temp_idx = self.intern(temp_name);
+                                self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
+                            }
                         }
-                        _ => {
-                            self.compile_expr(&m_fn)?;
-                            let name_idx =
-                                self.chunk.add_constant(Value::String(method.name.clone()));
-                            self.chunk
-                                .emit(Op::InitPrivateMethod(name_idx), self.current_line);
+                        crate::ast::ClassElement::PrivateField(_)
+                        | crate::ast::ClassElement::StaticBlock(_) => {}
+                    }
+                }
+
+                // Static element initialization runs after all class element
+                // names have been evaluated, but in static element source order.
+                for element in &cls.elements {
+                    match element {
+                        crate::ast::ClassElement::PublicField(idx) => {
+                            self.compile_class_static_public_field(
+                                &cls.public_fields[*idx],
+                                public_field_computed_key_temps[*idx].as_ref(),
+                            )?;
+                        }
+                        crate::ast::ClassElement::PrivateField(idx) => {
+                            self.compile_class_static_private_field(&cls.private_fields[*idx])?;
+                        }
+                        crate::ast::ClassElement::Method(idx) => {
+                            self.compile_class_static_private_method(&cls.methods[*idx])?;
+                        }
+                        crate::ast::ClassElement::StaticBlock(idx) => {
+                            self.compile_class_static_block(&cls.static_blocks[*idx])?;
                         }
                     }
-                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
-                }
-                // Static initialization blocks: each runs with `this` = the
-                // class (constructor), in source order. We bind `this` in a
-                // temp env so the block body sees it, then compile inline.
-                // Static initialization blocks: compile each as a separate
-                // function and call it with this=ctor via CallThis.
-                for block in &cls.static_blocks {
-                    let sb_fn = FunctionExpr {
-                        name: None,
-                        params: Vec::new(),
-                        param_defaults: Vec::new(),
-                        rest_param: None,
-                        body: block.clone(),
-                        is_arrow: false,
-                        is_async: false,
-                        is_generator: false,
-                        param_decls: Vec::new(),
-                        is_strict: true,
-                        is_method: false,
-                        has_name_binding: false,
-                    };
-                    let (sb_chunk, sb_slots) = self.compile_function(&sb_fn)?;
-                    let sb_idx = self.funcs.len();
-                    let sbdef = crate::function::FunctionDef {
-                        name: None,
-                        params: Vec::new(),
-                        param_slots: sb_slots,
-                        rest_param: None,
-                        chunk: Arc::new(sb_chunk),
-                        num_locals: 16,
-                        is_arrow: false,
-                        is_async: false,
-                        is_generator: false,
-                        has_parameter_expressions: false,
-                        length: 0,
-                        is_method: false,
-                        has_name_binding: false,
-                        is_derived: false,
-                    };
-                    self.funcs.push(Arc::new(sbdef));
-                    // stack: [ctor]. Dup ctor for `this`, then MakeClosure.
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor, ctor]
-                    self.emit_make_closure_capturing_super_from_stack(sb_idx);
-                    // CallThis expects [..., this, fn, args...]; here this=ctor
-                    // (dup), fn on top.
-                    self.chunk.emit(Op::CallThis(0), self.current_line); // [ctor, result]
-                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                 }
                 self.chunk.emit(Op::PopScope, self.current_line);
                 self.pop_scope();

@@ -7,6 +7,7 @@ pub struct ClassExpr {
     pub inferred_name: Option<Arc<str>>,
     pub is_declaration: bool,
     pub superclass: Option<Box<Expr>>,
+    pub elements: Vec<ClassElement>,
     pub methods: Vec<ClassMethod>,
     /// Static initialization blocks: `static { ... }`. Each runs with `this`
     /// bound to the class (constructor), in source order, at class definition
@@ -16,6 +17,14 @@ pub struct ClassExpr {
     pub private_fields: Vec<PrivateFieldDecl>,
     /// Public field declarations: `name = init`, `static name = init`, `[key] = init`.
     pub public_fields: Vec<PublicFieldDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassElement {
+    Method(usize),
+    StaticBlock(usize),
+    PrivateField(usize),
+    PublicField(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]

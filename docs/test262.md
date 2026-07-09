@@ -284,6 +284,20 @@ name, and arrow-function gates temporarily lifted, the broader
 **1582 pass / 82 fail / 1298 skip**. Remaining failures still include full
 ordered class-element evaluation across computed methods and static blocks.
 
+Focused ordered class element local check:
+class parsing now records source order across methods, fields, and static
+blocks, while retaining the existing per-kind vectors as indexed storage. Class
+compilation uses that ordered list for public computed method names, public
+field computed names, and static element initialization. This fixes
+field-before-method computed-name ordering, computed method names that read the
+inner class binding, and static block/static field initializer ordering after
+all element names have been evaluated. With public/static class field,
+computed-name, logical-assignment, and exponentiation gates temporarily lifted,
+the generated `cpn-class-*-fields-methods-*` cluster reports **60 pass / 0
+fail / 2 skip**. With the broader class element gates temporarily lifted, the
+`language/{statements,expressions}/class/elements` diagnostic now reports
+**1583 pass / 81 fail / 1298 skip**.
+
 Focused TypedArray `[[HasProperty]]` prototype-delegation local check:
 ordinary property keys missing from a TypedArray now delegate to the
 prototype's actual `[[HasProperty]]` operation instead of walking the chain with

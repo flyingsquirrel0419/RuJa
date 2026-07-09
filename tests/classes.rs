@@ -412,6 +412,63 @@ fn public_class_field_computed_name_abrupt_completion_prevents_initializers() {
 }
 
 #[test]
+fn class_computed_method_and_field_names_follow_source_order() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+                [log.push("field") || "f"];
+                [log.push("method") || "m"]() {}
+            }
+            log.join(",");
+        "#),
+        Value::String(Arc::from("field,method"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class C {
+                [C.name]() { return 1; }
+            }
+            C.prototype.C();
+        "#),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
+fn class_static_blocks_and_fields_follow_static_element_order() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+                static { log.push("block"); }
+                static [log.push("key") || "x"] = log.push("value");
+            }
+            log.join(",");
+        "#),
+        Value::String(Arc::from("key,block,value"))
+    );
+}
+
+#[test]
+fn class_instance_fields_follow_source_order_across_public_and_private() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+                a = log.push("public");
+                #b = log.push("private");
+                c = log.push("public2");
+            }
+            new C();
+            log.join(",");
+        "#),
+        Value::String(Arc::from("public,private,public2"))
+    );
+}
+
+#[test]
 fn static_block_await_identifier_contexts() {
     assert_eq!(
         run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),

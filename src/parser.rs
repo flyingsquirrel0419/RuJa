@@ -5218,6 +5218,7 @@ impl Parser {
             None
         };
         self.expect(&TokenKind::LBrace, "{")?;
+        let mut elements = Vec::new();
         let mut methods = Vec::new();
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
@@ -5235,7 +5236,9 @@ impl Parser {
             {
                 self.advance(); // static
                 let block = self.parse_static_block_body()?;
+                let idx = static_blocks.len();
                 static_blocks.push(block);
+                elements.push(crate::ast::ClassElement::StaticBlock(idx));
                 continue;
             }
             let is_static = self.check(&TokenKind::Static)
@@ -5298,6 +5301,7 @@ impl Parser {
                     pre.append(&mut body);
                     body = pre;
                 }
+                let idx = methods.len();
                 methods.push(ClassMethod {
                     name: Arc::from(name.as_str()),
                     computed_name: None,
@@ -5312,6 +5316,7 @@ impl Parser {
                     kind: crate::ast::PropKind::Method,
                     is_private: true,
                 });
+                elements.push(crate::ast::ClassElement::Method(idx));
                 continue;
             }
             if matches!(
@@ -5351,6 +5356,7 @@ impl Parser {
                     pre.append(&mut body);
                     body = pre;
                 }
+                let idx = methods.len();
                 methods.push(ClassMethod {
                     name: Arc::from(name.as_str()),
                     computed_name: None,
@@ -5365,6 +5371,7 @@ impl Parser {
                     kind,
                     is_private: true,
                 });
+                elements.push(crate::ast::ClassElement::Method(idx));
                 continue;
             }
             if let TokenKind::PrivateName(name) = self.peek().clone() {
@@ -5398,6 +5405,7 @@ impl Parser {
                         pre.append(&mut body);
                         body = pre;
                     }
+                    let idx = methods.len();
                     methods.push(ClassMethod {
                         name: Arc::from(name.as_str()),
                         computed_name: None,
@@ -5412,6 +5420,7 @@ impl Parser {
                         kind: crate::ast::PropKind::Method,
                         is_private: true,
                     });
+                    elements.push(crate::ast::ClassElement::Method(idx));
                     continue;
                 }
                 self.advance();
@@ -5428,12 +5437,14 @@ impl Parser {
                     None
                 };
                 self.expect_semi()?;
+                let idx = private_fields.len();
                 private_fields.push(crate::ast::PrivateFieldDecl {
                     name: Arc::from(name.as_str()),
                     init,
                     is_static,
                     kind: crate::ast::PropKind::Normal,
                 });
+                elements.push(crate::ast::ClassElement::PrivateField(idx));
                 continue;
             }
             // Getter/setter in class body.
@@ -5531,12 +5542,14 @@ impl Parser {
                     None
                 };
                 self.expect_semi()?;
+                let idx = public_fields.len();
                 public_fields.push(crate::ast::PublicFieldDecl {
                     name: method_name,
                     computed_name,
                     init,
                     is_static,
                 });
+                elements.push(crate::ast::ClassElement::PublicField(idx));
                 continue;
             }
             if is_constructor {
@@ -5580,6 +5593,7 @@ impl Parser {
                 pre.append(&mut body);
                 body = pre;
             }
+            let idx = methods.len();
             methods.push(ClassMethod {
                 name: method_name,
                 computed_name,
@@ -5600,6 +5614,7 @@ impl Parser {
                 },
                 is_private: false,
             });
+            elements.push(crate::ast::ClassElement::Method(idx));
         }
         self.expect(&TokenKind::RBrace, "}")?;
         self.is_strict_context = saved_strict_context;
@@ -5608,6 +5623,7 @@ impl Parser {
             inferred_name: None,
             is_declaration,
             superclass,
+            elements,
             methods,
             static_blocks,
             private_fields,
