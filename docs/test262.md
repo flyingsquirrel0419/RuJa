@@ -212,6 +212,17 @@ realm constructor coverage. The current runner's broader
 `built-ins/TypedArrayConstructors` diagnostic improves to **453 pass / 20 fail
 / 265 skip**.
 
+Focused TypedArray integer-indexed `[[Set]]` local check:
+numeric index assignments now run `ToNumber`/`ToBigInt` element conversion
+before detached-buffer, out-of-bounds, invalid-index, or immutable-buffer
+validation, so observable conversion side effects and abrupt completions are
+preserved even when the write has no effect. With TypedArray-related skips
+temporarily lifted, `built-ins/TypedArrayConstructors/internals/Set` improves
+from **15 pass / 8 fail / 30 skip** to **21 pass / 2 fail / 30 skip**; the
+remaining failures are detached-buffer realm constructor coverage. The current
+runner's broader `built-ins/TypedArrayConstructors` diagnostic improves to
+**459 pass / 14 fail / 265 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

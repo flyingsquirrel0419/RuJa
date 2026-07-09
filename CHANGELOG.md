@@ -83,6 +83,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   reject non-typed-array receivers. The focused
   `built-ins/TypedArrayConstructors` run improves from **10 pass / 6 fail /
   722 skip** to **16 pass / 0 fail / 722 skip**.
+- **TypedArray integer-indexed `[[Set]]` ordering**: TypedArray numeric index
+  assignments now run element value conversion before detached-buffer,
+  out-of-bounds, invalid-index, or immutable-buffer validation. This preserves
+  observable `ToNumber`/`ToBigInt` side effects and abrupt completions even
+  when the write ultimately has no effect. With TypedArray-related skips
+  temporarily lifted, `built-ins/TypedArrayConstructors/internals/Set`
+  improves from **15 pass / 8 fail / 30 skip** to **21 pass / 2 fail / 30
+  skip**; the remaining failures are detached-buffer realm constructor
+  coverage.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

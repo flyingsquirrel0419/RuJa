@@ -1408,6 +1408,7 @@ impl Vm {
         slots: TypedArrayNumericSlots,
         value: &Value,
     ) -> error::Result<bool> {
+        let element_bytes = crate::builtins::typed_array_value_to_bytes(self, slots.kind, value)?;
         let Some(i) = self.typed_array_valid_index(&slots) else {
             return Ok(true);
         };
@@ -1434,7 +1435,6 @@ impl Vm {
                 ));
             }
         }
-        let element_bytes = crate::builtins::typed_array_value_to_bytes(self, slots.kind, value)?;
         if let Some(backing) = slots.viewed_array_buffer {
             if let Value::Object(buffer_idx) = backing {
                 self.heap.with_obj(buffer_idx.0, |o| {

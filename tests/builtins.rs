@@ -990,6 +990,59 @@ fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
 }
 
 #[test]
+fn typed_array_numeric_set_converts_value_before_index_validation() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([42]);
+            var calls = 0;
+            var value = {
+              valueOf: function() {
+                calls += 1;
+                return 7;
+              }
+            };
+            sample["1.1"] = value;
+            sample["-0"] = value;
+            sample["-1"] = value;
+            sample["1"] = value;
+            sample["2"] = value;
+            [calls, sample[0], sample["1.1"], sample["-0"], sample["-1"], sample["1"], sample["2"]].join(",");
+        "#),
+        Value::String(Arc::from("5,42,,,,,"))
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([42]);
+            $262.detachArrayBuffer(sample.buffer);
+            sample[0] = { valueOf: function() { throw new Error("boom"); } };
+            "#
+        )
+        .contains("boom"),
+        "TypedArray [[Set]] should convert values before detached-buffer validation"
+    );
+    assert!(
+        run_err(r#"new BigInt64Array(1)[0] = "definitely not a bigint";"#).contains("SyntaxError"),
+        "BigInt TypedArray [[Set]] should preserve StringToBigInt SyntaxError"
+    );
+    assert_eq!(
+        run(r#"
+            var receiver = new Int32Array(10);
+            var obj = Object.create(receiver);
+            var calls = 0;
+            var value = {
+              valueOf: function() {
+                calls += 1;
+                return 1;
+              }
+            };
+            [Reflect.set(obj, 100, value, receiver), calls].join(",");
+        "#),
+        Value::String(Arc::from("true,1"))
+    );
+}
+
+#[test]
 fn typed_array_length_allocation_keeps_backing_buffer_live_after_gc() {
     assert_eq!(
         run(r#"
