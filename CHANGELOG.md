@@ -40,6 +40,10 @@
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `built-ins/AggregateError/` coverage by lifting only the
+  AggregateError and `error-cause` feature gates on that path, leaving
+  Symbol/Reflect-dependent files skipped.
 - `tools/test262_analyze.py` now mirrors the runner's unsupported-feature
   boundary exactly, and `tools/analyze_failures.py` passes test paths into
   `should_skip()`, so path-scoped feature exceptions are not hidden during
@@ -69,8 +73,8 @@ Current supported subset count: **5106 pass / 0 fail / 15332 skip / 0 timeout**.
   array, and shares the same `InstallErrorCause` path. The five `error-cause`
   test262 files now pass; `built-ins/Error` reports **86 pass / 0 fail / 7
   skip**, `built-ins/NativeErrors` reports **81 pass / 0 fail / 13 skip**, and
-  `built-ins/AggregateError` admits its cause-property file at **1 pass / 0 fail
-  / 24 skip**.
+  `built-ins/AggregateError` now admits the implemented constructor and
+  prototype coverage at **17 pass / 0 fail / 8 skip**.
 - **Error stack accessor runner admission**: the
   `built-ins/Error/prototype/stack/` path exception now admits the
   already-implemented stack accessor coverage, including Proxy receivers and

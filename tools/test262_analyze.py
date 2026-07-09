@@ -128,6 +128,15 @@ ERROR_CAUSE_FEATURES = {
     "error-cause",
 }
 
+AGGREGATE_ERROR_PREFIXES = (
+    "built-ins/AggregateError/",
+)
+
+AGGREGATE_ERROR_FEATURES = {
+    "AggregateError",
+    "error-cause",
+}
+
 WITH_STATEMENT_PREFIXES = (
     "language/statements/with/",
 )
@@ -221,6 +230,14 @@ def error_cause_path(path):
         return False
     return rel.as_posix() in ERROR_CAUSE_FILES
 
+def aggregate_error_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(AGGREGATE_ERROR_PREFIXES)
+
 def with_statement_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -245,6 +262,8 @@ def should_skip(meta, path=None):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and error_stack_path(path):
         feats.difference_update(ERROR_STACK_FEATURES)
+    if path is not None and aggregate_error_path(path):
+        feats.difference_update(AGGREGATE_ERROR_FEATURES)
     if path is not None and error_cause_path(path):
         feats.difference_update(ERROR_CAUSE_FEATURES)
     if path is not None and with_statement_path(path):

@@ -826,8 +826,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   iterable, and shares that cause path. The five `error-cause` files now pass:
   `built-ins/Error` reports **86 pass / 0 fail / 7 skip**,
   `built-ins/NativeErrors` reports **81 pass / 0 fail / 13 skip**, and
-  `built-ins/AggregateError` admits its cause-property file at **1 pass / 0 fail
-  / 24 skip**.
+  `built-ins/AggregateError` now admits the implemented constructor and
+  prototype coverage at **17 pass / 0 fail / 8 skip**. The remaining skipped
+  AggregateError files still require broader Symbol/Reflect coverage.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class
