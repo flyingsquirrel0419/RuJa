@@ -155,6 +155,20 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   cross-realm detached-buffer constructor coverage. The broader
   `built-ins/TypedArrayConstructors` diagnostic reports **429 pass / 44 fail /
   265 skip**.
+- **TypedArray integer-indexed `[[Get]]`**: canonical numeric index property
+  reads now use Integer-Indexed exotic element access instead of Rust integer
+  parsing or ordinary prototype lookup. Valid indexes read numeric and BigInt
+  elements from owned or ArrayBuffer-backed storage, detached buffers and
+  invalid canonical numeric keys such as `"-0"`, fractional, negative,
+  infinite, and out-of-bounds indexes return `undefined` without touching
+  inherited accessors, and non-canonical numeric-looking keys such as `"+1"`
+  continue through ordinary own/prototype lookup. With TypedArray skips
+  temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/internals/Get` diagnostic now reports
+  **20 pass / 2 fail / 6 skip**; the remaining failures are cross-realm
+  detached-buffer constructor coverage. The broader
+  `built-ins/TypedArrayConstructors` diagnostic improves to **437 pass / 36
+  fail / 265 skip**.
 - **Nullish computed property write/delete ordering**: simple computed
   property assignment and `delete` now reject `null`/`undefined` bases before
   observable `ToPropertyKey` coercion. Assignment still evaluates the RHS

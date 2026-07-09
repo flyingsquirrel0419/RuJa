@@ -146,6 +146,10 @@ impl Vm {
         let key_str = key.as_str();
         match obj {
             Value::Object(idx) => {
+                if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, key)
+                {
+                    return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
+                }
                 // Own accessor on this object?
                 if let Some(getter) = self.heap.with_obj(idx.0, |o| {
                     o.props().lock().get(key).and_then(|d| {

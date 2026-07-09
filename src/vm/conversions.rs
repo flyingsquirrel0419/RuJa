@@ -497,6 +497,9 @@ impl Vm {
                 break;
             }
             depth += 1;
+            if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(&cur, key) {
+                return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
+            }
             let (found, getter, proto) = self.heap.with_obj(idx.0, |o| {
                 let props = o.props();
                 let desc = props.lock().get(key).cloned();
@@ -969,7 +972,6 @@ impl Vm {
                 key
             ))),
             Value::Object(idx) => {
-                // TypedArray index access: read from buffer.
                 let ta_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::TypedArray(t) = o {
                         Some((
@@ -1005,51 +1007,13 @@ impl Vm {
                     if key == "buffer" {
                         return Ok(viewed_array_buffer.unwrap_or(Value::Undefined));
                     }
-                    if let Ok(i) = key.parse::<usize>() {
-                        if let Some(backing) = viewed_array_buffer {
-                            if let Value::Object(buffer_idx) = backing {
-                                if let Some(value) = self.heap.with_obj(buffer_idx.0, |o| {
-                                    if let crate::value::HeapObj::ArrayBuffer(buffer) = o {
-                                        if buffer
-                                            .detached
-                                            .load(std::sync::atomic::Ordering::Relaxed)
-                                        {
-                                            return None;
-                                        }
-                                        let bytes = buffer.bytes.lock();
-                                        let size = kind.element_size();
-                                        let offset =
-                                            i.checked_mul(size)?.checked_add(byte_offset)?;
-                                        let end = offset.checked_add(size)?;
-                                        if end > byte_offset + byte_length {
-                                            return None;
-                                        }
-                                        return crate::builtins::typed_array_read_element(
-                                            kind,
-                                            &bytes,
-                                            offset / size,
-                                        );
-                                    }
-                                    None
-                                }) {
-                                    return Ok(value);
-                                }
-                            }
-                        } else if let Some(value) = self.heap.with_obj(idx.0, |o| {
-                            if let crate::value::HeapObj::TypedArray(t) = o {
-                                return crate::builtins::typed_array_read_element(
-                                    kind,
-                                    &t.buffer.lock(),
-                                    i,
-                                );
-                            }
-                            None
-                        }) {
-                            return Ok(value);
-                        }
-                        return Ok(Value::Undefined);
+                    let pkey = crate::value::PropertyKey::from(key);
+                    if let Some(desc) =
+                        self.typed_array_integer_index_own_property_descriptor(obj, &pkey)
+                    {
+                        return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
                     }
-                    // Non-index property: fall through to object props.
+                    // Non-canonical numeric-looking keys fall through to ordinary lookup.
                 }
                 let array_buffer_len = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::ArrayBuffer(buffer) = o {

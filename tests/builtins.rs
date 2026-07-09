@@ -1188,6 +1188,102 @@ fn typed_array_integer_index_descriptors_feed_proxy_invariants() {
 }
 
 #[test]
+fn typed_array_get_canonical_numeric_indices_follow_integer_indexed_exotic() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([42, 43]);
+            [sample["0"], sample["1"], sample[0], sample[-0]].join(",");
+        "#),
+        Value::String(Arc::from("42,43,42,42"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new BigInt64Array(2);
+            sample[0] = 42n;
+            sample[1] = 43n;
+            [sample["0"] === 42n, sample["1"] === 43n].join(",");
+        "#),
+        Value::String(Arc::from("true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(8);
+            var sample = new Uint16Array(buffer, 2, 2);
+            sample[0] = 0x1234;
+            sample[1] = 0x5678;
+            [sample["0"], sample["1"]].join(",");
+        "#),
+        Value::String(Arc::from("4660,22136"))
+    );
+}
+
+#[test]
+fn typed_array_get_invalid_canonical_indices_skip_ordinary_lookup() {
+    assert_eq!(
+        run(r#"
+            var TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+            Object.defineProperty(TypedArrayPrototype, "1.1", {
+              get: function() { throw new Error("ordinary get"); },
+              configurable: true
+            });
+            Object.defineProperty(TypedArrayPrototype, "-0", {
+              get: function() { throw new Error("ordinary get"); },
+              configurable: true
+            });
+            Object.defineProperty(TypedArrayPrototype, "2", {
+              get: function() { throw new Error("ordinary get"); },
+              configurable: true
+            });
+            try {
+              var sample = new Uint8Array([7, 8]);
+              [
+                sample["1.1"] === undefined,
+                sample["-0"] === undefined,
+                sample["2"] === undefined
+              ].join(",");
+            } finally {
+              delete TypedArrayPrototype["1.1"];
+              delete TypedArrayPrototype["-0"];
+              delete TypedArrayPrototype["2"];
+            }
+        "#),
+        Value::String(Arc::from("true,true,true"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([7]);
+            $262.detachArrayBuffer(sample.buffer);
+            sample["0"] === undefined;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_get_noncanonical_numeric_keys_use_ordinary_lookup() {
+    assert_eq!(
+        run(r#"
+            var TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+            try {
+              var sample = new Uint8Array();
+              TypedArrayPrototype["+1"] = "inherited";
+              var inherited = sample["+1"];
+              sample["+1"] = "own";
+              var own = sample["+1"];
+              Object.defineProperty(sample, "+1", {
+                get: function() { return "accessor"; },
+                configurable: true
+              });
+              [inherited, own, sample["+1"]].join(",");
+            } finally {
+              delete TypedArrayPrototype["+1"];
+            }
+        "#),
+        Value::String(Arc::from("inherited,own,accessor"))
+    );
+}
+
+#[test]
 fn data_view_constructor_length_descriptor() {
     assert_eq!(
         run(r#"

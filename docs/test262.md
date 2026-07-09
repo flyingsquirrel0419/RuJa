@@ -185,6 +185,20 @@ constructor coverage. The current runner's broader
 `built-ins/TypedArrayConstructors` diagnostic reports **429 pass / 44 fail /
 265 skip**.
 
+Focused TypedArray integer-indexed `[[Get]]` local check:
+canonical numeric index property reads now use Integer-Indexed exotic element
+access instead of Rust integer parsing or ordinary prototype lookup. Valid
+indexes read numeric and BigInt elements from owned or ArrayBuffer-backed
+storage, detached buffers and invalid canonical numeric keys such as `"-0"`,
+fractional, negative, infinite, and out-of-bounds indexes return `undefined`
+without touching inherited accessors, and non-canonical numeric-looking keys
+such as `"+1"` continue through ordinary own/prototype lookup. With
+TypedArray-related skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/Get` now reports **20 pass / 2 fail
+/ 6 skip**; the remaining failures are detached-buffer realm constructor
+coverage. The current runner's broader `built-ins/TypedArrayConstructors`
+diagnostic improves to **437 pass / 36 fail / 265 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,
