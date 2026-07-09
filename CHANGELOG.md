@@ -125,6 +125,13 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   skip**; the broader `built-ins/Date` diagnostic now reports **476 pass / 6
   fail / 112 skip**, with the remaining failures isolated to Temporal
   `toTemporalInstant` coverage.
+- **Date toTemporalInstant bridge**: `Date.prototype.toTemporalInstant` now
+  validates Date-branded receivers, throws `RangeError` for invalid dates, and
+  returns a minimal Temporal Instant-shaped object exposing
+  `epochNanoseconds` as a BigInt millisecond-to-nanosecond conversion. The
+  focused `built-ins/Date/prototype/toTemporalInstant` run improves from **0
+  pass / 6 fail / 2 skip** to **6 pass / 0 fail / 2 skip**, closing the
+  broader `built-ins/Date` diagnostic at **482 pass / 0 fail / 112 skip**.
 - **BigInt TypedArray constructor surface**: BigInt typed array constructors
   and prototypes now expose non-writable, non-enumerable, non-configurable
   `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors

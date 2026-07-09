@@ -29,7 +29,7 @@ pub(crate) use global::{
 pub(crate) use json::{
     build_json, build_reflect, date_constructor, date_get_component, date_get_time,
     date_get_timezone_offset, date_now, date_parse, date_set_component, date_to_iso_string,
-    date_to_json, date_to_string, date_utc,
+    date_to_json, date_to_string, date_to_temporal_instant, date_utc,
 };
 pub(crate) use math::{build_console, build_math};
 pub(crate) use proxy::*;
@@ -5133,6 +5133,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toLocaleTimeString", date_to_string, 0),
             ("toISOString", date_to_iso_string, 0),
             ("toJSON", date_to_json, 1),
+            ("toTemporalInstant", date_to_temporal_instant, 0),
             ("getTimezoneOffset", date_get_timezone_offset, 0),
         ],
         None,

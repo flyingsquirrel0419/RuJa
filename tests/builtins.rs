@@ -7260,6 +7260,39 @@ fn date_stringification_parse_and_json_follow_spec() {
 }
 
 #[test]
+fn date_to_temporal_instant_returns_epoch_nanoseconds() {
+    assert_eq!(
+        run(r#"
+            var desc = Object.getOwnPropertyDescriptor(Date.prototype, 'toTemporalInstant');
+            var lengthDesc = Object.getOwnPropertyDescriptor(Date.prototype.toTemporalInstant, 'length');
+            var nameDesc = Object.getOwnPropertyDescriptor(Date.prototype.toTemporalInstant, 'name');
+            Date.prototype.toTemporalInstant.length + ':' +
+            Date.prototype.toTemporalInstant.name + ':' +
+            desc.writable + ':' + desc.enumerable + ':' + desc.configurable + ':' +
+            lengthDesc.writable + ':' + lengthDesc.enumerable + ':' + lengthDesc.configurable + ':' +
+            nameDesc.writable + ':' + nameDesc.enumerable + ':' + nameDesc.configurable
+            "#),
+        Value::String(Arc::from(
+            "0:toTemporalInstant:true:false:true:false:false:true:false:false:true"
+        ))
+    );
+    assert_eq!(
+        run("new Date(123456789).toTemporalInstant().epochNanoseconds === 123456789000000n;"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("new Date(-8640000000000000).toTemporalInstant().epochNanoseconds === -8640000000000000000000n;"),
+        Value::Bool(true)
+    );
+    assert!(run_err("new Date(NaN).toTemporalInstant();").contains("RangeError"));
+    assert!(run_err("Date.prototype.toTemporalInstant.call({});").contains("TypeError"));
+    assert!(
+        run_err("Date.prototype.toTemporalInstant.call(Date.prototype);").contains("TypeError")
+    );
+    assert!(run_err("var d = new Date(0); new d.toTemporalInstant();").contains("TypeError"));
+}
+
+#[test]
 fn date_subclass_instances_keep_date_components() {
     assert_eq!(
         run("class D extends Date{};let d=new D(1859,'10',24,11);d.getFullYear()+','+d.getMonth()+','+d.getDate();"),
