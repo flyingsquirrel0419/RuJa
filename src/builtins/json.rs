@@ -619,6 +619,10 @@ const MAX_TIME_VALUE: f64 = 8.64e15;
 const MAKE_DAY_YEAR_LIMIT: f64 = 1_000_000_000.0;
 const MAKE_DAY_MONTH_LIMIT: f64 = 12_000_000_000.0;
 const MAKE_DAY_DATE_LIMIT: f64 = 1_000_000_000_000.0;
+const DATE_WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DATE_MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 fn date_time_clip(ts: f64) -> f64 {
     if ts.is_nan() || ts.is_infinite() || ts.abs() > MAX_TIME_VALUE {
@@ -780,6 +784,272 @@ fn date_components(ts: f64) -> (f64, f64, f64, f64, f64) {
     )
 }
 
+fn date_year_string(year: i64) -> String {
+    if year < 0 {
+        format!("-{:04}", year.saturating_abs())
+    } else {
+        format!("{year:04}")
+    }
+}
+
+fn date_iso_year_string(year: i64) -> String {
+    if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else if year < 0 {
+        format!("-{:06}", year.saturating_abs())
+    } else {
+        format!("+{year:06}")
+    }
+}
+
+fn date_time_string(ts: f64) -> String {
+    let (_, hour, minute, second, _) = date_time_components(ts);
+    format!(
+        "{:02}:{:02}:{:02}",
+        hour as i64, minute as i64, second as i64
+    )
+}
+
+fn date_date_string(ts: f64) -> String {
+    let day = date_day(ts);
+    let (year, month_one_based, date) = date_civil_from_days(day);
+    let weekday = (day + 4).rem_euclid(7) as usize;
+    let month = (month_one_based - 1) as usize;
+    format!(
+        "{} {} {:02} {}",
+        DATE_WEEKDAYS[weekday],
+        DATE_MONTHS[month],
+        date,
+        date_year_string(year)
+    )
+}
+
+fn date_utc_string(ts: f64) -> String {
+    let day = date_day(ts);
+    let (year, month_one_based, date) = date_civil_from_days(day);
+    let weekday = (day + 4).rem_euclid(7) as usize;
+    let month = (month_one_based - 1) as usize;
+    format!(
+        "{}, {:02} {} {} {} GMT",
+        DATE_WEEKDAYS[weekday],
+        date,
+        DATE_MONTHS[month],
+        date_year_string(year),
+        date_time_string(ts)
+    )
+}
+
+fn date_date_time_string(ts: f64) -> String {
+    format!("{} {} GMT+0000", date_date_string(ts), date_time_string(ts))
+}
+
+fn date_iso_string(ts: f64) -> String {
+    let day = date_day(ts);
+    let (year, month_one_based, date) = date_civil_from_days(day);
+    let (_, hour, minute, second, ms) = date_time_components(ts);
+    format!(
+        "{}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        date_iso_year_string(year),
+        month_one_based,
+        date,
+        hour as i64,
+        minute as i64,
+        second as i64,
+        ms as i64
+    )
+}
+
+fn date_parse_digits_i64(text: &str) -> Option<i64> {
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse::<i64>().ok()
+}
+
+fn date_month_from_name(name: &str) -> Option<i64> {
+    DATE_MONTHS
+        .iter()
+        .position(|month| *month == name)
+        .map(|idx| idx as i64)
+}
+
+fn date_parse_hms(text: &str) -> Option<(i64, i64, i64)> {
+    let mut parts = text.split(':');
+    let hour = date_parse_digits_i64(parts.next()?)?;
+    let minute = date_parse_digits_i64(parts.next()?)?;
+    let second = date_parse_digits_i64(parts.next()?)?;
+    if parts.next().is_some()
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+    {
+        return None;
+    }
+    Some((hour, minute, second))
+}
+
+fn date_make_utc_time(
+    year: i64,
+    month_zero_based: i64,
+    date: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+    ms: i64,
+) -> f64 {
+    date_time_clip(date_make_date(
+        date_make_day(year as f64, month_zero_based as f64, date as f64),
+        date_make_time(hour as f64, minute as f64, second as f64, ms as f64),
+    ))
+}
+
+fn date_parse_timezone_offset(text: &str) -> Option<i64> {
+    if text == "Z" || text.is_empty() {
+        return Some(0);
+    }
+    let sign = match text.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let rest = &text[1..];
+    let (hour, minute) = if rest.len() == 5 && rest.as_bytes().get(2) == Some(&b':') {
+        (
+            date_parse_digits_i64(&rest[..2])?,
+            date_parse_digits_i64(&rest[3..])?,
+        )
+    } else if rest.len() == 4 {
+        (
+            date_parse_digits_i64(&rest[..2])?,
+            date_parse_digits_i64(&rest[2..])?,
+        )
+    } else {
+        return None;
+    };
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
+        return None;
+    }
+    Some(sign * (hour * 60 + minute))
+}
+
+fn date_parse_iso_string(source: &str) -> Option<f64> {
+    let s = source.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let (sign, year_start, year_len) = match bytes[0] {
+        b'+' => (1_i64, 1, 6),
+        b'-' => (-1_i64, 1, 6),
+        b'0'..=b'9' => (1_i64, 0, 4),
+        _ => return None,
+    };
+    if s.len() < year_start + year_len {
+        return None;
+    }
+    let year_digits = date_parse_digits_i64(&s[year_start..year_start + year_len])?;
+    if sign < 0 && year_digits == 0 {
+        return None;
+    }
+    let year = sign * year_digits;
+    let mut rest = &s[year_start + year_len..];
+    if rest.is_empty() {
+        return Some(date_make_utc_time(year, 0, 1, 0, 0, 0, 0));
+    }
+    if !rest.starts_with('-') || rest.len() < 3 {
+        return None;
+    }
+    let month = date_parse_digits_i64(&rest[1..3])?;
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    rest = &rest[3..];
+    if rest.is_empty() {
+        return Some(date_make_utc_time(year, month - 1, 1, 0, 0, 0, 0));
+    }
+    if !rest.starts_with('-') || rest.len() < 3 {
+        return None;
+    }
+    let date = date_parse_digits_i64(&rest[1..3])?;
+    if !(1..=31).contains(&date) {
+        return None;
+    }
+    rest = &rest[3..];
+    if rest.is_empty() {
+        return Some(date_make_utc_time(year, month - 1, date, 0, 0, 0, 0));
+    }
+    if !rest.starts_with('T') || rest.len() < 6 {
+        return None;
+    }
+    let hour = date_parse_digits_i64(&rest[1..3])?;
+    let minute = date_parse_digits_i64(&rest[4..6])?;
+    if rest.as_bytes().get(3) != Some(&b':')
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+    {
+        return None;
+    }
+    rest = &rest[6..];
+    let mut second = 0;
+    let mut ms = 0;
+    if rest.starts_with(':') {
+        if rest.len() < 3 {
+            return None;
+        }
+        second = date_parse_digits_i64(&rest[1..3])?;
+        if !(0..=59).contains(&second) {
+            return None;
+        }
+        rest = &rest[3..];
+    }
+    if rest.starts_with('.') {
+        let digits = rest[1..].bytes().take_while(|b| b.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        let raw = &rest[1..1 + digits.min(3)];
+        ms = date_parse_digits_i64(raw)? * 10_i64.pow((3 - raw.len()) as u32);
+        rest = &rest[1 + digits..];
+    }
+    let offset_minutes = date_parse_timezone_offset(rest)?;
+    let time = date_make_utc_time(year, month - 1, date, hour, minute, second, ms);
+    Some(date_time_clip(time - offset_minutes as f64 * MS_PER_MINUTE))
+}
+
+fn date_parse_legacy_string(source: &str) -> Option<f64> {
+    let parts: Vec<&str> = source.split_whitespace().collect();
+    if parts.len() >= 6 && parts[0].ends_with(',') {
+        let date = date_parse_digits_i64(parts[1])?;
+        let month = date_month_from_name(parts[2])?;
+        let year = parts[3].parse::<i64>().ok()?;
+        let (hour, minute, second) = date_parse_hms(parts[4])?;
+        if parts[5] != "GMT" {
+            return None;
+        }
+        return Some(date_make_utc_time(
+            year, month, date, hour, minute, second, 0,
+        ));
+    }
+    if parts.len() >= 6 {
+        let month = date_month_from_name(parts[1])?;
+        let date = date_parse_digits_i64(parts[2])?;
+        let year = parts[3].parse::<i64>().ok()?;
+        let (hour, minute, second) = date_parse_hms(parts[4])?;
+        let offset = parts[5]
+            .strip_prefix("GMT")
+            .and_then(date_parse_timezone_offset)?;
+        let time = date_make_utc_time(year, month, date, hour, minute, second, 0);
+        return Some(date_time_clip(time - offset as f64 * MS_PER_MINUTE));
+    }
+    None
+}
+
+fn date_parse_string(source: &str) -> f64 {
+    date_parse_iso_string(source)
+        .or_else(|| date_parse_legacy_string(source))
+        .unwrap_or(f64::NAN)
+}
+
 fn active_native_name(vm: &mut Vm) -> Option<Arc<str>> {
     let callee = vm.current_native_callee.clone()?;
     let Value::Object(idx) = callee else {
@@ -799,10 +1069,25 @@ pub(crate) fn date_constructor(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    if !matches!(this, Some(Value::Object(_))) {
+        return Ok(Value::String(Arc::from(
+            date_date_time_string(now_ms()).as_str(),
+        )));
+    }
+
     let ts = if args.is_empty() {
         now_ms()
     } else if args.len() == 1 {
-        vm.to_number(args.first().unwrap_or(&Value::Undefined))?
+        let value = args.first().unwrap_or(&Value::Undefined);
+        if let Ok((_, ts)) = date_this_time_value(vm, Some(value.clone())) {
+            ts
+        } else {
+            let value = vm.to_primitive(value)?;
+            match value {
+                Value::String(source) => date_parse_string(&source),
+                _ => vm.to_number(&value)?,
+            }
+        }
     } else {
         let year = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
         let month = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
@@ -833,7 +1118,7 @@ pub(crate) fn date_constructor(
     };
     // ES TimeValue: values outside +/-8.64e15 ms become Invalid Date (NaN).
     let ts = date_time_clip(ts);
-    if let Some(Value::Object(idx)) = &this {
+    if let Some(Value::Object(idx)) = this {
         vm.heap.with_obj_mut(idx.0, |o| {
             if let HeapObj::Object(o) = o {
                 o.class_name = Some(Arc::from("Date"));
@@ -842,9 +1127,9 @@ pub(crate) fn date_constructor(
                     .insert(PropertyKey::from("__time__"), data_prop(Value::Number(ts)));
             }
         });
-        Ok(this.unwrap())
+        Ok(Value::Object(idx))
     } else {
-        Ok(Value::String(Arc::from(format!("{}", ts as i64).as_str())))
+        unreachable!("Date constructor function calls return before constructing a time value")
     }
 }
 
@@ -1042,21 +1327,73 @@ fn date_set_date_component(
 }
 
 pub(crate) fn date_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    if let Some(Value::Object(idx)) = &this {
-        let _ = idx;
+    let (_, ts) = date_this_time_value(vm, this)?;
+    if ts.is_nan() {
+        return Ok(Value::String(Arc::from("Invalid Date")));
     }
-    Ok(Value::String(Arc::from("Date")))
+    let name = active_native_name(vm).unwrap_or_else(|| Arc::from(""));
+    let result = match name.as_ref() {
+        "toDateString" | "toLocaleDateString" => date_date_string(ts),
+        "toTimeString" | "toLocaleTimeString" => {
+            format!("{} GMT+0000", date_time_string(ts))
+        }
+        "toUTCString" => date_utc_string(ts),
+        "toString" | "toLocaleString" => date_date_time_string(ts),
+        _ => date_date_time_string(ts),
+    };
+    Ok(Value::String(Arc::from(result.as_str())))
+}
+
+pub(crate) fn date_to_iso_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (_, ts) = date_this_time_value(vm, this)?;
+    if !ts.is_finite() {
+        return Err(Error::range("Invalid time value"));
+    }
+    Ok(Value::String(Arc::from(date_iso_string(ts).as_str())))
+}
+
+pub(crate) fn date_to_json(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let value = this.unwrap_or(Value::Undefined);
+    if value.is_nullish() {
+        return Err(Error::type_err(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let object = vm.to_object(&value)?;
+    let primitive = vm.to_primitive_number(&object)?;
+    if let Value::Number(n) = primitive {
+        if !n.is_finite() {
+            return Ok(Value::Null);
+        }
+    }
+    let to_iso = vm.get_property(&object, "toISOString")?;
+    if !is_callable(&to_iso, &vm.heap) {
+        return Err(Error::type_err("toISOString is not callable"));
+    }
+    vm.call_function(&to_iso, &[], Some(object))
 }
 
 pub(crate) fn date_get_timezone_offset(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     _args: &[Value],
-    _this: Option<Value>,
+    this: Option<Value>,
 ) -> error::Result<Value> {
+    let (_, ts) = date_this_time_value(vm, this)?;
+    if ts.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
     Ok(Value::Number(0.0))
 }
 
@@ -1077,10 +1414,7 @@ pub(crate) fn date_parse(
         Some(v) => vm.to_string(v)?,
         None => return Ok(Value::Number(f64::NAN)),
     };
-    if let Ok(n) = source.trim().parse::<f64>() {
-        return Ok(Value::Number(n));
-    }
-    Ok(Value::Number(f64::NAN))
+    Ok(Value::Number(date_parse_string(&source)))
 }
 
 pub(crate) fn date_utc(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {

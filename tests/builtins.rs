@@ -7050,8 +7050,8 @@ fn boxed_string_valueof() {
 #[test]
 fn date_static_parse_exists() {
     assert_eq!(
-        run("typeof Date.parse + ':' + Date.parse('123') + ':' + typeof Date.UTC + ':' + typeof Date.prototype.getUTCFullYear + ':' + typeof Date.prototype.setUTCFullYear;"),
-        Value::String(std::sync::Arc::from("function:123:function:function:function"))
+        run("typeof Date.parse + ':' + Date.parse('1970') + ':' + typeof Date.UTC + ':' + typeof Date.prototype.getUTCFullYear + ':' + typeof Date.prototype.setUTCFullYear;"),
+        Value::String(std::sync::Arc::from("function:0:function:function:function"))
     );
 }
 
@@ -7202,6 +7202,64 @@ fn date_date_setters_update_components_and_lengths() {
 }
 
 #[test]
+fn date_stringification_parse_and_json_follow_spec() {
+    assert_eq!(
+        run(r#"
+            var d = new Date(0);
+            [
+              d.toISOString(),
+              d.toUTCString(),
+              d.toString(),
+              d.toDateString(),
+              d.toTimeString()
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "1970-01-01T00:00:00.000Z|Thu, 01 Jan 1970 00:00:00 GMT|Thu Jan 01 1970 00:00:00 GMT+0000|Thu Jan 01 1970|00:00:00 GMT+0000"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(0);
+            [
+              Date.parse(d.toISOString()),
+              Date.parse(d.toUTCString()),
+              Date.parse(d.toString()),
+              Date.parse("1970"),
+              Date.parse("1970-01-01T00:00:00"),
+              Date.parse("+275760-09-13T00:00:00.000Z")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("0|0|0|0|0|8640000000000000"))
+    );
+    assert!(matches!(
+        run(r#"Date.parse("-000000-03-31T00:45Z");"#),
+        Value::Number(n) if n.is_nan()
+    ));
+    assert_eq!(
+        run(r#"
+            var result = {};
+            var obj = {
+              toISOString: function() { return result; },
+              valueOf: function() { return 0; }
+            };
+            Date.prototype.toJSON.call(obj) === result;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(run("new Date(NaN).toJSON();"), Value::Null);
+    assert_eq!(
+        run(r#"
+            var oldDate = new Date(1438560000000);
+            oldDate.valueOf = function() { throw new Error("valueOf"); };
+            oldDate.toString = function() { throw new Error("toString"); };
+            new Date(oldDate).getTime();
+        "#),
+        Value::Number(1438560000000.0)
+    );
+}
+
+#[test]
 fn date_subclass_instances_keep_date_components() {
     assert_eq!(
         run("class D extends Date{};let d=new D(1859,'10',24,11);d.getFullYear()+','+d.getMonth()+','+d.getDate();"),
@@ -7257,19 +7315,23 @@ fn boxed_number_addition_uses_valueof() {
 fn date_addition_uses_default_string_hint() {
     assert_eq!(
         run("var d = new Date(0); d + d;"),
-        Value::String(Arc::from("DateDate"))
+        Value::String(Arc::from(
+            "Thu Jan 01 1970 00:00:00 GMT+0000Thu Jan 01 1970 00:00:00 GMT+0000"
+        ))
     );
     assert_eq!(
         run("var d = new Date(0); d + 0;"),
-        Value::String(Arc::from("Date0"))
+        Value::String(Arc::from("Thu Jan 01 1970 00:00:00 GMT+00000"))
     );
     assert_eq!(
         run("var d = new Date(0); d + true;"),
-        Value::String(Arc::from("Datetrue"))
+        Value::String(Arc::from("Thu Jan 01 1970 00:00:00 GMT+0000true"))
     );
     assert_eq!(
         run("var d = new Date(0); d + {};"),
-        Value::String(Arc::from("Date[object Object]"))
+        Value::String(Arc::from(
+            "Thu Jan 01 1970 00:00:00 GMT+0000[object Object]"
+        ))
     );
 }
 

@@ -113,6 +113,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   improves from **23 pass / 41 fail / 9 skip** to **64 pass / 0 fail / 9
   skip**; the broader `built-ins/Date` diagnostic now reports **435 pass / 47
   fail / 112 skip**.
+- **Date stringification, JSON, and ISO parsing**: Date prototype string
+  methods now validate Date receivers, render UTC-backed date/time strings,
+  return `Invalid Date` for invalid time values, and expose proper
+  `toISOString` RangeError behavior. `Date.prototype.toJSON` now follows the
+  generic `ToObject`/`ToPrimitive(number)`/`Invoke(toISOString)` path, while
+  `Date.parse` recognizes the ISO and Date string forms emitted by RuJa.
+  Single-argument Date construction now copies Date receivers without calling
+  user hooks and parses Date strings. The focused string/parse/JSON run
+  improves from **26 pass / 37 fail / 13 skip** to **63 pass / 0 fail / 13
+  skip**; the broader `built-ins/Date` diagnostic now reports **476 pass / 6
+  fail / 112 skip**, with the remaining failures isolated to Temporal
+  `toTemporalInstant` coverage.
 - **BigInt TypedArray constructor surface**: BigInt typed array constructors
   and prototypes now expose non-writable, non-enumerable, non-configurable
   `BYTES_PER_ELEMENT` own properties, and typed array prototype accessors
