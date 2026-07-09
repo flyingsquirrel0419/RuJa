@@ -199,6 +199,19 @@ TypedArray-related skips temporarily lifted,
 coverage. The current runner's broader `built-ins/TypedArrayConstructors`
 diagnostic improves to **437 pass / 36 fail / 265 skip**.
 
+Focused TypedArray integer-indexed `[[DefineOwnProperty]]` local check:
+canonical numeric index property definitions now follow Integer-Indexed exotic
+validation. Invalid or detached indexes reject, accessor descriptors and
+descriptors requesting non-configurable, non-enumerable, or non-writable
+attributes reject, valid value descriptors write through element conversion for
+numeric and BigInt arrays, and non-canonical numeric-looking keys remain
+ordinary properties. With TypedArray-related skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/DefineOwnProperty` now reports
+**16 pass / 2 fail / 36 skip**; the remaining failures are detached-buffer
+realm constructor coverage. The current runner's broader
+`built-ins/TypedArrayConstructors` diagnostic improves to **453 pass / 20 fail
+/ 265 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

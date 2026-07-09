@@ -4214,6 +4214,25 @@ pub(crate) fn object_define_property_result(
                 "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
             ));
         }
+        if let Some(success) = vm.define_typed_array_integer_index_property(
+            &target,
+            &key,
+            crate::vm::TypedArrayDefineDescriptor {
+                value: has_value.then_some(&value),
+                has_configurable,
+                configurable,
+                has_enumerable,
+                enumerable,
+                is_accessor,
+                has_writable,
+                writable,
+            },
+        )? {
+            if !success && throw_on_failure {
+                return Err(Error::type_err("Cannot define TypedArray integer index"));
+            }
+            return Ok(success);
+        }
         let current = own_property_descriptor_for_key(vm, &target, &key);
         let mapped_arguments_index = key
             .as_str()

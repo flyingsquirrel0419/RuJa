@@ -169,6 +169,18 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   detached-buffer constructor coverage. The broader
   `built-ins/TypedArrayConstructors` diagnostic improves to **437 pass / 36
   fail / 265 skip**.
+- **TypedArray integer-indexed `[[DefineOwnProperty]]`**: defining canonical
+  numeric index properties now follows Integer-Indexed exotic validation.
+  Invalid or detached indexes reject, accessor descriptors and descriptors
+  requesting non-configurable, non-enumerable, or non-writable attributes
+  reject, valid value descriptors write through element conversion for numeric
+  and BigInt arrays, and non-canonical numeric-looking keys remain ordinary
+  properties. With TypedArray skips temporarily lifted, the focused
+  `built-ins/TypedArrayConstructors/internals/DefineOwnProperty` diagnostic now
+  reports **16 pass / 2 fail / 36 skip**; the remaining failures are
+  cross-realm detached-buffer constructor coverage. The broader
+  `built-ins/TypedArrayConstructors` diagnostic improves to **453 pass / 20
+  fail / 265 skip**.
 - **Nullish computed property write/delete ordering**: simple computed
   property assignment and `delete` now reject `null`/`undefined` bases before
   observable `ToPropertyKey` coercion. Assignment still evaluates the RHS

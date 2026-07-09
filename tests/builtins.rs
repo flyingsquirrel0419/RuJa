@@ -1284,6 +1284,143 @@ fn typed_array_get_noncanonical_numeric_keys_use_ordinary_lookup() {
 }
 
 #[test]
+fn typed_array_define_own_property_numeric_indices_validate_descriptors() {
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            Object.defineProperty(sample, "0", { configurable: false });
+            "#
+        )
+        .contains("TypeError"),
+        "TypedArray numeric index descriptors cannot set configurable false"
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            Object.defineProperty(sample, "0", { enumerable: false });
+            "#
+        )
+        .contains("TypeError"),
+        "TypedArray numeric index descriptors cannot set enumerable false"
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            Object.defineProperty(sample, "0", { writable: false });
+            "#
+        )
+        .contains("TypeError"),
+        "TypedArray numeric index descriptors cannot set writable false"
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            Object.defineProperty(sample, "0", { get: function() { return 1; } });
+            "#
+        )
+        .contains("TypeError"),
+        "TypedArray numeric index descriptors cannot be accessors"
+    );
+}
+
+#[test]
+fn typed_array_define_own_property_numeric_indices_write_elements() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([0]);
+            Object.defineProperty(sample, "0", { value: 260 });
+            sample[0];
+        "#),
+        Value::Number(4.0)
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new BigInt64Array(1);
+            Object.defineProperty(sample, "0", { value: 42n });
+            sample[0] === 42n;
+        "#),
+        Value::Bool(true)
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            Object.defineProperty(sample, "0", {
+              value: { valueOf: function() { throw new Error("boom"); } }
+            });
+            "#
+        )
+        .contains("boom"),
+        "TypedArray numeric index define must propagate value conversion errors"
+    );
+}
+
+#[test]
+fn typed_array_define_own_property_rejects_invalid_canonical_indices() {
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            var desc = Object.getOwnPropertyDescriptor(sample, "0");
+            Object.defineProperty(sample, "1", desc);
+            "#
+        )
+        .contains("TypeError"),
+        "out-of-bounds canonical numeric index define should fail"
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            var desc = Object.getOwnPropertyDescriptor(sample, "0");
+            Object.defineProperty(sample, "-0", desc);
+            "#
+        )
+        .contains("TypeError"),
+        "-0 canonical numeric index define should fail"
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([0]);
+            var desc = Object.getOwnPropertyDescriptor(sample, "0");
+            Reflect.defineProperty(sample, "1.5", desc);
+        "#),
+        Value::Bool(false)
+    );
+    assert!(
+        run_err(
+            r#"
+            var sample = new Uint8Array([0]);
+            var desc = Object.getOwnPropertyDescriptor(sample, "0");
+            $262.detachArrayBuffer(sample.buffer);
+            Object.defineProperty(sample, "0", desc);
+            "#
+        )
+        .contains("TypeError"),
+        "detached TypedArray numeric index define should fail"
+    );
+}
+
+#[test]
+fn typed_array_define_own_property_noncanonical_keys_are_ordinary() {
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array(0);
+            Object.defineProperty(sample, "+1", {
+              value: "ordinary",
+              configurable: true
+            });
+            Object.getOwnPropertyDescriptor(sample, "+1").value;
+        "#),
+        Value::String(Arc::from("ordinary"))
+    );
+}
+
+#[test]
 fn data_view_constructor_length_descriptor() {
     assert_eq!(
         run(r#"

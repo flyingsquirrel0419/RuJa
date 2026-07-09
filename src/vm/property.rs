@@ -15,6 +15,17 @@ struct TypedArrayNumericSlots {
     numeric_index: f64,
 }
 
+pub(crate) struct TypedArrayDefineDescriptor<'a> {
+    pub(crate) value: Option<&'a Value>,
+    pub(crate) has_configurable: bool,
+    pub(crate) configurable: bool,
+    pub(crate) has_enumerable: bool,
+    pub(crate) enumerable: bool,
+    pub(crate) is_accessor: bool,
+    pub(crate) has_writable: bool,
+    pub(crate) writable: bool,
+}
+
 impl Vm {
     pub(crate) fn function_caller_value(&self, callee_idx: GcIdx) -> error::Result<Value> {
         let Some(frame_index) = self
@@ -1360,6 +1371,35 @@ impl Vm {
         };
         self.set_typed_array_numeric_slots(idx, slots, value)
             .map(Some)
+    }
+
+    pub(crate) fn define_typed_array_integer_index_property(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+        desc: TypedArrayDefineDescriptor<'_>,
+    ) -> error::Result<Option<bool>> {
+        let Value::Object(idx) = obj else {
+            return Ok(None);
+        };
+        let Some(name) = key.as_str() else {
+            return Ok(None);
+        };
+        let Some(slots) = self.typed_array_numeric_slots(*idx, name) else {
+            return Ok(None);
+        };
+        if self.typed_array_valid_index(&slots).is_none()
+            || (desc.has_configurable && !desc.configurable)
+            || (desc.has_enumerable && !desc.enumerable)
+            || desc.is_accessor
+            || (desc.has_writable && !desc.writable)
+        {
+            return Ok(Some(false));
+        }
+        if let Some(value) = desc.value {
+            self.set_typed_array_numeric_slots(*idx, slots, value)?;
+        }
+        Ok(Some(true))
     }
 
     fn set_typed_array_numeric_slots(
