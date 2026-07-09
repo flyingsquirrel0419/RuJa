@@ -620,8 +620,15 @@ const MAX_TIME_VALUE: f64 = 8.64e15;
 fn date_time_clip(ts: f64) -> f64 {
     if ts.is_nan() || ts.is_infinite() || ts.abs() > MAX_TIME_VALUE {
         f64::NAN
+    } else if ts == 0.0 {
+        0.0
     } else {
-        ts
+        let clipped = ts.trunc();
+        if clipped == 0.0 {
+            0.0
+        } else {
+            clipped
+        }
     }
 }
 
@@ -650,7 +657,7 @@ fn date_civil_from_days(days: i64) -> (i64, i64, i64) {
 }
 
 fn date_make_day(year: f64, month: f64, date: f64) -> f64 {
-    if year.is_nan() || month.is_nan() || date.is_nan() {
+    if !year.is_finite() || !month.is_finite() || !date.is_finite() {
         return f64::NAN;
     }
     let mut year = year.trunc() as i64;
@@ -665,7 +672,7 @@ fn date_make_day(year: f64, month: f64, date: f64) -> f64 {
 }
 
 fn date_make_time(hour: f64, min: f64, sec: f64, ms: f64) -> f64 {
-    if hour.is_nan() || min.is_nan() || sec.is_nan() || ms.is_nan() {
+    if !hour.is_finite() || !min.is_finite() || !sec.is_finite() || !ms.is_finite() {
         return f64::NAN;
     }
     hour.trunc() * MS_PER_HOUR
@@ -822,6 +829,11 @@ pub(crate) fn date_set_component(
         Some(v) => vm.to_number(v)?,
         None => f64::NAN,
     };
+    let value = if active_native_name(vm).as_deref() == Some("setTime") {
+        date_time_clip(value)
+    } else {
+        value
+    };
     vm.heap.with_obj(idx.0, |o| {
         if let HeapObj::Object(o) = o {
             o.props.lock().insert(
@@ -880,10 +892,35 @@ pub(crate) fn date_utc(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> err
         Some(v) => vm.to_number(v)?,
         None => f64::NAN,
     };
-    if year.is_nan() {
-        return Ok(Value::Number(f64::NAN));
-    }
-    Ok(Value::Number(year))
+    let month = match args.get(1) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let date = match args.get(2) {
+        Some(v) => vm.to_number(v)?,
+        None => 1.0,
+    };
+    let hour = match args.get(3) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let minute = match args.get(4) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let second = match args.get(5) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let ms = match args.get(6) {
+        Some(v) => vm.to_number(v)?,
+        None => 0.0,
+    };
+    let time = date_make_date(
+        date_make_day(year, month, date),
+        date_make_time(hour, minute, second, ms),
+    );
+    Ok(Value::Number(date_time_clip(time)))
 }
 
 pub(crate) fn reflect_get(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {

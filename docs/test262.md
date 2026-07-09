@@ -445,6 +445,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   The focused Date component getter run improves from **80 pass / 16 fail / 32
   skip** to **96 pass / 0 fail / 32 skip**; the broader `built-ins/Date`
   diagnostic now reports **309 pass / 173 fail / 112 skip**.
+- **Date.UTC and TimeClip semantics** —
+  `Date.UTC` now performs left-to-right numeric coercion for all supplied
+  components, applies default month/date/time fields, normalizes 0-99 years,
+  and returns the clipped MakeDate result. `TimeClip` now truncates fractional
+  milliseconds and normalizes negative zero, so `Date` construction,
+  `getTime`/`valueOf`, and `setTime` expose integer clipped time values. The
+  focused `built-ins/Date/UTC built-ins/Date/prototype/{getTime,valueOf,setTime}`
+  run improves from **20 pass / 16 fail / 6 skip** to **36 pass / 0 fail / 6
+  skip**; the broader `built-ins/Date` diagnostic now reports **326 pass / 156
+  fail / 112 skip**.
 - **BigInt TypedArray constructor surface** —
   BigInt typed array constructors and prototypes now expose
   `BYTES_PER_ELEMENT` as own non-writable, non-enumerable, non-configurable

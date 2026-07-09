@@ -7056,6 +7056,42 @@ fn date_static_parse_exists() {
 }
 
 #[test]
+fn date_utc_and_time_clip_follow_spec() {
+    assert_eq!(run("Date.UTC(1970);"), Value::Number(0.0));
+    assert_eq!(
+        run("Date.UTC(2016, 6, 5, 15, 34, 45, 876);"),
+        Value::Number(1467732885876.0)
+    );
+    assert_eq!(
+        run("Date.UTC(1970.9, 0.9, 1.9, 0.9, 0.9, 0.9, 0.9);"),
+        Value::Number(0.0)
+    );
+    assert_eq!(run("Date.UTC(70, 0);"), Value::Number(0.0));
+    assert_eq!(run("Date.UTC(-1, 0);"), Value::Number(-62198755200000.0));
+    assert!(matches!(run("Date.UTC(Infinity, 0);"), Value::Number(n) if n.is_nan()));
+    assert!(matches!(run("Date.UTC(275760, 8, 13, 0, 0, 0, 1);"), Value::Number(n) if n.is_nan()));
+    assert_eq!(
+        run(r#"
+            var log = "";
+            function arg(name, value) {
+              return { toString: function() { log += name; return value; } };
+            }
+            Date.UTC(arg("year", 0), arg("month", 0), arg("date", 1), arg("hours", 0), arg("minutes", 0), arg("seconds", 0), arg("ms", 0));
+            log;
+        "#),
+        Value::String(Arc::from("yearmonthdatehoursminutessecondsms"))
+    );
+    assert_eq!(
+        run("new Date(6.54321).valueOf() + ':' + new Date(-0).getTime() + ':' + Object.is(new Date(-0).getTime(), -0);"),
+        Value::String(Arc::from("6:0:false"))
+    );
+    assert!(matches!(
+        run("var d = new Date(0); d.setTime(8640000000000001);"),
+        Value::Number(n) if n.is_nan()
+    ));
+}
+
+#[test]
 fn date_subclass_instances_keep_date_components() {
     assert_eq!(
         run("class D extends Date{};let d=new D(1859,'10',24,11);d.getFullYear()+','+d.getMonth()+','+d.getDate();"),
