@@ -2845,6 +2845,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   only the `destructuring-binding` skip lifted for diagnostics, the focused
   `language/expressions/assignment/dstr` run improves to **249 pass / 11 fail
   / 108 skip** while the default supported subset remains green.
+- **Array rest assignment pattern early errors** — assignment destructuring now
+  rejects array rest elements followed by another element, elision, another
+  rest element, a trailing comma, or an initializer. With only the
+  `destructuring-binding` skip lifted for diagnostics, the focused
+  `language/expressions/assignment/dstr` run improves to **254 pass / 6 fail /
+  108 skip** while the default supported subset remains green.
 
 ## Why the full-suite rate is not higher
 

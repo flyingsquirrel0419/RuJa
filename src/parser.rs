@@ -2008,6 +2008,9 @@ impl Parser {
                 "Invalid left-hand side in assignment".to_string(),
             ));
         }
+        if matches!(op, AssignOp::Assign) {
+            self.reject_array_rest_continuation_assignment_target(&left, left_start, self.pos)?;
+        }
         // Strict mode: assignment to `eval` or `arguments` is a SyntaxError.
         if self.is_strict_context {
             Self::reject_strict_eval_arguments_assignment_target(&left)?;
@@ -2098,11 +2101,20 @@ impl Parser {
         match target {
             Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
             Expr::Assign(AssignOp::Assign, left, _) => Self::is_assignment_pattern(left),
-            Expr::Array(elements) => elements.iter().all(|element| match element {
-                Expr::ArrayHole => true,
-                Expr::Spread(inner) => Self::is_assignment_pattern(inner),
-                other => Self::is_assignment_pattern(other),
-            }),
+            Expr::Array(elements) => {
+                elements
+                    .iter()
+                    .enumerate()
+                    .all(|(idx, element)| match element {
+                        Expr::ArrayHole => true,
+                        Expr::Spread(inner) => {
+                            idx + 1 == elements.len()
+                                && !matches!(inner.as_ref(), Expr::Assign(AssignOp::Assign, _, _))
+                                && Self::is_assignment_pattern(inner)
+                        }
+                        other => Self::is_assignment_pattern(other),
+                    })
+            }
             Expr::Object(props) => props.iter().all(|prop| {
                 if prop.method
                     || matches!(prop.kind, PropKind::Method | PropKind::Get | PropKind::Set)
@@ -2116,6 +2128,48 @@ impl Parser {
             }),
             _ => false,
         }
+    }
+
+    fn reject_array_rest_continuation_assignment_target(
+        &self,
+        target: &Expr,
+        start: usize,
+        end: usize,
+    ) -> error::Result<()> {
+        if !matches!(target, Expr::Array(_)) {
+            return Ok(());
+        }
+
+        let mut i = start;
+        while i < end && matches!(&self.tokens[i].kind, TokenKind::LParen) {
+            i += 1;
+        }
+        if i >= end || !matches!(&self.tokens[i].kind, TokenKind::LBracket) {
+            return Ok(());
+        }
+
+        let mut depth = 0usize;
+        let mut saw_top_level_rest = false;
+        while i < end {
+            match &self.tokens[i].kind {
+                TokenKind::LParen | TokenKind::LBrace | TokenKind::LBracket => depth += 1,
+                TokenKind::RParen | TokenKind::RBrace | TokenKind::RBracket => {
+                    if depth == 1 && matches!(&self.tokens[i].kind, TokenKind::RBracket) {
+                        break;
+                    }
+                    depth = depth.saturating_sub(1);
+                }
+                TokenKind::Spread if depth == 1 => saw_top_level_rest = true,
+                TokenKind::Comma if depth == 1 && saw_top_level_rest => {
+                    return Err(error::Error::syntax(
+                        "rest element must be last in array pattern".to_string(),
+                    ));
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        Ok(())
     }
 
     fn reject_object_literal_assignment_cover(expr: &Expr) -> error::Result<()> {

@@ -120,6 +120,20 @@ fn array_assign_rest() {
 }
 
 #[test]
+fn array_assign_rest_pattern_early_errors() {
+    for src in [
+        "var x, y; [...x, y] = [];",
+        "var x; [...x,] = [];",
+        "var x; [...x,,] = [];",
+        "var x, y; [...x, ...y] = [];",
+        "var x; [...x = 1] = [];",
+    ] {
+        let err = run_err(src);
+        assert!(err.contains("SyntaxError"), "{src}: {err}");
+    }
+}
+
+#[test]
 fn array_assign_uses_iterator_protocol_and_defaults() {
     let src = r#"
         var a = 0, b = 0;

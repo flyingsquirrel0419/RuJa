@@ -54,6 +54,12 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   only the `destructuring-binding` skip lifted for diagnostics, the focused
   `language/expressions/assignment/dstr` run improves to **249 pass / 11 fail
   / 108 skip** while the default supported subset remains green.
+- **Array rest assignment pattern early errors**: assignment destructuring now
+  rejects array rest elements followed by another element, elision, another
+  rest element, a trailing comma, or an initializer. With only the
+  `destructuring-binding` skip lifted for diagnostics, the focused
+  `language/expressions/assignment/dstr` run improves to **254 pass / 6 fail /
+  108 skip** while the default supported subset remains green.
 - **Property Reference records for simple member assignment**: ordinary member
   assignment now lowers final writes through an explicit property Reference
   while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates
