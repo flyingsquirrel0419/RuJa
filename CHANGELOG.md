@@ -41,6 +41,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Private element duplicate initialization**: private field, private method,
+  and private accessor initialization now rejects attempts to add the same
+  class private name to the same receiver twice instead of overwriting the
+  existing private slot. This matches derived-constructor cases where a base
+  constructor returns an object that is reused across multiple subclass
+  constructions. With private class feature skips temporarily lifted, the
+  focused
+  `language/statements/class/elements/private-method-double-initialisation*.js`
+  and `privatefieldadd-typeerror.js` cluster now runs at **5 pass / 0 fail /
+  0 skip**. The default supported subset remains **5099 pass / 0 fail / 0
+  timeout**.
 - **Public class fields baseline**: class bodies now parse public instance and
   static field declarations, including computed names and `static`/`get`/`set`/
   `async` names that are fields rather than method prefixes. Field

@@ -475,6 +475,26 @@ fn private_accessors_and_non_extensible_private_slots() {
 }
 
 #[test]
+fn private_elements_reject_duplicate_initialization_on_same_object() {
+    assert_eq!(
+        run("class B{constructor(o){return o;}}class C extends B{#x;}var o={};new C(o);try{new C(o);false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class B{constructor(o){return o;}}class C extends B{#m(){}}var o={};new C(o);try{new C(o);false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class B{constructor(o){return o;}}class C extends B{get #x(){return 1;}}var o={};new C(o);try{new C(o);false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("class B{constructor(o){return o;}}class C extends B{get #x(){return 1;}set #x(v){}}var o={};new C(o);try{new C(o);false;}catch(e){e instanceof TypeError;}"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_brand_checks_reject_missing_slots() {
     assert_eq!(
         run("class C{#x=1;read(o){return o.#x;}}try{new C().read({});false;}catch(e){e instanceof TypeError;}"),

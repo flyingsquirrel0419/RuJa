@@ -137,6 +137,16 @@ supported subset remains **5099 pass / 0 fail / 15339 skip** because full
 public-field coverage still needs direct-eval, computed-name ordering, and
 static-initializer follow-ups before the runner can lift those features.
 
+Focused private element duplicate-initialization local check:
+private fields, methods, and accessors now throw `TypeError` instead of
+overwriting an existing same-class private slot when a derived constructor
+returns the same object across multiple constructions. With private class
+feature skips temporarily lifted, the
+`language/statements/class/elements/private-method-double-initialisation*.js`
+and `privatefieldadd-typeerror.js` cluster reports **5 pass / 0 fail / 0
+skip**. The default supported subset remains **5099 pass / 0 fail / 15339
+skip**.
+
 Focused ArrayBuffer transfer/immutable local check: `built-ins/ArrayBuffer`
 improves from **57 pass / 34 fail / 130 skip** to **91 pass / 0 fail / 130
 skip** after adding fixed-buffer `transfer`, `transferToFixedLength`,
