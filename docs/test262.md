@@ -543,12 +543,14 @@ Focused TypedArrayConstructors runner coverage check:
 `built-ins/TypedArrayConstructors/` coverage with a path-scoped exception for
 TypedArray, concrete TypedArray constructors, ArrayBuffer, DataView, Reflect,
 `Reflect.construct`, Proxy, Symbol, `Symbol.iterator`, `Symbol.toPrimitive`,
-and `Symbol.toStringTag`. `Reflect.set()` also routes Symbol property keys
-through the receiver-aware ordinary `[[Set]]` path, so Symbol-named
-non-writable own data properties on TypedArrays return `false`. The normal
-runner now reports **673 pass / 0 fail / 65 skip** on that path. Remaining
-skips stay behind unsupported SharedArrayBuffer, resizable ArrayBuffer,
-iterator-helper, generator, and Atomics feature gates.
+`Symbol.toStringTag`, and generator metadata needed by the implemented
+object-argument iterable constructor path. `Reflect.set()` also routes Symbol
+property keys through the receiver-aware ordinary `[[Set]]` path, so
+Symbol-named non-writable own data properties on TypedArrays return `false`;
+generator object arguments now propagate abrupt completion during iteration.
+The normal runner now reports **674 pass / 0 fail / 64 skip** on that path.
+Remaining skips stay behind unsupported SharedArrayBuffer, resizable
+ArrayBuffer, iterator-helper, and Atomics feature gates.
 
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to

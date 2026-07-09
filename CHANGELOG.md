@@ -24,7 +24,8 @@
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/TypedArrayConstructors/` coverage by lifting only the
   TypedArray, concrete TypedArray constructor, ArrayBuffer, DataView, Reflect,
-  Proxy, Symbol, and well-known Symbol feature gates needed by that path.
+  Proxy, Symbol, well-known Symbol, and generator feature gates needed by that
+  path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/DataView/` coverage by lifting only the DataView,
   ArrayBuffer, Float16Array, Reflect, and typed-array helper feature gates
@@ -49,6 +50,11 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   exposes a non-writable, non-enumerable, configurable
   `Symbol.toStringTag` data property with value `"ArrayBuffer"`. The focused
   `built-ins/ArrayBuffer` run closes at **92 pass / 0 fail / 129 skip**.
+- **TypedArray generator object-argument admission**: the
+  `built-ins/TypedArrayConstructors/` path exception now admits generator
+  metadata for the already-supported iterable constructor path, covering
+  generator abrupt completion during `IterableToArrayLike`. The normal runner
+  now reports **674 pass / 0 fail / 64 skip** on that path.
 - **Mapped arguments object index writes**: property-Reference writes to sloppy
   mapped arguments objects now update the linked parameter binding, including
   writes after `Object.defineProperty(arguments, "0", ...)`. Dense arguments

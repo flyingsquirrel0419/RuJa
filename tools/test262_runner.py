@@ -73,6 +73,7 @@ TYPED_ARRAY_CONSTRUCTORS_FEATURES = {
     "Float16Array",
     "Float32Array",
     "Float64Array",
+    "generators",
     "Int8Array",
     "Int16Array",
     "Int32Array",
