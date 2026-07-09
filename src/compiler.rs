@@ -1945,6 +1945,12 @@ impl Compiler {
                 }
             }
             Pattern::Object(props, rest) => {
+                if props.is_empty() {
+                    self.load_path(temp_idx, path);
+                    self.chunk
+                        .emit(Op::RequireObjectCoercible, self.current_line);
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
                 let mut bound_keys: Vec<RestExcludeKey> = Vec::new();
                 for (key, target) in props {
                     // Static keys extend the access path; computed/numeric keys
@@ -2184,6 +2190,15 @@ impl Compiler {
                 self.chunk.patch_jump(jump_after_finally, after_finally);
             }
             Expr::Object(props) => {
+                if props
+                    .iter()
+                    .all(|p| matches!(p.key, PropertyKey::Spread(_)))
+                {
+                    self.load_path(temp_idx, path);
+                    self.chunk
+                        .emit(Op::RequireObjectCoercible, self.current_line);
+                    self.chunk.emit(Op::Pop, self.current_line);
+                }
                 let mut bound_keys: Vec<RestExcludeKey> = Vec::new();
                 for p in props {
                     let mut new_path = path.to_vec();

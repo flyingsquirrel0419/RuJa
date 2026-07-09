@@ -387,7 +387,8 @@ pub enum Op {
     ToString,
     // Coerce top-of-stack via ToPropertyKey, preserving Symbol keys.
     ToPropertyKey,
-    CheckNullBase, // pop obj; throw TypeError if null/undefined; push obj back
+    CheckNullBase,          // pop obj; throw TypeError if null/undefined; push obj back
+    RequireObjectCoercible, // throw TypeError if top-of-stack is null/undefined
 
     // Halt
     Halt,

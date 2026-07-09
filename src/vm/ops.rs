@@ -237,6 +237,15 @@ impl Vm {
                         }
                     }
                 }
+                Op::RequireObjectCoercible => {
+                    let v = self.stack.last().cloned().unwrap_or(Value::Undefined);
+                    if matches!(v, Value::Null | Value::Undefined) {
+                        return Err(Error::type_err(format!(
+                            "Cannot destructure {}",
+                            v.type_of()
+                        )));
+                    }
+                }
                 Op::Const(idx) => {
                     let v = {
                         let frame = self.current_frame()?;

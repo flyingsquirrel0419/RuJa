@@ -2839,6 +2839,12 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   prototype numeric setters no longer intercept writes to `arguments[0]`. The
   focused `language/arguments-object` run now closes at **126 pass / 0 fail /
   137 skip**.
+- **Object destructuring `RequireObjectCoercible`** — empty object assignment
+  patterns such as `({} = null)` and rest-only object assignment patterns now
+  throw `TypeError` for nullish sources instead of completing silently. With
+  only the `destructuring-binding` skip lifted for diagnostics, the focused
+  `language/expressions/assignment/dstr` run improves to **249 pass / 11 fail
+  / 108 skip** while the default supported subset remains green.
 
 ## Why the full-suite rate is not higher
 

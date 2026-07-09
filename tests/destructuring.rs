@@ -39,6 +39,24 @@ fn array_assign_with_holes() {
 }
 
 #[test]
+fn object_assign_empty_pattern_requires_object_coercible() {
+    let err = run_err("({} = null);");
+    assert!(err.contains("TypeError"), "{err}");
+
+    let err = run_err("({} = undefined);");
+    assert!(err.contains("TypeError"), "{err}");
+}
+
+#[test]
+fn object_assign_rest_only_requires_object_coercible() {
+    let err = run_err("var rest; ({...rest} = null);");
+    assert!(err.contains("TypeError"), "{err}");
+
+    let err = run_err("var rest; ({...rest} = undefined);");
+    assert!(err.contains("TypeError"), "{err}");
+}
+
+#[test]
 fn array_assign_empty_pattern_closes_iterator_without_stepping() {
     assert_eq!(
         run(r#"
