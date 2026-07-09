@@ -180,6 +180,17 @@ ASSIGNMENT_EXPRESSION_PREFIXES = (
 ASSIGNMENT_EXPRESSION_FEATURES = {
     "destructuring-binding",
     "object-rest",
+    "Proxy",
+    "Symbol",
+}
+
+REFERENCE_PRIVATE_EXPRESSION_PREFIXES = (
+    "language/expressions/compound-assignment/",
+    "language/expressions/logical-assignment/",
+)
+
+REFERENCE_PRIVATE_EXPRESSION_FEATURES = {
+    "class-fields-private",
 }
 
 def parse_meta(src):
@@ -301,6 +312,14 @@ def assignment_expression_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(ASSIGNMENT_EXPRESSION_PREFIXES)
 
+def reference_private_expression_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(REFERENCE_PRIVATE_EXPRESSION_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -327,6 +346,8 @@ def should_skip(meta, path=None):
         feats.difference_update(WITH_STATEMENT_FEATURES)
     if path is not None and assignment_expression_path(path):
         feats.difference_update(ASSIGNMENT_EXPRESSION_FEATURES)
+    if path is not None and reference_private_expression_path(path):
+        feats.difference_update(REFERENCE_PRIVATE_EXPRESSION_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

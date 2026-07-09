@@ -40,8 +40,13 @@
   the `with` statement path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `language/expressions/assignment/` destructuring assignment
-  coverage by lifting only the `destructuring-binding` and `object-rest` gates
-  on that path.
+  coverage by lifting only the `destructuring-binding`, `object-rest`, Symbol,
+  and Proxy gates on that path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented private-field Reference coverage for
+  `language/expressions/compound-assignment/` and
+  `language/expressions/logical-assignment/` by lifting only
+  `class-fields-private` on those paths.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -66,7 +71,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5305 pass / 0 fail / 15133 skip / 0 timeout**.
+Current supported subset count: **5380 pass / 0 fail / 15058 skip / 0 timeout**.
 
 - **`with` runner admission**: the `language/statements/with/` path exception
   now admits the remaining implemented object-environment coverage, including
@@ -80,13 +85,19 @@ Current supported subset count: **5305 pass / 0 fail / 15133 skip / 0 timeout**.
   indices while keeping nullish sources as `TypeError`.
 - **Assignment destructuring runner admission**: the
   `language/expressions/assignment/` path exception now admits the implemented
-  destructuring assignment and object rest coverage without opening
-  `Symbol.iterator`, generator, optional chaining, or Proxy coverage more
-  broadly. `language/expressions/assignment` reports **397 pass / 0 fail / 88
-  skip**, and the Reference-adjacent cluster
+  destructuring assignment, object rest, Symbol-key, and Proxy coverage without
+  opening `Symbol.iterator`, generator, or optional chaining coverage more
+  broadly. `language/expressions/assignment` reports **403 pass / 0 fail / 82
+  skip**.
+- **Private-field Reference runner admission**: compound and logical assignment
+  paths now admit the already-implemented private-field Reference coverage
+  without opening private class fields more broadly. The combined
+  `language/expressions/compound-assignment
+  language/expressions/logical-assignment` run reports **532 pass / 0 fail / 0
+  skip**. The Reference-adjacent cluster
   `language/expressions/assignment language/expressions/compound-assignment
   language/expressions/logical-assignment language/expressions/update
-  language/statements/with` reports **1041 pass / 0 fail / 157 skip**.
+  language/statements/with` reports **1116 pass / 0 fail / 82 skip**.
 - **Error `cause` semantics**: `Error` and NativeError constructors now perform
   observable `HasProperty(options, "cause")` followed by `Get`, after installing
   the message property. `AggregateError` now uses its `(errors, message,
