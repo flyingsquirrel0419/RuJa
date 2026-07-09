@@ -38,6 +38,9 @@
   implemented `language/statements/with/` coverage by lifting only Proxy,
   Reflect, TypedArray, generator, async function, and async iteration gates on
   the `with` statement path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `language/expressions/assignment/` destructuring assignment
+  coverage by lifting only the `destructuring-binding` gate on that path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -62,13 +65,22 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5111 pass / 0 fail / 15327 skip / 0 timeout**.
+Current supported subset count: **5281 pass / 0 fail / 15157 skip / 0 timeout**.
 
 - **`with` runner admission**: the `language/statements/with/` path exception
   now admits the remaining implemented object-environment coverage, including
   TypedArray prototype-chain binding deletion and async/generator declaration
   parse-negative files, without unskipping those features more broadly. The
   `with` path now closes at **181 pass / 0 fail / 0 skip**.
+- **Assignment destructuring runner admission**: the
+  `language/expressions/assignment/` path exception now admits the implemented
+  destructuring assignment coverage without opening object rest,
+  `Symbol.iterator`, generator, optional chaining, or Proxy coverage more
+  broadly. `language/expressions/assignment` reports **373 pass / 0 fail / 112
+  skip**, and the Reference-adjacent cluster
+  `language/expressions/assignment language/expressions/compound-assignment
+  language/expressions/logical-assignment language/expressions/update
+  language/statements/with` reports **1017 pass / 0 fail / 181 skip**.
 - **Error `cause` semantics**: `Error` and NativeError constructors now perform
   observable `HasProperty(options, "cause")` followed by `Get`, after installing
   the message property. `AggregateError` now uses its `(errors, message,

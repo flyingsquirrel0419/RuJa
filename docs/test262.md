@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5106 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5281 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -364,6 +364,17 @@ broader Reference-adjacent cluster
 `language/expressions/assignment language/expressions/compound-assignment
 language/expressions/logical-assignment language/expressions/update
 language/statements/with` now reports **847 pass / 0 fail / 351 skip**.
+
+Focused assignment destructuring runner admission local check:
+`language/expressions/assignment` now admits the implemented destructuring
+assignment coverage by lifting only the `destructuring-binding` feature gate on
+that path. Object rest, `Symbol.iterator`, generator, optional-chaining, and
+Proxy coverage remain behind their broader feature gates because those lifts
+still expose separate runtime or early-error work. The assignment path reports
+**373 pass / 0 fail / 112 skip**. The broader Reference-adjacent cluster
+`language/expressions/assignment language/expressions/compound-assignment
+language/expressions/logical-assignment language/expressions/update
+language/statements/with` now reports **1017 pass / 0 fail / 181 skip**.
 
 Focused for-of iterator protocol local check:
 `language/statements/for-of` now reports **113 pass / 0 fail / 638 skip**
