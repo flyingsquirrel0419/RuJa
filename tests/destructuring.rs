@@ -569,6 +569,35 @@ fn plain_array_destructure_still_works() {
 }
 
 #[test]
+fn array_binding_closes_unfinished_iterator() {
+    assert_eq!(
+        run(r#"
+            var returnCount = 0;
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                return { value: 7, done: false };
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            let [x] = iterable;
+            x + ":" + returnCount;
+        "#),
+        Value::String(Arc::from("7:1"))
+    );
+}
+
+#[test]
+fn array_binding_requires_array_iterator_method() {
+    let err = run_err("delete Array.prototype[Symbol.iterator]; var [x] = [1];");
+    assert!(err.contains("TypeError"), "{err}");
+}
+
+#[test]
 fn nested_array_binding_does_not_clobber_outer_iterator() {
     assert_eq!(
         run(r#"var out = [];

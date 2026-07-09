@@ -599,6 +599,58 @@ fn for_of_assignment_destructure() {
         run("var x, prop, elem; for ([x = 'x' in {}] of [[]]) {} for ({ prop = 'x' in {}, key: elem = 'x' in {} } of [{key: undefined}]) {} [x, prop, elem].join(':');"),
         Value::String(Arc::from("false:false:false"))
     );
+    assert_eq!(
+        run(r#"
+            var nextCount = 0, returnCount = 0, counter = 0, x;
+            function Sentinel() {}
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                throw new Sentinel();
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            try {
+              for ([x] of [iterable]) {
+                counter += 1;
+              }
+              counter += 1;
+            } catch (e) {}
+            [counter, nextCount, returnCount].join(":");
+        "#),
+        Value::String(Arc::from("0:1:0"))
+    );
+    assert_eq!(
+        run(r#"
+            var nextCount = 0, returnCount = 0, counter = 0, x;
+            function Sentinel() {}
+            var iterable = {};
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                throw new Sentinel();
+              },
+              return: function() {
+                returnCount += 1;
+                return {};
+              }
+            };
+            iterable[Symbol.iterator] = function() { return iterator; };
+            try {
+              for ([...x] of [iterable]) {
+                counter += 1;
+              }
+              counter += 1;
+            } catch (e) {}
+            [counter, nextCount, returnCount].join(":");
+        "#),
+        Value::String(Arc::from("0:1:0"))
+    );
 }
 
 #[test]
@@ -1873,6 +1925,7 @@ fn computed_and_shorthand_proto_are_data_properties() {
 #[test]
 fn array_prototype_iterator_override_honored() {
     let src = r#"
+        let originalIterator = Array.prototype[Symbol.iterator];
         Array.prototype[Symbol.iterator] = function() {
             let i = 0; let self = this;
             return { next() {
@@ -1882,7 +1935,7 @@ fn array_prototype_iterator_override_honored() {
         };
         let r = [];
         for (let v of [1,2,3]) r.push(v);
-        delete Array.prototype[Symbol.iterator];
+        Array.prototype[Symbol.iterator] = originalIterator;
         let r2 = [];
         for (let v of [1,2,3]) r2.push(v);
         r.join(",") + "|" + r2.join(",");

@@ -2897,6 +2897,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   With only the `destructuring-binding` skip lifted for diagnostics,
   `language/statements/for-of/dstr` improves to **436 pass / 13 fail / 120
   skip** while the default supported subset remains green.
+- **For-of destructuring IteratorClose semantics** — array binding patterns
+  now close non-exhausted inner iterators on normal completion and abrupt
+  binding/default evaluation, while still skipping close when the iterator
+  step itself throws. Array binding initialization also observes deletion of
+  `Array.prototype[Symbol.iterator]` instead of falling back to an index
+  iterator. With only the `destructuring-binding` skip lifted for diagnostics,
+  `language/statements/for-of/dstr` now closes at **449 pass / 0 fail / 120
+  skip** while the default supported subset remains green.
 
 ## Why the full-suite rate is not higher
 

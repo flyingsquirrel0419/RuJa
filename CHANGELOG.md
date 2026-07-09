@@ -106,6 +106,14 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   With only the `destructuring-binding` skip lifted for diagnostics,
   `language/statements/for-of/dstr` improves to **436 pass / 13 fail / 120
   skip** while the default supported subset remains green.
+- **For-of destructuring IteratorClose semantics**: array binding patterns now
+  close non-exhausted inner iterators on normal and non-iterator abrupt
+  completion, array binding initialization now observes a missing
+  `Array.prototype[Symbol.iterator]`, and non-declaration `for-of`
+  assignment heads no longer close an inner iterator when that iterator's own
+  step throws. With only the `destructuring-binding` skip lifted for
+  diagnostics, `language/statements/for-of/dstr` now closes at **449 pass / 0
+  fail / 120 skip** while the default supported subset remains green.
 - **Property Reference records for simple member assignment**: ordinary member
   assignment now lowers final writes through an explicit property Reference
   while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates

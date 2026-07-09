@@ -70,6 +70,12 @@ enum PathStep {
     RestFrom(usize),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AssignmentIteratorCloseMode {
+    Ordinary,
+    SkipIteratorAbrupt,
+}
+
 #[derive(Clone)]
 enum RestExcludeKey {
     Const(Arc<str>),
@@ -1619,7 +1625,12 @@ impl Compiler {
                         Expr::Array(_) | Expr::Object(_) => {
                             let temp_idx = self.intern("#for-assign");
                             self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
-                            self.compile_assign_value_to_target(expr, temp_idx, None)?;
+                            self.compile_assign_value_to_target_with_mode(
+                                expr,
+                                temp_idx,
+                                None,
+                                AssignmentIteratorCloseMode::SkipIteratorAbrupt,
+                            )?;
                         }
                         _ => {
                             self.compile_assign_target(expr)?;
@@ -1929,30 +1940,77 @@ impl Compiler {
                 self.chunk.emit(Op::GetIterator, self.current_line);
                 let iter_idx = self.fresh_temp("#arr-iter");
                 self.chunk.emit(Op::DeclareEnv(iter_idx), self.current_line);
+                let done_idx = self.fresh_temp("#arr-done");
+                self.chunk.emit(Op::False, self.current_line);
+                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                let finally_guard_ip = self.chunk.code.len();
+                self.chunk.emit(Op::PushFinally(0), self.current_line);
                 for el in elems.iter() {
                     match el {
                         Pattern::Rest(inner) => {
                             // Collect the remaining iterator values into an array.
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
                             let rest_idx = self.fresh_temp("#arr-rest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.compile_pattern(inner, rest_idx, &[], kind)?;
+                        }
+                        Pattern::Hole => {
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
+                            self.chunk.emit(Op::IteratorNext, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
                         }
                         _ => {
                             // Pull the next value (or undefined if exhausted).
+                            self.chunk.emit(Op::True, self.current_line);
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
-                            // IteratorNext pushes [value, done]; we ignore done
-                            // here (a missing element binds undefined, matching
-                            // the spec where exhausted iterators yield undefined).
-                            self.chunk.emit(Op::Pop, self.current_line); // discard `done`
+                            // IteratorNext pushes [value, done]. Preserve `done`
+                            // for IteratorClose while binding undefined on
+                            // exhaustion.
+                            self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             let elem_idx = self.fresh_temp("#arr-elem");
                             self.chunk.emit(Op::DeclareEnv(elem_idx), self.current_line);
                             self.compile_pattern(el, elem_idx, &[], kind)?;
                         }
                     }
                 }
+                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(
+                    Op::IteratorClose {
+                        iter: iter_idx,
+                        done: done_idx,
+                        ignore_close_errors: false,
+                    },
+                    self.current_line,
+                );
+                let jump_after_finally = self.chunk.code.len();
+                self.chunk.emit(Op::Jump(0), self.current_line);
+                let finally_start = self.chunk.code.len();
+                if let Op::PushFinally(ref mut target) = self.chunk.code[finally_guard_ip] {
+                    *target = finally_start;
+                }
+                self.chunk.emit(Op::PopFinally, self.current_line);
+                self.chunk.emit(
+                    Op::IteratorCloseIfAbrupt {
+                        iter: iter_idx,
+                        done: done_idx,
+                        inner_continue: None,
+                        ignore_close_errors: true,
+                    },
+                    self.current_line,
+                );
+                self.chunk.emit(Op::PopFinallyRethrow, self.current_line);
+                let after_finally = self.chunk.code.len();
+                self.chunk.patch_jump(jump_after_finally, after_finally);
             }
             Pattern::Object(props, rest) => {
                 if props.is_empty() {
@@ -2131,6 +2189,21 @@ impl Compiler {
         temp_idx: usize,
         path: &[PathStep],
     ) -> error::Result<()> {
+        self.compile_assign_pattern_with_mode(
+            target,
+            temp_idx,
+            path,
+            AssignmentIteratorCloseMode::Ordinary,
+        )
+    }
+
+    fn compile_assign_pattern_with_mode(
+        &mut self,
+        target: &Expr,
+        temp_idx: usize,
+        path: &[PathStep],
+        close_mode: AssignmentIteratorCloseMode,
+    ) -> error::Result<()> {
         match target {
             Expr::Array(elems) => {
                 self.load_path(temp_idx, path);
@@ -2145,6 +2218,10 @@ impl Compiler {
                 for el in elems {
                     match el {
                         Expr::ArrayHole => {
+                            if close_mode == AssignmentIteratorCloseMode::SkipIteratorAbrupt {
+                                self.chunk.emit(Op::True, self.current_line);
+                                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            }
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
@@ -2153,23 +2230,41 @@ impl Compiler {
                         Expr::Spread(inner) => {
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(inner))?;
+                            if close_mode == AssignmentIteratorCloseMode::SkipIteratorAbrupt {
+                                self.chunk.emit(Op::True, self.current_line);
+                                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            }
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorCollectRest, self.current_line);
                             let rest_idx = self.intern("#arr-assign-rest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
                             self.chunk.emit(Op::True, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
-                            self.compile_assign_value_to_target(inner, rest_idx, target_temp)?;
+                            self.compile_assign_value_to_target_with_mode(
+                                inner,
+                                rest_idx,
+                                target_temp,
+                                close_mode,
+                            )?;
                         }
                         _ => {
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(el))?;
+                            if close_mode == AssignmentIteratorCloseMode::SkipIteratorAbrupt {
+                                self.chunk.emit(Op::True, self.current_line);
+                                self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
+                            }
                             self.chunk.emit(Op::LoadEnv(iter_idx), self.current_line);
                             self.chunk.emit(Op::IteratorNext, self.current_line);
                             self.chunk.emit(Op::DeclareEnv(done_idx), self.current_line);
                             let elem_idx = self.intern("#arr-assign-elem");
                             self.chunk.emit(Op::DeclareEnv(elem_idx), self.current_line);
-                            self.compile_assign_value_to_target(el, elem_idx, target_temp)?;
+                            self.compile_assign_value_to_target_with_mode(
+                                el,
+                                elem_idx,
+                                target_temp,
+                                close_mode,
+                            )?;
                         }
                     }
                 }
@@ -2224,7 +2319,12 @@ impl Compiler {
                             self.load_path(temp_idx, &new_path);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                            self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
+                            self.compile_assign_value_to_target_with_mode(
+                                &p.value,
+                                t2,
+                                target_temp,
+                                close_mode,
+                            )?;
                         }
                         PropertyKey::Number(n) => {
                             let ks = crate::value::num_to_string(*n);
@@ -2240,7 +2340,12 @@ impl Compiler {
                             self.chunk.emit(Op::GetElem, self.current_line);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                            self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
+                            self.compile_assign_value_to_target_with_mode(
+                                &p.value,
+                                t2,
+                                target_temp,
+                                close_mode,
+                            )?;
                         }
                         PropertyKey::Computed(e) => {
                             self.compile_expr(e)?;
@@ -2256,7 +2361,12 @@ impl Compiler {
                             self.chunk.emit(Op::GetElem, self.current_line);
                             let t2 = self.intern("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                            self.compile_assign_value_to_target(&p.value, t2, target_temp)?;
+                            self.compile_assign_value_to_target_with_mode(
+                                &p.value,
+                                t2,
+                                target_temp,
+                                close_mode,
+                            )?;
                         }
                         PropertyKey::Spread(rest_target) => {
                             let target_temp = self
@@ -2278,10 +2388,11 @@ impl Compiler {
                                 .emit(Op::ObjRest(bound_keys.len()), self.current_line);
                             let rest_idx = self.intern("#drest");
                             self.chunk.emit(Op::DeclareEnv(rest_idx), self.current_line);
-                            self.compile_assign_value_to_target(
+                            self.compile_assign_value_to_target_with_mode(
                                 rest_target,
                                 rest_idx,
                                 target_temp,
+                                close_mode,
                             )?;
                         }
                     }
@@ -2300,7 +2411,7 @@ impl Compiler {
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#d2");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                self.compile_assign_pattern(left, t2, &[])?;
+                self.compile_assign_pattern_with_mode(left, t2, &[], close_mode)?;
             }
             Expr::Ident(name) => {
                 self.load_path(temp_idx, path);
@@ -2336,6 +2447,21 @@ impl Compiler {
         value_idx: usize,
         target_temp: Option<AssignTargetTemp>,
     ) -> error::Result<()> {
+        self.compile_assign_value_to_target_with_mode(
+            target,
+            value_idx,
+            target_temp,
+            AssignmentIteratorCloseMode::Ordinary,
+        )
+    }
+
+    fn compile_assign_value_to_target_with_mode(
+        &mut self,
+        target: &Expr,
+        value_idx: usize,
+        target_temp: Option<AssignTargetTemp>,
+        close_mode: AssignmentIteratorCloseMode,
+    ) -> error::Result<()> {
         match target {
             Expr::Assign(AssignOp::Assign, left, default) => {
                 self.load_path(value_idx, &[]);
@@ -2357,7 +2483,7 @@ impl Compiler {
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#arr-assign-value");
                 self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
-                self.compile_assign_value_to_target(left, t2, target_temp)?;
+                self.compile_assign_value_to_target_with_mode(left, t2, target_temp, close_mode)?;
             }
             Expr::Ident(name) => {
                 self.load_path(value_idx, &[]);
@@ -2386,7 +2512,7 @@ impl Compiler {
                 self.store_current_value_to_member_target(target);
             }
             Expr::Array(_) | Expr::Object(_) => {
-                self.compile_assign_pattern(target, value_idx, &[])?;
+                self.compile_assign_pattern_with_mode(target, value_idx, &[], close_mode)?;
             }
             _ => {
                 self.load_path(value_idx, &[]);
