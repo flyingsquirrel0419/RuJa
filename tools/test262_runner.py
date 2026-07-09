@@ -180,6 +180,7 @@ ASSIGNMENT_EXPRESSION_PREFIXES = (
 ASSIGNMENT_EXPRESSION_FEATURES = {
     "destructuring-binding",
     "object-rest",
+    "optional-chaining",
     "Proxy",
     "Symbol",
 }

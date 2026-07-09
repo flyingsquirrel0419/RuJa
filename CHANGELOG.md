@@ -71,7 +71,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5380 pass / 0 fail / 15058 skip / 0 timeout**.
+Current supported subset count: **5384 pass / 0 fail / 15054 skip / 0 timeout**.
 
 - **`with` runner admission**: the `language/statements/with/` path exception
   now admits the remaining implemented object-environment coverage, including
@@ -83,12 +83,17 @@ Current supported subset count: **5380 pass / 0 fail / 15058 skip / 0 timeout**.
   assignment property, and object rest copy now boxes primitive sources before
   enumerating own properties. This lets `({...rest} = "foo")` copy string
   indices while keeping nullish sources as `TypeError`.
+- **Optional-chain assignment target early errors**: optional member/call
+  chains now preserve enough parser-side chain-boundary state to reject direct
+  and chained optional expressions as assignment, update, destructuring, and
+  `for-in` targets while preserving parenthesized member targets such as
+  `(a?.b).c = 1`.
 - **Assignment destructuring runner admission**: the
   `language/expressions/assignment/` path exception now admits the implemented
-  destructuring assignment, object rest, Symbol-key, and Proxy coverage without
-  opening `Symbol.iterator`, generator, or optional chaining coverage more
-  broadly. `language/expressions/assignment` reports **403 pass / 0 fail / 82
-  skip**.
+  destructuring assignment, object rest, optional-chaining parse-negative,
+  Symbol-key, and Proxy coverage without opening `Symbol.iterator` or
+  generator coverage more broadly. `language/expressions/assignment` reports
+  **407 pass / 0 fail / 78 skip**.
 - **Private-field Reference runner admission**: compound and logical assignment
   paths now admit the already-implemented private-field Reference coverage
   without opening private class fields more broadly. The combined
@@ -97,7 +102,7 @@ Current supported subset count: **5380 pass / 0 fail / 15058 skip / 0 timeout**.
   skip**. The Reference-adjacent cluster
   `language/expressions/assignment language/expressions/compound-assignment
   language/expressions/logical-assignment language/expressions/update
-  language/statements/with` reports **1116 pass / 0 fail / 82 skip**.
+  language/statements/with` reports **1120 pass / 0 fail / 78 skip**.
 - **Error `cause` semantics**: `Error` and NativeError constructors now perform
   observable `HasProperty(options, "cause")` followed by `Get`, after installing
   the message property. `AggregateError` now uses its `(errors, message,

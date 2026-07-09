@@ -1194,6 +1194,35 @@ fn optional_chain_deep() {
     );
 }
 
+#[test]
+fn optional_chain_is_not_assignment_target() {
+    for src in [
+        "var a = {}; a?.b = 1;",
+        "var a = { b: {} }; a?.b.c = 1;",
+        "var a = { b: {} }; (a?.b.c) = 1;",
+        "var a = {}; ++a?.b;",
+        "var a = { b: {} }; ++a?.b.c;",
+        "var a = {}; a?.b++;",
+        "var a = { b: {} }; a?.b.c++;",
+        "var a = {}; 0, [a?.b = 1] = [2];",
+        "var a = { b: {} }; 0, [a?.b.c = 1] = [2];",
+        "var a = {}; 0, { x: a?.b = 1 } = { x: 2 };",
+        "var a = { b: {} }; 0, { x: a?.b.c = 1 } = { x: 2 };",
+        "var a = { b: {} }; for (a?.b.c in {}) ;",
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+
+    assert_eq!(
+        run("var a = { b: {} }; (a?.b).c = 1; a.b.c;"),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run("var a = { b: {} }; for ((a?.b).c in {x: 1}) {} a.b.c;"),
+        Value::String(Arc::from("x"))
+    );
+}
+
 // --- Number toString (exponential notation) ---
 
 #[test]

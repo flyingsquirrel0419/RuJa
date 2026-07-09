@@ -81,6 +81,7 @@ pub struct Parser {
     lexical_declaration_allowed: bool,
     super_depth: usize,
     super_call_depth: usize,
+    last_primary_parenthesized: bool,
 }
 
 type ParsedParams = (
@@ -127,6 +128,7 @@ impl Parser {
             lexical_declaration_allowed: true,
             super_depth: 0,
             super_call_depth: 0,
+            last_primary_parenthesized: false,
         }
     }
 
@@ -2071,8 +2073,25 @@ impl Parser {
             return false;
         }
         match target {
-            Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
+            Expr::Ident(_) | Expr::PrivateGet { .. } => true,
+            Expr::Member {
+                optional,
+                optional_chain,
+                ..
+            } => !*optional && !*optional_chain,
             Expr::Array(_) | Expr::Object(_) => Self::is_assignment_pattern(target),
+            _ => false,
+        }
+    }
+
+    fn is_simple_assignment_target(target: &Expr) -> bool {
+        match target {
+            Expr::Ident(_) | Expr::PrivateGet { .. } => true,
+            Expr::Member {
+                optional,
+                optional_chain,
+                ..
+            } => !*optional && !*optional_chain,
             _ => false,
         }
     }
@@ -2136,7 +2155,12 @@ impl Parser {
 
     fn is_assignment_pattern(target: &Expr) -> bool {
         match target {
-            Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. } => true,
+            Expr::Ident(_) | Expr::PrivateGet { .. } => true,
+            Expr::Member {
+                optional,
+                optional_chain,
+                ..
+            } => !*optional && !*optional_chain,
             Expr::Assign(AssignOp::Assign, left, _) => Self::is_assignment_pattern(left),
             Expr::Array(elements) => {
                 elements
@@ -2543,10 +2567,7 @@ impl Parser {
             let e = self.parse_unary()?;
             // Validate: only identifiers and member expressions are valid
             // update targets. Call expressions, literals, etc. are not.
-            if !matches!(
-                &e,
-                Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }
-            ) {
+            if !Self::is_simple_assignment_target(&e) {
                 return Err(error::Error::syntax(
                     "Invalid left-hand side expression in prefix update operation".to_string(),
                 ));
@@ -2596,10 +2617,7 @@ impl Parser {
         if matches!(self.peek(), TokenKind::Inc | TokenKind::Dec) {
             // Validate: only identifiers and member expressions are valid
             // update targets. Call expressions, literals, etc. are not.
-            if !matches!(
-                &e,
-                Expr::Ident(_) | Expr::Member { .. } | Expr::PrivateGet { .. }
-            ) {
+            if !Self::is_simple_assignment_target(&e) {
                 return Err(error::Error::syntax(
                     "Invalid left-hand side expression in postfix operation".to_string(),
                 ));
@@ -2636,7 +2654,10 @@ impl Parser {
     }
 
     fn parse_call(&mut self) -> error::Result<Expr> {
+        self.last_primary_parenthesized = false;
         let mut e = self.parse_primary()?;
+        let mut parenthesized_base = self.last_primary_parenthesized;
+        self.last_primary_parenthesized = false;
         loop {
             match self.peek().clone() {
                 TokenKind::Dot => {
@@ -2651,13 +2672,17 @@ impl Parser {
                     } else {
                         let name = self.read_property_name()?;
                         let prop = Expr::String(Arc::from(name.as_str()));
+                        let optional_chain =
+                            !parenthesized_base && Self::continues_optional_chain(&e);
                         e = Expr::Member {
                             object: Box::new(e),
                             property: Box::new(prop),
                             computed: false,
                             optional: false,
+                            optional_chain,
                         };
                     }
+                    parenthesized_base = false;
                 }
                 TokenKind::QuestionDot => {
                     self.advance();
@@ -2670,6 +2695,7 @@ impl Parser {
                                 callee: Box::new(e),
                                 args,
                                 optional: true,
+                                optional_chain: true,
                             };
                         }
                         TokenKind::LBracket => {
@@ -2681,6 +2707,7 @@ impl Parser {
                                 property: Box::new(prop),
                                 computed: true,
                                 optional: true,
+                                optional_chain: true,
                             };
                         }
                         _ => {
@@ -2691,20 +2718,25 @@ impl Parser {
                                 property: Box::new(prop),
                                 computed: false,
                                 optional: true,
+                                optional_chain: true,
                             };
                         }
                     }
+                    parenthesized_base = false;
                 }
                 TokenKind::LBracket => {
                     self.advance();
                     let prop = self.with_in_allowed(|p| p.parse_expr())?;
                     self.expect(&TokenKind::RBracket, "]")?;
+                    let optional_chain = !parenthesized_base && Self::continues_optional_chain(&e);
                     e = Expr::Member {
                         object: Box::new(e),
                         property: Box::new(prop),
                         computed: true,
                         optional: false,
+                        optional_chain,
                     };
+                    parenthesized_base = false;
                 }
                 TokenKind::LParen => {
                     if matches!(e, Expr::Super) && self.super_call_depth == 0 {
@@ -2713,11 +2745,14 @@ impl Parser {
                     self.advance();
                     let args = self.parse_args()?;
                     self.expect(&TokenKind::RParen, ")")?;
+                    let optional_chain = !parenthesized_base && Self::continues_optional_chain(&e);
                     e = Expr::Call {
                         callee: Box::new(e),
                         args,
                         optional: false,
+                        optional_chain,
                     };
+                    parenthesized_base = false;
                 }
                 TokenKind::TemplateString { cooked, raw } => {
                     // Tagged template: tag`str${expr}str`
@@ -2726,11 +2761,21 @@ impl Parser {
                     self.advance(); // consume the TemplateString token
                     let tag = e;
                     e = self.parse_tagged_template(tag, quasi0, raw0)?;
+                    parenthesized_base = false;
                 }
                 _ => break,
             }
         }
         Ok(e)
+    }
+
+    fn continues_optional_chain(expr: &Expr) -> bool {
+        match expr {
+            Expr::Member { optional_chain, .. } | Expr::Call { optional_chain, .. } => {
+                *optional_chain
+            }
+            _ => false,
+        }
     }
 
     fn parse_args(&mut self) -> error::Result<Vec<Expr>> {
@@ -2980,6 +3025,7 @@ impl Parser {
                 }
                 let e = self.parse_expr()?;
                 self.expect(&TokenKind::RParen, ")")?;
+                self.last_primary_parenthesized = true;
                 Ok(e)
             }
             TokenKind::LBracket => self.parse_array(),
@@ -3634,6 +3680,7 @@ impl Parser {
                         property: Box::new(prop),
                         computed: false,
                         optional: false,
+                        optional_chain: false,
                     };
                 }
                 TokenKind::LBracket => {
@@ -3645,6 +3692,7 @@ impl Parser {
                         property: Box::new(prop),
                         computed: true,
                         optional: false,
+                        optional_chain: false,
                     };
                 }
                 TokenKind::TemplateString { cooked, raw } => {
@@ -6139,6 +6187,29 @@ mod tests {
         for src in ["import.meta = 1;", "(import.meta) = 1;"] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
+    }
+
+    #[test]
+    fn parse_optional_chain_is_not_assignment_target() {
+        for src in [
+            "a?.b = 1;",
+            "a?.b.c = 1;",
+            "(a?.b.c) = 1;",
+            "++a?.b;",
+            "++a?.b.c;",
+            "a?.b++;",
+            "a?.b.c++;",
+            "0, [a?.b = 1] = [2];",
+            "0, [a?.b.c = 1] = [2];",
+            "0, { x: a?.b = 1 } = { x: 2 };",
+            "0, { x: a?.b.c = 1 } = { x: 2 };",
+            "for (a?.b.c in {}) {}",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        assert!(Parser::parse("(a?.b).c = 1;").is_ok());
+        assert!(Parser::parse("for ((a?.b).c in {}) {}").is_ok());
     }
 
     #[test]

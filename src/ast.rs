@@ -124,6 +124,7 @@ pub enum Expr {
         callee: Box<Expr>,
         args: Vec<Expr>,
         optional: bool,
+        optional_chain: bool,
     },
     New {
         callee: Box<Expr>,
@@ -135,6 +136,7 @@ pub enum Expr {
         property: Box<Expr>,
         computed: bool,
         optional: bool,
+        optional_chain: bool,
     },
     Spread(Box<Expr>),
     Sequence(Vec<Expr>),

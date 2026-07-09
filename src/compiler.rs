@@ -3539,6 +3539,7 @@ impl Compiler {
                 callee,
                 args,
                 optional: call_opt,
+                ..
             } => {
                 // check if method call
                 // `super(args)`: call the parent constructor with `this`.
@@ -3668,6 +3669,7 @@ impl Compiler {
                         property,
                         computed,
                         optional: m_opt,
+                        ..
                     } => {
                         if matches!(object.as_ref(), Expr::Super) {
                             // super.m(args): call parent proto's m with `this`.
@@ -3894,6 +3896,7 @@ impl Compiler {
                 property,
                 computed,
                 optional,
+                ..
             } => {
                 if matches!(object.as_ref(), Expr::Super) {
                     let this_idx = self.intern("this");
@@ -3966,7 +3969,7 @@ impl Compiler {
                     object,
                     property,
                     computed,
-                    optional: _,
+                    ..
                 } = tag.as_ref()
                 {
                     self.compile_expr(object)?; // [obj]
@@ -4225,6 +4228,7 @@ impl Compiler {
                                             callee: Box::new(Expr::Super),
                                             args,
                                             optional: false,
+                                            optional_chain: false,
                                         }),
                                     }])
                                 } else {
