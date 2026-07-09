@@ -24,6 +24,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5060 pass / 0 fail / 0 timeout**.
 
+- **`%ThrowTypeError%` Realm identity**: restricted
+  `Function.prototype.caller`/`arguments` accessors and strict-mode unmapped
+  arguments objects now reuse the same canonical Realm `%ThrowTypeError%`
+  intrinsic even when the arguments object is created by a function nested
+  inside `new Function(...)`. `$262.createRealm()` now receives a Realm-local
+  `Function.prototype` for dynamic functions, so cross-Realm restricted
+  accessors compare against that Realm's thrower instead of the main Realm's.
+  The focused
+  `built-ins/Function/prototype/caller built-ins/Function/prototype/arguments`
+  run improves from **0 pass / 2 fail / 0 skip** to **2 pass / 0 fail / 0
+  skip**.
 - **`Function.prototype[@@hasInstance]`**: `instanceof` now performs
   `GetMethod(C, @@hasInstance)` before falling back to `OrdinaryHasInstance`,
   and `Function.prototype[Symbol.hasInstance]` exposes the default hook with

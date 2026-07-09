@@ -1244,7 +1244,16 @@ fn accessor_prop(get: Value, set: Value) -> PropertyDescriptor {
     }
 }
 
+fn set_function_object_proto(vm: &mut Vm, function_idx: GcIdx, proto: &Value) {
+    vm.heap.with_obj(function_idx.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            *f.proto.lock() = Some(proto.clone());
+        }
+    });
+}
+
 pub(crate) fn throw_type_error_intrinsic(vm: &mut Vm, realm: GcIdx) -> error::Result<Value> {
+    let realm = env::global_env_root(&vm.heap, realm);
     if let Some(value) = vm.realm_throw_type_errors.get(&realm.0) {
         return Ok(value.clone());
     }
@@ -2179,18 +2188,80 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         });
         define_realm_global(vm, realm_env, &global, name, Value::Object(ctor));
     }
+    let realm_function_proto_idx =
+        vm.new_native_function_in_env("Function.prototype", function_proto_noop, 0, realm_env)?;
+    let realm_function_proto = Value::Object(realm_function_proto_idx);
+    vm.heap.with_obj(realm_function_proto_idx.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            *f.proto.lock() = Some(vm.object_proto.clone());
+        }
+    });
+    vm.realm_function_prototypes
+        .insert(realm_env.0, realm_function_proto.clone());
+
     let function_ctor_idx =
         vm.new_native_function_in_env("Function", function_constructor, 1, realm_env)?;
+    set_function_object_proto(vm, function_ctor_idx, &realm_function_proto);
+    let call_fn = vm.new_native_function_in_env("call", function_call, 1, realm_env)?;
+    let apply_fn = vm.new_native_function_in_env("apply", function_apply, 2, realm_env)?;
+    let bind_fn = vm.new_native_function_in_env("bind", function_bind, 1, realm_env)?;
+    let tostring_fn =
+        vm.new_native_function_in_env("toString", function_to_string, 0, realm_env)?;
+    let has_instance_fn = vm.new_native_function_in_env(
+        "[Symbol.hasInstance]",
+        function_symbol_has_instance,
+        1,
+        realm_env,
+    )?;
+    for idx in [call_fn, apply_fn, bind_fn, tostring_fn, has_instance_fn] {
+        set_function_object_proto(vm, idx, &realm_function_proto);
+    }
+    let throw_type_error_fn = throw_type_error_intrinsic(vm, realm_env)?;
+    install_methods(
+        vm,
+        &realm_function_proto,
+        &[
+            (Arc::from("call"), Value::Object(call_fn)),
+            (Arc::from("apply"), Value::Object(apply_fn)),
+            (Arc::from("bind"), Value::Object(bind_fn)),
+            (Arc::from("toString"), Value::Object(tostring_fn)),
+        ],
+    );
     vm.heap.with_obj(function_ctor_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {
-            if matches!(vm.function_proto, Value::Object(_)) {
-                f.prototype.lock().replace(vm.function_proto.clone());
-            }
+            f.prototype.lock().replace(realm_function_proto.clone());
         }
         obj.props().lock().insert(
             PropertyKey::from("prototype"),
-            const_prop(vm.function_proto.clone()),
+            const_prop(realm_function_proto.clone()),
         );
+    });
+    vm.heap.with_obj(realm_function_proto_idx.0, |obj| {
+        let props = obj.props();
+        let mut props = props.lock();
+        props.insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(function_ctor_idx)),
+        );
+        let mut has_instance_desc = PropertyDescriptor::data(Value::Object(has_instance_fn));
+        has_instance_desc.writable = false;
+        has_instance_desc.enumerable = false;
+        has_instance_desc.configurable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.has_instance),
+            has_instance_desc,
+        );
+        let restricted = PropertyDescriptor {
+            value: Value::Undefined,
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: Some(throw_type_error_fn.clone()),
+            set: Some(throw_type_error_fn),
+            is_accessor: true,
+        };
+        props.insert(PropertyKey::from("caller"), restricted.clone());
+        props.insert(PropertyKey::from("arguments"), restricted);
     });
     define_realm_global(
         vm,
@@ -5639,6 +5710,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let has_instance_fn =
         vm.new_native_function("[Symbol.hasInstance]", function_symbol_has_instance, 1)?;
     let throw_type_error_fn = throw_type_error_intrinsic(vm, vm.global)?;
+    vm.realm_function_prototypes
+        .insert(vm.global.0, Value::Object(function_proto_idx));
     install_methods(
         vm,
         &Value::Object(function_proto_idx),

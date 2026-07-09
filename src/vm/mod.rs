@@ -87,6 +87,10 @@ pub struct Vm {
     /// Realm global environment index -> that Realm's intrinsic
     /// `%ThrowTypeError%` function object.
     pub(crate) realm_throw_type_errors: HashMap<usize, Value>,
+    /// Realm global environment index -> that Realm's intrinsic
+    /// `%Function.prototype%` object. Dynamic `Function(...)` calls use this
+    /// when there is no explicit `new.target` prototype.
+    pub(crate) realm_function_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + native error constructor name -> that
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
@@ -277,7 +281,7 @@ impl Vm {
         }
     }
 
-    fn append_compiled_functions(
+    pub(crate) fn append_compiled_functions(
         &mut self,
         mut chunk: Chunk,
         funcs: Vec<Arc<crate::function::FunctionDef>>,
@@ -369,6 +373,7 @@ impl Vm {
             global_constants: Vec::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
+            realm_function_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
             functions: Vec::new(),
             fuel: None,

@@ -521,6 +521,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Realm-local thrower for `callee`, while `$262.createRealm()` receives a
   distinct intrinsic. The focused `built-ins/ThrowTypeError` run improves from
   **8 pass / 6 fail / 0 skip** to **14 pass / 0 fail / 0 skip**.
+- **`%ThrowTypeError%` identity through dynamic functions** —
+  Dynamic `Function` bodies now register nested function expressions into the
+  VM function table before execution, so IIFEs inside `new Function(...)`
+  close over and call the intended function instead of an unrelated existing
+  function slot. This also canonicalizes strict arguments'
+  `%ThrowTypeError%` accessor to the Realm global environment and gives
+  `$262.createRealm()` a Realm-local `Function.prototype` for dynamic
+  functions' `[[Prototype]]`, bringing
+  `built-ins/Function/prototype/caller built-ins/Function/prototype/arguments`
+  from **0 pass / 2 fail / 0 skip** to **2 pass / 0 fail / 0 skip**.
 - **`Error.isError` static method** —
   `Error.isError(value)` is now installed as a non-constructable unary builtin.
   It accepts real Error/NativeError objects, Error subclasses, and

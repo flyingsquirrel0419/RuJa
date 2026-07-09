@@ -413,6 +413,8 @@ fn dynamic_function_constructor(
     };
     let mut compiler = crate::compiler::Compiler::new();
     let (chunk, param_slots) = compiler.compile_function(&f)?;
+    let chunk = vm.append_compiled_functions(chunk, compiler.take_functions());
+    let function_realm = vm.native_callee_closure().unwrap_or(vm.global);
     let fdef = std::sync::Arc::new(crate::function::FunctionDef {
         name: Some(Arc::from("anonymous")),
         params: f.params.clone(),
@@ -429,7 +431,6 @@ fn dynamic_function_constructor(
         has_name_binding: false,
         is_derived: false,
     });
-    let function_realm = vm.native_callee_closure().unwrap_or(vm.global);
     vm.functions.push(fdef.clone());
     let func_idx = vm.functions.len() - 1;
     // Create the function object with a fresh prototype.
@@ -450,7 +451,11 @@ fn dynamic_function_constructor(
         if is_generator && matches!(vm.generator_function_proto, Value::Object(_)) {
             vm.generator_function_proto.clone()
         } else {
-            vm.function_proto.clone()
+            let realm = crate::environment::global_env_root(&vm.heap, function_realm);
+            vm.realm_function_prototypes
+                .get(&realm.0)
+                .cloned()
+                .unwrap_or_else(|| vm.function_proto.clone())
         };
     let function_object_proto = if let Some(proto) = vm.current_native_new_target_prototype.clone()
     {

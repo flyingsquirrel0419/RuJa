@@ -256,6 +256,10 @@ impl Compiler {
         Ok((chunk, funcs))
     }
 
+    pub fn take_functions(&mut self) -> Vec<Arc<crate::function::FunctionDef>> {
+        std::mem::take(&mut self.funcs)
+    }
+
     fn push_scope_with_runtime(&mut self, is_function: bool, has_runtime_env: bool) {
         let base = self
             .scopes

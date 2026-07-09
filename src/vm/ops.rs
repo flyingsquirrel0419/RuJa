@@ -3291,6 +3291,15 @@ impl Vm {
             } else {
                 env_idx
             };
+            let function_object_proto = if is_generator {
+                self.generator_function_proto.clone()
+            } else {
+                let realm = crate::environment::global_env_root(&self.heap, env_idx);
+                self.realm_function_prototypes
+                    .get(&realm.0)
+                    .cloned()
+                    .unwrap_or_else(|| self.function_proto.clone())
+            };
             let lexical_new_target = if is_arrow {
                 self.frames
                     .last()
@@ -3310,20 +3319,10 @@ impl Vm {
                 } else {
                     None
                 }),
-                proto: Mutex::new(
-                    match if is_generator {
-                        &self.generator_function_proto
-                    } else {
-                        &self.function_proto
-                    } {
-                        Value::Object(_) => Some(if is_generator {
-                            self.generator_function_proto.clone()
-                        } else {
-                            self.function_proto.clone()
-                        }),
-                        _ => None,
-                    },
-                ),
+                proto: Mutex::new(match function_object_proto {
+                    Value::Object(_) => Some(function_object_proto),
+                    _ => None,
+                }),
                 props: Mutex::new(IndexMap::new()),
                 extensible: std::sync::atomic::AtomicBool::new(true),
                 private_fields: Mutex::new(std::collections::HashMap::new()),

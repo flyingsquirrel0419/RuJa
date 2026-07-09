@@ -790,3 +790,20 @@ pub fn function_scope_root(heap: &Heap, env: GcIdx) -> GcIdx {
         }
     }
 }
+
+pub fn global_env_root(heap: &Heap, env: GcIdx) -> GcIdx {
+    let mut cur = env;
+    loop {
+        let parent = heap.with_obj(cur.0, |obj| {
+            if let HeapObj::Environment(e) = obj {
+                *e.parent.lock()
+            } else {
+                None
+            }
+        });
+        match parent {
+            Some(p) => cur = p,
+            None => return cur,
+        }
+    }
+}

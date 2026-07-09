@@ -3615,6 +3615,27 @@ fn throw_type_error_intrinsic_is_reused_for_unmapped_arguments() {
 }
 
 #[test]
+fn throw_type_error_intrinsic_matches_function_prototype_restricted_accessors() {
+    assert_eq!(
+        run(
+            r#"var functionCaller = Object.getOwnPropertyDescriptor(Function.prototype, "caller");
+               var functionArguments = Object.getOwnPropertyDescriptor(Function.prototype, "arguments");
+               function outer() {
+                 return function() { "use strict"; return arguments; }();
+               }
+               var thrower = Object.getOwnPropertyDescriptor(outer(), "callee").get;
+               [
+                 functionCaller.get === functionCaller.set,
+                 functionArguments.get === functionArguments.set,
+                 functionCaller.get === thrower,
+                 functionArguments.get === thrower
+               ].join(":");"#
+        ),
+        Value::String(Arc::from("true:true:true:true"))
+    );
+}
+
+#[test]
 fn throw_type_error_intrinsic_is_distinct_per_test262_realm() {
     assert_eq!(
         run(r#"var other = $262.createRealm().global;
@@ -3626,6 +3647,23 @@ fn throw_type_error_intrinsic_is_distinct_per_test262_realm() {
                var otherThrower2 = Object.getOwnPropertyDescriptor(otherArgs2, "callee").get;
                (localThrower !== otherThrower) + ":" + (otherThrower === otherThrower2);"#),
         Value::String(Arc::from("true:true"))
+    );
+}
+
+#[test]
+fn throw_type_error_intrinsic_matches_cross_realm_function_prototype() {
+    assert_eq!(
+        run(r#"var other = $262.createRealm().global;
+               var protoThrower = Object.getOwnPropertyDescriptor(other.Function.prototype, "caller").get;
+               var argsThrower = new other.Function('return (function() { "use strict"; return Object.getOwnPropertyDescriptor(arguments, "callee").get })()')();
+               var normalFunction = other.Function('return function nested() { return 1; }')();
+               [
+                 protoThrower === Object.getOwnPropertyDescriptor(other.Function.prototype, "arguments").set,
+                 protoThrower === argsThrower,
+                 Object.getPrototypeOf(normalFunction) === other.Function.prototype,
+                 protoThrower !== Object.getOwnPropertyDescriptor(Function.prototype, "caller").get
+               ].join(":");"#),
+        Value::String(Arc::from("true:true:true:true"))
     );
 }
 

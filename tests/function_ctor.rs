@@ -80,6 +80,26 @@ fn function_ctor_defines_own_name_and_length_descriptors() {
 }
 
 #[test]
+fn function_ctor_registers_nested_function_expressions() {
+    assert_eq!(
+        run(r#"new Function('return (function() { return 1; })()')();"#),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run(r#"function Test262Error(message) {
+                 if (!(this instanceof Test262Error)) return new Test262Error(message);
+                 this.message = message || "";
+               }
+               var thrower = new Function('return (function() { "use strict"; return Object.getOwnPropertyDescriptor(arguments, "callee").get })()')();
+               [
+                 typeof thrower,
+                 thrower === Object.getOwnPropertyDescriptor(Function.prototype, "caller").get
+               ].join(":");"#),
+        Value::String(Arc::from("function:true"))
+    );
+}
+
+#[test]
 fn function_subclass_instances_use_new_target_prototype() {
     let src = r#"
         class Subclass extends Function {}

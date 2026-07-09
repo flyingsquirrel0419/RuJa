@@ -2383,6 +2383,9 @@ impl Vm {
         for v in self.realm_throw_type_errors.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_function_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
         roots.extend_from_slice(&self.gc_pins);
         roots
