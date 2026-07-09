@@ -595,6 +595,10 @@ fn for_of_assignment_destructure() {
         run("var yield = 3, x; for ([{x = yield}] of [[{}]]) {} x;"),
         Value::Number(3.0)
     );
+    assert_eq!(
+        run("var x, prop, elem; for ([x = 'x' in {}] of [[]]) {} for ({ prop = 'x' in {}, key: elem = 'x' in {} } of [{key: undefined}]) {} [x, prop, elem].join(':');"),
+        Value::String(Arc::from("false:false:false"))
+    );
 }
 
 #[test]

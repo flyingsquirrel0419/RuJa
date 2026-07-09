@@ -2890,6 +2890,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `destructuring-binding` skip lifted for diagnostics,
   `language/statements/for-of/dstr` improves to **433 pass / 16 fail / 120
   skip** while the default supported subset remains green.
+- **For-of assignment-pattern `in` initializers** — non-declaration `for-of`
+  heads now distinguish a top-level `of` delimiter before parsing the left
+  side, allowing `in` expressions inside array, shorthand object, and renamed
+  object default initializers such as `for ([x = "x" in obj] of values)`.
+  With only the `destructuring-binding` skip lifted for diagnostics,
+  `language/statements/for-of/dstr` improves to **436 pass / 13 fail / 120
+  skip** while the default supported subset remains green.
 
 ## Why the full-suite rate is not higher
 

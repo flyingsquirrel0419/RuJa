@@ -1629,7 +1629,8 @@ impl Parser {
                     "async cannot be the for-of left-hand side".to_string(),
                 ));
             }
-            self.no_in = true;
+            let allow_in_in_lhs = self.has_top_level_for_of_delimiter();
+            self.no_in = !allow_in_in_lhs;
             let lhs_start = self.pos;
             let e = self.with_deferred_object_proto_duplicate_check(|p| p.parse_assign())?;
             self.no_in = false;
@@ -1730,6 +1731,32 @@ impl Parser {
     fn is_raw_of_at(&self, offset: usize) -> bool {
         let tok = self.peek_at_tok(offset);
         matches!(tok.kind, TokenKind::Of) && !tok.had_escape
+    }
+
+    fn has_top_level_for_of_delimiter(&self) -> bool {
+        let mut depth = 0usize;
+        let mut offset = 0usize;
+        loop {
+            let tok = self.peek_at_tok(offset);
+            match &tok.kind {
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                TokenKind::RBracket | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1);
+                }
+                TokenKind::Eof => return false,
+                TokenKind::Semicolon if depth == 0 => return false,
+                TokenKind::In if depth == 0 => return false,
+                TokenKind::Of if depth == 0 && offset > 0 && !tok.had_escape => return true,
+                _ => {}
+            }
+            offset += 1;
+        }
     }
 
     fn parse_var_decl_no_semi(&mut self) -> error::Result<Stmt> {
@@ -6468,6 +6495,11 @@ mod tests {
         assert!(Parser::parse("for ([...x] of []) {}").is_ok());
         assert!(Parser::parse("for ({ x = 1 } of [{}]) {}").is_ok());
         assert!(Parser::parse("for ({ fn = function() {} } of [{}]) {}").is_ok());
+        assert!(Parser::parse("for ([x = 'x' in {}] of [[]]) {}").is_ok());
+        assert!(Parser::parse("for ({ x = 'x' in {} } of [{}]) {}").is_ok());
+        assert!(Parser::parse("for ({ p: x = 'x' in {} } of [{}]) {}").is_ok());
+        assert!(Parser::parse("for (of; ; ) {}").is_ok());
+        assert!(Parser::parse("for (of in {}) {}").is_ok());
         assert!(Parser::parse("for ({ x = 1 }; ; ) {}").is_err());
         assert!(Parser::parse("for ({ __proto__: null, __proto__: null }; ; ) {}").is_err());
     }

@@ -99,6 +99,13 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   `destructuring-binding` skip lifted for diagnostics,
   `language/statements/for-of/dstr` improves to **433 pass / 16 fail / 120
   skip** while the default supported subset remains green.
+- **For-of assignment-pattern `in` initializers**: non-declaration `for-of`
+  heads now distinguish a top-level `of` delimiter before parsing the left
+  side, allowing `in` expressions inside array, shorthand object, and renamed
+  object default initializers such as `for ([x = "x" in obj] of values)`.
+  With only the `destructuring-binding` skip lifted for diagnostics,
+  `language/statements/for-of/dstr` improves to **436 pass / 13 fail / 120
+  skip** while the default supported subset remains green.
 - **Property Reference records for simple member assignment**: ordinary member
   assignment now lowers final writes through an explicit property Reference
   while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates
