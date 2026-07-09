@@ -2851,6 +2851,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `destructuring-binding` skip lifted for diagnostics, the focused
   `language/expressions/assignment/dstr` run improves to **254 pass / 6 fail /
   108 skip** while the default supported subset remains green.
+- **Object shorthand destructuring default function names** — object assignment
+  shorthand defaults such as `{ fn = function() {} } = source` now apply
+  `SetFunctionName` when the default initializer is an anonymous function,
+  arrow function, class, or parenthesized anonymous function. With only the
+  `destructuring-binding` skip lifted for diagnostics, the focused
+  `language/expressions/assignment/dstr` run improves to **258 pass / 2 fail /
+  108 skip** while the default supported subset remains green.
 
 ## Why the full-suite rate is not higher
 

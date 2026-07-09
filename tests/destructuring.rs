@@ -447,6 +447,42 @@ fn object_assignment_shorthand_defaults() {
 }
 
 #[test]
+fn object_assignment_shorthand_default_infers_function_names() {
+    assert_eq!(
+        run("var arrow; var vals={}; result = {arrow = () => {}} = vals; arrow.name;"),
+        Value::String(Arc::from("arrow"))
+    );
+    assert_eq!(
+        run("var fn; var vals={}; result = {fn = function() {}} = vals; fn.name;"),
+        Value::String(Arc::from("fn"))
+    );
+    assert_eq!(
+        run("var cls; var vals={}; result = {cls = class {}} = vals; cls.name;"),
+        Value::String(Arc::from("cls"))
+    );
+    assert_eq!(
+        run("var cover; var vals={}; result = {cover = (function() {})} = vals; cover.name;"),
+        Value::String(Arc::from("cover"))
+    );
+}
+
+#[test]
+fn object_assignment_shorthand_default_keeps_existing_function_names() {
+    assert_eq!(
+        run("var xFn; var vals={}; result = {xFn = function x() {}} = vals; xFn.name;"),
+        Value::String(Arc::from("x"))
+    );
+    assert_eq!(
+        run("var xCover; var vals={}; result = {xCover = (0, function() {})} = vals; xCover.name;"),
+        Value::String(Arc::from(""))
+    );
+    assert_eq!(
+        run("var xCls; var vals={}; result = {xCls = class { static name() {} }} = vals; typeof xCls.name;"),
+        Value::String(Arc::from("function"))
+    );
+}
+
+#[test]
 fn object_literal_rejects_assignment_shorthand_defaults() {
     assert!(run_err("var x = 0; ({x = 1});").contains("SyntaxError"));
     assert!(run_err("var x = 0; var o = {x = 1};").contains("SyntaxError"));

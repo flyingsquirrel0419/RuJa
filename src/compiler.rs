@@ -2333,6 +2333,13 @@ impl Compiler {
                 self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
                 self.compile_expr(default)?;
+                if Self::is_anonymous_function_definition(default) {
+                    if let Expr::Ident(name) = left.as_ref() {
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk
+                            .emit(Op::SetFunctionNameConst(name_idx), self.current_line);
+                    }
+                }
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#arr-assign-value");
