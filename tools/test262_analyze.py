@@ -161,8 +161,12 @@ WITH_STATEMENT_PREFIXES = (
 )
 
 WITH_STATEMENT_FEATURES = {
+    "async-functions",
+    "async-iteration",
+    "generators",
     "Proxy",
     "Reflect",
+    "TypedArray",
 }
 
 def parse_meta(src):

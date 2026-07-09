@@ -354,14 +354,16 @@ language/expressions/logical-assignment language/expressions/update
 language/statements/with` remained **835 pass / 0 fail / 363 skip** before the
 subsequent `with` Proxy/Reflect admission.
 
-Focused `with` Proxy/Reflect admission local check:
-`language/statements/with` now admits Proxy/Reflect-tagged tests for object
-environment binding resolution without opening broader Proxy/Reflect coverage.
-The path reports **176 pass / 0 fail / 5 skip**, and the broader
-Reference-adjacent cluster
+Focused `with` runner admission local check:
+`language/statements/with` now admits all implemented object-environment
+binding coverage without opening Proxy, Reflect, TypedArray, generator, async
+function, or async-iteration coverage outside that path. This includes
+TypedArray prototype-chain binding deletion and async/generator declaration
+parse-negative files. The path reports **181 pass / 0 fail / 0 skip**. The
+broader Reference-adjacent cluster
 `language/expressions/assignment language/expressions/compound-assignment
 language/expressions/logical-assignment language/expressions/update
-language/statements/with` rises to **842 pass / 0 fail / 356 skip**.
+language/statements/with` now reports **847 pass / 0 fail / 351 skip**.
 
 Focused for-of iterator protocol local check:
 `language/statements/for-of` now reports **113 pass / 0 fail / 638 skip**

@@ -35,8 +35,9 @@
   Error stack accessor, Proxy, Reflect, and `Reflect.construct` feature gates
   needed by that path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
-  implemented `language/statements/with/` Proxy/Reflect coverage by lifting only
-  those feature gates on the `with` statement path.
+  implemented `language/statements/with/` coverage by lifting only Proxy,
+  Reflect, TypedArray, generator, async function, and async iteration gates on
+  the `with` statement path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -61,14 +62,13 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5106 pass / 0 fail / 15332 skip / 0 timeout**.
+Current supported subset count: **5111 pass / 0 fail / 15327 skip / 0 timeout**.
 
-- **`with` Proxy/Reflect runner admission**: the
-  `language/statements/with/` path exception now admits already-implemented
-  Proxy/Reflect object-environment binding coverage without unskipping broader
-  Proxy/Reflect tests. The `with` path reports **176 pass / 0 fail / 5 skip**,
-  and the broader Reference-adjacent cluster reports **842 pass / 0 fail / 356
-  skip**.
+- **`with` runner admission**: the `language/statements/with/` path exception
+  now admits the remaining implemented object-environment coverage, including
+  TypedArray prototype-chain binding deletion and async/generator declaration
+  parse-negative files, without unskipping those features more broadly. The
+  `with` path now closes at **181 pass / 0 fail / 0 skip**.
 - **Error `cause` semantics**: `Error` and NativeError constructors now perform
   observable `HasProperty(options, "cause")` followed by `Get`, after installing
   the message property. `AggregateError` now uses its `(errors, message,
