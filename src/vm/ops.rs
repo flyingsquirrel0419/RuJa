@@ -21,6 +21,60 @@ impl Vm {
         format!("#private_name:{}", name)
     }
 
+    fn function_name_from_property_key(
+        &self,
+        key: &crate::value::PropertyKey,
+        prefix: Option<&str>,
+    ) -> Arc<str> {
+        let base = match key {
+            crate::value::PropertyKey::Str(name) => name.to_string(),
+            crate::value::PropertyKey::Symbol(id) => self
+                .symbol_descriptions
+                .get(id)
+                .and_then(|description| description.as_ref())
+                .map(|description| format!("[{}]", description))
+                .unwrap_or_default(),
+        };
+        match prefix {
+            Some(prefix) => Arc::from(format!("{}{}", prefix, base).as_str()),
+            None => Arc::from(base.as_str()),
+        }
+    }
+
+    fn set_empty_function_name_from_property_key(
+        &self,
+        value: &Value,
+        key: &crate::value::PropertyKey,
+        prefix: Option<&str>,
+    ) {
+        let Value::Object(idx) = value else {
+            return;
+        };
+        let name = self.function_name_from_property_key(key, prefix);
+        self.heap.with_obj(idx.0, |obj| {
+            let HeapObj::Function(function) = obj else {
+                return;
+            };
+            let mut props = function.props.lock();
+            let Some(desc) = props.get_mut(&crate::value::PropertyKey::from("name")) else {
+                return;
+            };
+            if desc.is_accessor {
+                return;
+            }
+            if matches!(&desc.value, Value::String(current) if current.is_empty()) {
+                desc.value = Value::String(name);
+            }
+        });
+    }
+
+    fn property_key_from_value(&mut self, key: &Value) -> error::Result<crate::value::PropertyKey> {
+        Ok(match key {
+            Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
+            _ => crate::value::PropertyKey::from(self.to_property_key(key)?),
+        })
+    }
+
     fn private_slot_key_from_name(
         &self,
         name_idx: usize,
@@ -1552,20 +1606,29 @@ impl Vm {
                     }
                     self.stack.push(new_obj);
                 }
+                Op::SetFunctionNameFromKey(prefix_kind) => {
+                    let Some(value) = self.stack.last().cloned() else {
+                        continue;
+                    };
+                    let Some(key) = self.stack.get(self.stack.len().saturating_sub(2)).cloned()
+                    else {
+                        continue;
+                    };
+                    let pkey = self.property_key_from_value(&key)?;
+                    let prefix = match prefix_kind {
+                        1 => Some("get "),
+                        2 => Some("set "),
+                        _ => None,
+                    };
+                    self.set_empty_function_name_from_property_key(&value, &pkey, prefix);
+                }
                 Op::DefineAccessor(kind) => {
                     // stack: [obj, key, fn]; define getter(0) or setter(1).
                     let func = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_val = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
-                        let pkey = match &key_val {
-                            Value::String(s) => crate::value::PropertyKey::Str(s.clone()),
-                            Value::Number(n) => crate::value::PropertyKey::Str(Arc::from(
-                                crate::value::num_to_string(*n).as_str(),
-                            )),
-                            Value::Symbol(s) => crate::value::PropertyKey::Symbol(*s),
-                            _ => crate::value::PropertyKey::Str(Arc::from("undefined")),
-                        };
+                        let pkey = self.property_key_from_value(&key_val)?;
                         self.heap.with_obj(idx.0, |o| {
                             let props = o.props();
                             let mut props = props.lock();
@@ -1597,14 +1660,7 @@ impl Vm {
                     let key_val = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     if let Value::Object(idx) = &obj {
-                        let pkey = match &key_val {
-                            Value::String(s) => crate::value::PropertyKey::Str(s.clone()),
-                            Value::Number(n) => crate::value::PropertyKey::Str(Arc::from(
-                                crate::value::num_to_string(*n).as_str(),
-                            )),
-                            Value::Symbol(s) => crate::value::PropertyKey::Symbol(*s),
-                            _ => crate::value::PropertyKey::Str(Arc::from("undefined")),
-                        };
+                        let pkey = self.property_key_from_value(&key_val)?;
                         let current = self
                             .heap
                             .with_obj(idx.0, |o| o.props().lock().get(&pkey).cloned());

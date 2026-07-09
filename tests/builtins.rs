@@ -586,6 +586,48 @@ fn disposal_well_known_symbols_are_exposed() {
 }
 
 #[test]
+fn symbol_property_keys_drive_function_name_inference() {
+    assert_eq!(
+        run(r#"
+            var method = Symbol("method");
+            var fn = Symbol("fn");
+            var cls = Symbol("cls");
+            var getter = Symbol();
+            var setter = Symbol();
+            var o = {
+              [method]() {},
+              [fn]: function() {},
+              [cls]: class {},
+              get [getter]() { return 1; },
+              set [setter](v) {}
+            };
+            var cover = { x: (0, function() {}) };
+            class C {
+              [method]() {}
+              get [fn]() { return 1; }
+              set [getter](v) {}
+              static [cls]() {}
+            }
+            [
+              o[method].name,
+              o[fn].name,
+              o[cls].name,
+              Object.getOwnPropertyDescriptor(o, getter).get.name,
+              Object.getOwnPropertyDescriptor(o, setter).set.name,
+              cover.x.name,
+              C.prototype[method].name,
+              Object.getOwnPropertyDescriptor(C.prototype, fn).get.name,
+              Object.getOwnPropertyDescriptor(C.prototype, getter).set.name,
+              C[cls].name
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "[method]|[fn]|[cls]|get |set ||[method]|get [fn]|set |[cls]"
+        ))
+    );
+}
+
+#[test]
 fn symbol_description_and_key_for_follow_registry_semantics() {
     assert_eq!(
         run("typeof Symbol.prototype.toString + ':' + Object.getOwnPropertyDescriptor(Symbol, 'prototype').writable;"),

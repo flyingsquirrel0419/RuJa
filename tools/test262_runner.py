@@ -46,6 +46,12 @@ EXPLICIT_RESOURCE_MANAGEMENT_SYMBOL_PREFIXES = (
     "built-ins/Symbol/dispose/",
 )
 
+SYMBOL_FUNCTION_NAME_PREFIXES = (
+    "language/expressions/object/fn-name-",
+    "language/expressions/object/method-definition/fn-name-",
+    "language/statements/class/definition/fn-name-",
+)
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -79,10 +85,20 @@ def explicit_resource_management_symbols_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(EXPLICIT_RESOURCE_MANAGEMENT_SYMBOL_PREFIXES)
 
+def symbol_function_name_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(SYMBOL_FUNCTION_NAME_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
+    if path is not None and symbol_function_name_path(path):
+        feats.discard("Symbol")
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

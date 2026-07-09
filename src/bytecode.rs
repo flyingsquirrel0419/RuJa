@@ -158,12 +158,17 @@ pub enum Op {
 
     // Objects/arrays
     NewObject,
-    NewArray(usize),         // count of elements already on stack
-    ArrayPush,               // pop [value, array]; append value to the array's items
-    ArrayHolePush,           // pop [array]; append an absent dense slot
-    SpreadPush,              // pop [iterable, array]; spread iterable's values into the array
-    ObjSpread,               // pop [src, dest]; copy src's enumerable own props into dest
-    ObjRest(usize),          // pop [src, k1..kN]; new obj with src's own enum props except k1..kN
+    NewArray(usize), // count of elements already on stack
+    ArrayPush,       // pop [value, array]; append value to the array's items
+    ArrayHolePush,   // pop [array]; append an absent dense slot
+    SpreadPush,      // pop [iterable, array]; spread iterable's values into the array
+    ObjSpread,       // pop [src, dest]; copy src's enumerable own props into dest
+    /// Pop `[src, k1..kN]`; create object with source enumerable own props
+    /// except the excluded keys.
+    ObjRest(usize),
+    /// Peek `[.., key, fn]` and apply SetFunctionName. Prefix: 0 none, 1 get,
+    /// 2 set.
+    SetFunctionNameFromKey(u8),
     DefineAccessor(u8),      // pop [fn, key, obj]; define getter(0)/setter(1)
     DefineClassAccessor(u8), // same but enumerable=false (for class methods)
     GetProp,

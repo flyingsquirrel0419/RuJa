@@ -104,6 +104,22 @@ impl Compiler {
         }
     }
 
+    fn public_method_function_name(name: &Arc<str>, kind: PropKind) -> Arc<str> {
+        match kind {
+            PropKind::Get => Arc::from(format!("get {}", name).as_str()),
+            PropKind::Set => Arc::from(format!("set {}", name).as_str()),
+            _ => name.clone(),
+        }
+    }
+
+    fn is_anonymous_function_definition(expr: &Expr) -> bool {
+        match expr {
+            Expr::Function(function) | Expr::Arrow(function) => function.name.is_none(),
+            Expr::Class(class) => class.name.is_none() && class.inferred_name.is_none(),
+            _ => false,
+        }
+    }
+
     pub fn new() -> Self {
         Compiler {
             chunk: Chunk::new(),
@@ -2885,6 +2901,11 @@ impl Compiler {
                             PropertyKey::Spread(_) => unreachable!(),
                         }
                         self.compile_expr(&p.value)?; // [obj, obj, key, fn]
+                        if matches!(p.key, PropertyKey::Computed(_)) {
+                            let prefix = if kind == 0 { 1 } else { 2 };
+                            self.chunk
+                                .emit(Op::SetFunctionNameFromKey(prefix), self.current_line);
+                        }
                         self.chunk.emit(Op::DefineAccessor(kind), self.current_line); // [obj, obj]
                         self.chunk.emit(Op::Pop, self.current_line); // [obj]
                         continue;
@@ -2898,6 +2919,10 @@ impl Compiler {
                             self.compile_expr(e)?;
                             self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             self.compile_expr(&p.value)?;
+                            if Self::is_anonymous_function_definition(&p.value) {
+                                self.chunk
+                                    .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                            }
                             self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::Ident(s) => {
@@ -2909,6 +2934,10 @@ impl Compiler {
                             let key_idx = self.chunk.add_constant(Value::String(s.clone()));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
+                            if Self::is_anonymous_function_definition(&p.value) {
+                                self.chunk
+                                    .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                            }
                             self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::String(s) => {
@@ -2920,6 +2949,10 @@ impl Compiler {
                             let key_idx = self.chunk.add_constant(Value::String(s.clone()));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
+                            if Self::is_anonymous_function_definition(&p.value) {
+                                self.chunk
+                                    .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                            }
                             self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::Number(n) => {
@@ -2929,6 +2962,10 @@ impl Compiler {
                                 .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                             self.compile_expr(&p.value)?;
+                            if Self::is_anonymous_function_definition(&p.value) {
+                                self.chunk
+                                    .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                            }
                             self.chunk.emit(Op::DefineDataProperty, self.current_line);
                         }
                         PropertyKey::Spread(_) => unreachable!("spread handled above"),
@@ -3920,8 +3957,14 @@ impl Compiler {
                     if method.is_private {
                         continue;
                     }
+                    let computed_method = method.computed_name.is_some();
+                    let method_function_name = if computed_method {
+                        None
+                    } else {
+                        Some(Self::public_method_function_name(&method.name, method.kind))
+                    };
                     let m_fn = FunctionExpr {
-                        name: Some(method.name.clone()),
+                        name: method_function_name.clone(),
                         params: method.params.clone(),
                         param_defaults: method.param_defaults.clone(),
                         rest_param: method.rest_param.clone(),
@@ -3937,7 +3980,7 @@ impl Compiler {
                     let (m_chunk, m_slots) = self.compile_function(&m_fn)?;
                     let m_idx = self.funcs.len();
                     let mdef = crate::function::FunctionDef {
-                        name: Some(method.name.clone()),
+                        name: method_function_name,
                         params: method.params.clone(),
                         param_slots: m_slots,
                         rest_param: method.rest_param.clone(),
@@ -3984,6 +4027,8 @@ impl Compiler {
                                 .emit(Op::LoadEnv(static_super_idx), self.current_line);
                             self.emit_make_closure_capturing_super_from_stack(m_idx);
                             self.chunk
+                                .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
+                            self.chunk
                                 .emit(Op::DefineClassAccessor(akind), self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor, ctor]
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor]
@@ -4012,6 +4057,8 @@ impl Compiler {
                                 .emit(Op::LoadEnv(instance_super_idx), self.current_line);
                             self.emit_make_closure_capturing_super_from_stack(m_idx);
                             self.chunk
+                                .emit(Op::SetFunctionNameFromKey(akind + 1), self.current_line);
+                            self.chunk
                                 .emit(Op::DefineClassAccessor(akind), self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor, proto]
                             self.chunk.emit(Op::Pop, self.current_line); // [ctor]
@@ -4034,6 +4081,10 @@ impl Compiler {
                         self.chunk
                             .emit(Op::LoadEnv(static_super_idx), self.current_line);
                         self.emit_make_closure_capturing_super_from_stack(m_idx);
+                        if method.computed_name.is_some() {
+                            self.chunk
+                                .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                        }
                         self.chunk.emit(Op::DefineMethod, self.current_line);
                         self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     } else {
@@ -4059,6 +4110,10 @@ impl Compiler {
                         self.chunk
                             .emit(Op::LoadEnv(instance_super_idx), self.current_line);
                         self.emit_make_closure_capturing_super_from_stack(m_idx);
+                        if method.computed_name.is_some() {
+                            self.chunk
+                                .emit(Op::SetFunctionNameFromKey(0), self.current_line);
+                        }
                         self.chunk.emit(Op::DefineMethod, self.current_line);
                         self.chunk.emit(Op::Pop, self.current_line); // [ctor]
                     }

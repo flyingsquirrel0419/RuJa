@@ -12,6 +12,9 @@
   `onlyStrict` tests and indented `negative:` metadata, so strict-mode and
   parse-negative test262 files are no longer reported as false failure
   buckets during focused analysis.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  Symbol-key function-name inference tests without unskipping broader Symbol
+  iterator coverage, keeping the unsupported-feature boundary narrow.
 
 ### Runtime hardening
 
@@ -22,8 +25,15 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5060 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5070 pass / 0 fail / 0 timeout**.
 
+- **Symbol-key `SetFunctionName`**: object literal methods, anonymous
+  function/arrow/class property values, and public class methods/accessors now
+  infer function `name` properties from runtime Symbol property keys, using
+  `[description]` formatting and `get ` / `set ` prefixes while preserving the
+  cover-expression exception for `(0, function() {})`. The focused Symbol
+  function-name cluster now runs at **10 pass / 0 fail / 5 skip**, and the
+  supported subset increases to **5070 pass / 0 fail / 0 timeout**.
 - **Disposal well-known Symbols**: `Symbol.dispose` and
   `Symbol.asyncDispose` are now exposed as shared well-known Symbols with
   spec-shaped static property descriptors and no global-registry keys.
