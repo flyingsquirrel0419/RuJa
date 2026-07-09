@@ -3689,6 +3689,26 @@ impl Compiler {
                         // Private methods are stored as private fields whose
                         // value is a function expression, so `this.#m()`
                         // resolves via PrivateGet like a field.
+                        let public_field_stmts: Vec<Stmt> = cls
+                            .public_fields
+                            .iter()
+                            .filter(|field| !field.is_static)
+                            .map(|field| {
+                                let init = field
+                                    .init
+                                    .clone()
+                                    .unwrap_or_else(|| Box::new(Expr::Undefined));
+                                Stmt {
+                                    line: 0,
+                                    node: StmtNode::ExprStmt(Expr::PublicFieldInit {
+                                        object: Box::new(Expr::This),
+                                        name: field.name.clone(),
+                                        computed_name: field.computed_name.clone(),
+                                        value: init,
+                                    }),
+                                }
+                            })
+                            .collect();
                         let pm_fields: Vec<crate::ast::PrivateFieldDecl> = cls
                             .methods
                             .iter()
@@ -3776,7 +3796,8 @@ impl Compiler {
                                 }
                             })
                             .collect();
-                        let mut init_stmts = pf_stmts;
+                        let mut init_stmts = public_field_stmts;
+                        init_stmts.extend(pf_stmts);
                         init_stmts.extend(private_accessors);
                         if cls.superclass.is_some() {
                             let mut combined = Vec::new();
@@ -4137,6 +4158,23 @@ impl Compiler {
                     self.chunk
                         .emit(Op::InitEnvConst(name_idx), self.current_line); // [ctor]
                 }
+                for field in cls.public_fields.iter().filter(|field| field.is_static) {
+                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                    if let Some(computed_name) = &field.computed_name {
+                        self.compile_expr(computed_name)?;
+                        self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                    } else {
+                        let key_idx = self.chunk.add_constant(Value::String(field.name.clone()));
+                        self.chunk.emit(Op::Const(key_idx), self.current_line);
+                    }
+                    let init = field
+                        .init
+                        .clone()
+                        .unwrap_or_else(|| Box::new(Expr::Undefined));
+                    self.compile_expr(&init)?;
+                    self.chunk.emit(Op::DefineDataProperty, self.current_line);
+                    self.chunk.emit(Op::Pop, self.current_line); // [ctor]
+                }
                 for pf in cls.private_fields.iter().filter(|pf| pf.is_static) {
                     self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
                     let init = pf.init.clone().unwrap_or_else(|| Box::new(Expr::Undefined));
@@ -4303,6 +4341,23 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+            }
+            Expr::PublicFieldInit {
+                object,
+                name,
+                computed_name,
+                value,
+            } => {
+                self.compile_expr(object)?;
+                if let Some(computed_name) = computed_name {
+                    self.compile_expr(computed_name)?;
+                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                } else {
+                    let key_idx = self.chunk.add_constant(Value::String(name.clone()));
+                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                }
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::DefineDataProperty, self.current_line);
             }
             Expr::Sequence(exprs) => {
                 for (i, e) in exprs.iter().enumerate() {

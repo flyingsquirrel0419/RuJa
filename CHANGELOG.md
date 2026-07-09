@@ -41,6 +41,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Public class fields baseline**: class bodies now parse public instance and
+  static field declarations, including computed names and `static`/`get`/`set`/
+  `async` names that are fields rather than method prefixes. Field
+  initialization uses `DefineDataProperty`, so inherited setters are not
+  invoked and uninitialized fields become own `undefined` data properties. With
+  public class field skips temporarily lifted, the focused
+  `language/{statements,expressions}/class/elements` diagnostic now reports
+  **309 pass / 113 fail / 2540 skip**. The default supported subset remains
+  **5099 pass / 0 fail / 0 timeout** because full public-field coverage is
+  still gated behind direct-eval, computed-name ordering, and static
+  initializer follow-ups.
 - **DataView prototype and constructor ordering**: `DataView.prototype` now
   exposes spec-shaped `@@toStringTag`, `Reflect.construct(DataView, ...)`
   validates invalid byte offsets before reading `newTarget.prototype`, and

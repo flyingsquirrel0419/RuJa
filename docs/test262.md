@@ -125,6 +125,18 @@ latest full baseline documentation check: `test262-full` 28937391393 on
 Latest improvement confirmation: `test262-full` 28962802017 on `6d6328e`.
 Latest improvement confirmation: `test262-full` 28964634961 on `05173b6`.
 
+Focused public class fields local check:
+`language/{statements,expressions}/class/elements` now parses public instance
+and static fields, including computed names and field names such as `static`,
+`get`, `set`, and `async` that are not method prefixes. Public field
+initializers define own data properties instead of invoking inherited setters,
+and fields without initializers are created with `undefined`. With
+`class-fields-public` and `class-static-fields-public` temporarily lifted, the
+focused diagnostic reports **309 pass / 113 fail / 2540 skip**. The default
+supported subset remains **5099 pass / 0 fail / 15339 skip** because full
+public-field coverage still needs direct-eval, computed-name ordering, and
+static-initializer follow-ups before the runner can lift those features.
+
 Focused ArrayBuffer transfer/immutable local check: `built-ins/ArrayBuffer`
 improves from **57 pass / 34 fail / 130 skip** to **91 pass / 0 fail / 130
 skip** after adding fixed-buffer `transfer`, `transferToFixedLength`,

@@ -14,6 +14,8 @@ pub struct ClassExpr {
     pub static_blocks: Vec<Vec<Stmt>>,
     /// Private instance field declarations: `#name = init`.
     pub private_fields: Vec<PrivateFieldDecl>,
+    /// Public field declarations: `name = init`, `static name = init`, `[key] = init`.
+    pub public_fields: Vec<PublicFieldDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +98,13 @@ pub enum Expr {
         name: Arc<str>,
         init: Option<Box<Expr>>,
     },
+    /// Public field initialization performed by class construction/evaluation.
+    PublicFieldInit {
+        object: Box<Expr>,
+        name: Arc<str>,
+        computed_name: Option<Box<Expr>>,
+        value: Box<Expr>,
+    },
     Unary(UnOp, Box<Expr>),
     Update(UpdateOp, bool, Box<Expr>), // op, prefix, expr
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -134,6 +143,14 @@ pub struct PrivateFieldDecl {
     pub init: Option<Box<Expr>>,
     pub is_static: bool,
     pub kind: PropKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PublicFieldDecl {
+    pub name: Arc<str>,
+    pub computed_name: Option<Box<Expr>>,
+    pub init: Option<Box<Expr>>,
+    pub is_static: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]

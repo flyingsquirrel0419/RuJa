@@ -4297,6 +4297,18 @@ impl Parser {
                 Self::check_static_block_expr(value)
             }
             Expr::PrivateDefineAccessor { object, .. } => Self::check_static_block_expr(object),
+            Expr::PublicFieldInit {
+                object,
+                computed_name,
+                value,
+                ..
+            } => {
+                Self::check_static_block_expr(object)?;
+                if let Some(computed_name) = computed_name {
+                    Self::check_static_block_expr(computed_name)?;
+                }
+                Self::check_static_block_expr(value)
+            }
             Expr::PrivateFieldDecl {
                 init: Some(init), ..
             } => Self::check_static_block_expr(init),
@@ -4329,6 +4341,14 @@ impl Parser {
                 for method in &cls.methods {
                     if let Some(computed_name) = &method.computed_name {
                         Self::check_static_block_expr(computed_name)?;
+                    }
+                }
+                for field in &cls.public_fields {
+                    if let Some(computed_name) = &field.computed_name {
+                        Self::check_static_block_expr(computed_name)?;
+                    }
+                    if let Some(init) = &field.init {
+                        Self::check_static_block_expr(init)?;
                     }
                 }
                 for field in &cls.private_fields {
@@ -4684,6 +4704,18 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expr::PublicFieldInit {
+                object,
+                computed_name,
+                value,
+                ..
+            } => {
+                Self::validate_private_names_expr(object, names)?;
+                if let Some(computed_name) = computed_name {
+                    Self::validate_private_names_expr(computed_name, names)?;
+                }
+                Self::validate_private_names_expr(value, names)
+            }
             Expr::PrivateFieldDecl {
                 name,
                 init: Some(init),
@@ -4769,6 +4801,14 @@ impl Parser {
             }
         }
 
+        for field in &cls.public_fields {
+            if let Some(computed_name) = &field.computed_name {
+                Self::validate_private_names_expr(computed_name, &class_names)?;
+            }
+            if let Some(init) = &field.init {
+                Self::validate_private_names_expr(init, &class_names)?;
+            }
+        }
         for method in &cls.methods {
             if let Some(computed_name) = &method.computed_name {
                 Self::validate_private_names_expr(computed_name, &class_names)?;
@@ -4894,6 +4934,7 @@ impl Parser {
         let mut methods = Vec::new();
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
+        let mut public_fields: Vec<crate::ast::PublicFieldDecl> = Vec::new();
         let mut seen_constructor = false;
         let mut private_bound_names = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
@@ -4910,10 +4951,16 @@ impl Parser {
                 static_blocks.push(block);
                 continue;
             }
-            let is_static = self.check(&TokenKind::Static) && !self.peek_at_tok(0).had_escape && {
-                self.advance();
-                true
-            };
+            let is_static = self.check(&TokenKind::Static)
+                && !self.peek_at_tok(0).had_escape
+                && !matches!(
+                    self.peek_at_tok(1).kind,
+                    TokenKind::Assign | TokenKind::Semicolon | TokenKind::RBrace
+                )
+                && {
+                    self.advance();
+                    true
+                };
             // Private field declaration: #name = init  or  #name;
             // Private method/accessor: #name(params) / get #name() / set #name(v)
             let is_async_token = match self.peek().clone() {
@@ -5105,9 +5152,14 @@ impl Parser {
                 TokenKind::Ident(s)
                     if (s == "get" || s == "set")
                         && !self.tokens[self.pos].had_escape
+                        && !self.peek_at_tok(1).preceded_by_newline
                         && !matches!(
                             self.peek_at_tok(1).kind,
-                            TokenKind::LParen | TokenKind::Assign | TokenKind::Semicolon
+                            TokenKind::LParen
+                                | TokenKind::Assign
+                                | TokenKind::Semicolon
+                                | TokenKind::Star
+                                | TokenKind::RBrace
                         ) =>
                 {
                     (s == "get", s == "set")
@@ -5123,18 +5175,15 @@ impl Parser {
                 && !self.peek_at_tok(1).preceded_by_newline
                 && !matches!(
                     self.peek_at_tok(1).kind,
-                    TokenKind::LParen | TokenKind::Assign | TokenKind::Semicolon
+                    TokenKind::LParen
+                        | TokenKind::Assign
+                        | TokenKind::Semicolon
+                        | TokenKind::RBrace
                 );
             if is_async_method {
                 self.advance();
             }
             let is_generator_method = !is_getter && !is_setter && self.eat(&TokenKind::Star);
-            let is_constructor = !is_getter
-                && !is_setter
-                && !is_async_method
-                && !is_generator_method
-                && !is_static
-                && matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "constructor");
             // Computed method name: [expr]
             let computed_name = if self.check(&TokenKind::LBracket) {
                 self.advance();
@@ -5144,10 +5193,7 @@ impl Parser {
             } else {
                 None
             };
-            let method_name: Arc<str> = if is_constructor {
-                self.advance();
-                Arc::from("constructor")
-            } else if computed_name.is_some() {
+            let method_name: Arc<str> = if computed_name.is_some() {
                 // Placeholder name; the compiler uses computed_name for the actual key.
                 Arc::from("")
             } else {
@@ -5165,6 +5211,39 @@ impl Parser {
                     _ => Arc::from(self.read_property_name()?.as_str()),
                 }
             };
+            let has_params = self.check(&TokenKind::LParen);
+            let is_constructor = !is_getter
+                && !is_setter
+                && !is_async_method
+                && !is_generator_method
+                && !is_static
+                && computed_name.is_none()
+                && method_name.as_ref() == "constructor"
+                && has_params;
+            if !is_getter && !is_setter && !is_async_method && !is_generator_method && !has_params {
+                if is_static && computed_name.is_none() && method_name.as_ref() == "prototype" {
+                    return Err(error::Error::syntax(
+                        "Static class element cannot be named prototype".to_string(),
+                    ));
+                }
+                let init = if self.eat(&TokenKind::Assign) {
+                    let mut init = self.parse_assign()?;
+                    if computed_name.is_none() {
+                        Self::name_function_from_ident(&mut init, &method_name);
+                    }
+                    Some(Box::new(init))
+                } else {
+                    None
+                };
+                self.expect_semi()?;
+                public_fields.push(crate::ast::PublicFieldDecl {
+                    name: method_name,
+                    computed_name,
+                    init,
+                    is_static,
+                });
+                continue;
+            }
             if is_constructor {
                 if seen_constructor {
                     return Err(error::Error::syntax(
@@ -5237,6 +5316,7 @@ impl Parser {
             methods,
             static_blocks,
             private_fields,
+            public_fields,
         })
     }
     #[allow(dead_code)]

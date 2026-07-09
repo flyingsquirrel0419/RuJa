@@ -98,6 +98,68 @@ fn class_numeric_method_names_use_js_number_to_string() {
 }
 
 #[test]
+fn public_class_fields_define_own_data_properties() {
+    let src = r#"
+        var setterCalled = false;
+        class Base {
+          set x(v) { setterCalled = true; }
+        }
+        class C extends Base {
+          x = 1;
+          y;
+          ["z"] = 3;
+          constructor() {
+            super();
+            this.after = this.x + this.z;
+          }
+        }
+        var c = new C();
+        [
+          setterCalled,
+          c.hasOwnProperty("x"),
+          c.hasOwnProperty("y"),
+          c.y === undefined,
+          c.z,
+          c.after
+        ].join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("false,true,true,true,3,4"))
+    );
+}
+
+#[test]
+fn public_static_fields_and_static_name_ambiguity() {
+    let src = r#"
+        class A {
+          static = "instance";
+          static value = 2;
+          static ["dyn"] = 3;
+        }
+        var a = new A();
+        [a.static, A.value, A.dyn].join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("instance,2,3")));
+}
+
+#[test]
+fn public_field_names_do_not_force_method_prefix_parsing() {
+    assert_eq!(
+        run("class C { set\n*g(){} } var c = new C(); [c.hasOwnProperty('set'), typeof C.prototype.g].join(',');"),
+        Value::String(Arc::from("true,function"))
+    );
+    assert_eq!(
+        run("class C { get\nx() { return 1; } } var c = new C(); [c.hasOwnProperty('get'), c.x()].join(',');"),
+        Value::String(Arc::from("true,1"))
+    );
+    assert_eq!(
+        run("class C { async } new C().hasOwnProperty('async');"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn static_constructor_is_ordinary_static_method() {
     let src = r#"
         class C {
