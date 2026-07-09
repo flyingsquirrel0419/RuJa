@@ -4930,6 +4930,34 @@ fn active_error_constructor_prototype(vm: &mut Vm) -> error::Result<Value> {
     Ok(vm.error_proto.clone())
 }
 
+fn active_error_constructor_name(vm: &mut Vm) -> Arc<str> {
+    let Some(Value::Object(idx)) = vm.current_native_callee.as_ref() else {
+        return Arc::from("Error");
+    };
+    vm.heap.with_obj(idx.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            f.name.clone().unwrap_or_else(|| Arc::from("Error"))
+        } else {
+            Arc::from("Error")
+        }
+    })
+}
+
+fn active_error_intrinsic_prototype(vm: &mut Vm, name: &Arc<str>) -> error::Result<Value> {
+    if let Some(env) = vm.native_callee_closure() {
+        if let Some(proto) = vm.realm_error_prototypes.get(&(env.0, name.clone())) {
+            return Ok(proto.clone());
+        }
+    }
+    active_error_constructor_prototype(vm)
+}
+
+fn new_target_error_constructor_prototype(vm: &mut Vm) -> error::Result<Value> {
+    let name = active_error_constructor_name(vm);
+    let fallback = active_error_intrinsic_prototype(vm, &name)?;
+    native_constructor_prototype_with_default(vm, &name, fallback)
+}
+
 fn new_error_object(vm: &mut Vm, proto: Value) -> error::Result<GcIdx> {
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
@@ -4966,18 +4994,8 @@ fn error_object_for_constructor(vm: &mut Vm, this: Option<Value>) -> error::Resu
                 let proto = active_error_constructor_prototype(vm)?;
                 Ok(new_error_object(vm, proto)?)
             } else if vm.current_native_new_target.is_some() {
-                let (is_error_object, proto) = vm.heap.with_obj(i.0, |obj| {
-                    (
-                        matches!(obj, HeapObj::Object(o) if o.class_name.as_deref() == Some("Error")),
-                        obj.proto().lock().clone(),
-                    )
-                });
-                if is_error_object {
-                    Ok(i)
-                } else {
-                    let proto = proto.unwrap_or_else(|| vm.error_proto.clone());
-                    Ok(new_error_object(vm, proto)?)
-                }
+                let proto = new_target_error_constructor_prototype(vm)?;
+                Ok(new_error_object(vm, proto)?)
             } else {
                 Ok(i)
             }
@@ -4985,7 +5003,11 @@ fn error_object_for_constructor(vm: &mut Vm, this: Option<Value>) -> error::Resu
         _ => {
             // Called as Error(msg) or TypeError(msg) without new: create a
             // fresh object from the active constructor's prototype.
-            let proto = active_error_constructor_prototype(vm)?;
+            let proto = if vm.current_native_new_target.is_some() {
+                new_target_error_constructor_prototype(vm)?
+            } else {
+                active_error_constructor_prototype(vm)?
+            };
             Ok(new_error_object(vm, proto)?)
         }
     }

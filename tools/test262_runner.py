@@ -139,6 +139,25 @@ AGGREGATE_ERROR_PREFIXES = (
 AGGREGATE_ERROR_FEATURES = {
     "AggregateError",
     "error-cause",
+    "Reflect",
+    "Reflect.construct",
+    "Symbol",
+    "Symbol.iterator",
+}
+
+ERROR_CONSTRUCTOR_REALM_FILES = {
+    "built-ins/Error/proto-from-ctor-realm.js",
+    "built-ins/NativeErrors/EvalError/proto-from-ctor-realm.js",
+    "built-ins/NativeErrors/RangeError/proto-from-ctor-realm.js",
+    "built-ins/NativeErrors/ReferenceError/proto-from-ctor-realm.js",
+    "built-ins/NativeErrors/SyntaxError/proto-from-ctor-realm.js",
+    "built-ins/NativeErrors/TypeError/proto-from-ctor-realm.js",
+    "built-ins/NativeErrors/URIError/proto-from-ctor-realm.js",
+}
+
+ERROR_CONSTRUCTOR_REALM_FEATURES = {
+    "Reflect",
+    "Symbol",
 }
 
 WITH_STATEMENT_PREFIXES = (
@@ -246,6 +265,13 @@ def aggregate_error_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(AGGREGATE_ERROR_PREFIXES)
 
+def error_constructor_realm_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in ERROR_CONSTRUCTOR_REALM_FILES
+
 def with_statement_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -272,6 +298,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ERROR_STACK_FEATURES)
     if path is not None and aggregate_error_path(path):
         feats.difference_update(AGGREGATE_ERROR_FEATURES)
+    if path is not None and error_constructor_realm_path(path):
+        feats.difference_update(ERROR_CONSTRUCTOR_REALM_FEATURES)
     if path is not None and error_cause_path(path):
         feats.difference_update(ERROR_CAUSE_FEATURES)
     if path is not None and with_statement_path(path):

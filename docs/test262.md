@@ -479,6 +479,17 @@ ArrayBuffer, DataView, Reflect, and `Reflect.construct` skips temporarily
 lifted for the targeted files, `proto-from-ctor-realm` checks now report **13
 pass / 0 fail / 0 skip**.
 
+Focused Error-family constructor-realm fallback local check:
+Error, NativeError, and `AggregateError` construction now applies
+`GetPrototypeFromConstructor(newTarget, "%<ErrorName>.prototype%")` when
+`newTarget.prototype` is not an object, instead of reusing the preallocated
+ordinary-object fallback prototype. This keeps primitive `newTarget.prototype`
+fallbacks on `%Error.prototype%`, `%TypeError.prototype%`, or
+`%AggregateError.prototype%` from the `newTarget` realm. The focused
+`built-ins/{Error,NativeErrors,AggregateError}` run reports **199 pass / 0 fail
+/ 13 skip**, and `built-ins/AggregateError` now closes at **25 pass / 0 fail /
+0 skip**.
+
 Focused TypedArray integer-indexed `[[HasProperty]]` local check:
 canonical numeric index property checks now return `true` only for valid
 in-bounds TypedArray indexes and return `false` for detached buffers,
@@ -824,11 +835,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `AggregateError` now uses `(errors, message, options)`, reports
   `length === 2`, creates a non-enumerable `errors` array from the supplied
   iterable, and shares that cause path. The five `error-cause` files now pass:
-  `built-ins/Error` reports **86 pass / 0 fail / 7 skip**,
-  `built-ins/NativeErrors` reports **81 pass / 0 fail / 13 skip**, and
-  `built-ins/AggregateError` now admits the implemented constructor and
-  prototype coverage at **17 pass / 0 fail / 8 skip**. The remaining skipped
-  AggregateError files still require broader Symbol/Reflect coverage.
+  `built-ins/Error` reports **87 pass / 0 fail / 6 skip**,
+  `built-ins/NativeErrors` reports **87 pass / 0 fail / 7 skip**, and
+  `built-ins/AggregateError` now closes at **25 pass / 0 fail / 0 skip**.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

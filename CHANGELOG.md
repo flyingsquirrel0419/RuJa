@@ -42,8 +42,11 @@
   without unskipping broader AggregateError coverage.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/AggregateError/` coverage by lifting only the
-  AggregateError and `error-cause` feature gates on that path, leaving
-  Symbol/Reflect-dependent files skipped.
+  AggregateError, `error-cause`, Symbol iterator, Reflect constructor, Symbol,
+  and Reflect feature gates on that path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented Error and NativeError `proto-from-ctor-realm.js` files by lifting
+  only the Reflect/Symbol gates on those exact files.
 - `tools/test262_analyze.py` now mirrors the runner's unsupported-feature
   boundary exactly, and `tools/analyze_failures.py` passes test paths into
   `should_skip()`, so path-scoped feature exceptions are not hidden during
@@ -71,10 +74,13 @@ Current supported subset count: **5106 pass / 0 fail / 15332 skip / 0 timeout**.
   the message property. `AggregateError` now uses its `(errors, message,
   options)` signature, reports `length === 2`, creates a non-enumerable `errors`
   array, and shares the same `InstallErrorCause` path. The five `error-cause`
-  test262 files now pass; `built-ins/Error` reports **86 pass / 0 fail / 7
-  skip**, `built-ins/NativeErrors` reports **81 pass / 0 fail / 13 skip**, and
-  `built-ins/AggregateError` now admits the implemented constructor and
-  prototype coverage at **17 pass / 0 fail / 8 skip**.
+  test262 files now pass. Error-family constructors now also apply
+  `GetPrototypeFromConstructor(newTarget, "%<ErrorName>.prototype%")` when
+  `newTarget.prototype` is not an object, including cross-realm `newTarget`
+  functions. The focused built-ins run reports `built-ins/Error` at **87 pass /
+  0 fail / 6 skip**, `built-ins/NativeErrors` at **87 pass / 0 fail / 7
+  skip**, and `built-ins/AggregateError` closed at **25 pass / 0 fail / 0
+  skip**.
 - **Error stack accessor runner admission**: the
   `built-ins/Error/prototype/stack/` path exception now admits the
   already-implemented stack accessor coverage, including Proxy receivers and

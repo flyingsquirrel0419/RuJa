@@ -3804,6 +3804,39 @@ fn native_error_constructors_inherit_from_error_constructor() {
 }
 
 #[test]
+fn error_constructors_use_new_target_realm_default_prototype() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var nt = new Function();
+            nt.prototype = undefined;
+            var otherNt = new other.Function();
+            otherNt.prototype = undefined;
+            [
+              Object.getPrototypeOf(Reflect.construct(Error, [], nt)) === Error.prototype,
+              Object.getPrototypeOf(Reflect.construct(TypeError, [], nt)) === TypeError.prototype,
+              Object.getPrototypeOf(Reflect.construct(AggregateError, [[]], nt)) === AggregateError.prototype,
+              Object.getPrototypeOf(Reflect.construct(Error, [], otherNt)) === other.Error.prototype,
+              Object.getPrototypeOf(Reflect.construct(TypeError, [], otherNt)) === other.TypeError.prototype,
+              Object.getPrototypeOf(Reflect.construct(AggregateError, [[]], otherNt)) === other.AggregateError.prototype
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true,true,true,true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var proto = {};
+            function NewTarget() {}
+            NewTarget.prototype = proto;
+            var err = Reflect.construct(AggregateError, [[]], NewTarget);
+            Object.getPrototypeOf(err) === proto;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn native_error_subclass_inherits_name_and_message() {
     assert_eq!(
         run(r#"
