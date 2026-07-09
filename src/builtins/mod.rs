@@ -3090,11 +3090,22 @@ pub(crate) fn own_property_keys(
 
     let mut keys = Vec::new();
     let mut seen = IndexSet::new();
+    let typed_array_index_count = include_strings
+        .then(|| vm.typed_array_integer_index_own_property_key_count(obj))
+        .flatten();
     match obj {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             let mut index_keys: Vec<u32> = Vec::new();
             let mut string_keys: Vec<PropertyKey> = Vec::new();
             let mut symbol_keys: Vec<PropertyKey> = Vec::new();
+
+            if let Some(count) = typed_array_index_count {
+                for i in 0..count {
+                    if let Ok(index) = u32::try_from(i) {
+                        index_keys.push(index);
+                    }
+                }
+            }
 
             if let HeapObj::Array(a) = o {
                 if include_strings {

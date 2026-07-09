@@ -286,6 +286,19 @@ expanded diagnostic, broader `built-ins/TypedArrayConstructors` reports
 Integer-Indexed `[[OwnPropertyKeys]]` ordering, `Reflect.set` receiver writes,
 and one typed-array-argument validation ordering case.
 
+Focused TypedArray integer-indexed `[[OwnPropertyKeys]]` local check:
+own-key enumeration now synthesizes attached TypedArray integer index keys
+before ordinary string and symbol keys, including offset `subarray()` views,
+while detached buffers expose no integer-indexed own keys. With TypedArray,
+ArrayBuffer, DataView, Reflect, and `Reflect.construct` skips temporarily
+lifted, `built-ins/TypedArrayConstructors/internals/OwnPropertyKeys` improves
+from **0 pass / 4 fail / 6 skip** to **4 pass / 0 fail / 6 skip**. With
+Symbol also lifted, the same focused path reports **8 pass / 0 fail / 2
+skip**. Under the same expanded diagnostic, broader
+`built-ins/TypedArrayConstructors` reports **590 pass / 3 fail / 145 skip**;
+the remaining failures are now `Reflect.set` receiver writes and one
+typed-array-argument validation ordering case.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

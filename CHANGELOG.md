@@ -144,6 +144,19 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   skip**. The remaining broader failures are concentrated in
   Integer-Indexed `[[OwnPropertyKeys]]` ordering, `Reflect.set` receiver
   writes, and one typed-array-argument validation ordering case.
+- **TypedArray integer-indexed `[[OwnPropertyKeys]]`**:
+  `Reflect.ownKeys()` and shared own-key enumeration now synthesize attached
+  TypedArray integer index keys before ordinary string and symbol keys,
+  including offset `subarray()` views, while detached buffers expose no
+  integer-indexed own keys. Focused
+  `built-ins/TypedArrayConstructors/internals/OwnPropertyKeys` improves from
+  **0 pass / 4 fail / 6 skip** to **4 pass / 0 fail / 6 skip** with
+  TypedArray, ArrayBuffer, DataView, Reflect, and `Reflect.construct` skips
+  temporarily lifted; with Symbol also lifted it reports **8 pass / 0 fail /
+  2 skip**. Under the same expanded diagnostic, broader
+  `built-ins/TypedArrayConstructors` improves to **590 pass / 3 fail / 145
+  skip**. The remaining failures are now `Reflect.set` receiver writes and
+  one typed-array-argument validation ordering case.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

@@ -1373,6 +1373,40 @@ impl Vm {
         Some(self.is_valid_typed_array_numeric_index(&slots))
     }
 
+    pub(crate) fn typed_array_integer_index_own_property_key_count(
+        &self,
+        obj: &Value,
+    ) -> Option<usize> {
+        let Value::Object(idx) = obj else {
+            return None;
+        };
+        self.heap.with_obj(idx.0, |o| {
+            let HeapObj::TypedArray(array) = o else {
+                return None;
+            };
+            if let Some(Value::Object(buffer_idx)) = &array.viewed_array_buffer {
+                let detached = self.heap.with_obj(buffer_idx.0, |buffer_obj| {
+                    if let HeapObj::ArrayBuffer(buffer) = buffer_obj {
+                        return buffer.detached.load(std::sync::atomic::Ordering::Relaxed);
+                    }
+                    false
+                });
+                if detached {
+                    return Some(0);
+                }
+            }
+            let byte_length = if array.viewed_array_buffer.is_some() {
+                array.byte_length
+            } else {
+                array.buffer.lock().len()
+            };
+            Some(crate::builtins::typed_array_element_count(
+                array.kind,
+                byte_length,
+            ))
+        })
+    }
+
     fn set_typed_array_numeric_property(
         &mut self,
         idx: GcIdx,

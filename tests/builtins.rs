@@ -1447,6 +1447,47 @@ fn typed_array_subarray_uses_species_and_rejects_detached_buffers() {
 }
 
 #[test]
+fn typed_array_own_keys_include_integer_indices_first() {
+    assert_eq!(
+        run(r#"
+            var sym = Symbol("s");
+            var sample = new Uint8Array([7, 8, 9]);
+            sample.extra = 10;
+            sample[sym] = 11;
+            Reflect.ownKeys(sample).map(function(key) {
+              return typeof key === "symbol" ? "symbol:" + key.description : key;
+            }).join(",");
+        "#),
+        Value::String(Arc::from("0,1,2,extra,symbol:s"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([7, 8, 9, 10]).subarray(2);
+            sample.extra = 11;
+            Reflect.ownKeys(sample).join(",");
+        "#),
+        Value::String(Arc::from("0,1,extra"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new BigInt64Array(2);
+            sample.extra = 1;
+            Reflect.ownKeys(sample).join(",");
+        "#),
+        Value::String(Arc::from("0,1,extra"))
+    );
+    assert_eq!(
+        run(r#"
+            var sample = new Uint8Array([7, 8]);
+            sample.extra = 9;
+            $262.detachArrayBuffer(sample.buffer);
+            Reflect.ownKeys(sample).join(",");
+        "#),
+        Value::String(Arc::from("extra"))
+    );
+}
+
+#[test]
 fn typed_array_get_canonical_numeric_indices_follow_integer_indexed_exotic() {
     assert_eq!(
         run(r#"
