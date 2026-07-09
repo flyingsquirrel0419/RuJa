@@ -99,6 +99,17 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   properties. With public/static class field and computed-name gates temporarily
   lifted, the focused constructor-PropName class-elements cluster reports
   **11 pass / 0 fail / 0 skip**.
+- **Public class field computed-name records**: public instance and static
+  field computed names now evaluate once during class definition and are stored
+  as field keys for later `DefineField` execution. Instance field keys are no
+  longer re-evaluated for each `new C()`, and static/instance public field keys
+  now evaluate in field declaration order while initializers keep their existing
+  static-vs-instance timing. With public/static class field and computed-name
+  gates temporarily lifted, the focused incremental/intercalated/error
+  computed-name class-elements cluster reports **12 pass / 0 fail / 0 skip**,
+  and the broader class-elements diagnostic reports **1582 pass / 82 fail /
+  1298 skip**. Remaining failures include full ordered class-element evaluation
+  across computed methods and static blocks.
 - **TypedArray `[[HasProperty]]` prototype delegation**: ordinary property keys
   missing from a TypedArray now continue through the prototype's real
   `[[HasProperty]]` operation instead of raw own-property lookup. This preserves

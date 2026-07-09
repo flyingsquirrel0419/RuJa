@@ -3667,6 +3667,24 @@ impl Compiler {
                         )
                     })
                     .collect();
+                let public_field_computed_key_temps: Vec<Option<Arc<str>>> = cls
+                    .public_fields
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, field)| {
+                        field.computed_name.as_ref().map(|_| {
+                            Arc::from(
+                                format!(
+                                    "#class_field_key:{}:{}:{}",
+                                    idx,
+                                    self.chunk.code.len(),
+                                    self.chunk.constants.len()
+                                )
+                                .as_str(),
+                            )
+                        })
+                    })
+                    .collect();
                 let ctor_fn = FunctionExpr {
                     name: display_name.clone(),
                     params: cls
@@ -3733,8 +3751,9 @@ impl Compiler {
                         let public_field_stmts: Vec<Stmt> = cls
                             .public_fields
                             .iter()
-                            .filter(|field| !field.is_static)
-                            .map(|field| {
+                            .zip(public_field_computed_key_temps.iter())
+                            .filter(|(field, _)| !field.is_static)
+                            .map(|(field, computed_key_temp)| {
                                 let init = field
                                     .init
                                     .clone()
@@ -3744,7 +3763,9 @@ impl Compiler {
                                     node: StmtNode::ExprStmt(Expr::PublicFieldInit {
                                         object: Box::new(Expr::This),
                                         name: field.name.clone(),
-                                        computed_name: field.computed_name.clone(),
+                                        computed_name: computed_key_temp
+                                            .as_ref()
+                                            .map(|name| Box::new(Expr::Ident(name.clone()))),
                                         value: init,
                                     }),
                                 }
@@ -4199,11 +4220,30 @@ impl Compiler {
                     self.chunk
                         .emit(Op::InitEnvConst(name_idx), self.current_line); // [ctor]
                 }
-                for field in cls.public_fields.iter().filter(|field| field.is_static) {
-                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
-                    if let Some(computed_name) = &field.computed_name {
+                for (field, computed_key_temp) in cls
+                    .public_fields
+                    .iter()
+                    .zip(public_field_computed_key_temps.iter())
+                {
+                    if let (Some(computed_name), Some(temp_name)) =
+                        (&field.computed_name, computed_key_temp)
+                    {
                         self.compile_expr(computed_name)?;
                         self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                        let temp_idx = self.intern(temp_name);
+                        self.chunk.emit(Op::DeclareEnv(temp_idx), self.current_line);
+                    }
+                }
+                for (field, computed_key_temp) in cls
+                    .public_fields
+                    .iter()
+                    .zip(public_field_computed_key_temps.iter())
+                    .filter(|(field, _)| field.is_static)
+                {
+                    self.chunk.emit(Op::Dup, self.current_line); // [ctor, ctor]
+                    if let Some(temp_name) = computed_key_temp {
+                        let temp_idx = self.intern(temp_name);
+                        self.chunk.emit(Op::LoadEnv(temp_idx), self.current_line);
                     } else {
                         let key_idx = self.chunk.add_constant(Value::String(field.name.clone()));
                         self.chunk.emit(Op::Const(key_idx), self.current_line);

@@ -351,6 +351,67 @@ fn class_fields_reject_literal_constructor_name() {
 }
 
 #[test]
+fn public_class_field_computed_names_evaluate_once() {
+    assert_eq!(
+        run(r#"
+            var x = 1;
+            class C {
+                [x++] = x++;
+                [x++] = x++;
+            }
+            var c1 = new C();
+            var c2 = new C();
+            [x, c1["1"], c1["2"], c2["1"], c2["2"]].join(",");
+        "#),
+        Value::String(Arc::from("7,3,4,5,6"))
+    );
+}
+
+#[test]
+fn public_class_field_computed_names_interleave_static_and_instance() {
+    assert_eq!(
+        run(r#"
+            let i = 0;
+            class C {
+                [i++] = i++;
+                static [i++] = i++;
+                [i++] = i++;
+            }
+            let c = new C();
+            [
+                i,
+                c["0"],
+                C["1"],
+                c["2"],
+                c.hasOwnProperty("1"),
+                C.hasOwnProperty("0"),
+                C.hasOwnProperty("2")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("6,4,3,5,false,false,false"))
+    );
+}
+
+#[test]
+fn public_class_field_computed_name_abrupt_completion_prevents_initializers() {
+    assert_eq!(
+        run(r#"
+            var hit = false;
+            try {
+                class C {
+                    [missing] = (hit = true);
+                    static ok = (hit = true);
+                }
+                false;
+            } catch (e) {
+                e instanceof ReferenceError && hit === false;
+            }
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn static_block_await_identifier_contexts() {
     assert_eq!(
         run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),

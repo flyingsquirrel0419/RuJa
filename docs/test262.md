@@ -270,6 +270,20 @@ the spec's empty PropName for computed names. With public/static class field and
 computed-name gates temporarily lifted, the focused constructor-PropName
 class-elements cluster reports **11 pass / 0 fail / 0 skip**.
 
+Focused public class field computed-name local check:
+public instance and static field computed names now evaluate once during class
+definition and are stored as field keys for later `DefineField` execution.
+Instance field keys are no longer re-evaluated for each construction, while
+static and instance public field keys are evaluated in field declaration order.
+With public/static class field and computed-name gates temporarily lifted, the
+focused incremental/intercalated/error computed-name class-elements cluster
+reports **12 pass / 0 fail / 0 skip**. With public/private class field,
+private method, static block, Proxy, Reflect, Symbol, Symbol.iterator, computed
+name, and arrow-function gates temporarily lifted, the broader
+`language/{statements,expressions}/class/elements` diagnostic now reports
+**1582 pass / 82 fail / 1298 skip**. Remaining failures still include full
+ordered class-element evaluation across computed methods and static blocks.
+
 Focused TypedArray `[[HasProperty]]` prototype-delegation local check:
 ordinary property keys missing from a TypedArray now delegate to the
 prototype's actual `[[HasProperty]]` operation instead of walking the chain with
