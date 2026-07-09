@@ -1874,6 +1874,15 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             const_prop(Value::Object(proto_idx)),
         );
     });
+    if name == "Error" {
+        let is_error_fn = vm.new_native_function("isError", error_is_error, 1)?;
+        vm.heap.with_obj(ctor_idx.0, |obj| {
+            obj.props().lock().insert(
+                PropertyKey::from("isError"),
+                data_prop(Value::Object(is_error_fn)),
+            );
+        });
+    }
     let ts_fn = vm.new_native_function("toString", error_to_string, 0)?;
     vm.heap.with_obj(proto_idx.0, |obj| {
         obj.props().lock().insert(
@@ -2107,17 +2116,28 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(object) = crate::environment::get(&vm.heap, vm.global, "Object") {
         define_realm_global(vm, realm_env, &global, "Object", object);
     }
+    if let Some(array) = crate::environment::get(&vm.heap, vm.global, "Array") {
+        define_realm_global(vm, realm_env, &global, "Array", array);
+    }
     if let Some(bigint) = crate::environment::get(&vm.heap, vm.global, "BigInt") {
         define_realm_global(vm, realm_env, &global, "BigInt", bigint);
     }
     if let Some(proxy) = crate::environment::get(&vm.heap, vm.global, "Proxy") {
         define_realm_global(vm, realm_env, &global, "Proxy", proxy);
     }
-    if let Some(error) = crate::environment::get(&vm.heap, vm.global, "Error") {
-        define_realm_global(vm, realm_env, &global, "Error", error);
-    }
-    if let Some(type_error) = crate::environment::get(&vm.heap, vm.global, "TypeError") {
-        define_realm_global(vm, realm_env, &global, "TypeError", type_error);
+    for name in [
+        "Error",
+        "EvalError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "TypeError",
+        "URIError",
+        "AggregateError",
+    ] {
+        if let Some(error_ctor) = crate::environment::get(&vm.heap, vm.global, name) {
+            define_realm_global(vm, realm_env, &global, name, error_ctor);
+        }
     }
     let function_ctor_idx =
         vm.new_native_function_in_env("Function", function_constructor, 1, realm_env)?;
@@ -4806,6 +4826,19 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
             if is_global {
                 let proto = active_error_constructor_prototype(vm)?;
                 new_error_object(vm, proto)?
+            } else if vm.current_native_new_target.is_some() {
+                let (is_error_object, proto) = vm.heap.with_obj(i.0, |obj| {
+                    (
+                        matches!(obj, HeapObj::Object(o) if o.class_name.as_deref() == Some("Error")),
+                        obj.proto().lock().clone(),
+                    )
+                });
+                if is_error_object {
+                    i
+                } else {
+                    let proto = proto.unwrap_or_else(|| vm.error_proto.clone());
+                    new_error_object(vm, proto)?
+                }
             } else {
                 i
             }
@@ -5648,6 +5681,16 @@ fn object_is_prototype_of(
         }
     }
     Ok(Value::Bool(false))
+}
+
+fn error_is_error(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
+    let is_error = match args.first() {
+        Some(Value::Object(idx)) => vm.heap.with_obj(idx.0, |obj| {
+            matches!(obj, HeapObj::Object(data) if data.class_name.as_deref() == Some("Error"))
+        }),
+        _ => false,
+    };
+    Ok(Value::Bool(is_error))
 }
 
 fn error_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {

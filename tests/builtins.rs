@@ -3361,6 +3361,45 @@ fn native_error_subclass_inherits_name_and_message() {
 }
 
 #[test]
+fn error_is_error_recognizes_real_error_objects_only() {
+    assert_eq!(
+        run(r#"
+            class CustomError extends Error {}
+            var other = $262.createRealm().global;
+            var fake = {
+              __proto__: Error.prototype,
+              constructor: Error,
+              message: "",
+              stack: new Error().stack
+            };
+            [
+              Error.isError(new Error()),
+              Error.isError(new TypeError()),
+              Error.isError(new CustomError()),
+              Error.isError(new other.Error()),
+              Error.isError(new other.Array()),
+              Error.isError(fake),
+              Error.isError(Error),
+              Error.isError({}),
+              Error.isError(undefined),
+              Error.isError(0n),
+              Error.isError(Symbol()),
+              Object.prototype.propertyIsEnumerable.call(Error, "isError"),
+              Object.getOwnPropertyDescriptor(Error, "isError").writable,
+              Object.getOwnPropertyDescriptor(Error, "isError").configurable
+            ].join(",");
+        "#),
+        Value::String(Arc::from(
+            "true,true,true,true,false,false,false,false,false,false,false,false,true,true"
+        ))
+    );
+    assert!(
+        run_err("new Error.isError();").contains("TypeError"),
+        "Error.isError must not be constructable"
+    );
+}
+
+#[test]
 fn native_constructor_new_target_does_not_leak_to_next_call() {
     let msg = run_err("new Error('x'); class C {} C();");
     assert!(

@@ -464,6 +464,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   Realm-local thrower for `callee`, while `$262.createRealm()` receives a
   distinct intrinsic. The focused `built-ins/ThrowTypeError` run improves from
   **8 pass / 6 fail / 0 skip** to **14 pass / 0 fail / 0 skip**.
+- **`Error.isError` static method** —
+  `Error.isError(value)` is now installed as a non-constructable unary builtin.
+  It accepts real Error/NativeError objects, Error subclasses, and
+  `$262.createRealm()` Error objects, while rejecting primitives, constructors,
+  ordinary objects, and fake objects that only inherit from `Error.prototype`.
+  `$262.createRealm()` now also exposes `Array` and the native error
+  constructor surface required by the cross-realm Error tests. The focused
+  `built-ins/Error/isError` run improves from **0 pass / 10 fail / 2 skip** to
+  **10 pass / 0 fail / 2 skip**; the broader `built-ins/Error` diagnostic now
+  reports **46 pass / 28 fail / 19 skip**.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

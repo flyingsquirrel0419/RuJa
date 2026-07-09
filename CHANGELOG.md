@@ -181,6 +181,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   temporarily lifted. Under the same expanded diagnostic, broader
   `built-ins/TypedArrayConstructors` closes at **593 pass / 0 fail / 145
   skip**.
+- **`Error.isError` static method**: `Error.isError(value)` is now exposed as
+  a non-constructable unary builtin and recognizes real Error/NativeError
+  objects, Error subclasses, and `$262.createRealm()` Error objects while
+  rejecting primitives, constructors, ordinary objects, and objects that only
+  spoof `Error.prototype`. `$262.createRealm()` also exposes `Array` and the
+  native error constructor surface needed by cross-realm Error checks. The
+  focused `built-ins/Error/isError` run improves from **0 pass / 10 fail / 2
+  skip** to **10 pass / 0 fail / 2 skip**; the broader `built-ins/Error`
+  diagnostic now reports **46 pass / 28 fail / 19 skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,
