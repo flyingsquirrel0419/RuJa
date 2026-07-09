@@ -100,6 +100,15 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   TypedArray-related skips temporarily lifted, the focused
   `built-ins/TypedArrayConstructors/{ctors,ctors-bigint}/buffer-arg` run
   reports **44 pass / 0 fail / 62 skip**.
+- **Cross-realm TypedArray constructors**: `$262.createRealm()` now exposes
+  realm-local `ArrayBuffer`, `DataView`, `%TypedArray%`, and concrete
+  TypedArray constructors instead of leaving `other[TA.name]` absent. Concrete
+  constructors inherit from that realm's hidden `%TypedArray%`, their
+  prototypes inherit from that realm's `%TypedArray%.prototype`, and detached
+  buffers created through cross-realm constructors keep the expected
+  integer-indexed behavior. With TypedArray-related skips temporarily lifted,
+  the broader `built-ins/TypedArrayConstructors` diagnostic improves from
+  **463 pass / 10 fail / 265 skip** to **473 pass / 0 fail / 265 skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

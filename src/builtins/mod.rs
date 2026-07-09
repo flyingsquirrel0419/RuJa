@@ -1470,7 +1470,26 @@ fn install_typed_array_constructor(
     typed_array_ctor: &Value,
     typed_array_proto: &Value,
 ) -> error::Result<()> {
-    let ctor_idx = vm.new_native_function(name, constructor, 3)?;
+    install_typed_array_constructor_in_env(
+        vm,
+        vm.global,
+        None,
+        (name, constructor, kind),
+        typed_array_ctor,
+        typed_array_proto,
+    )
+}
+
+fn install_typed_array_constructor_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+    entry: (&str, NativeFn, crate::value::TypedArrayKind),
+    typed_array_ctor: &Value,
+    typed_array_proto: &Value,
+) -> error::Result<()> {
+    let (name, constructor, kind) = entry;
+    let ctor_idx = vm.new_native_function_in_env(name, constructor, 3, env)?;
     let proto_idx = GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(typed_array_proto.clone())),
@@ -1509,8 +1528,292 @@ fn install_typed_array_constructor(
             );
         }
     });
-    define_global(vm, name, Value::Object(ctor_idx));
+    let ctor = Value::Object(ctor_idx);
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, name, ctor);
+    } else {
+        define_global(vm, name, ctor);
+    }
     Ok(())
+}
+
+fn typed_array_constructor_entries() -> [(&'static str, NativeFn, crate::value::TypedArrayKind); 11]
+{
+    [
+        (
+            "Int8Array",
+            int8array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Int8,
+        ),
+        (
+            "Uint8Array",
+            uint8array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint8,
+        ),
+        (
+            "Uint8ClampedArray",
+            uint8clampedarray_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint8Clamped,
+        ),
+        (
+            "Int16Array",
+            int16array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Int16,
+        ),
+        (
+            "Uint16Array",
+            uint16array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint16,
+        ),
+        (
+            "Int32Array",
+            int32array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Int32,
+        ),
+        (
+            "Uint32Array",
+            uint32array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Uint32,
+        ),
+        (
+            "Float32Array",
+            float32array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Float32,
+        ),
+        (
+            "Float64Array",
+            float64array_constructor as NativeFn,
+            crate::value::TypedArrayKind::Float64,
+        ),
+        (
+            "BigInt64Array",
+            bigint64array_constructor as NativeFn,
+            crate::value::TypedArrayKind::BigInt64,
+        ),
+        (
+            "BigUint64Array",
+            biguint64array_constructor as NativeFn,
+            crate::value::TypedArrayKind::BigUint64,
+        ),
+    ]
+}
+
+fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(Value, Value)> {
+    let typed_array_ctor = Value::Object(vm.new_native_function_in_env(
+        "TypedArray",
+        typed_array_intrinsic_constructor,
+        0,
+        env,
+    )?);
+    let typed_array_proto =
+        Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(vm.object_proto.clone())),
+            extensible: AtomicBool::new(true),
+            class_name: Some(Arc::from("TypedArray")),
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        }))?));
+    if let Value::Object(idx) = &typed_array_ctor {
+        let typed_array_from_fn =
+            vm.new_native_function_in_env("from", typed_array_from, 1, env)?;
+        let typed_array_of_fn = vm.new_native_function_in_env("of", typed_array_of, 0, env)?;
+        vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::Function(f) = o {
+                *f.prototype.lock() = Some(typed_array_proto.clone());
+                f.props.lock().insert(
+                    PropertyKey::from("prototype"),
+                    const_prop(typed_array_proto.clone()),
+                );
+                f.props.lock().insert(
+                    PropertyKey::from("from"),
+                    data_prop(Value::Object(typed_array_from_fn)),
+                );
+                f.props.lock().insert(
+                    PropertyKey::from("of"),
+                    data_prop(Value::Object(typed_array_of_fn)),
+                );
+            }
+        });
+    }
+    let typed_array_buffer_getter =
+        vm.new_native_function_in_env("get buffer", typed_array_buffer_get, 0, env)?;
+    let typed_array_byte_length_getter =
+        vm.new_native_function_in_env("get byteLength", typed_array_byte_length_get, 0, env)?;
+    let typed_array_byte_offset_getter =
+        vm.new_native_function_in_env("get byteOffset", typed_array_byte_offset_get, 0, env)?;
+    let typed_array_length_getter =
+        vm.new_native_function_in_env("get length", typed_array_length_get, 0, env)?;
+    if let Value::Object(idx) = &typed_array_proto {
+        vm.heap.with_obj(idx.0, |obj| {
+            let mut props = obj.props().lock();
+            props.insert(
+                PropertyKey::from("constructor"),
+                data_prop(typed_array_ctor.clone()),
+            );
+            props.insert(
+                PropertyKey::from("buffer"),
+                accessor_get_prop(Value::Object(typed_array_buffer_getter)),
+            );
+            props.insert(
+                PropertyKey::from("byteLength"),
+                accessor_get_prop(Value::Object(typed_array_byte_length_getter)),
+            );
+            props.insert(
+                PropertyKey::from("byteOffset"),
+                accessor_get_prop(Value::Object(typed_array_byte_offset_getter)),
+            );
+            props.insert(
+                PropertyKey::from("length"),
+                accessor_get_prop(Value::Object(typed_array_length_getter)),
+            );
+        });
+    }
+
+    Ok((typed_array_ctor, typed_array_proto))
+}
+
+fn install_array_buffer_constructor_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+    update_vm_slot: bool,
+) -> error::Result<(Value, Value)> {
+    let (array_buffer_ctor, array_buffer_proto) = make_builtin_constructor_with_in_env(
+        vm,
+        "ArrayBuffer",
+        1,
+        array_buffer_constructor,
+        &[
+            ("slice", array_buffer_slice, 2),
+            ("sliceToImmutable", array_buffer_slice_to_immutable, 2),
+            ("transfer", array_buffer_transfer, 0),
+            (
+                "transferToFixedLength",
+                array_buffer_transfer_to_fixed_length,
+                0,
+            ),
+            ("transferToImmutable", array_buffer_transfer_to_immutable, 0),
+        ],
+        env,
+    )?;
+    let array_buffer_ctor = Value::Object(array_buffer_ctor);
+    let array_buffer_proto = Value::Object(array_buffer_proto);
+    if update_vm_slot {
+        vm.array_buffer_proto = array_buffer_proto.clone();
+    }
+    let array_buffer_byte_length_getter =
+        vm.new_native_function_in_env("get byteLength", array_buffer_byte_length_get, 0, env)?;
+    let array_buffer_immutable_getter =
+        vm.new_native_function_in_env("get immutable", array_buffer_immutable_get, 0, env)?;
+    let array_buffer_is_view_fn =
+        vm.new_native_function_in_env("isView", array_buffer_is_view, 1, env)?;
+    let array_buffer_species_getter =
+        vm.new_native_function_in_env("get [Symbol.species]", array_buffer_species_get, 0, env)?;
+    if let Value::Object(idx) = &array_buffer_ctor {
+        vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                let mut props = f.props.lock();
+                props.insert(
+                    PropertyKey::from("isView"),
+                    data_prop(Value::Object(array_buffer_is_view_fn)),
+                );
+                props.insert(
+                    PropertyKey::Symbol(vm.well_known_symbols.species),
+                    accessor_get_prop(Value::Object(array_buffer_species_getter)),
+                );
+            }
+        });
+    }
+    if let Value::Object(idx) = &array_buffer_proto {
+        vm.heap.with_obj(idx.0, |obj| {
+            let props = obj.props();
+            let mut props = props.lock();
+            props.insert(
+                PropertyKey::from("byteLength"),
+                accessor_get_prop(Value::Object(array_buffer_byte_length_getter)),
+            );
+            props.insert(
+                PropertyKey::from("immutable"),
+                accessor_get_prop(Value::Object(array_buffer_immutable_getter)),
+            );
+        });
+    }
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "ArrayBuffer", array_buffer_ctor.clone());
+    } else {
+        define_global(vm, "ArrayBuffer", array_buffer_ctor.clone());
+    }
+    Ok((array_buffer_ctor, array_buffer_proto))
+}
+
+fn install_data_view_constructor_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+) -> error::Result<(Value, Value)> {
+    let (data_view_ctor, data_view_proto) = make_builtin_constructor_with_in_env(
+        vm,
+        "DataView",
+        1,
+        data_view_constructor,
+        &[
+            ("getFloat16", data_view_get_float16, 1),
+            ("getFloat32", data_view_get_float32, 1),
+            ("getFloat64", data_view_get_float64, 1),
+            ("getBigInt64", data_view_get_bigint64, 1),
+            ("getBigUint64", data_view_get_biguint64, 1),
+            ("getInt16", data_view_get_int16, 1),
+            ("getInt32", data_view_get_int32, 1),
+            ("getInt8", data_view_get_int8, 1),
+            ("getUint16", data_view_get_uint16, 1),
+            ("getUint32", data_view_get_uint32, 1),
+            ("getUint8", data_view_get_uint8, 1),
+            ("setFloat16", data_view_set_float16, 2),
+            ("setFloat32", data_view_set_float32, 2),
+            ("setFloat64", data_view_set_float64, 2),
+            ("setBigInt64", data_view_set_bigint64, 2),
+            ("setBigUint64", data_view_set_biguint64, 2),
+            ("setInt16", data_view_set_int16, 2),
+            ("setInt32", data_view_set_int32, 2),
+            ("setInt8", data_view_set_int8, 2),
+            ("setUint16", data_view_set_uint16, 2),
+            ("setUint32", data_view_set_uint32, 2),
+            ("setUint8", data_view_set_uint8, 2),
+        ],
+        env,
+    )?;
+    let data_view_ctor = Value::Object(data_view_ctor);
+    let data_view_proto = Value::Object(data_view_proto);
+    let data_view_buffer_getter =
+        vm.new_native_function_in_env("get buffer", data_view_buffer_get, 0, env)?;
+    let data_view_byte_length_getter =
+        vm.new_native_function_in_env("get byteLength", data_view_byte_length_get, 0, env)?;
+    let data_view_byte_offset_getter =
+        vm.new_native_function_in_env("get byteOffset", data_view_byte_offset_get, 0, env)?;
+    if let Value::Object(idx) = &data_view_proto {
+        vm.heap.with_obj(idx.0, |obj| {
+            let mut props = obj.props().lock();
+            props.insert(
+                PropertyKey::from("buffer"),
+                accessor_get_prop(Value::Object(data_view_buffer_getter)),
+            );
+            props.insert(
+                PropertyKey::from("byteLength"),
+                accessor_get_prop(Value::Object(data_view_byte_length_getter)),
+            );
+            props.insert(
+                PropertyKey::from("byteOffset"),
+                accessor_get_prop(Value::Object(data_view_byte_offset_getter)),
+            );
+        });
+    }
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "DataView", data_view_ctor.clone());
+    } else {
+        define_global(vm, "DataView", data_view_ctor.clone());
+    }
+    Ok((data_view_ctor, data_view_proto))
 }
 
 pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(GcIdx, GcIdx)> {
@@ -1891,6 +2194,20 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         );
     });
     define_realm_global(vm, realm_env, &global, "Symbol", Value::Object(symbol_idx));
+
+    install_array_buffer_constructor_in_env(vm, realm_env, Some(&global), false)?;
+    install_data_view_constructor_in_env(vm, realm_env, Some(&global))?;
+    let (typed_array_ctor, typed_array_proto) = make_typed_array_intrinsic_in_env(vm, realm_env)?;
+    for entry in typed_array_constructor_entries() {
+        install_typed_array_constructor_in_env(
+            vm,
+            realm_env,
+            Some(&global),
+            entry,
+            &typed_array_ctor,
+            &typed_array_proto,
+        )?;
+    }
 
     Ok(global)
 }
@@ -4653,236 +4970,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
 
-    let (array_buffer_ctor, array_buffer_proto) = make_builtin_constructor_with(
-        vm,
-        "ArrayBuffer",
-        1,
-        array_buffer_constructor,
-        &[
-            ("slice", array_buffer_slice, 2),
-            ("sliceToImmutable", array_buffer_slice_to_immutable, 2),
-            ("transfer", array_buffer_transfer, 0),
-            (
-                "transferToFixedLength",
-                array_buffer_transfer_to_fixed_length,
-                0,
-            ),
-            ("transferToImmutable", array_buffer_transfer_to_immutable, 0),
-        ],
-    )?;
-    vm.array_buffer_proto = Value::Object(array_buffer_proto);
-    let array_buffer_byte_length_getter =
-        vm.new_native_function("get byteLength", array_buffer_byte_length_get, 0)?;
-    let array_buffer_immutable_getter =
-        vm.new_native_function("get immutable", array_buffer_immutable_get, 0)?;
-    let array_buffer_is_view_fn = vm.new_native_function("isView", array_buffer_is_view, 1)?;
-    let array_buffer_species_getter =
-        vm.new_native_function("get [Symbol.species]", array_buffer_species_get, 0)?;
-    vm.heap.with_obj(array_buffer_ctor.0, |obj| {
-        if let HeapObj::Function(f) = obj {
-            let mut props = f.props.lock();
-            props.insert(
-                PropertyKey::from("isView"),
-                data_prop(Value::Object(array_buffer_is_view_fn)),
-            );
-            props.insert(
-                PropertyKey::Symbol(vm.well_known_symbols.species),
-                accessor_get_prop(Value::Object(array_buffer_species_getter)),
-            );
-        }
-    });
-    vm.heap.with_obj(array_buffer_proto.0, |obj| {
-        let props = obj.props();
-        let mut props = props.lock();
-        props.insert(
-            PropertyKey::from("byteLength"),
-            accessor_get_prop(Value::Object(array_buffer_byte_length_getter)),
-        );
-        props.insert(
-            PropertyKey::from("immutable"),
-            accessor_get_prop(Value::Object(array_buffer_immutable_getter)),
-        );
-    });
-    define_global(vm, "ArrayBuffer", Value::Object(array_buffer_ctor));
-
-    let (data_view_ctor, data_view_proto) = make_builtin_constructor_with(
-        vm,
-        "DataView",
-        1,
-        data_view_constructor,
-        &[
-            ("getFloat16", data_view_get_float16, 1),
-            ("getFloat32", data_view_get_float32, 1),
-            ("getFloat64", data_view_get_float64, 1),
-            ("getBigInt64", data_view_get_bigint64, 1),
-            ("getBigUint64", data_view_get_biguint64, 1),
-            ("getInt16", data_view_get_int16, 1),
-            ("getInt32", data_view_get_int32, 1),
-            ("getInt8", data_view_get_int8, 1),
-            ("getUint16", data_view_get_uint16, 1),
-            ("getUint32", data_view_get_uint32, 1),
-            ("getUint8", data_view_get_uint8, 1),
-            ("setFloat16", data_view_set_float16, 2),
-            ("setFloat32", data_view_set_float32, 2),
-            ("setFloat64", data_view_set_float64, 2),
-            ("setBigInt64", data_view_set_bigint64, 2),
-            ("setBigUint64", data_view_set_biguint64, 2),
-            ("setInt16", data_view_set_int16, 2),
-            ("setInt32", data_view_set_int32, 2),
-            ("setInt8", data_view_set_int8, 2),
-            ("setUint16", data_view_set_uint16, 2),
-            ("setUint32", data_view_set_uint32, 2),
-            ("setUint8", data_view_set_uint8, 2),
-        ],
-    )?;
-    let data_view_buffer_getter = vm.new_native_function("get buffer", data_view_buffer_get, 0)?;
-    let data_view_byte_length_getter =
-        vm.new_native_function("get byteLength", data_view_byte_length_get, 0)?;
-    let data_view_byte_offset_getter =
-        vm.new_native_function("get byteOffset", data_view_byte_offset_get, 0)?;
-    vm.heap.with_obj(data_view_proto.0, |obj| {
-        let mut props = obj.props().lock();
-        props.insert(
-            PropertyKey::from("buffer"),
-            accessor_get_prop(Value::Object(data_view_buffer_getter)),
-        );
-        props.insert(
-            PropertyKey::from("byteLength"),
-            accessor_get_prop(Value::Object(data_view_byte_length_getter)),
-        );
-        props.insert(
-            PropertyKey::from("byteOffset"),
-            accessor_get_prop(Value::Object(data_view_byte_offset_getter)),
-        );
-    });
-    define_global(vm, "DataView", Value::Object(data_view_ctor));
-
-    let typed_array_ctor = Value::Object(vm.new_native_function(
-        "TypedArray",
-        typed_array_intrinsic_constructor,
-        0,
-    )?);
-    let typed_array_proto =
-        Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
-            props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
-            extensible: AtomicBool::new(true),
-            class_name: Some(Arc::from("TypedArray")),
-            private_fields: Mutex::new(std::collections::HashMap::new()),
-            primitive: Mutex::new(None),
-        }))?));
-    if let Value::Object(idx) = &typed_array_ctor {
-        let typed_array_from_fn = vm.new_native_function("from", typed_array_from, 1)?;
-        let typed_array_of_fn = vm.new_native_function("of", typed_array_of, 0)?;
-        vm.heap.with_obj(idx.0, |o| {
-            if let HeapObj::Function(f) = o {
-                *f.prototype.lock() = Some(typed_array_proto.clone());
-                f.props.lock().insert(
-                    PropertyKey::from("prototype"),
-                    const_prop(typed_array_proto.clone()),
-                );
-                f.props.lock().insert(
-                    PropertyKey::from("from"),
-                    data_prop(Value::Object(typed_array_from_fn)),
-                );
-                f.props.lock().insert(
-                    PropertyKey::from("of"),
-                    data_prop(Value::Object(typed_array_of_fn)),
-                );
-            }
-        });
-    }
-    let typed_array_buffer_getter =
-        vm.new_native_function("get buffer", typed_array_buffer_get, 0)?;
-    let typed_array_byte_length_getter =
-        vm.new_native_function("get byteLength", typed_array_byte_length_get, 0)?;
-    let typed_array_byte_offset_getter =
-        vm.new_native_function("get byteOffset", typed_array_byte_offset_get, 0)?;
-    let typed_array_length_getter =
-        vm.new_native_function("get length", typed_array_length_get, 0)?;
-    if let Value::Object(idx) = &typed_array_proto {
-        vm.heap.with_obj(idx.0, |obj| {
-            let mut props = obj.props().lock();
-            props.insert(
-                PropertyKey::from("constructor"),
-                data_prop(typed_array_ctor.clone()),
-            );
-            props.insert(
-                PropertyKey::from("buffer"),
-                accessor_get_prop(Value::Object(typed_array_buffer_getter)),
-            );
-            props.insert(
-                PropertyKey::from("byteLength"),
-                accessor_get_prop(Value::Object(typed_array_byte_length_getter)),
-            );
-            props.insert(
-                PropertyKey::from("byteOffset"),
-                accessor_get_prop(Value::Object(typed_array_byte_offset_getter)),
-            );
-            props.insert(
-                PropertyKey::from("length"),
-                accessor_get_prop(Value::Object(typed_array_length_getter)),
-            );
-        });
-    }
-
-    for (name, constructor, kind) in [
-        (
-            "Int8Array",
-            int8array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Int8,
-        ),
-        (
-            "Uint8Array",
-            uint8array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Uint8,
-        ),
-        (
-            "Uint8ClampedArray",
-            uint8clampedarray_constructor as NativeFn,
-            crate::value::TypedArrayKind::Uint8Clamped,
-        ),
-        (
-            "Int16Array",
-            int16array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Int16,
-        ),
-        (
-            "Uint16Array",
-            uint16array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Uint16,
-        ),
-        (
-            "Int32Array",
-            int32array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Int32,
-        ),
-        (
-            "Uint32Array",
-            uint32array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Uint32,
-        ),
-        (
-            "Float32Array",
-            float32array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Float32,
-        ),
-        (
-            "Float64Array",
-            float64array_constructor as NativeFn,
-            crate::value::TypedArrayKind::Float64,
-        ),
-        (
-            "BigInt64Array",
-            bigint64array_constructor as NativeFn,
-            crate::value::TypedArrayKind::BigInt64,
-        ),
-        (
-            "BigUint64Array",
-            biguint64array_constructor as NativeFn,
-            crate::value::TypedArrayKind::BigUint64,
-        ),
-    ] {
+    install_array_buffer_constructor_in_env(vm, vm.global, None, true)?;
+    install_data_view_constructor_in_env(vm, vm.global, None)?;
+    let (typed_array_ctor, typed_array_proto) = make_typed_array_intrinsic_in_env(vm, vm.global)?;
+    for (name, constructor, kind) in typed_array_constructor_entries() {
         install_typed_array_constructor(
             vm,
             name,

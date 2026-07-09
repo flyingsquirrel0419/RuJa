@@ -236,6 +236,16 @@ built-ins/TypedArrayConstructors/ctors-bigint/buffer-arg` now reports **44 pass
 / 265 skip**; the remaining failures are detached-buffer realm constructor
 coverage.
 
+Focused TypedArray cross-realm constructor local check:
+`$262.createRealm()` now installs realm-local `ArrayBuffer`, `DataView`, a
+hidden `%TypedArray%` intrinsic constructor/prototype pair, and all concrete
+TypedArray constructors. This makes `other[TA.name]` constructable in test262
+realm tests while keeping concrete constructors linked to that realm's
+`%TypedArray%` and concrete prototypes linked to that realm's
+`%TypedArray%.prototype`. With TypedArray-related skips temporarily lifted, the
+broader `built-ins/TypedArrayConstructors` diagnostic now reports **473 pass /
+0 fail / 265 skip**.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

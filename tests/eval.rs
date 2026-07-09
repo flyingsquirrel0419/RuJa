@@ -336,6 +336,47 @@ fn test262_create_realm_exposes_primitive_wrapper_constructors() {
 }
 
 #[test]
+fn test262_create_realm_exposes_typed_array_constructors() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        var names = [
+          "Int8Array",
+          "Uint8Array",
+          "Uint8ClampedArray",
+          "Int16Array",
+          "Uint16Array",
+          "Int32Array",
+          "Uint32Array",
+          "Float32Array",
+          "Float64Array",
+          "BigInt64Array",
+          "BigUint64Array"
+        ];
+        var ok = [];
+        for (var i = 0; i < names.length; i++) {
+          var name = names[i];
+          var C = other[name];
+          var sample = name.indexOf("Big") === 0 ? new C([1n]) : new C([1]);
+          ok.push(typeof C === "function");
+          ok.push(sample.constructor === C);
+          ok.push(Object.getPrototypeOf(sample) === C.prototype);
+          ok.push(Object.getPrototypeOf(C) === Object.getPrototypeOf(other.Int8Array));
+          ok.push(Object.getPrototypeOf(C.prototype) === Object.getPrototypeOf(other.Int8Array.prototype));
+          $262.detachArrayBuffer(sample.buffer);
+          ok.push(sample[0] === undefined);
+        }
+        var buffer = new other.ArrayBuffer(8);
+        var view = new other.DataView(buffer);
+        ok.push(Object.getPrototypeOf(buffer) === other.ArrayBuffer.prototype);
+        ok.push(Object.getPrototypeOf(view) === other.DataView.prototype);
+        ok.push(other.ArrayBuffer.isView(view));
+        ok.join(",");
+    "#;
+    let expected = vec!["true"; 69].join(",");
+    assert_eq!(run(src), Value::String(Arc::from(expected.as_str())));
+}
+
+#[test]
 fn cross_realm_non_constructor_native_throws_current_realm_type_error() {
     let src = r#"
         var otherParseInt = $262.createRealm().global.parseInt;
