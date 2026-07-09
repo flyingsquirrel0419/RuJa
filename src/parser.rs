@@ -5510,6 +5510,11 @@ impl Parser {
                 && method_name.as_ref() == "constructor"
                 && has_params;
             if !is_getter && !is_setter && !is_async_method && !is_generator_method && !has_params {
+                if computed_name.is_none() && method_name.as_ref() == "constructor" {
+                    return Err(error::Error::syntax(
+                        "Class field cannot be named constructor".to_string(),
+                    ));
+                }
                 if is_static && computed_name.is_none() && method_name.as_ref() == "prototype" {
                     return Err(error::Error::syntax(
                         "Static class element cannot be named prototype".to_string(),

@@ -331,6 +331,26 @@ fn class_field_initializers_reject_contains_arguments() {
 }
 
 #[test]
+fn class_fields_reject_literal_constructor_name() {
+    for src in [
+        "class C { constructor; }",
+        "class C { constructor = 1; }",
+        "class C { 'constructor'; }",
+        "class C { static constructor; }",
+        "class C { static 'constructor' = 1; }",
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+
+    assert_eq!(
+        run(
+            "var name='constructor'; class C { [name] = 1; static [name] = 2; } var c = new C(); c.constructor + C.constructor;"
+        ),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
 fn static_block_await_identifier_contexts() {
     assert_eq!(
         run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),

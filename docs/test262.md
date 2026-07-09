@@ -248,8 +248,9 @@ skips temporarily lifted, the
 `language/{statements,expressions}/class/elements/static-field-anonymous-function-name.js`
 cluster reports **2 pass / 0 fail / 0 skip**. With class field, private method,
 Proxy, Reflect, and Symbol skips temporarily lifted, the broader
-`language/{statements,expressions}/class/elements` diagnostic reports **1491
-pass / 173 fail / 1298 skip**.
+`language/{statements,expressions}/class/elements` diagnostic now reports
+**1559 pass / 105 fail / 1298 skip** after the subsequent field early-error
+fixes.
 
 Focused class field `ContainsArguments` early-error local check:
 public and private class field initializers now raise a parse-time
@@ -260,6 +261,14 @@ class field, static field, computed-name, and arrow gates temporarily lifted,
 the generated
 `language/{statements,expressions}/class/elements/*init-err-contains-arguments.js`
 cluster reports **60 pass / 0 fail / 0 skip**.
+
+Focused class field `constructor` PropName early-error local check:
+public instance and static fields whose non-computed literal PropName is
+`constructor` now raise a parse-time `SyntaxError`. Computed fields such as
+`["constructor"]` still evaluate and define ordinary data properties, matching
+the spec's empty PropName for computed names. With public/static class field and
+computed-name gates temporarily lifted, the focused constructor-PropName
+class-elements cluster reports **11 pass / 0 fail / 0 skip**.
 
 Focused TypedArray `[[HasProperty]]` prototype-delegation local check:
 ordinary property keys missing from a TypedArray now delegate to the
