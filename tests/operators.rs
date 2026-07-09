@@ -589,6 +589,51 @@ fn compound_member_preserves_symbol_computed_key() {
 }
 
 #[test]
+fn compound_member_uses_property_reference() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            var target = { x: 1 };
+            var proxy = new Proxy(target, {
+              get: function(t, k, r) {
+                log.push("get:" + (r === proxy));
+                return Reflect.get(t, k, r);
+              },
+              set: function(t, k, v, r) {
+                log.push("set:" + v + ":" + (r === proxy));
+                return Reflect.set(t, k, v, r);
+              }
+            });
+            var result = proxy[key] += (log.push("rhs"), 2);
+            result + ";" + target.x + ";" + log.join("|");
+            "#),
+        Value::String(Arc::from("3;3;key|get:true|rhs|set:3:true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var o = {};
+            Object.defineProperty(o, "x", { value: 1, writable: false });
+            var sloppy = o.x += 1;
+            var strict;
+            try {
+              (function() { "use strict"; o.x += 1; })();
+            } catch (e) {
+              strict = e.name;
+            }
+            sloppy + ":" + o.x + ":" + strict;
+            "#),
+        Value::String(Arc::from("2:1:TypeError"))
+    );
+}
+
+#[test]
 fn compound_ident_preserves_resolved_binding_across_eval() {
     assert_eq!(
         run("function f(){ var x=3; var inner=(function(){ x *= (eval('var x=2;'), 4); return x; })(); return inner + ':' + x; } f();"),

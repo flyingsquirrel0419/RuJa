@@ -164,6 +164,15 @@ expression class-element directories report **4 pass / 0 fail / 0 skip**. The
 fail / 978 skip** to **469 pass / 87 fail / 978 skip**. The default supported
 subset remains **5099 pass / 0 fail / 15339 skip**.
 
+Focused property Reference member-compound local check:
+ordinary member compound assignments now create an explicit property Reference
+before `GetValue` and preserve that Reference through `PutValue`, matching the
+identifier compound-assignment path. This keeps Symbol property keys intact,
+does not re-coerce computed keys, passes Proxy `set` traps the original
+receiver, and uses the Reference's strict flag when writes fail. The focused
+`language/expressions/compound-assignment` run remains closed at **406 pass /
+0 fail / 48 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

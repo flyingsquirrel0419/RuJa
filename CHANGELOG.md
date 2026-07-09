@@ -41,6 +41,15 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Property Reference records for member compound assignment**: ordinary
+  member compound assignments now lower through the same spec
+  `Reference -> GetValue -> PutValue` path as identifier compound
+  assignments. The new property Reference path preserves Symbol keys, keeps
+  computed keys single-evaluated, passes Proxy `set` traps the original
+  receiver, and applies the Reference's strict flag when the final write
+  fails. `language/expressions/compound-assignment` remains closed at **406
+  pass / 0 fail / 48 skip**, with new Rust regression coverage for Proxy
+  receiver and read-only-property strict/sloppy behavior.
 - **Static class field initializer `this` binding**: static public and private
   field initializers now run with `this` bound to the class constructor, so
   `static g = this.f` and arrows created inside static initializers see the

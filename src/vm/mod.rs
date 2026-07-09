@@ -1661,12 +1661,10 @@ impl Vm {
                             Err(Error::reference(format!("{} is not defined", name)))
                         }
                     }
-                    crate::value::ReferenceBase::Value(base) => match &r.name {
-                        crate::value::PropertyKey::Str(s) => self.get_property(base, s),
-                        crate::value::PropertyKey::Symbol(id) => {
-                            self.get_property(base, &format!("[Symbol {}]", id))
-                        }
-                    },
+                    crate::value::ReferenceBase::Value(base) => {
+                        let key = Self::property_key_to_value(&r.name);
+                        self.get_property_key(base, &key)
+                    }
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
                         crate::value::PropertyKey::Str(s) => {
                             if !self.has_property(base, s)? {
@@ -1908,13 +1906,32 @@ impl Vm {
                         let global_this = self.global_this.clone();
                         self.set_property(&global_this, &name, value)?;
                     }
-                    crate::value::ReferenceBase::Value(base) => match &r.name {
-                        crate::value::PropertyKey::Str(s) => self.set_property(base, s, value)?,
-                        crate::value::PropertyKey::Symbol(id) => {
-                            let key = crate::value::PropertyKey::Symbol(*id);
-                            self.set_property_key(base, &Value::Symbol(*id), value)?
+                    crate::value::ReferenceBase::Value(base) => {
+                        let success = if matches!(base.as_ref(), Value::Object(_)) {
+                            self.try_set_property_key_with_receiver(base, &r.name, value, base)?
+                        } else if base.is_nullish() || r.strict {
+                            return Err(Error::type_err(
+                                "Cannot set property of primitive".to_string(),
+                            ));
+                        } else {
+                            true
+                        };
+                        if !success && r.strict {
+                            match &r.name {
+                                crate::value::PropertyKey::Str(s) => {
+                                    return Err(Error::type_err(format!(
+                                        "Cannot assign to read only property '{}' of object",
+                                        s
+                                    )));
+                                }
+                                crate::value::PropertyKey::Symbol(_) => {
+                                    return Err(Error::type_err(
+                                        "Cannot assign to read only Symbol property",
+                                    ));
+                                }
+                            }
                         }
-                    },
+                    }
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
                         crate::value::PropertyKey::Str(s) => {
                             if !self.has_property(base, s)? {

@@ -4582,25 +4582,20 @@ impl Compiler {
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                 }
                 // stack: [obj, key]
-                self.chunk.emit(Op::Dup2, self.current_line);
-                // stack: [obj, key, obj, key]
-                // Load current value.
-                if *computed {
-                    self.chunk.emit(Op::GetElem, self.current_line);
-                } else {
-                    self.chunk.emit(Op::GetProp, self.current_line);
-                }
-                // stack: [obj, key, currentValue]
-                // Evaluate RHS and apply binary op.
+                self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                // stack: [ref]
+                self.chunk.emit(Op::Dup, self.current_line);
+                // stack: [ref, ref]
+                self.chunk.emit(Op::GetValue, self.current_line);
+                // stack: [ref, currentValue]
                 self.compile_expr(value)?;
+                // stack: [ref, currentValue, rhs]
                 self.chunk.emit(bin, 0);
-                // stack: [obj, key, result]
-                // Store: SetProp/SetElem consumes [obj, key, value] and pushes value.
-                if *computed {
-                    self.chunk.emit(Op::SetElem, self.current_line);
-                } else {
-                    self.chunk.emit(Op::SetProp, self.current_line);
-                }
+                // stack: [ref, result]
+                self.chunk.emit(Op::Swap, self.current_line);
+                // stack: [result, ref]
+                self.chunk.emit(Op::PutValue, self.current_line);
+                // stack: [result]
             }
             Expr::Ident(name) => {
                 // Spec-conforming compound assignment: evaluate the reference

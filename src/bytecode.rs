@@ -375,6 +375,7 @@ pub enum Op {
     LoadEnvName(usize), // push name const then load from env
     StoreEnvName(usize), // push name const then store to env
     LoadRef(usize),   // push a Reference record for the named binding
+    MakePropertyRef,  // pop [base, propertyKey], push a property Reference
     GetValue,         // pop a Reference, push its resolved value
     PutValue,         // pop [Reference, value], store value into the Reference
 
