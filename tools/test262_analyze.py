@@ -67,6 +67,22 @@ TYPED_ARRAY_CONSTRUCTORS_FEATURES = {
     "Symbol.toStringTag",
 }
 
+DATA_VIEW_PREFIXES = (
+    "built-ins/DataView/",
+)
+
+DATA_VIEW_FEATURES = {
+    "ArrayBuffer",
+    "DataView",
+    "Float16Array",
+    "Int8Array",
+    "Reflect",
+    "Reflect.construct",
+    "Symbol.toPrimitive",
+    "Symbol.toStringTag",
+    "Uint8Array",
+}
+
 def parse_meta(src):
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
     if not m:
@@ -120,6 +136,14 @@ def typed_array_constructors_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(TYPED_ARRAY_CONSTRUCTORS_PREFIXES)
 
+def data_view_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(DATA_VIEW_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -130,6 +154,8 @@ def should_skip(meta, path=None):
         feats.discard("Symbol.iterator")
     if path is not None and typed_array_constructors_path(path):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
+    if path is not None and data_view_path(path):
+        feats.difference_update(DATA_VIEW_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

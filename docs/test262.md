@@ -374,6 +374,20 @@ methods. With DataView-related skips temporarily lifted, the broader
 also lifting `Float16Array` for that DataView diagnostic reports **352 pass / 0
 fail / 209 skip**.
 
+Focused DataView runner coverage check:
+`DataView.prototype[Symbol.toStringTag]` is now exposed with the spec
+non-writable, non-enumerable, configurable descriptor. `Reflect.construct`
+DataView construction now delays `newTarget.prototype` lookup until after
+invalid byte-offset validation, then rechecks whether the backing ArrayBuffer
+was detached by that observable lookup before returning the new view.
+`tools/test262_runner.py` and `tools/test262_analyze.py` now admit implemented
+`built-ins/DataView/` coverage with a path-scoped exception for DataView,
+ArrayBuffer, Float16Array, Reflect, `Reflect.construct`, Int8Array, Uint8Array,
+`Symbol.toPrimitive`, and `Symbol.toStringTag`. The normal runner now reports
+**415 pass / 0 fail / 146 skip** on that path. Remaining skips stay behind
+unsupported broad Symbol, SharedArrayBuffer, and resizable ArrayBuffer feature
+gates.
+
 | Metric | Latest confirmed count |
 |--------|------------------------|
 | Total matrix files | 47,717 |

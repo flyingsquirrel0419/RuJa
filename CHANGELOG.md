@@ -25,6 +25,10 @@
   implemented `built-ins/TypedArrayConstructors/` coverage by lifting only the
   TypedArray, ArrayBuffer, DataView, Reflect, and well-known Symbol feature
   gates needed by that path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `built-ins/DataView/` coverage by lifting only the DataView,
+  ArrayBuffer, Float16Array, Reflect, and typed-array helper feature gates
+  needed by that path.
 
 ### Runtime hardening
 
@@ -37,6 +41,14 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **DataView prototype and constructor ordering**: `DataView.prototype` now
+  exposes spec-shaped `@@toStringTag`, `Reflect.construct(DataView, ...)`
+  validates invalid byte offsets before reading `newTarget.prototype`, and
+  rechecks detached ArrayBuffers after the observable prototype lookup. The
+  runner now executes implemented `built-ins/DataView/` coverage under a
+  path-scoped feature exception at **415 pass / 0 fail / 146 skip**; remaining
+  skips stay behind broad Symbol, SharedArrayBuffer, and resizable ArrayBuffer
+  coverage.
 - **TypedArray constructors coverage lift**: the runner now executes the
   implemented `built-ins/TypedArrayConstructors/` tests under a path-scoped
   feature exception instead of requiring ad hoc temporary skip removal. The

@@ -418,6 +418,11 @@ pub(crate) fn data_view_constructor(
     }
 
     let proto = native_constructor_prototype_with_default(vm, "DataView", vm.object_proto.clone())?;
+    let (_, detached) = array_buffer_len_and_detached(vm, &buffer)
+        .ok_or_else(|| Error::type_err("DataView buffer must be an ArrayBuffer"))?;
+    if detached {
+        return Err(Error::type_err("DataView buffer is detached"));
+    }
     let idx = vm
         .heap
         .allocate(HeapObj::DataView(crate::value::DataViewData {

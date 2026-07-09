@@ -915,7 +915,7 @@ impl Vm {
         self.construct_with_new_target(constructor, args, constructor)
     }
 
-    fn is_typed_array_native_constructor(&self, idx: GcIdx) -> bool {
+    fn is_internally_allocating_native_constructor(&self, idx: GcIdx) -> bool {
         self.heap.with_obj(idx.0, |obj| {
             let HeapObj::Function(f) = obj else {
                 return false;
@@ -925,7 +925,8 @@ impl Vm {
             }
             matches!(
                 f.name.as_deref(),
-                Some("Int8Array")
+                Some("DataView")
+                    | Some("Int8Array")
                     | Some("Uint8Array")
                     | Some("Uint8ClampedArray")
                     | Some("Int16Array")
@@ -985,7 +986,7 @@ impl Vm {
         if !self.is_constructor_value(new_target) {
             return Err(Error::type_err("newTarget is not a constructor"));
         }
-        if self.is_typed_array_native_constructor(idx) {
+        if self.is_internally_allocating_native_constructor(idx) {
             self.pending_new_target = Some(new_target.clone());
             self.pending_new_target_prototype = None;
             return self.call_function(constructor, args, Some(Value::Undefined));

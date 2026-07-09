@@ -1835,6 +1835,18 @@ fn install_data_view_constructor_in_env(
                 PropertyKey::from("byteOffset"),
                 accessor_get_prop(Value::Object(data_view_byte_offset_getter)),
             );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                PropertyDescriptor {
+                    value: Value::String(Arc::from("DataView")),
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    get: None,
+                    set: None,
+                    is_accessor: false,
+                },
+            );
         });
     }
     if let Some(global) = global {

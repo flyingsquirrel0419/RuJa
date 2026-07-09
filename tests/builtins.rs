@@ -1908,6 +1908,49 @@ fn data_view_constructor_length_descriptor() {
         "#),
         Value::String(Arc::from("1,false,false,true"))
     );
+    assert_eq!(
+        run(r#"
+            var desc = Object.getOwnPropertyDescriptor(DataView.prototype, Symbol.toStringTag);
+            [desc.value, desc.writable, desc.enumerable, desc.configurable].join(",");
+        "#),
+        Value::String(Arc::from("DataView,false,false,true"))
+    );
+}
+
+#[test]
+fn data_view_constructor_validates_before_new_target_prototype() {
+    assert_eq!(
+        run(r#"
+            var newTarget = Object.defineProperty(function(){}.bind(), "prototype", {
+              get: function() { throw new Error("prototype"); }
+            });
+            var log = [];
+            try {
+              Reflect.construct(DataView, [new ArrayBuffer(0), 10], newTarget);
+              log.push("none");
+            } catch (e) {
+              log.push(e.name + ":" + /prototype/.test(e.message));
+            }
+            try {
+              Reflect.construct(DataView, [new ArrayBuffer(0), 0], newTarget);
+              log.push("none");
+            } catch (e) {
+              log.push(e.name + ":" + /prototype/.test(e.message));
+            }
+            var buffer = new ArrayBuffer(8);
+            var detachingNewTarget = Object.defineProperty(function(){}.bind(), "prototype", {
+              get: function() { $262.detachArrayBuffer(buffer); return DataView.prototype; }
+            });
+            try {
+              Reflect.construct(DataView, [buffer, { valueOf: function() { log.push("offset"); return 0; } }], detachingNewTarget);
+              log.push("none");
+            } catch (e) {
+              log.push(e.name);
+            }
+            log.join("|");
+        "#),
+        Value::String(Arc::from("RangeError:false|Error:true|offset|TypeError"))
+    );
 }
 
 #[test]
