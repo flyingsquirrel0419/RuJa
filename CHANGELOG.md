@@ -41,6 +41,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Property Reference records for member update expressions**: ordinary
+  member update expressions now create an explicit property Reference and
+  preserve it through `GetValue`, numeric increment/decrement, and `PutValue`.
+  This aligns `obj.x++`, `++obj[x]`, and Symbol-keyed update targets with the
+  identifier Reference path while preserving prefix/postfix result values,
+  Proxy receiver identity, and strict failed-write behavior. The focused
+  update-expression test262 cluster reports **138 pass / 0 fail / 4 skip**.
 - **Property Reference records for member compound assignment**: ordinary
   member compound assignments now lower through the same spec
   `Reference -> GetValue -> PutValue` path as identifier compound

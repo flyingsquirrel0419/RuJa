@@ -487,6 +487,54 @@ fn update_member_preserves_symbol_computed_key() {
 }
 
 #[test]
+fn update_member_uses_property_reference() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            var target = { x: 1 };
+            var proxy = new Proxy(target, {
+              get: function(t, k, r) {
+                log.push("get:" + (r === proxy));
+                return Reflect.get(t, k, r);
+              },
+              set: function(t, k, v, r) {
+                log.push("set:" + v + ":" + (r === proxy));
+                return Reflect.set(t, k, v, r);
+              }
+            });
+            var post = proxy[key]++;
+            var pre = ++proxy[key];
+            post + ";" + pre + ";" + target.x + ";" + log.join("|");
+            "#),
+        Value::String(Arc::from(
+            "1;3;3;key|get:true|set:2:true|key|get:true|set:3:true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var o = {};
+            Object.defineProperty(o, "x", { value: 1, writable: false });
+            var sloppy = o.x++;
+            var strict;
+            try {
+              (function() { "use strict"; o.x++; })();
+            } catch (e) {
+              strict = e.name;
+            }
+            sloppy + ":" + o.x + ":" + strict;
+            "#),
+        Value::String(Arc::from("1:1:TypeError"))
+    );
+}
+
+#[test]
 fn update_preserves_bigint_numeric_type() {
     assert_eq!(
         run(r#"

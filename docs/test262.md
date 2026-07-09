@@ -173,6 +173,15 @@ receiver, and uses the Reference's strict flag when writes fail. The focused
 `language/expressions/compound-assignment` run remains closed at **406 pass /
 0 fail / 48 skip**.
 
+Focused property Reference member-update local check:
+ordinary member update expressions now use the same explicit property
+Reference path before applying numeric increment/decrement and `PutValue`.
+This keeps prefix/postfix result values stable while preserving Symbol keys,
+single computed-key coercion, Proxy receiver identity, and strict failed-write
+behavior. The focused update-expression cluster
+`language/expressions/{update,prefix-increment,postfix-increment,prefix-decrement,postfix-decrement}`
+reports **138 pass / 0 fail / 4 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

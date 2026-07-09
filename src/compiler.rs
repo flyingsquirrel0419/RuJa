@@ -2604,22 +2604,16 @@ impl Compiler {
                                 .add_constant(Value::String(Arc::from(key.as_str())));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
-                        self.chunk.emit(Op::Dup2, self.current_line);
-                        if *computed {
-                            self.chunk.emit(Op::GetElem, self.current_line);
-                        } else {
-                            self.chunk.emit(Op::GetProp, self.current_line);
-                        }
+                        self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
                         self.chunk.emit(Op::ToNumeric, self.current_line);
                         let tmp_idx = self.intern("#upd");
                         self.chunk.emit(Op::Dup, self.current_line);
                         self.chunk.emit(Op::DeclareEnv(tmp_idx), self.current_line);
                         self.chunk.emit(inc_op(), self.current_line);
-                        if *computed {
-                            self.chunk.emit(Op::SetElem, self.current_line);
-                        } else {
-                            self.chunk.emit(Op::SetProp, self.current_line);
-                        }
+                        self.chunk.emit(Op::Swap, self.current_line);
+                        self.chunk.emit(Op::PutValue, self.current_line);
                         if !*prefix {
                             self.chunk.emit(Op::Pop, self.current_line);
                             self.chunk.emit(Op::LoadEnv(tmp_idx), self.current_line);
