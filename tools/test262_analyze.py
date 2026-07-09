@@ -52,6 +52,14 @@ FOR_OF_SYMBOL_ITERATOR_PREFIXES = (
     "language/statements/for-of/",
 )
 
+FOR_OF_STATEMENT_FEATURES = {
+    "destructuring-binding",
+    "object-rest",
+    "optional-chaining",
+    "Proxy",
+    "Symbol.iterator",
+}
+
 OBJECT_SPREAD_SYMBOL_PREFIXES = (
     "language/expressions/array/spread-obj-",
     "language/expressions/call/spread-obj-",
@@ -322,7 +330,7 @@ def should_skip(meta, path=None):
     if path is not None and object_spread_symbol_path(path):
         feats.discard("Symbol")
     if path is not None and for_of_symbol_iterator_path(path):
-        feats.discard("Symbol.iterator")
+        feats.difference_update(FOR_OF_STATEMENT_FEATURES)
     if path is not None and typed_array_constructors_path(path):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
     if path is not None and data_view_path(path):
