@@ -4690,17 +4690,14 @@ impl Compiler {
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                 }
                 // stack: [obj, key]
-                self.chunk.emit(Op::Dup2, self.current_line);
-                // stack: [obj, key, obj, key]
-                // Load current value.
-                if *computed {
-                    self.chunk.emit(Op::GetElem, self.current_line);
-                } else {
-                    self.chunk.emit(Op::GetProp, self.current_line);
-                }
-                // stack: [obj, key, currentValue]
+                self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                // stack: [ref]
                 self.chunk.emit(Op::Dup, self.current_line);
-                // stack: [obj, key, currentValue, currentValue]
+                // stack: [ref, ref]
+                self.chunk.emit(Op::GetValue, self.current_line);
+                // stack: [ref, currentValue]
+                self.chunk.emit(Op::Dup, self.current_line);
+                // stack: [ref, currentValue, currentValue]
                 let (cond_jump, fires_when) = match op {
                     AssignOp::AndAssign => (Op::JumpIfFalse(0), "falsy"),
                     AssignOp::OrAssign => (Op::JumpIfTrue(0), "truthy"),
@@ -4710,25 +4707,21 @@ impl Compiler {
                 let _ = fires_when;
                 let jskip = self.chunk.code.len();
                 self.chunk.emit(cond_jump, 0);
-                // Assignment path: drop the old value (keep obj+key),
-                // evaluate the RHS, and store it.
+                // Assignment path: drop the old value, evaluate the RHS, and
+                // store it through the same property Reference.
                 self.chunk.emit(Op::Pop, self.current_line);
-                // stack: [obj, key]
+                // stack: [ref]
                 self.compile_expr(value)?;
-                // stack: [obj, key, result]
-                if *computed {
-                    self.chunk.emit(Op::SetElem, self.current_line);
-                } else {
-                    self.chunk.emit(Op::SetProp, self.current_line);
-                }
+                // stack: [ref, result]
+                self.chunk.emit(Op::Swap, self.current_line);
+                // stack: [result, ref]
+                self.chunk.emit(Op::PutValue, self.current_line);
+                // stack: [result]
                 let jend = self.chunk.code.len();
                 self.chunk.emit(Op::Jump(0), self.current_line);
                 self.chunk.patch_jump(jskip, self.chunk.code.len());
-                // Short-circuit path leaves [obj, key, currentValue]. Drop the
-                // saved target pair so the assignment expression yields the
-                // existing value.
-                self.chunk.emit(Op::Rot3, self.current_line);
-                self.chunk.emit(Op::Pop, self.current_line);
+                // Short-circuit path leaves [ref, currentValue]. Drop the ref
+                // and keep currentValue as the expression result.
                 self.chunk.emit(Op::Swap, self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
                 self.chunk.patch_jump(jend, self.chunk.code.len());

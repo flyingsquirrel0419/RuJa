@@ -182,6 +182,14 @@ behavior. The focused update-expression cluster
 `language/expressions/{update,prefix-increment,postfix-increment,prefix-decrement,postfix-decrement}`
 reports **138 pass / 0 fail / 4 skip**.
 
+Focused property Reference member-logical-assignment local check:
+ordinary member logical assignments now carry a property Reference across
+`GetValue`, short-circuit testing, and `PutValue`. This keeps skipped-write
+expression results stable while preserving Symbol keys, single computed-key
+coercion, Proxy receiver identity, strict failed-write behavior, and nullish
+base ordering. The focused `language/expressions/logical-assignment` run
+remains closed at **57 pass / 0 fail / 21 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

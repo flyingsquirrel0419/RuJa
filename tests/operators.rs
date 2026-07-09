@@ -855,6 +855,62 @@ fn logical_assign_member_preserves_symbol_computed_key() {
 }
 
 #[test]
+fn logical_assign_member_uses_property_reference() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function key(name) {
+              return {
+                toString: function() {
+                  log.push("key:" + name);
+                  return name;
+                }
+              };
+            }
+            var sym = Symbol("sym");
+            var target = { or: 0, and: 1, nil: null, skip: 1 };
+            target[sym] = 0;
+            var proxy = new Proxy(target, {
+              get: function(t, k, r) {
+                log.push("get:" + (k === sym ? "sym" : k) + ":" + (r === proxy));
+                return Reflect.get(t, k, r);
+              },
+              set: function(t, k, v, r) {
+                log.push("set:" + (k === sym ? "sym" : k) + ":" + v + ":" + (r === proxy));
+                t[k] = v;
+                return true;
+              }
+            });
+            var orValue = (proxy[key("or")] ||= 2);
+            var andValue = (proxy[key("and")] &&= 4);
+            var nullishValue = (proxy[key("nil")] ??= 5);
+            var skipValue = (proxy[key("skip")] ||= 9);
+            var symValue = (proxy[sym] ||= 8);
+            [orValue, andValue, nullishValue, skipValue, symValue, target.or, target.and, target.nil, target.skip, target[sym], log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "2;4;5;1;8;2;4;5;1;8;key:or|get:or:true|set:or:2:true|key:and|get:and:true|set:and:4:true|key:nil|get:nil:true|set:nil:5:true|key:skip|get:skip:true|get:sym:true|set:sym:8:true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var o = {};
+            Object.defineProperty(o, "x", { value: 0, writable: false });
+            var sloppy = (o.x ||= 2);
+            var strict;
+            try {
+              (function() { "use strict"; o.x ||= 3; })();
+            } catch (e) {
+              strict = e.name;
+            }
+            sloppy + ":" + o.x + ":" + strict;
+            "#),
+        Value::String(Arc::from("2:0:TypeError"))
+    );
+}
+
+#[test]
 fn logical_assign_member_null_base_precedes_property_key_coercion() {
     for op in ["&&=", "||=", "??="] {
         let err = run_err(&format!(

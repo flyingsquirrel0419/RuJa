@@ -41,6 +41,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Property Reference records for member logical assignment**: ordinary member
+  logical assignments now preserve an explicit property Reference from
+  `GetValue` through the conditional short-circuit and `PutValue` paths. This
+  aligns `obj.x ||= rhs`, `obj[x] &&= rhs`, and `obj[x] ??= rhs` with the
+  identifier Reference path while keeping short-circuit result values, computed
+  key coercion count, Symbol keys, Proxy receiver identity, and strict
+  failed-write behavior stable.
 - **Property Reference records for member update expressions**: ordinary
   member update expressions now create an explicit property Reference and
   preserve it through `GetValue`, numeric increment/decrement, and `PutValue`.
