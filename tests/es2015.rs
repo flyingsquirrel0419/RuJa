@@ -530,6 +530,19 @@ fn object_rest_destructuring_assignment_targets() {
 }
 
 #[test]
+fn object_rest_assignment_boxes_string_sources() {
+    assert_eq!(
+        run(r#"
+            var rest;
+            var vals = "foo";
+            var result = ({...rest} = vals);
+            rest[0] + rest[1] + rest[2] + ":" + (rest instanceof Object) + ":" + result;
+        "#),
+        Value::String(Arc::from("foo:true:foo"))
+    );
+}
+
+#[test]
 fn object_rest_excludes_computed_keys_and_copies_symbols() {
     assert_eq!(
         run(r#"

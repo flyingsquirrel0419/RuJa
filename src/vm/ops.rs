@@ -1609,22 +1609,29 @@ impl Vm {
                     }
                     let src = self.stack.pop().unwrap_or(Value::Undefined);
                     let new_obj = Value::Object(self.new_object()?);
-                    if matches!(src, Value::Object(_)) {
+                    if matches!(src, Value::Null | Value::Undefined) {
+                        return Err(Error::type_err(format!(
+                            "Cannot destructure {}",
+                            src.type_of()
+                        )));
+                    }
+                    let src_obj = self.to_object(&src)?;
+                    if matches!(src_obj, Value::Object(_)) {
                         let keys = crate::builtins::own_property_keys_or_throw(
-                            self, &src, false, true, true,
+                            self, &src_obj, false, true, true,
                         )?;
                         for key in keys {
                             if excluded.contains(&key) {
                                 continue;
                             }
                             if !crate::builtins::own_property_descriptor_for_key_or_throw(
-                                self, &src, &key,
+                                self, &src_obj, &key,
                             )?
                             .is_some_and(|desc| desc.enumerable)
                             {
                                 continue;
                             }
-                            let v = self.get_property_by_key(&src, &key)?;
+                            let v = self.get_property_by_key(&src_obj, &key)?;
                             self.define_data_property(&new_obj, key, v)?;
                         }
                     }

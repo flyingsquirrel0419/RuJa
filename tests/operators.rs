@@ -566,12 +566,18 @@ fn strict_destructuring_eval_arguments_assignment_targets_are_syntax_errors() {
     for src in [
         r#""use strict"; 0, [arguments] = [];"#,
         r#""use strict"; 0, { eval } = {};"#,
+        r#""use strict"; 0, { ...eval } = {};"#,
         r#""use strict"; 0, [{ x: arguments }] = [{}];"#,
         r#""use strict"; for ([arguments] in [[]]) ;"#,
         r#""use strict"; for ({ eval } of [{}]) ;"#,
     ] {
         assert!(run_err(src).contains("SyntaxError"), "{src}");
     }
+}
+
+#[test]
+fn object_assignment_rest_must_be_last() {
+    assert!(run_err("var rest, b; 0, {...rest, b} = {};").contains("SyntaxError"));
 }
 
 #[test]

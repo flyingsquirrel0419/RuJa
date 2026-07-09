@@ -2099,7 +2099,12 @@ impl Parser {
             }
             Expr::Object(props) => {
                 for prop in props {
-                    Self::reject_strict_eval_arguments_assignment_target(&prop.value)?;
+                    match &prop.key {
+                        PropertyKey::Spread(expr) => {
+                            Self::reject_strict_eval_arguments_assignment_target(expr)?
+                        }
+                        _ => Self::reject_strict_eval_arguments_assignment_target(&prop.value)?,
+                    }
                 }
                 Ok(())
             }
@@ -2147,14 +2152,16 @@ impl Parser {
                         other => Self::is_assignment_pattern(other),
                     })
             }
-            Expr::Object(props) => props.iter().all(|prop| {
+            Expr::Object(props) => props.iter().enumerate().all(|(idx, prop)| {
                 if prop.method
                     || matches!(prop.kind, PropKind::Method | PropKind::Get | PropKind::Set)
                 {
                     return false;
                 }
                 match &prop.key {
-                    PropertyKey::Spread(expr) => Self::is_assignment_pattern(expr),
+                    PropertyKey::Spread(expr) => {
+                        idx + 1 == props.len() && Self::is_assignment_pattern(expr)
+                    }
                     _ => Self::is_assignment_pattern(&prop.value),
                 }
             }),

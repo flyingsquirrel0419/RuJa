@@ -175,6 +175,7 @@ ASSIGNMENT_EXPRESSION_PREFIXES = (
 
 ASSIGNMENT_EXPRESSION_FEATURES = {
     "destructuring-binding",
+    "object-rest",
 }
 
 def parse_meta(src):
