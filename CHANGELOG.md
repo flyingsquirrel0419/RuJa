@@ -83,6 +83,14 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   `destructuring-binding` skip lifted for diagnostics,
   `language/statements/{variable,let,const,for}/dstr` now closes at **412 pass
   / 0 fail / 156 skip** while the default supported subset remains green.
+- **For-in/of array rest assignment-pattern early errors**: non-declaration
+  `for` heads now reject array assignment patterns where a rest element is
+  followed by a comma or elision before `in`/`of`, matching the ordinary
+  assignment-pattern early error. With only the `destructuring-binding` skip
+  lifted for diagnostics, `language/statements/for-in/dstr` now closes at
+  **27 pass / 0 fail / 6 skip**, and `language/statements/for-of/dstr`
+  improves to **417 pass / 32 fail / 120 skip** while the default supported
+  subset remains green.
 - **Property Reference records for simple member assignment**: ordinary member
   assignment now lowers final writes through an explicit property Reference
   while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates

@@ -1630,6 +1630,7 @@ impl Parser {
                 ));
             }
             self.no_in = true;
+            let lhs_start = self.pos;
             let e = self.parse_assign()?;
             self.no_in = false;
             if self.check(&TokenKind::In) {
@@ -1639,6 +1640,7 @@ impl Parser {
                         "Invalid left-hand side in for-in".to_string(),
                     ));
                 }
+                self.reject_array_rest_continuation_assignment_target(&e, lhs_start, self.pos)?;
                 if self.is_strict_context {
                     Self::reject_strict_eval_arguments_assignment_target(&e)?;
                 }
@@ -1661,6 +1663,7 @@ impl Parser {
                         "Invalid left-hand side in for-of".to_string(),
                     ));
                 }
+                self.reject_array_rest_continuation_assignment_target(&e, lhs_start, self.pos)?;
                 if self.is_strict_context {
                     Self::reject_strict_eval_arguments_assignment_target(&e)?;
                 }
@@ -6450,10 +6453,17 @@ mod tests {
             "for ({ m() {} } of []) {}",
             "for ([(x, y)] in {}) {}",
             "for ({ m() {} } in {}) {}",
+            "for ([...x,] in {}) {}",
+            "for ([...x,,] in {}) {}",
+            "for ([...x,] of []) {}",
+            "for ([...x,,] of []) {}",
             "var async; for (async of [1]) ;",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
         }
+
+        assert!(Parser::parse("for ([...x] in {}) {}").is_ok());
+        assert!(Parser::parse("for ([...x] of []) {}").is_ok());
     }
 
     #[test]
