@@ -56,9 +56,10 @@
   `language/expressions/logical-assignment/` by lifting only
   `class-fields-private` on those paths.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
-  implemented public instance/static class field coverage on
-  `language/{statements,expressions}/class/elements/` by lifting only
-  `class-fields-public` and `class-static-fields-public` on those paths.
+  implemented public instance/static class field, generator method, async
+  method, and async generator method coverage on
+  `language/{statements,expressions}/class/elements/` without lifting those
+  features outside the class-elements paths.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -83,8 +84,17 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **6328 pass / 0 fail / 14110 skip / 0 timeout**.
+Current supported subset count: **6415 pass / 0 fail / 14023 skip / 0 timeout**.
 
+- **Class special-method constructor early errors**: class parsing now rejects
+  instance `async constructor()`, `* constructor()`, and
+  `async * constructor()` methods as `SyntaxError`, while still allowing static
+  async/generator methods named `constructor`. The class-elements runner
+  exception now admits implemented generator, async method, and async generator
+  method coverage on the class-elements paths. The focused
+  `language/{statements,expressions}/class/elements` run now reports **509 pass
+  / 0 fail / 2453 skip**, and the supported subset rises to **6415 pass / 0
+  fail / 14023 skip**.
 - **Class field initializer arrow `super` context**: public class field
   initializers now parse with the class field initializer `super` and
   `new.target` context, allowing `super.prop` while continuing to reject

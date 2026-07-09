@@ -5746,6 +5746,15 @@ impl Parser {
                 }
                 seen_constructor = true;
             }
+            if !is_static
+                && computed_name.is_none()
+                && method_name.as_ref() == "constructor"
+                && (is_async_method || is_generator_method)
+            {
+                return Err(error::Error::syntax(
+                    "Class constructor cannot be async or generator".to_string(),
+                ));
+            }
             if !is_static && (is_getter || is_setter) && method_name.as_ref() == "constructor" {
                 return Err(error::Error::syntax(
                     "Class constructor cannot be an accessor".to_string(),

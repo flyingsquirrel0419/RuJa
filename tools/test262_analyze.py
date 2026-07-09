@@ -218,14 +218,17 @@ REFERENCE_PRIVATE_EXPRESSION_FEATURES = {
     "class-fields-private",
 }
 
-CLASS_ELEMENTS_PUBLIC_FIELD_PREFIXES = (
+CLASS_ELEMENTS_PREFIXES = (
     "language/expressions/class/elements/",
     "language/statements/class/elements/",
 )
 
-CLASS_ELEMENTS_PUBLIC_FIELD_FEATURES = {
+CLASS_ELEMENTS_FEATURES = {
+    "async-functions",
+    "async-iteration",
     "class-fields-public",
     "class-static-fields-public",
+    "generators",
 }
 
 def parse_meta(src):
@@ -366,13 +369,13 @@ def reference_private_expression_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(REFERENCE_PRIVATE_EXPRESSION_PREFIXES)
 
-def class_elements_public_field_path(path):
+def class_elements_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
     except ValueError:
         return False
     rel_text = rel.as_posix()
-    return rel_text.startswith(CLASS_ELEMENTS_PUBLIC_FIELD_PREFIXES)
+    return rel_text.startswith(CLASS_ELEMENTS_PREFIXES)
 
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
@@ -406,8 +409,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ASSIGNMENT_EXPRESSION_FEATURES)
     if path is not None and reference_private_expression_path(path):
         feats.difference_update(REFERENCE_PRIVATE_EXPRESSION_FEATURES)
-    if path is not None and class_elements_public_field_path(path):
-        feats.difference_update(CLASS_ELEMENTS_PUBLIC_FIELD_FEATURES)
+    if path is not None and class_elements_path(path):
+        feats.difference_update(CLASS_ELEMENTS_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

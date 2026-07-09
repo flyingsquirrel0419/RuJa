@@ -356,6 +356,9 @@ fn class_element_early_errors_follow_static_semantics() {
         "class C { constructor() {} constructor() {} }",
         "class C { get constructor() {} }",
         "class C { set constructor(v) {} }",
+        "class C { async constructor() {} }",
+        "class C { * constructor() {} }",
+        "class C { async * constructor() {} }",
         "class C { static prototype() {} }",
         "class C { static get prototype() {} }",
         "class C { static set prototype(v) {} }",
@@ -399,6 +402,8 @@ fn class_element_early_errors_follow_static_semantics() {
     run("class C { m() { class B { #x() {} } } #x() {} }");
     run("class C { #x = 2; m() { function f(o) { return o.#x; } return f(this); } } new C().m();");
     run("class C { #x = 3; m() { class Inner { read(o) { return o.#x; } } return new Inner().read(this); } } new C().m();");
+    run("class C { static async constructor() {} constructor() {} } typeof C.constructor;");
+    run("class C { static * constructor() {} constructor() {} } typeof C.constructor;");
 }
 
 #[test]
