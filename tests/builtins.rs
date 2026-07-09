@@ -1488,6 +1488,50 @@ fn typed_array_own_keys_include_integer_indices_first() {
 }
 
 #[test]
+fn typed_array_reflect_set_uses_receiver_for_valid_indices() {
+    assert_eq!(
+        run(r#"
+            var valueOfCalls = 0;
+            var value = { valueOf: function() { valueOfCalls++; return 2.3; } };
+            var target = new Float64Array([0]);
+            var receiver = {};
+            var ok = Reflect.set(target, "0", value, receiver);
+            [ok, target[0], receiver[0] === value, valueOfCalls].join(",");
+        "#),
+        Value::String(Arc::from("true,0,true,0"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = new Float64Array([0]);
+            var receiver = new Float64Array([1]);
+            var ok = Reflect.set(target, "0", new Number(2.3), receiver);
+            [ok, target[0], receiver[0]].join(",");
+        "#),
+        Value::String(Arc::from("true,0,2.3"))
+    );
+    assert_eq!(
+        run(r#"
+            var valueOfCalls = 0;
+            var value = { valueOf: function() { valueOfCalls++; return 2.3; } };
+            var target = new Float64Array([0, 0]);
+            var receiver = new Float64Array([1]);
+            var ok = Reflect.set(target, "1", value, receiver);
+            [ok, target[1], Reflect.has(receiver, "1"), valueOfCalls].join(",");
+        "#),
+        Value::String(Arc::from("false,0,false,0"))
+    );
+    assert_eq!(
+        run(r#"
+            var target = new BigInt64Array([0n]);
+            var receiver = new BigInt64Array([1n]);
+            var ok = Reflect.set(target, "0", Object(2n), receiver);
+            [ok, target[0], receiver[0]].join(",");
+        "#),
+        Value::String(Arc::from("true,0,2"))
+    );
+}
+
+#[test]
 fn typed_array_get_canonical_numeric_indices_follow_integer_indexed_exotic() {
     assert_eq!(
         run(r#"

@@ -157,6 +157,19 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   `built-ins/TypedArrayConstructors` improves to **590 pass / 3 fail / 145
   skip**. The remaining failures are now `Reflect.set` receiver writes and
   one typed-array-argument validation ordering case.
+- **TypedArray receiver-aware integer-indexed `[[Set]]`**:
+  `Reflect.set(target, index, value, receiver)` now routes valid
+  integer-indexed writes through the receiver instead of always mutating the
+  target. Plain-object receivers get ordinary data properties without
+  coercing the value, while TypedArray receivers apply their own integer-index
+  validation and element conversion; invalid receiver indexes fail before
+  value coercion. Focused `built-ins/TypedArrayConstructors/internals/Set`
+  improves from **41 pass / 2 fail / 10 skip** to **43 pass / 0 fail / 10
+  skip** with TypedArray, ArrayBuffer, DataView, Reflect, and
+  `Reflect.construct` skips temporarily lifted. Under the same expanded
+  diagnostic, broader `built-ins/TypedArrayConstructors` improves to **592
+  pass / 1 fail / 145 skip**; the remaining failure is the
+  typed-array-argument validation ordering case.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

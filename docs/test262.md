@@ -299,6 +299,19 @@ skip**. Under the same expanded diagnostic, broader
 the remaining failures are now `Reflect.set` receiver writes and one
 typed-array-argument validation ordering case.
 
+Focused TypedArray receiver-aware integer-indexed `[[Set]]` local check:
+`Reflect.set(target, index, value, receiver)` now writes valid integer-indexed
+assignments through the receiver. Plain-object receivers receive ordinary data
+properties without value coercion; TypedArray receivers perform their own
+integer-index validation and element conversion, and invalid receiver indexes
+fail before coercion. With TypedArray, ArrayBuffer, DataView, Reflect, and
+`Reflect.construct` skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/Set` improves from **41 pass / 2
+fail / 10 skip** to **43 pass / 0 fail / 10 skip**. Under the same expanded
+diagnostic, broader `built-ins/TypedArrayConstructors` reports **592 pass / 1
+fail / 145 skip**; the remaining failure is the typed-array-argument
+validation ordering case.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,

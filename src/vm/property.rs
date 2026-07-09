@@ -1568,6 +1568,22 @@ impl Vm {
             }
             return self.set_receiver_data_property(&target, pkey, value);
         }
+        if let Some(success) = self.define_typed_array_integer_index_property(
+            receiver,
+            &pkey,
+            TypedArrayDefineDescriptor {
+                value: Some(&value),
+                has_configurable: false,
+                configurable: false,
+                has_enumerable: false,
+                enumerable: true,
+                is_accessor: false,
+                has_writable: false,
+                writable: true,
+            },
+        )? {
+            return Ok(success);
+        }
         let existing = self
             .heap
             .with_obj(receiver_idx.0, |o| o.props().lock().get(&pkey).cloned());
