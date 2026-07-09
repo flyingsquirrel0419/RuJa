@@ -12,7 +12,7 @@ use crate::bytecode::{Chunk, Op};
 use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
-use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
+use crate::value::{GcIdx, HeapObj, PromiseStatus, PropertyKey, Value};
 use indexmap::IndexMap;
 use num_traits::Zero;
 use parking_lot::Mutex;
@@ -1009,6 +1009,90 @@ impl Vm {
             locals: frame.locals,
             catch_stack: frame.catch_stack,
         })
+    }
+
+    pub(crate) fn instanceof_operator(
+        &mut self,
+        object: &Value,
+        constructor: &Value,
+    ) -> error::Result<bool> {
+        if !matches!(constructor, Value::Object(_)) {
+            return Err(Error::type_err(
+                "Right-hand side of 'instanceof' is not an object".to_string(),
+            ));
+        }
+
+        let has_instance_key = PropertyKey::Symbol(self.well_known_symbols.has_instance);
+        let has_instance = self.get_property_by_key(constructor, &has_instance_key)?;
+        if !has_instance.is_undefined() && !has_instance.is_null() {
+            if !crate::builtins::is_callable(&has_instance, &self.heap) {
+                return Err(Error::type_err(
+                    "Symbol.hasInstance method is not callable".to_string(),
+                ));
+            }
+            let result = self.call_function(
+                &has_instance,
+                std::slice::from_ref(object),
+                Some(constructor.clone()),
+            )?;
+            return Ok(self.to_boolean(&result));
+        }
+
+        if !crate::builtins::is_callable(constructor, &self.heap) {
+            return Err(Error::type_err(
+                "Right-hand side of 'instanceof' is not callable".to_string(),
+            ));
+        }
+
+        self.ordinary_has_instance(constructor, object)
+    }
+
+    pub(crate) fn ordinary_has_instance(
+        &mut self,
+        constructor: &Value,
+        object: &Value,
+    ) -> error::Result<bool> {
+        if !crate::builtins::is_callable(constructor, &self.heap) {
+            return Ok(false);
+        }
+
+        if let Value::Object(idx) = constructor {
+            let bound_target = self.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Function(function) = obj {
+                    if let crate::value::FunctionKind::Bound { target, .. } = &function.kind {
+                        return Some(*target);
+                    }
+                }
+                None
+            });
+            if let Some(target) = bound_target {
+                return self.instanceof_operator(object, &Value::Object(target));
+            }
+        }
+
+        if !matches!(object, Value::Object(_)) {
+            return Ok(false);
+        }
+
+        let constructor_proto =
+            self.get_property_by_key(constructor, &PropertyKey::from("prototype"))?;
+        if !matches!(constructor_proto, Value::Object(_)) {
+            return Err(Error::type_err(
+                "Function has non-object prototype 'undefined' in instanceof check".to_string(),
+            ));
+        }
+
+        let mut current = object.clone();
+        while let Value::Object(object_idx) = &current {
+            if Value::Object(*object_idx) == constructor_proto {
+                return Ok(true);
+            }
+            current = self.get_prototype_of(&current)?.unwrap_or(Value::Undefined);
+            if current.is_undefined() {
+                break;
+            }
+        }
+        Ok(false)
     }
 
     /// Resume (or start) a lazy generator, running until the next `yield` or

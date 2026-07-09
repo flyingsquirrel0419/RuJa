@@ -157,6 +157,18 @@ pub(crate) fn function_bind(
     Ok(Value::Object(GcIdx(fidx)))
 }
 
+/// `Function.prototype[Symbol.hasInstance](value)`: expose
+/// OrdinaryHasInstance as the default instanceof hook.
+pub(crate) fn function_symbol_has_instance(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let target = this.unwrap_or(Value::Undefined);
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    vm.ordinary_has_instance(&target, &value).map(Value::Bool)
+}
+
 /// `Function.prototype` itself is a callable no-op function (per spec:
 /// "an empty function"). Invoking it returns `undefined`.
 pub(crate) fn function_proto_noop(

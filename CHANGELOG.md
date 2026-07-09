@@ -22,8 +22,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5057 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5060 pass / 0 fail / 0 timeout**.
 
+- **`Function.prototype[@@hasInstance]`**: `instanceof` now performs
+  `GetMethod(C, @@hasInstance)` before falling back to `OrdinaryHasInstance`,
+  and `Function.prototype[Symbol.hasInstance]` exposes the default hook with
+  spec-shaped `name`, `length`, and property attributes. The
+  `Symbol.hasInstance` test262 feature skip is removed; the supported subset
+  remains green while increasing to **5060 pass / 0 fail / 0 timeout**.
 - **Symbol prototype well-known properties**: `Symbol.prototype[@@toPrimitive]`
   and `Symbol.prototype[@@toStringTag]` now expose spec-shaped descriptors,
   Symbol primitives can resolve symbol-keyed prototype properties, and unary

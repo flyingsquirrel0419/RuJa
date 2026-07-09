@@ -1302,50 +1302,11 @@ impl Vm {
                     self.stack.push(Value::Bool(has));
                 }
                 Op::InstanceOf => {
-                    // stack: [obj, ctor]; walk obj's proto chain for ctor.prototype.
+                    // stack: [obj, ctor]; first honor @@hasInstance, then fall
+                    // back to OrdinaryHasInstance.
                     let ctor = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    // ES spec: if ctor is not a function, throw TypeError.
-                    let is_function = if let Value::Object(ci) = &ctor {
-                        self.heap.with_obj(ci.0, |o| o.is_function())
-                    } else {
-                        false
-                    };
-                    if !is_function {
-                        return Err(Error::type_err(
-                            "Right-hand side of 'instanceof' is not callable".to_string(),
-                        ));
-                    }
-                    if !matches!(obj, Value::Object(_)) {
-                        self.stack.push(Value::Bool(false));
-                        continue;
-                    }
-                    // ES spec: call [[Get]](ctor, "prototype") — this honors
-                    // user-set .prototype and getters, not just the internal
-                    // field.
-                    let ctor_proto = self.get_property(&ctor, "prototype")?;
-                    // ES spec: if F.prototype is not an object, throw TypeError.
-                    if !matches!(ctor_proto, Value::Object(_) | Value::Null) {
-                        return Err(Error::type_err(
-                            "Function has non-object prototype 'undefined' in instanceof check"
-                                .to_string(),
-                        ));
-                    }
-                    let mut cur = obj;
-                    let mut result = false;
-                    while let Value::Object(oi) = &cur {
-                        if Value::Object(*oi) == ctor_proto {
-                            result = true;
-                            break;
-                        }
-                        cur = self.get_prototype_of(&cur)?.unwrap_or(Value::Undefined);
-                        if cur.is_undefined() {
-                            break;
-                        }
-                    }
-                    // ES spec: if O is not an object, return false.
-                    // (Already handled: the while loop only enters for Object.)
-                    let _ = ctor;
+                    let result = self.instanceof_operator(&obj, &ctor)?;
                     self.stack.push(Value::Bool(result));
                 }
                 Op::BitAnd => self.bitwise_bin(|a, b| a & b, |a, b| Ok(a & b))?,

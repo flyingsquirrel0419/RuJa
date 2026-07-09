@@ -5636,6 +5636,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     let apply_fn = vm.new_native_function("apply", function_apply, 2)?;
     let bind_fn = vm.new_native_function("bind", function_bind, 1)?;
     let tostring_fn = vm.new_native_function("toString", function_to_string, 0)?;
+    let has_instance_fn =
+        vm.new_native_function("[Symbol.hasInstance]", function_symbol_has_instance, 1)?;
     let throw_type_error_fn = throw_type_error_intrinsic(vm, vm.global)?;
     install_methods(
         vm,
@@ -5661,6 +5663,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         props.insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(function_ctor_idx)),
+        );
+        let mut has_instance_desc = PropertyDescriptor::data(Value::Object(has_instance_fn));
+        has_instance_desc.writable = false;
+        has_instance_desc.enumerable = false;
+        has_instance_desc.configurable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.has_instance),
+            has_instance_desc,
         );
         let restricted = PropertyDescriptor {
             value: Value::Undefined,

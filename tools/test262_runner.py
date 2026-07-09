@@ -17,7 +17,7 @@ SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "DataView", "FinalizationRegistry",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
     "Int32Array", "Intl", "Promise", "SharedArrayBuffer",
-    "Symbol", "Symbol.asyncIterator", "Symbol.hasInstance", "Symbol.iterator",
+    "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
     "TypedArray", "Uint8Array", "Uint8Array-base64", "Uint8Array-hex",
     "Uint8ClampedArray", "Uint16Array", "Uint32Array", "WeakMap", "WeakRef",
     "WeakSet", "arraybuffer", "async-functions", "async-iteration", "atomics",

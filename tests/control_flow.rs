@@ -331,6 +331,41 @@ fn instanceof_basic() {
 }
 
 #[test]
+fn instanceof_uses_symbol_has_instance() {
+    assert_eq!(
+        run(r#"
+            var F = {};
+            var seenThis, seenArg, calls = 0;
+            F[Symbol.hasInstance] = function(value) {
+              seenThis = this;
+              seenArg = value;
+              calls += 1;
+              return "truthy";
+            };
+            [0 instanceof F, seenThis === F, seenArg, calls].join(":");
+            "#,),
+        Value::String(Arc::from("true:true:0:1"))
+    );
+    assert_eq!(
+        run(r#"
+            var desc = Object.getOwnPropertyDescriptor(Function.prototype, Symbol.hasInstance);
+            [
+              typeof desc.value,
+              desc.value.name,
+              desc.value.length,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable,
+              Function.prototype[Symbol.hasInstance].call({}, {})
+            ].join(":");
+            "#,),
+        Value::String(Arc::from(
+            "function:[Symbol.hasInstance]:1:false:false:false:false",
+        ))
+    );
+}
+
+#[test]
 fn string_gt_comparison() {
     assert_eq!(run(r#""b" > "a";"#), Value::Bool(true));
     assert_eq!(run(r#""ab" >= "a";"#), Value::Bool(true));

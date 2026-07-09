@@ -24,7 +24,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5057 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5060 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -49,7 +49,7 @@ blocks, default & rest parameters, destructuring (array/object/nested),
 template literals,
 tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
-Symbol.unscopables, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
+Symbol.hasInstance, Symbol.unscopables, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 Promise, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
