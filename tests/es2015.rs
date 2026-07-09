@@ -494,6 +494,45 @@ fn object_rest_destructuring_assignment_targets() {
 }
 
 #[test]
+fn object_rest_excludes_computed_keys_and_copies_symbols() {
+    assert_eq!(
+        run(r#"
+            var key = "a";
+            var v;
+            var rest;
+            ({ [key]: v, ...rest } = { a: 1, b: 2 });
+            v + ":" + rest.a + ":" + rest.b;
+        "#),
+        Value::String(Arc::from("1:undefined:2"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var s = Symbol("slot");
+            var v;
+            var rest;
+            var source = { b: 2 };
+            source[s] = 1;
+            ({ [s]: v, ...rest } = source);
+            v + ":" + rest[s] + ":" + rest.b + ":" + Object.getOwnPropertySymbols(rest).length;
+        "#),
+        Value::String(Arc::from("1:undefined:2:0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var s = Symbol("slot");
+            var source = { a: 1 };
+            source[s] = 2;
+            var rest;
+            ({ a: a, ...rest } = source);
+            rest[s] + ":" + Object.getOwnPropertySymbols(rest).length;
+        "#),
+        Value::String(Arc::from("2:1"))
+    );
+}
+
+#[test]
 fn for_of_destructure() {
     assert_eq!(
         run("let s=0; for(let [k,v] of [['a',1]]){s+=v;} s;"),

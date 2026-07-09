@@ -70,6 +70,12 @@ enum PathStep {
     RestFrom(usize),
 }
 
+#[derive(Clone)]
+enum RestExcludeKey {
+    Const(Arc<str>),
+    Temp(usize),
+}
+
 #[derive(Clone, Copy)]
 enum AssignTargetTemp {
     IdentRef(usize),
@@ -1935,20 +1941,20 @@ impl Compiler {
                 }
             }
             Pattern::Object(props, rest) => {
-                let mut bound_keys: Vec<Arc<str>> = Vec::new();
+                let mut bound_keys: Vec<RestExcludeKey> = Vec::new();
                 for (key, target) in props {
                     // Static keys extend the access path; computed/numeric keys
                     // load the source via GetElem into a temp env binding.
                     match key {
                         PropertyKey::Ident(s) | PropertyKey::String(s) => {
-                            bound_keys.push(s.clone());
+                            bound_keys.push(RestExcludeKey::Const(s.clone()));
                             let mut new_path = path.to_vec();
                             new_path.push(PathStep::Prop(s.clone()));
                             self.bind_destructure_target(target, temp_idx, &new_path, kind)?;
                         }
                         PropertyKey::Number(n) => {
                             let ks = crate::value::num_to_string(*n);
-                            bound_keys.push(Arc::from(ks.as_str()));
+                            bound_keys.push(RestExcludeKey::Const(Arc::from(ks.as_str())));
                             self.load_path(temp_idx, path);
                             let key_idx = self.chunk.add_constant(Value::Number(*n));
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
@@ -1958,9 +1964,14 @@ impl Compiler {
                             self.bind_destructure_target_value(target, t2, kind)?;
                         }
                         PropertyKey::Computed(e) => {
-                            // Can't statically exclude a computed key from rest.
                             self.load_path(temp_idx, path);
                             self.compile_expr(e)?;
+                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                            let source_key = self.fresh_temp("#dkey");
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk
+                                .emit(Op::DeclareEnv(source_key), self.current_line);
+                            bound_keys.push(RestExcludeKey::Temp(source_key));
                             self.chunk.emit(Op::GetElem, self.current_line);
                             let t2 = self.fresh_temp("#d2");
                             self.chunk.emit(Op::DeclareEnv(t2), self.current_line);
@@ -1977,8 +1988,15 @@ impl Compiler {
                 if let Some(r) = rest {
                     self.load_path(temp_idx, path); // [src]
                     for k in &bound_keys {
-                        let k_idx = self.chunk.add_constant(Value::String(k.clone()));
-                        self.chunk.emit(Op::Const(k_idx), self.current_line);
+                        match k {
+                            RestExcludeKey::Const(s) => {
+                                let k_idx = self.chunk.add_constant(Value::String(s.clone()));
+                                self.chunk.emit(Op::Const(k_idx), self.current_line);
+                            }
+                            RestExcludeKey::Temp(idx) => {
+                                self.chunk.emit(Op::LoadEnv(*idx), self.current_line);
+                            }
+                        }
                     }
                     self.chunk
                         .emit(Op::ObjRest(bound_keys.len()), self.current_line); // [restObj]
@@ -2162,12 +2180,12 @@ impl Compiler {
                 self.chunk.patch_jump(jump_after_finally, after_finally);
             }
             Expr::Object(props) => {
-                let mut bound_keys: Vec<Arc<str>> = Vec::new();
+                let mut bound_keys: Vec<RestExcludeKey> = Vec::new();
                 for p in props {
                     let mut new_path = path.to_vec();
                     match &p.key {
                         PropertyKey::Ident(s) | PropertyKey::String(s) => {
-                            bound_keys.push(s.clone());
+                            bound_keys.push(RestExcludeKey::Const(s.clone()));
                             new_path.push(PathStep::Prop(s.clone()));
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
@@ -2178,7 +2196,7 @@ impl Compiler {
                         }
                         PropertyKey::Number(n) => {
                             let ks = crate::value::num_to_string(*n);
-                            bound_keys.push(Arc::from(ks.as_str()));
+                            bound_keys.push(RestExcludeKey::Const(Arc::from(ks.as_str())));
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
                             let key = self
@@ -2195,9 +2213,10 @@ impl Compiler {
                         PropertyKey::Computed(e) => {
                             self.compile_expr(e)?;
                             self.chunk.emit(Op::ToPropertyKey, self.current_line);
-                            let source_key = self.intern("#dkey");
+                            let source_key = self.fresh_temp("#dkey");
                             self.chunk
                                 .emit(Op::DeclareEnv(source_key), self.current_line);
+                            bound_keys.push(RestExcludeKey::Temp(source_key));
                             let target_temp =
                                 self.compile_assign_target_temp(Self::assignment_target(&p.value))?;
                             self.load_path(temp_idx, path);
@@ -2212,8 +2231,16 @@ impl Compiler {
                                 .compile_assign_target_temp(Self::assignment_target(rest_target))?;
                             self.load_path(temp_idx, path);
                             for k in &bound_keys {
-                                let k_idx = self.chunk.add_constant(Value::String(k.clone()));
-                                self.chunk.emit(Op::Const(k_idx), self.current_line);
+                                match k {
+                                    RestExcludeKey::Const(s) => {
+                                        let k_idx =
+                                            self.chunk.add_constant(Value::String(s.clone()));
+                                        self.chunk.emit(Op::Const(k_idx), self.current_line);
+                                    }
+                                    RestExcludeKey::Temp(idx) => {
+                                        self.chunk.emit(Op::LoadEnv(*idx), self.current_line);
+                                    }
+                                }
                             }
                             self.chunk
                                 .emit(Op::ObjRest(bound_keys.len()), self.current_line);

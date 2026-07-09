@@ -71,6 +71,13 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   member targets that rely on `PutValue` receiver identity. The focused
   `language/expressions/assignment/dstr` run remains closed at **90 pass / 0
   fail / 278 skip**.
+- **Object rest computed-key exclusion**: object rest destructuring now excludes
+  computed property names from the rest object after `ToPropertyKey`, including
+  Symbol keys, and copies remaining enumerable Symbol properties into the rest
+  result. This aligns `({ [key]: v, ...rest } = rhs)` and declaration patterns
+  with ordinary object rest semantics. The focused
+  `language/expressions/{assignment,destructuring}` run remains closed at
+  **203 pass / 0 fail / 282 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This

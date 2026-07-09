@@ -230,6 +230,15 @@ targets aligned with `PutValue`/Proxy receiver semantics. The focused
 fail / 278 skip**; `language/expressions/{assignment,destructuring}` reports
 **203 pass / 0 fail / 282 skip**.
 
+Focused object rest computed-key exclusion local check:
+object rest destructuring now stores computed property keys after
+`ToPropertyKey`, excludes those keys from the rest object, and copies remaining
+enumerable Symbol properties. This keeps string and Symbol forms of
+`({ [key]: v, ...rest } = rhs)` aligned with object rest semantics. The focused
+`language/expressions/assignment/dstr` run remains closed at **90 pass / 0
+fail / 278 skip**; `language/expressions/{assignment,destructuring}` reports
+**203 pass / 0 fail / 282 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

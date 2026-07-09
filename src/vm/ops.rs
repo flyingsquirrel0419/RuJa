@@ -1588,36 +1588,32 @@ impl Vm {
                 }
                 Op::ObjRest(count) => {
                     // stack: [src, k1..kN]; new obj with src's own enum props except k1..kN
-                    let mut excluded: Vec<Arc<str>> = Vec::with_capacity(count);
+                    let mut excluded: Vec<crate::value::PropertyKey> = Vec::with_capacity(count);
                     for _ in 0..count {
-                        if let Some(Value::String(s)) = self.stack.pop() {
-                            excluded.push(s);
+                        if let Some(v) = self.stack.pop() {
+                            excluded.push(self.coerce_property_key_record(&v)?);
                         }
                     }
                     let src = self.stack.pop().unwrap_or(Value::Undefined);
                     let new_obj = Value::Object(self.new_object()?);
-                    if let (Value::Object(dest_idx), Value::Object(src_idx)) = (&new_obj, &src) {
-                        let pairs: Vec<(Arc<str>, Value)> = self.heap.with_obj(src_idx.0, |o| {
-                            let mut out = Vec::new();
-                            for (k, desc) in o.props().lock().iter() {
-                                if desc.enumerable {
-                                    if let crate::value::PropertyKey::Str(s) = k {
-                                        out.push((s.clone(), Value::Undefined));
-                                    }
-                                }
-                            }
-                            out
-                        });
-                        for (k, mut v) in pairs {
-                            if excluded.contains(&k) {
+                    if matches!(src, Value::Object(_)) {
+                        let keys = crate::builtins::own_property_keys_or_throw(
+                            self, &src, false, true, true,
+                        )?;
+                        for key in keys {
+                            if excluded.contains(&key) {
                                 continue;
                             }
-                            if v.is_undefined() {
-                                v = self.get_property(&src, &k)?;
+                            if !crate::builtins::own_property_descriptor_for_key_or_throw(
+                                self, &src, &key,
+                            )?
+                            .is_some_and(|desc| desc.enumerable)
+                            {
+                                continue;
                             }
-                            self.set_property(&new_obj, &k, v)?;
+                            let v = self.get_property_by_key(&src, &key)?;
+                            self.define_data_property(&new_obj, key, v)?;
                         }
-                        let _ = dest_idx;
                     }
                     self.stack.push(new_obj);
                 }
