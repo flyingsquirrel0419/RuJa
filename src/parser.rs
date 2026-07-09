@@ -4113,6 +4113,293 @@ impl Parser {
         Ok(())
     }
 
+    fn reject_class_field_initializer_contains_arguments(expr: &Expr) -> error::Result<()> {
+        if Self::class_field_initializer_contains_arguments_expr(expr) {
+            return Err(error::Error::syntax(
+                "'arguments' is not allowed in class field initializer".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn class_field_initializer_contains_arguments_stmt(stmt: &Stmt) -> bool {
+        match &stmt.node {
+            StmtNode::VarDecl { decls, .. } => decls.iter().any(|(_, init)| {
+                init.as_ref()
+                    .is_some_and(Self::class_field_initializer_contains_arguments_expr)
+            }),
+            StmtNode::ExprStmt(expr) | StmtNode::Throw(expr) => {
+                Self::class_field_initializer_contains_arguments_expr(expr)
+            }
+            StmtNode::Block(body) => body
+                .iter()
+                .any(Self::class_field_initializer_contains_arguments_stmt),
+            StmtNode::If { cond, then, else_ } => {
+                Self::class_field_initializer_contains_arguments_expr(cond)
+                    || Self::class_field_initializer_contains_arguments_stmt(then)
+                    || else_.as_ref().is_some_and(|stmt| {
+                        Self::class_field_initializer_contains_arguments_stmt(stmt)
+                    })
+            }
+            StmtNode::While { cond, body } | StmtNode::DoWhile { body, cond } => {
+                Self::class_field_initializer_contains_arguments_expr(cond)
+                    || Self::class_field_initializer_contains_arguments_stmt(body)
+            }
+            StmtNode::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                init.as_ref()
+                    .is_some_and(|stmt| Self::class_field_initializer_contains_arguments_stmt(stmt))
+                    || cond
+                        .as_ref()
+                        .is_some_and(Self::class_field_initializer_contains_arguments_expr)
+                    || update
+                        .as_ref()
+                        .is_some_and(Self::class_field_initializer_contains_arguments_expr)
+                    || Self::class_field_initializer_contains_arguments_stmt(body)
+            }
+            StmtNode::ForIn { left, right, body } => {
+                Self::class_field_initializer_contains_arguments_stmt(left)
+                    || Self::class_field_initializer_contains_arguments_expr(right)
+                    || Self::class_field_initializer_contains_arguments_stmt(body)
+            }
+            StmtNode::ForOf {
+                left, right, body, ..
+            } => {
+                Self::class_field_initializer_contains_arguments_stmt(left)
+                    || Self::class_field_initializer_contains_arguments_expr(right)
+                    || Self::class_field_initializer_contains_arguments_stmt(body)
+            }
+            StmtNode::With { object, body } => {
+                Self::class_field_initializer_contains_arguments_expr(object)
+                    || Self::class_field_initializer_contains_arguments_stmt(body)
+            }
+            StmtNode::Return(expr) => expr
+                .as_ref()
+                .is_some_and(Self::class_field_initializer_contains_arguments_expr),
+            StmtNode::TryCatch {
+                try_body,
+                catch_param,
+                catch_body,
+                finally_body,
+            } => {
+                Self::class_field_initializer_contains_arguments_stmt(try_body)
+                    || catch_param
+                        .as_ref()
+                        .is_some_and(Self::class_field_initializer_contains_arguments_pattern)
+                    || catch_body.as_ref().is_some_and(|stmt| {
+                        Self::class_field_initializer_contains_arguments_stmt(stmt)
+                    })
+                    || finally_body.as_ref().is_some_and(|stmt| {
+                        Self::class_field_initializer_contains_arguments_stmt(stmt)
+                    })
+            }
+            StmtNode::Labeled(_, body) => {
+                Self::class_field_initializer_contains_arguments_stmt(body)
+            }
+            StmtNode::Switch { disc, cases } => {
+                Self::class_field_initializer_contains_arguments_expr(disc)
+                    || cases.iter().any(|case| {
+                        case.test
+                            .as_ref()
+                            .is_some_and(Self::class_field_initializer_contains_arguments_expr)
+                            || case
+                                .body
+                                .iter()
+                                .any(Self::class_field_initializer_contains_arguments_stmt)
+                    })
+            }
+            StmtNode::Destructure { pattern, init, .. } => {
+                Self::class_field_initializer_contains_arguments_pattern(pattern)
+                    || init
+                        .as_ref()
+                        .is_some_and(Self::class_field_initializer_contains_arguments_expr)
+            }
+            StmtNode::FunctionDecl(_)
+            | StmtNode::Break(_)
+            | StmtNode::Continue(_)
+            | StmtNode::Empty => false,
+        }
+    }
+
+    fn class_field_initializer_contains_arguments_expr(expr: &Expr) -> bool {
+        match expr {
+            Expr::Ident(name) => name.as_ref() == "arguments",
+            Expr::Array(elements) | Expr::Sequence(elements) => elements
+                .iter()
+                .any(Self::class_field_initializer_contains_arguments_expr),
+            Expr::Object(props) => props.iter().any(|prop| {
+                Self::class_field_initializer_contains_arguments_property_key(&prop.key)
+                    || Self::class_field_initializer_contains_arguments_expr(&prop.value)
+            }),
+            Expr::Unary(_, expr)
+            | Expr::Update(_, _, expr)
+            | Expr::Spread(expr)
+            | Expr::Await(expr)
+            | Expr::YieldDelegate(expr) => {
+                Self::class_field_initializer_contains_arguments_expr(expr)
+            }
+            Expr::Yield(Some(expr)) => Self::class_field_initializer_contains_arguments_expr(expr),
+            Expr::Binary(_, left, right)
+            | Expr::Logical(_, left, right)
+            | Expr::Assign(_, left, right) => {
+                Self::class_field_initializer_contains_arguments_expr(left)
+                    || Self::class_field_initializer_contains_arguments_expr(right)
+            }
+            Expr::Conditional(cond, then_expr, else_expr) => {
+                Self::class_field_initializer_contains_arguments_expr(cond)
+                    || Self::class_field_initializer_contains_arguments_expr(then_expr)
+                    || Self::class_field_initializer_contains_arguments_expr(else_expr)
+            }
+            Expr::Call { callee, args, .. } | Expr::New { callee, args } => {
+                Self::class_field_initializer_contains_arguments_expr(callee)
+                    || args
+                        .iter()
+                        .any(Self::class_field_initializer_contains_arguments_expr)
+            }
+            Expr::Member {
+                object, property, ..
+            } => {
+                Self::class_field_initializer_contains_arguments_expr(object)
+                    || Self::class_field_initializer_contains_arguments_expr(property)
+            }
+            Expr::PrivateGet { object, .. } => {
+                Self::class_field_initializer_contains_arguments_expr(object)
+            }
+            Expr::PrivateSet { object, value, .. } | Expr::PrivateInit { object, value, .. } => {
+                Self::class_field_initializer_contains_arguments_expr(object)
+                    || Self::class_field_initializer_contains_arguments_expr(value)
+            }
+            Expr::PrivateDefineAccessor {
+                object, get, set, ..
+            } => {
+                Self::class_field_initializer_contains_arguments_expr(object)
+                    || get.as_ref().is_some_and(|expr| {
+                        Self::class_field_initializer_contains_arguments_expr(expr)
+                    })
+                    || set.as_ref().is_some_and(|expr| {
+                        Self::class_field_initializer_contains_arguments_expr(expr)
+                    })
+            }
+            Expr::PublicFieldInit {
+                object,
+                computed_name,
+                value,
+                ..
+            } => {
+                Self::class_field_initializer_contains_arguments_expr(object)
+                    || computed_name.as_ref().is_some_and(|expr| {
+                        Self::class_field_initializer_contains_arguments_expr(expr)
+                    })
+                    || Self::class_field_initializer_contains_arguments_expr(value)
+            }
+            Expr::PrivateFieldDecl {
+                init: Some(init), ..
+            } => Self::class_field_initializer_contains_arguments_expr(init),
+            Expr::TemplateInterp { exprs, .. } => exprs
+                .iter()
+                .any(Self::class_field_initializer_contains_arguments_expr),
+            Expr::TaggedTemplate { tag, exprs, .. } => {
+                Self::class_field_initializer_contains_arguments_expr(tag)
+                    || exprs
+                        .iter()
+                        .any(Self::class_field_initializer_contains_arguments_expr)
+            }
+            Expr::Arrow(func) => {
+                func.param_defaults
+                    .iter()
+                    .flatten()
+                    .any(Self::class_field_initializer_contains_arguments_expr)
+                    || func
+                        .param_decls
+                        .iter()
+                        .any(Self::class_field_initializer_contains_arguments_pattern)
+                    || func
+                        .body
+                        .iter()
+                        .any(Self::class_field_initializer_contains_arguments_stmt)
+            }
+            Expr::Class(cls) => {
+                cls.superclass
+                    .as_ref()
+                    .is_some_and(|expr| Self::class_field_initializer_contains_arguments_expr(expr))
+                    || cls.methods.iter().any(|method| {
+                        method.computed_name.as_ref().is_some_and(|expr| {
+                            Self::class_field_initializer_contains_arguments_expr(expr)
+                        })
+                    })
+                    || cls.public_fields.iter().any(|field| {
+                        field.computed_name.as_ref().is_some_and(|expr| {
+                            Self::class_field_initializer_contains_arguments_expr(expr)
+                        }) || field.init.as_ref().is_some_and(|expr| {
+                            Self::class_field_initializer_contains_arguments_expr(expr)
+                        })
+                    })
+                    || cls.private_fields.iter().any(|field| {
+                        field.init.as_ref().is_some_and(|expr| {
+                            Self::class_field_initializer_contains_arguments_expr(expr)
+                        })
+                    })
+                    || cls.static_blocks.iter().any(|body| {
+                        body.iter()
+                            .any(Self::class_field_initializer_contains_arguments_stmt)
+                    })
+            }
+            Expr::Function(_)
+            | Expr::Number(_)
+            | Expr::BigInt(_)
+            | Expr::String(_)
+            | Expr::TemplateStr(_)
+            | Expr::Bool(_)
+            | Expr::Null
+            | Expr::Undefined
+            | Expr::This
+            | Expr::Super
+            | Expr::ArrayHole
+            | Expr::Regex(_, _)
+            | Expr::NewTarget
+            | Expr::Yield(None)
+            | Expr::PrivateFieldDecl { init: None, .. } => false,
+        }
+    }
+
+    fn class_field_initializer_contains_arguments_pattern(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Assign(pattern, expr) => {
+                Self::class_field_initializer_contains_arguments_pattern(pattern)
+                    || Self::class_field_initializer_contains_arguments_expr(expr)
+            }
+            Pattern::Array(elements) => elements
+                .iter()
+                .any(Self::class_field_initializer_contains_arguments_pattern),
+            Pattern::Object(props, rest) => {
+                props.iter().any(|(key, pattern)| {
+                    Self::class_field_initializer_contains_arguments_property_key(key)
+                        || Self::class_field_initializer_contains_arguments_pattern(pattern)
+                }) || rest.as_ref().is_some_and(|pattern| {
+                    Self::class_field_initializer_contains_arguments_pattern(pattern)
+                })
+            }
+            Pattern::Rest(pattern) => {
+                Self::class_field_initializer_contains_arguments_pattern(pattern)
+            }
+            Pattern::Ident(name) => name.as_ref() == "arguments",
+            Pattern::Hole => false,
+        }
+    }
+
+    fn class_field_initializer_contains_arguments_property_key(key: &PropertyKey) -> bool {
+        match key {
+            PropertyKey::Computed(expr) | PropertyKey::Spread(expr) => {
+                Self::class_field_initializer_contains_arguments_expr(expr)
+            }
+            PropertyKey::Ident(_) | PropertyKey::String(_) | PropertyKey::Number(_) => false,
+        }
+    }
+
     fn check_static_block_stmt(
         stmt: &Stmt,
         labels: &mut std::collections::HashSet<Arc<str>>,
@@ -5134,7 +5421,9 @@ impl Parser {
                     crate::ast::PropKind::Normal,
                 )?;
                 let init = if self.eat(&TokenKind::Assign) {
-                    Some(Box::new(self.parse_assign()?))
+                    let init = self.parse_assign()?;
+                    Self::reject_class_field_initializer_contains_arguments(&init)?;
+                    Some(Box::new(init))
                 } else {
                     None
                 };
@@ -5228,6 +5517,7 @@ impl Parser {
                 }
                 let init = if self.eat(&TokenKind::Assign) {
                     let mut init = self.parse_assign()?;
+                    Self::reject_class_field_initializer_contains_arguments(&init)?;
                     if computed_name.is_none() {
                         Self::name_function_from_ident(&mut init, &method_name);
                     }

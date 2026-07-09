@@ -86,6 +86,12 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   `static-field-anonymous-function-name.js` now reports **2 pass / 0 fail / 0
   skip** across declaration and expression forms; the broader class-elements
   diagnostic reports **1491 pass / 173 fail / 1298 skip**.
+- **Class field `ContainsArguments` early errors**: public and private class
+  field initializers now reject `arguments` during parsing, including lexical
+  occurrences inside arrows while preserving ordinary function-expression
+  boundaries. With public/private class field and arrow gates temporarily
+  lifted, the generated `*init-err-contains-arguments.js` class-elements
+  cluster reports **60 pass / 0 fail / 0 skip**.
 - **TypedArray `[[HasProperty]]` prototype delegation**: ordinary property keys
   missing from a TypedArray now continue through the prototype's real
   `[[HasProperty]]` operation instead of raw own-property lookup. This preserves

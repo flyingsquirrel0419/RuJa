@@ -251,6 +251,16 @@ Proxy, Reflect, and Symbol skips temporarily lifted, the broader
 `language/{statements,expressions}/class/elements` diagnostic reports **1491
 pass / 173 fail / 1298 skip**.
 
+Focused class field `ContainsArguments` early-error local check:
+public and private class field initializers now raise a parse-time
+`SyntaxError` when their initializer contains `arguments`. The check follows
+lexical arrow boundaries, so `() => arguments` is rejected, while ordinary
+function expressions keep their own `arguments` binding. With public/private
+class field, static field, computed-name, and arrow gates temporarily lifted,
+the generated
+`language/{statements,expressions}/class/elements/*init-err-contains-arguments.js`
+cluster reports **60 pass / 0 fail / 0 skip**.
+
 Focused TypedArray `[[HasProperty]]` prototype-delegation local check:
 ordinary property keys missing from a TypedArray now delegate to the
 prototype's actual `[[HasProperty]]` operation instead of walking the chain with

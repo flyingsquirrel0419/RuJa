@@ -313,6 +313,24 @@ fn class_field_initializers_infer_anonymous_function_names() {
 }
 
 #[test]
+fn class_field_initializers_reject_contains_arguments() {
+    for src in [
+        "class C { x = arguments; }",
+        "class C { x = () => arguments; }",
+        "class C { static #x = () => { var f = () => arguments; }; }",
+        "class C { x = class { [arguments]() {} }; }",
+        "(class { #x = typeof arguments; });",
+    ] {
+        assert!(run_err(src).contains("SyntaxError"), "{src}");
+    }
+
+    assert_eq!(
+        run("class C { x = function() { return arguments[0]; }; } new C().x(7);"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
 fn static_block_await_identifier_contexts() {
     assert_eq!(
         run("var ok=false;class C{static{(()=>{class await{} ok=true;})();(()=>{const await=1; ok=ok&&await===1;})();}}ok;"),
