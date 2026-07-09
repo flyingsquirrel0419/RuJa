@@ -86,6 +86,13 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   `static-field-anonymous-function-name.js` now reports **2 pass / 0 fail / 0
   skip** across declaration and expression forms; the broader class-elements
   diagnostic reports **1491 pass / 173 fail / 1298 skip**.
+- **TypedArray `[[HasProperty]]` prototype delegation**: ordinary property keys
+  missing from a TypedArray now continue through the prototype's real
+  `[[HasProperty]]` operation instead of raw own-property lookup. This preserves
+  integer-indexed exotic handling for canonical numeric keys while propagating
+  Proxy `has` traps on the prototype chain. With the Proxy gate temporarily
+  lifted, `built-ins/TypedArrayConstructors/internals/HasProperty` reports
+  **26 pass / 0 fail / 6 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This

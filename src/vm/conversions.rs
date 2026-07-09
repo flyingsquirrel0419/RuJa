@@ -704,24 +704,25 @@ impl Vm {
         &mut self,
         obj: &Value,
         key: &crate::value::PropertyKey,
+        depth: usize,
     ) -> error::Result<bool> {
-        let mut cur = obj.clone();
-        let mut depth = 0;
-        while let Value::Object(idx) = &cur {
-            if depth > 1024 {
-                break;
-            }
-            depth += 1;
-            if self.has_own_property_key_raw(&cur, key) {
-                return Ok(true);
-            }
-            let proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
-            cur = proto.unwrap_or(Value::Undefined);
-            if cur.is_undefined() {
-                break;
-            }
+        if depth > 1024 {
+            return Ok(false);
         }
-        Ok(false)
+        let Value::Object(idx) = obj else {
+            return Ok(false);
+        };
+        if self.has_own_property_key_raw(obj, key) {
+            return Ok(true);
+        }
+        let proto = self.heap.with_obj(idx.0, |o| o.proto().lock().clone());
+        let Some(proto) = proto else {
+            return Ok(false);
+        };
+        if proto.is_undefined() {
+            return Ok(false);
+        }
+        self.has_property_key_inner(&proto, key, depth + 1)
     }
 
     /// Does `obj` (or its prototype chain) have an own/inherited property for
@@ -732,6 +733,18 @@ impl Vm {
         obj: &Value,
         key: &crate::value::PropertyKey,
     ) -> error::Result<bool> {
+        self.has_property_key_inner(obj, key, 0)
+    }
+
+    fn has_property_key_inner(
+        &mut self,
+        obj: &Value,
+        key: &crate::value::PropertyKey,
+        depth: usize,
+    ) -> error::Result<bool> {
+        if depth > 1024 {
+            return Ok(false);
+        }
         if let Value::Object(idx) = obj {
             let proxy_info = self.heap.with_obj(idx.0, |o| {
                 if let crate::value::HeapObj::Proxy(p) = o {
@@ -777,13 +790,13 @@ impl Vm {
                     }
                     return Ok(boolean_trap_result);
                 }
-                return self.has_property_key(&target, key);
+                return self.has_property_key_inner(&target, key, depth + 1);
             }
             if let Some(has_index) = self.typed_array_integer_index_has_property(obj, key) {
                 return Ok(has_index);
             }
         }
-        self.has_property_key_ordinary(obj, key)
+        self.has_property_key_ordinary(obj, key, depth)
     }
 
     /// Does `obj` have an **own** property (not inherited)?

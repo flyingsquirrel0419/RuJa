@@ -1507,6 +1507,29 @@ fn typed_array_has_property_canonical_numeric_indices_follow_integer_indexed_exo
 }
 
 #[test]
+fn typed_array_has_property_ordinary_keys_delegate_to_proxy_prototype() {
+    assert_eq!(
+        run(r#"
+            var hits = 0;
+            var proxy = new Proxy(Object.getPrototypeOf(Uint8Array.prototype), {
+              has: function(target, key) {
+                hits++;
+                if (key === "foo") throw new Error("has trap");
+                return Reflect.has(target, key);
+              }
+            });
+            var sample = new Uint8Array([7]);
+            Object.setPrototypeOf(sample, proxy);
+            var numeric = [Reflect.has(sample, "0"), Reflect.has(sample, "1")].join(",");
+            var threw = false;
+            try { Reflect.has(sample, "foo"); } catch (e) { threw = e.message === "has trap"; }
+            numeric + ":" + threw + ":" + hits;
+        "#),
+        Value::String(Arc::from("true,false:true:1"))
+    );
+}
+
+#[test]
 fn typed_array_subarray_creates_shared_offset_views() {
     assert_eq!(
         run(r#"

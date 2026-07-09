@@ -251,6 +251,15 @@ Proxy, Reflect, and Symbol skips temporarily lifted, the broader
 `language/{statements,expressions}/class/elements` diagnostic reports **1491
 pass / 173 fail / 1298 skip**.
 
+Focused TypedArray `[[HasProperty]]` prototype-delegation local check:
+ordinary property keys missing from a TypedArray now delegate to the
+prototype's actual `[[HasProperty]]` operation instead of walking the chain with
+raw own-property checks. Canonical numeric keys still use Integer-Indexed
+exotic semantics, while ordinary keys now propagate Proxy `has` traps from
+TypedArray prototype chains. With the Proxy gate temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/HasProperty` reports **26 pass / 0
+fail / 6 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor
