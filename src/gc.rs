@@ -228,6 +228,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             for v in g.locals.lock().iter() {
                 push_value(v, worklist);
             }
+            push_value(&g.finally_completion_val.lock(), worklist);
             push_value(&g.resume_value.lock(), worklist);
             for v in g.args.lock().iter() {
                 push_value(v, worklist);

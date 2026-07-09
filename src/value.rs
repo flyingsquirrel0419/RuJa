@@ -7,7 +7,7 @@
 use crate::ast::FunctionExpr;
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 use std::fmt;
 use std::sync::Arc;
@@ -788,6 +788,14 @@ pub struct LazyGeneratorData {
     pub locals: Mutex<Vec<Value>>,
     /// Saved try/catch handler stack (so catches resume across yields).
     pub catch_stack: Mutex<Vec<(usize, u32, GcIdx)>>,
+    /// Saved try/finally guard stack (so generator return/throw resumes can
+    /// run active finally blocks after yielding inside protected regions).
+    pub finally_stack: Mutex<Vec<(usize, u32)>>,
+    /// Monotonic guard sequence restored with catch/finally stacks.
+    pub guard_seq: AtomicU32,
+    /// Pending completion saved when a generator yields from inside a finally.
+    pub finally_completion_tag: AtomicU8,
+    pub finally_completion_val: Mutex<Value>,
     /// True once the body has begun executing.
     pub started: AtomicBool,
     /// True once the body has run to completion (return / fall-off end).

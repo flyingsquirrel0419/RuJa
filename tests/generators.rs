@@ -488,18 +488,125 @@ fn generator_return_value_surfaces() {
 #[test]
 fn generator_return_runs_finally() {
     // Per spec, return(v) runs any finally block before completing.
-    // (We at least require the generator to end done with the return value.)
     let src = r#"
+        let closed = 0;
         function* g() {
             try { yield 1; }
-            finally { }
+            finally { closed++; }
         }
         let it = g();
         it.next();
         let r = it.return(42);
-        r.value + "," + r.done + "," + it.next().done;
+        r.value + "," + r.done + "," + closed + "," + it.next().done;
     "#;
-    assert_eq!(run(src), Value::String(Arc::from("42,true,true")));
+    assert_eq!(run(src), Value::String(Arc::from("42,true,1,true")));
+}
+
+#[test]
+fn generator_return_can_yield_from_finally_then_complete() {
+    let src = r#"
+        let log = [];
+        function* g() {
+            try { yield 1; }
+            finally {
+                log.push("finally");
+                yield 2;
+                log.push("after");
+            }
+        }
+        let it = g();
+        let a = it.next();
+        let b = it.return(9);
+        let c = it.next();
+        let d = it.next();
+        [
+            a.value, a.done,
+            b.value, b.done,
+            c.value, c.done,
+            d.value, d.done,
+            log.join("|")
+        ].join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("1,false,2,false,9,true,,true,finally|after"))
+    );
+}
+
+#[test]
+fn generator_return_on_done_preserves_argument() {
+    let src = r#"
+        function* g() { yield 1; }
+        let it = g();
+        it.next();
+        it.next();
+        let r = it.return(7);
+        r.value + "," + r.done;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("7,true")));
+}
+
+#[test]
+fn for_of_break_closes_generator_with_finally() {
+    let src = r#"
+        let closed = 0;
+        function* g() {
+            try { yield 1; yield 2; }
+            finally { closed++; }
+        }
+        for (let v of g()) { break; }
+        closed;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
+}
+
+#[test]
+fn for_of_continue_closes_generator_with_finally() {
+    let src = r#"
+        let closed = 0;
+        function* g() {
+            try { yield 1; yield 2; }
+            finally { closed++; }
+        }
+        outer: for (let i = 0; i < 1; i++) {
+            for (let v of g()) { continue outer; }
+        }
+        closed;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
+}
+
+#[test]
+fn for_of_return_closes_generator_with_finally() {
+    let src = r#"
+        let closed = 0;
+        function* g() {
+            try { yield 1; yield 2; }
+            finally { closed++; }
+        }
+        function f() {
+            for (let v of g()) { return "done"; }
+        }
+        f();
+        closed;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
+}
+
+#[test]
+fn for_of_throw_closes_generator_with_finally() {
+    let src = r#"
+        let closed = 0;
+        function* g() {
+            try { yield 1; yield 2; }
+            finally { closed++; }
+        }
+        try {
+            for (let v of g()) { throw "stop"; }
+        } catch (e) {}
+        closed;
+    "#;
+    assert_eq!(run(src), Value::Number(1.0));
 }
 
 #[test]

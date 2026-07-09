@@ -22,6 +22,9 @@
   implemented `language/statements/for-of/` destructuring, object rest,
   optional-chaining, Proxy, and `Symbol.iterator` coverage without unskipping
   generator coverage.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the four
+  implemented `language/statements/for-of/generator-close-via-*.js` files
+  without opening broader generator coverage.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/TypedArrayConstructors/` coverage by lifting only the
   TypedArray, concrete TypedArray constructor, ArrayBuffer, DataView, Reflect,
@@ -72,13 +75,19 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5865 pass / 0 fail / 14573 skip / 0 timeout**.
+Current supported subset count: **5869 pass / 0 fail / 14569 skip / 0 timeout**.
 
 - **For-of runner admission**: the `language/statements/for-of/` path
   exception now admits implemented destructuring-binding, object-rest,
   optional-chaining, Proxy, and `Symbol.iterator` coverage without opening
-  generator coverage. The focused `for-of` path now reports **594 pass / 0
-  fail / 157 skip**.
+  broad generator coverage. The focused `for-of` path now reports **598 pass /
+  0 fail / 153 skip** after admitting the four implemented generator-close
+  files.
+- **Generator close via `for-of` abrupt completion**: generator `return()`
+  resumes suspended generators with a return completion instead of marking them
+  done immediately, so active `finally` blocks run when `for-of` exits through
+  `break`, `continue`, `return`, or `throw`. Generator suspension now preserves
+  active `finally` guards and pending finally completions across yields.
 - **`with` runner admission**: the `language/statements/with/` path exception
   now admits the remaining implemented object-environment coverage, including
   TypedArray prototype-chain binding deletion and async/generator declaration

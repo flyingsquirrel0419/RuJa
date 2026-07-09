@@ -70,6 +70,13 @@ FOR_OF_STATEMENT_FEATURES = {
     "Symbol.iterator",
 }
 
+FOR_OF_GENERATOR_CLOSE_FILES = {
+    "language/statements/for-of/generator-close-via-break.js",
+    "language/statements/for-of/generator-close-via-continue.js",
+    "language/statements/for-of/generator-close-via-return.js",
+    "language/statements/for-of/generator-close-via-throw.js",
+}
+
 TYPED_ARRAY_CONSTRUCTORS_PREFIXES = (
     "built-ins/TypedArrayConstructors/",
 )
@@ -259,6 +266,13 @@ def for_of_symbol_iterator_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(FOR_OF_SYMBOL_ITERATOR_PREFIXES)
 
+def for_of_generator_close_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in FOR_OF_GENERATOR_CLOSE_FILES
+
 def typed_array_constructors_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -339,6 +353,8 @@ def should_skip(meta, path=None):
         feats.discard("Symbol")
     if path is not None and for_of_symbol_iterator_path(path):
         feats.difference_update(FOR_OF_STATEMENT_FEATURES)
+    if path is not None and for_of_generator_close_path(path):
+        feats.discard("generators")
     if path is not None and typed_array_constructors_path(path):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
     if path is not None and data_view_path(path):

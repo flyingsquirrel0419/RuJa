@@ -152,6 +152,10 @@ pub struct CallFrame {
     /// in this frame throws `e` at the suspended `yield` point instead of
     /// pushing a resume value. Consumed on first use.
     pub force_throw: Mutex<Option<Value>>,
+    /// When set, the generator was resumed via `return(v)`: the next dispatch
+    /// in this frame injects a return completion at the suspended `yield`
+    /// point, so any active `finally` blocks run before the generator closes.
+    pub force_return: Mutex<Option<Value>>,
     /// Pending completion to re-raise after a `finally` block runs.
     /// Tag: 0 normal, 1 return, 2 break, 3 continue, 4 throw.
     pub finally_completion_tag: AtomicU8,
@@ -207,6 +211,7 @@ impl CallFrame {
             gen_suspended: AtomicBool::new(false),
             gen_resume_value: Mutex::new(Value::Undefined),
             force_throw: Mutex::new(None),
+            force_return: Mutex::new(None),
             finally_completion_tag: AtomicU8::new(0),
             finally_completion_val: Mutex::new(Value::Undefined),
             finally_stack: Vec::new(),
@@ -243,6 +248,10 @@ pub(crate) struct GeneratorPrologueState {
     pub stack: Vec<Value>,
     pub locals: Vec<Value>,
     pub catch_stack: Vec<(usize, u32, GcIdx)>,
+    pub finally_stack: Vec<(usize, u32)>,
+    pub guard_seq: u32,
+    pub finally_completion_tag: u8,
+    pub finally_completion_val: Value,
 }
 
 pub enum Microtask {
@@ -1019,12 +1028,19 @@ impl Vm {
             .pop()
             .ok_or_else(|| Error::internal("generator prologue frame missing"))?;
         let saved_stack = self.stack.split_off(stack_base);
+        let guard_seq = frame.guard_seq.load(Ordering::Relaxed);
+        let finally_completion_tag = frame.finally_completion_tag.load(Ordering::Relaxed);
+        let finally_completion_val = frame.finally_completion_val.lock().clone();
         Ok(GeneratorPrologueState {
             env: frame.env,
             ip: frame.ip,
             stack: saved_stack,
             locals: frame.locals,
             catch_stack: frame.catch_stack,
+            finally_stack: frame.finally_stack,
+            guard_seq,
+            finally_completion_tag,
+            finally_completion_val,
         })
     }
 
@@ -1131,6 +1147,10 @@ impl Vm {
             mut locals,
             mut stack,
             mut catch_stack,
+            mut finally_stack,
+            guard_seq,
+            finally_completion_tag,
+            finally_completion_val,
             started,
             done,
         ) = self.heap.with_obj(g_idx.0, |o| {
@@ -1144,6 +1164,10 @@ impl Vm {
                     g.locals.lock().clone(),
                     g.stack.lock().clone(),
                     g.catch_stack.lock().clone(),
+                    g.finally_stack.lock().clone(),
+                    g.guard_seq.load(Ordering::Relaxed),
+                    g.finally_completion_tag.load(Ordering::Relaxed),
+                    g.finally_completion_val.lock().clone(),
                     g.started.load(Ordering::Relaxed),
                     g.done.load(Ordering::Relaxed),
                 )
@@ -1153,26 +1177,32 @@ impl Vm {
         });
 
         if done {
-            return Ok((Value::Undefined, true));
+            return match &kind {
+                ResumeKind::Return(v) => Ok((v.clone(), true)),
+                _ => Ok((Value::Undefined, true)),
+            };
         }
 
-        // `return(v)` on a suspended generator forces completion: the value is
-        // the generator's return value and the generator is marked done.
-        // Per spec, an unstarted generator's return() also just completes.
-        if let ResumeKind::Return(v) = &kind {
-            self.heap.with_obj(g_idx.0, |o| {
-                if let HeapObj::LazyGenerator(g) = o {
-                    g.done.store(true, Ordering::Relaxed);
-                    g.started.store(true, Ordering::Relaxed);
-                }
-            });
-            return Ok((v.clone(), true));
+        // Per spec, an unstarted generator's return() completes without
+        // evaluating the body. A suspended generator's return() must instead
+        // resume at the yield point with a return completion so finally blocks
+        // can run.
+        if !started {
+            if let ResumeKind::Return(v) = &kind {
+                self.heap.with_obj(g_idx.0, |o| {
+                    if let HeapObj::LazyGenerator(g) = o {
+                        g.done.store(true, Ordering::Relaxed);
+                        g.started.store(true, Ordering::Relaxed);
+                    }
+                });
+                return Ok((v.clone(), true));
+            }
         }
 
         let resume_val = match &kind {
             ResumeKind::Next(v) => v.clone(),
             ResumeKind::Throw(e) => e.clone(),
-            ResumeKind::Return(_) => Value::Undefined, // handled above
+            ResumeKind::Return(v) => v.clone(),
         };
 
         // On the first resume, either continue after the call-time generator
@@ -1190,12 +1220,12 @@ impl Vm {
                 ip = 0;
                 stack.clear();
                 catch_stack.clear();
+                finally_stack.clear();
             }
-        } else if let ResumeKind::Throw(_e) = &kind {
-            // `throw(e)`: do NOT push a resume value; instead, set a flag so
-            // the next dispatch in this frame throws `e` at the yield point.
-            // (The force_throw is stashed on the frame after it is pushed
-            // below; we remember it in a local for now.)
+        } else if matches!(kind, ResumeKind::Throw(_) | ResumeKind::Return(_)) {
+            // Abrupt resumes do NOT push a resume value. They set a per-frame
+            // flag below so dispatch injects the completion at the suspended
+            // yield point.
         } else {
             // Resuming after a `yield`: the value sent via `next(v)` becomes the
             // result of the suspended `yield` expression.
@@ -1215,7 +1245,16 @@ impl Vm {
             frame.in_parameter_initializers = fdef.has_parameter_expressions;
         }
         // Restore the saved catch_stack onto the new frame.
-        self.current_frame_mut()?.catch_stack = catch_stack;
+        {
+            let frame = self.current_frame_mut()?;
+            frame.catch_stack = catch_stack;
+            frame.finally_stack = finally_stack;
+            frame.guard_seq.store(guard_seq, Ordering::Relaxed);
+            frame
+                .finally_completion_tag
+                .store(finally_completion_tag, Ordering::Relaxed);
+            *frame.finally_completion_val.lock() = finally_completion_val;
+        }
         // Swap in a dedicated operand stack for the generator run, preserving
         // the caller's stack untouched. This keeps generator execution fully
         // isolated from the caller's operand values.
@@ -1234,6 +1273,11 @@ impl Vm {
             // `throw(e)`: arrange for the next dispatch to raise `e`.
             if let ResumeKind::Throw(e) = &kind {
                 *frame.force_throw.lock() = Some(e.clone());
+            }
+            // `return(v)`: arrange for the next dispatch to inject a return
+            // completion at the suspended yield point.
+            if let ResumeKind::Return(v) = &kind {
+                *frame.force_return.lock() = Some(v.clone());
             }
         }
 
@@ -1298,6 +1342,14 @@ impl Vm {
                     *g.locals.lock() = frame.locals;
                     *g.stack.lock() = saved_stack;
                     *g.catch_stack.lock() = frame.catch_stack;
+                    *g.finally_stack.lock() = frame.finally_stack;
+                    g.guard_seq
+                        .store(frame.guard_seq.load(Ordering::Relaxed), Ordering::Relaxed);
+                    g.finally_completion_tag.store(
+                        frame.finally_completion_tag.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
+                    *g.finally_completion_val.lock() = frame.finally_completion_val.lock().clone();
                     g.started.store(true, Ordering::Relaxed);
                 }
             });

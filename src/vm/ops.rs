@@ -183,6 +183,34 @@ impl Vm {
             if let Some(exc) = self.frames.last().and_then(|f| f.force_throw.lock().take()) {
                 return Err(Error::thrown(exc, &self.heap));
             }
+            if let Some(ret) = self
+                .frames
+                .last()
+                .and_then(|f| f.force_return.lock().take())
+            {
+                let stack_base = self.current_frame()?.stack_base;
+                if let Some(frame) = self.frames.last_mut() {
+                    if let Some(&(target, fseq)) = frame.finally_stack.last() {
+                        Self::discard_catches_inside_finally(frame, fseq);
+                        frame.finally_completion_tag.store(1, Ordering::Relaxed);
+                        *frame.finally_completion_val.lock() = ret;
+                        frame.ip = target;
+                        continue;
+                    }
+                }
+                self.stack.truncate(stack_base);
+                self.frames.pop();
+                if self.frames.is_empty() {
+                    return Ok(ret);
+                }
+                if let Some(d) = return_depth {
+                    if self.frames.len() <= d {
+                        return Ok(ret);
+                    }
+                }
+                self.stack.push(ret);
+                continue;
+            }
             let frame = self.current_frame()?;
             let ip = frame.ip;
             if stop_at.is_some_and(|(depth, stop_ip)| {

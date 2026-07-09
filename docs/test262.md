@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5865 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5869 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -391,14 +391,16 @@ language/expressions/logical-assignment language/expressions/update
 language/statements/with` now reports **1120 pass / 0 fail / 78 skip**.
 
 Focused for-of iterator protocol local check:
-`language/statements/for-of` now reports **594 pass / 0 fail / 157 skip**
+`language/statements/for-of` now reports **598 pass / 0 fail / 153 skip**
 after for-of caches iterator `next` at `GetIterator` time, rejects non-object
 iterator results, applies `ToBoolean` to `done`, validates `return()` results
 during `IteratorClose`, preserves the original throw when close also throws,
-and keeps hidden iterator-close state alive across labeled `continue`. The
-runner now admits implemented destructuring-binding, object-rest,
-optional-chaining, Proxy, and `Symbol.iterator` coverage on this path while
-leaving generator-tagged cases behind their broader gate.
+keeps hidden iterator-close state alive across labeled `continue`, and runs
+generator `finally` blocks when generator-backed loops exit through `break`,
+`continue`, `return`, or `throw`. The runner now admits implemented
+destructuring-binding, object-rest, optional-chaining, Proxy,
+`Symbol.iterator`, and the four generator-close files on this path while
+leaving broader generator-tagged cases behind their broader gate.
 
 Focused TypedArray static `from`/`of` local check:
 `built-ins/TypedArrayConstructors/{from,from/BigInt,of,of/BigInt}` closes at
