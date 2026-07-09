@@ -107,6 +107,16 @@ TYPED_ARRAY_CONSTRUCTORS_FEATURES = {
     "Proxy",
 }
 
+ARRAY_BUFFER_PREFIXES = (
+    "built-ins/ArrayBuffer/",
+)
+
+ARRAY_BUFFER_FEATURES = {
+    "ArrayBuffer",
+    "Reflect.construct",
+    "Symbol",
+}
+
 DATA_VIEW_PREFIXES = (
     "built-ins/DataView/",
 )
@@ -284,6 +294,14 @@ def typed_array_constructors_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(TYPED_ARRAY_CONSTRUCTORS_PREFIXES)
 
+def array_buffer_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(ARRAY_BUFFER_PREFIXES)
+
 def data_view_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -360,6 +378,8 @@ def should_skip(meta, path=None):
         feats.discard("generators")
     if path is not None and typed_array_constructors_path(path):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
+    if path is not None and array_buffer_path(path):
+        feats.difference_update(ARRAY_BUFFER_FEATURES)
     if path is not None and data_view_path(path):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and error_stack_path(path):

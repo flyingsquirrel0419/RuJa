@@ -2360,6 +2360,7 @@ fn array_buffer_immutable_surface_and_transfer_validation_order() {
             }
             var ab = new ArrayBuffer(2);
             var immutableDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "immutable");
+            var detachedDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "detached");
             var transferDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "transfer");
             var fixedDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "transferToFixedLength");
             var immutableTransferDesc = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "transferToImmutable");
@@ -2379,7 +2380,15 @@ fn array_buffer_immutable_surface_and_transfer_validation_order() {
               immutableDesc.configurable,
               immutableDesc.get.call(new ArrayBuffer(1)),
               immutableDesc.get.call(detached),
+              detachedDesc.get.name,
+              detachedDesc.get.length,
+              detachedDesc.set === undefined,
+              detachedDesc.enumerable,
+              detachedDesc.configurable,
+              detachedDesc.get.call(new ArrayBuffer(1)),
+              detachedDesc.get.call(ab),
               throwsTypeError(function() { immutableDesc.get.call({}); }),
+              throwsTypeError(function() { detachedDesc.get.call({}); }),
               transferDesc.value.length,
               fixedDesc.value.length,
               immutableTransferDesc.value.length,
@@ -2388,7 +2397,7 @@ fn array_buffer_immutable_surface_and_transfer_validation_order() {
             ].join(",");
             "#),
         Value::String(Arc::from(
-            "get immutable,0,true,false,true,false,false,true,0,0,0,2,coerce|true",
+            "get immutable,0,true,false,true,false,false,get detached,0,true,false,true,false,true,true,true,0,0,0,2,coerce|true",
         ))
     );
 }

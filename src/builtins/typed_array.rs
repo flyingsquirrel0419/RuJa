@@ -251,6 +251,29 @@ pub(crate) fn array_buffer_immutable_get(
     }
 }
 
+pub(crate) fn array_buffer_detached_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("ArrayBuffer detached getter needs this"))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    Some(Value::Bool(
+                        buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| Error::type_err("ArrayBuffer detached getter on non-ArrayBuffer")),
+        _ => Err(Error::type_err("ArrayBuffer detached getter on non-object")),
+    }
+}
+
 pub(crate) fn array_buffer_transfer(
     vm: &mut Vm,
     args: &[Value],

@@ -1735,6 +1735,8 @@ fn install_array_buffer_constructor_in_env(
         vm.new_native_function_in_env("get byteLength", array_buffer_byte_length_get, 0, env)?;
     let array_buffer_immutable_getter =
         vm.new_native_function_in_env("get immutable", array_buffer_immutable_get, 0, env)?;
+    let array_buffer_detached_getter =
+        vm.new_native_function_in_env("get detached", array_buffer_detached_get, 0, env)?;
     let array_buffer_is_view_fn =
         vm.new_native_function_in_env("isView", array_buffer_is_view, 1, env)?;
     let array_buffer_species_getter =
@@ -1765,6 +1767,10 @@ fn install_array_buffer_constructor_in_env(
             props.insert(
                 PropertyKey::from("immutable"),
                 accessor_get_prop(Value::Object(array_buffer_immutable_getter)),
+            );
+            props.insert(
+                PropertyKey::from("detached"),
+                accessor_get_prop(Value::Object(array_buffer_detached_getter)),
             );
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),

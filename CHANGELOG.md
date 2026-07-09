@@ -31,6 +31,10 @@
   Proxy, Symbol, well-known Symbol, and generator feature gates needed by that
   path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `built-ins/ArrayBuffer/` coverage by lifting only the
+  ArrayBuffer, `Reflect.construct`, and Symbol feature gates needed by that
+  path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/DataView/` coverage by lifting only the DataView,
   ArrayBuffer, Float16Array, Reflect, and typed-array helper feature gates
   needed by that path.
@@ -149,10 +153,14 @@ Current supported subset count: **5947 pass / 0 fail / 14491 skip / 0 timeout**.
   already-implemented stack accessor coverage, including Proxy receivers and
   `Reflect.construct` constructor checks. The normal `built-ins/Error` runner
   now reports **83 pass / 0 fail / 10 skip**.
-- **ArrayBuffer `@@toStringTag` descriptor**: `%ArrayBuffer.prototype%` now
-  exposes a non-writable, non-enumerable, configurable
-  `Symbol.toStringTag` data property with value `"ArrayBuffer"`. The focused
-  `built-ins/ArrayBuffer` run closes at **92 pass / 0 fail / 129 skip**.
+- **ArrayBuffer detached accessor admission**:
+  `%ArrayBuffer.prototype.detached%` is now exposed as a spec-shaped accessor
+  returning whether the receiver's backing store has been detached, while
+  rejecting non-ArrayBuffer receivers. The runner now executes implemented
+  `built-ins/ArrayBuffer/` coverage under a path-scoped feature exception at
+  **122 pass / 0 fail / 99 skip**; remaining skips stay behind
+  SharedArrayBuffer, resizable ArrayBuffer, DataView, and typed-array helper
+  coverage.
 - **TypedArray generator object-argument admission**: the
   `built-ins/TypedArrayConstructors/` path exception now admits generator
   metadata for the already-supported iterable constructor path, covering

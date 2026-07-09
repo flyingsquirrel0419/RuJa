@@ -348,6 +348,17 @@ data property with value `"ArrayBuffer"`. The focused
 skip**, and the broader `built-ins/ArrayBuffer` run closes at **92 pass / 0
 fail / 129 skip**.
 
+Focused ArrayBuffer detached accessor runner coverage check:
+`ArrayBuffer.prototype.detached` now exposes a non-enumerable, configurable
+getter named `get detached` with length 0. It returns `false` for live
+ArrayBuffers, `true` after `$262.detachArrayBuffer()` or transfer detaches the
+source, and throws `TypeError` for non-ArrayBuffer receivers. The normal runner
+now admits implemented `built-ins/ArrayBuffer/` coverage with a path-scoped
+exception for ArrayBuffer, `Reflect.construct`, and Symbol, reporting
+**122 pass / 0 fail / 99 skip** on that path. Remaining skips stay behind
+unsupported SharedArrayBuffer, resizable ArrayBuffer, DataView, and typed-array
+helper feature gates.
+
 Latest improvement confirmation: `test262-full` 28965977305 on `576ba07`.
 Latest improvement confirmation: `test262-full` 28966918564 on `2256c6a`.
 Latest full baseline documentation check: `test262-full` 28967365155 on
