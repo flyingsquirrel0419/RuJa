@@ -1687,6 +1687,34 @@ fn typed_array_reflect_set_uses_receiver_for_valid_indices() {
         "#),
         Value::String(Arc::from("true,0,2"))
     );
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("slot");
+            var sample = new Float64Array([42]);
+            Reflect.set(sample, symbol, "first");
+            Object.defineProperty(sample, symbol, {
+              writable: false,
+              value: "locked"
+            });
+            var ok = Reflect.set(sample, symbol, "second");
+            [ok, sample[symbol]].join(",");
+        "#),
+        Value::String(Arc::from("false,locked"))
+    );
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("slot");
+            var sample = new BigInt64Array([42n]);
+            Reflect.set(sample, symbol, "first");
+            Object.defineProperty(sample, symbol, {
+              writable: false,
+              value: "locked"
+            });
+            var ok = Reflect.set(sample, symbol, "second");
+            [ok, sample[symbol]].join(",");
+        "#),
+        Value::String(Arc::from("false,locked"))
+    );
 }
 
 #[test]

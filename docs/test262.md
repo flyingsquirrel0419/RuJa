@@ -533,11 +533,14 @@ expanded diagnostic, broader `built-ins/TypedArrayConstructors` now closes at
 Focused TypedArrayConstructors runner coverage check:
 `tools/test262_runner.py` and `tools/test262_analyze.py` now admit implemented
 `built-ins/TypedArrayConstructors/` coverage with a path-scoped exception for
-TypedArray, ArrayBuffer, DataView, Reflect, `Reflect.construct`,
-`Symbol.toPrimitive`, and `Symbol.toStringTag`. The normal runner now reports
-**599 pass / 0 fail / 139 skip** on that path. Remaining skips stay behind
-unsupported SharedArrayBuffer, resizable ArrayBuffer, Proxy, broad Symbol
-iterator, and generator feature gates.
+TypedArray, concrete TypedArray constructors, ArrayBuffer, DataView, Reflect,
+`Reflect.construct`, Proxy, Symbol, `Symbol.iterator`, `Symbol.toPrimitive`,
+and `Symbol.toStringTag`. `Reflect.set()` also routes Symbol property keys
+through the receiver-aware ordinary `[[Set]]` path, so Symbol-named
+non-writable own data properties on TypedArrays return `false`. The normal
+runner now reports **673 pass / 0 fail / 65 skip** on that path. Remaining
+skips stay behind unsupported SharedArrayBuffer, resizable ArrayBuffer,
+iterator-helper, generator, and Atomics feature gates.
 
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to

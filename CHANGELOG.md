@@ -23,8 +23,8 @@
   unskipping broader Symbol iterator coverage.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/TypedArrayConstructors/` coverage by lifting only the
-  TypedArray, ArrayBuffer, DataView, Reflect, and well-known Symbol feature
-  gates needed by that path.
+  TypedArray, concrete TypedArray constructor, ArrayBuffer, DataView, Reflect,
+  Proxy, Symbol, and well-known Symbol feature gates needed by that path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented `built-ins/DataView/` coverage by lifting only the DataView,
   ArrayBuffer, Float16Array, Reflect, and typed-array helper feature gates
@@ -550,6 +550,14 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   temporarily lifted. Under the same expanded diagnostic, broader
   `built-ins/TypedArrayConstructors` closes at **593 pass / 0 fail / 145
   skip**.
+- **TypedArray Symbol-key `Reflect.set`**:
+  `Reflect.set()` now routes Symbol property keys through the same
+  receiver-aware ordinary `[[Set]]` path as string keys, so Symbol-named
+  non-writable own data properties on TypedArrays return `false` instead of
+  silently reporting success. With concrete TypedArray, Symbol, Proxy,
+  ArrayBuffer, DataView, Reflect, and `Reflect.construct` gates admitted for
+  the path, `built-ins/TypedArrayConstructors` now reports **673 pass / 0 fail
+  / 65 skip** through the normal runner.
 - **`Error.isError` static method**: `Error.isError(value)` is now exposed as
   a non-constructable unary builtin and recognizes real Error/NativeError
   objects, Error subclasses, and `$262.createRealm()` Error objects while

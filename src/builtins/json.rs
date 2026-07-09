@@ -1509,13 +1509,12 @@ pub(crate) fn reflect_set(vm: &mut Vm, args: &[Value], _: Option<Value>) -> erro
     let receiver = args.get(3).cloned().unwrap_or_else(|| target.clone());
     let result = match &key {
         Value::String(s) => vm.try_set_property_with_receiver(&target, s, value, &receiver),
-        Value::Symbol(_) => {
-            if receiver == target {
-                vm.set_property_key(&target, &key, value).map(|_| true)
-            } else {
-                vm.set_property_key(&receiver, &key, value).map(|_| true)
-            }
-        }
+        Value::Symbol(id) => vm.try_set_property_key_with_receiver(
+            &target,
+            &PropertyKey::Symbol(*id),
+            value,
+            &receiver,
+        ),
         _ => unreachable!("ToPropertyKey returns only String or Symbol"),
     };
     result.map(Value::Bool)
