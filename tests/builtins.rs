@@ -7092,6 +7092,48 @@ fn date_utc_and_time_clip_follow_spec() {
 }
 
 #[test]
+fn date_time_setters_update_components_and_lengths() {
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1)); d.setUTCHours(6); d.getTime();"),
+        Value::Number(1467352800000.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1)); d.setUTCMinutes(23); d.getTime();"),
+        Value::Number(1467332580000.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1)); d.setUTCSeconds(45, 543); d.getTime();"),
+        Value::Number(1467331245543.0)
+    );
+    assert_eq!(
+        run("var d = new Date(Date.UTC(2016, 6, 1)); d.setUTCMilliseconds(333); d.getTime();"),
+        Value::Number(1467331200333.0)
+    );
+    assert_eq!(
+        run("Date.prototype.setMilliseconds.length + ':' + Date.prototype.setSeconds.length + ':' + Date.prototype.setMinutes.length + ':' + Date.prototype.setHours.length;"),
+        Value::String(Arc::from("1:2:3:4"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(NaN);
+            var log = "";
+            function arg(name) { return { valueOf: function() { log += name; return 0; } }; }
+            var result = d.setHours(arg("h"), arg("m"), arg("s"), arg("ms"));
+            log + ":" + result + ":" + d.getTime();
+        "#),
+        Value::String(Arc::from("hmsms:NaN:NaN"))
+    );
+    assert_eq!(
+        run(r#"
+            var d = new Date(NaN);
+            var result = d.setMilliseconds({ valueOf: function() { d.setTime(0); return 1; } });
+            result + ":" + d.getTime();
+        "#),
+        Value::String(Arc::from("NaN:0"))
+    );
+}
+
+#[test]
 fn date_subclass_instances_keep_date_components() {
     assert_eq!(
         run("class D extends Date{};let d=new D(1859,'10',24,11);d.getFullYear()+','+d.getMonth()+','+d.getDate();"),

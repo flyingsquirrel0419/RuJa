@@ -693,6 +693,16 @@ fn date_time_within_day(ts: f64) -> f64 {
     ts.rem_euclid(MS_PER_DAY)
 }
 
+fn date_time_components(ts: f64) -> (f64, f64, f64, f64, f64) {
+    let day = date_day(ts) as f64;
+    let time = date_time_within_day(ts);
+    let hour = (time / MS_PER_HOUR).floor();
+    let minute = ((time % MS_PER_HOUR) / MS_PER_MINUTE).floor();
+    let second = ((time % MS_PER_MINUTE) / MS_PER_SECOND).floor();
+    let ms = time % MS_PER_SECOND;
+    (day, hour, minute, second, ms)
+}
+
 fn active_native_name(vm: &mut Vm) -> Option<Arc<str>> {
     let callee = vm.current_native_callee.clone()?;
     let Value::Object(idx) = callee else {
@@ -824,16 +834,25 @@ pub(crate) fn date_set_component(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let (idx, _) = date_this_time_value(vm, this)?;
+    let (idx, ts) = date_this_time_value(vm, this)?;
+    let name = active_native_name(vm).unwrap_or_else(|| Arc::from(""));
     let value = match args.first() {
         Some(v) => vm.to_number(v)?,
         None => f64::NAN,
     };
-    let value = if active_native_name(vm).as_deref() == Some("setTime") {
-        date_time_clip(value)
-    } else {
-        value
+    let value = match name.as_ref() {
+        "setTime" => date_time_clip(value),
+        "setMilliseconds" | "setUTCMilliseconds" => {
+            date_set_time_component(vm, args, ts, value, 1)?
+        }
+        "setSeconds" | "setUTCSeconds" => date_set_time_component(vm, args, ts, value, 2)?,
+        "setMinutes" | "setUTCMinutes" => date_set_time_component(vm, args, ts, value, 3)?,
+        "setHours" | "setUTCHours" => date_set_time_component(vm, args, ts, value, 4)?,
+        _ => value,
     };
+    if value.is_nan() && !matches!(name.as_ref(), "setTime") && ts.is_nan() {
+        return Ok(Value::Number(f64::NAN));
+    }
     vm.heap.with_obj(idx.0, |o| {
         if let HeapObj::Object(o) = o {
             o.props.lock().insert(
@@ -843,6 +862,60 @@ pub(crate) fn date_set_component(
         }
     });
     Ok(Value::Number(value))
+}
+
+fn date_set_time_component(
+    vm: &mut Vm,
+    args: &[Value],
+    ts: f64,
+    first: f64,
+    arity: usize,
+) -> error::Result<f64> {
+    let (day, old_hour, old_minute, old_second, old_ms) = date_time_components(ts);
+    let (hour, minute, second, ms) = match arity {
+        1 => (old_hour, old_minute, old_second, first),
+        2 => {
+            let ms = match args.get(1) {
+                Some(v) => vm.to_number(v)?,
+                None => old_ms,
+            };
+            (old_hour, old_minute, first, ms)
+        }
+        3 => {
+            let second = match args.get(1) {
+                Some(v) => vm.to_number(v)?,
+                None => old_second,
+            };
+            let ms = match args.get(2) {
+                Some(v) => vm.to_number(v)?,
+                None => old_ms,
+            };
+            (old_hour, first, second, ms)
+        }
+        4 => {
+            let minute = match args.get(1) {
+                Some(v) => vm.to_number(v)?,
+                None => old_minute,
+            };
+            let second = match args.get(2) {
+                Some(v) => vm.to_number(v)?,
+                None => old_second,
+            };
+            let ms = match args.get(3) {
+                Some(v) => vm.to_number(v)?,
+                None => old_ms,
+            };
+            (first, minute, second, ms)
+        }
+        _ => unreachable!(),
+    };
+    if ts.is_nan() {
+        return Ok(f64::NAN);
+    }
+    Ok(date_time_clip(date_make_date(
+        day,
+        date_make_time(hour, minute, second, ms),
+    )))
 }
 
 pub(crate) fn date_to_string(

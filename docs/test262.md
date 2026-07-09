@@ -455,6 +455,16 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   run improves from **20 pass / 16 fail / 6 skip** to **36 pass / 0 fail / 6
   skip**; the broader `built-ins/Date` diagnostic now reports **326 pass / 156
   fail / 112 skip**.
+- **Date time-component setters** —
+  `setMilliseconds`, `setSeconds`, `setMinutes`, `setHours`, and their UTC
+  variants now read the receiver's DateValue before argument coercion, coerce
+  optional arguments left to right, preserve omitted lower-order components,
+  apply `TimeClip`, and expose spec-shaped `length` values. Invalid Date
+  receivers still coerce supplied arguments but return `NaN` without
+  overwriting side effects from coercion. The focused time-setter run improves
+  from **28 pass / 68 fail / 12 skip** to **96 pass / 0 fail / 12 skip**; the
+  broader `built-ins/Date` diagnostic now reports **394 pass / 88 fail / 112
+  skip**.
 - **BigInt TypedArray constructor surface** —
   BigInt typed array constructors and prototypes now expose
   `BYTES_PER_ELEMENT` as own non-writable, non-enumerable, non-configurable
