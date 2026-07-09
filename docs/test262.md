@@ -817,6 +817,17 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Error/prototype/stack` run closes at **35 pass / 0 fail / 0
   skip**, and the broader `built-ins/Error` runner reports **83 pass / 0 fail
   / 10 skip**.
+- **Error `cause` and `AggregateError` constructor shape** —
+  `Error` and NativeError constructors now run `InstallErrorCause` through
+  observable `HasProperty`/`Get` after installing `message`, so Proxy `has`
+  traps, cause getters, and message-before-cause ordering match test262.
+  `AggregateError` now uses `(errors, message, options)`, reports
+  `length === 2`, creates a non-enumerable `errors` array from the supplied
+  iterable, and shares that cause path. The five `error-cause` files now pass:
+  `built-ins/Error` reports **86 pass / 0 fail / 7 skip**,
+  `built-ins/NativeErrors` reports **81 pass / 0 fail / 13 skip**, and
+  `built-ins/AggregateError` admits its cause-property file at **1 pass / 0 fail
+  / 24 skip**.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

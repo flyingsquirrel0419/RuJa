@@ -119,6 +119,19 @@ ERROR_STACK_FEATURES = {
     "Reflect.construct",
 }
 
+ERROR_CAUSE_FILES = {
+    "built-ins/AggregateError/cause-property.js",
+    "built-ins/Error/cause_abrupt.js",
+    "built-ins/Error/cause_property.js",
+    "built-ins/Error/constructor.js",
+    "built-ins/NativeErrors/cause_property_native_error.js",
+}
+
+ERROR_CAUSE_FEATURES = {
+    "AggregateError",
+    "error-cause",
+}
+
 WITH_STATEMENT_PREFIXES = (
     "language/statements/with/",
 )
@@ -209,6 +222,13 @@ def error_stack_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(ERROR_STACK_PREFIXES)
 
+def error_cause_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in ERROR_CAUSE_FILES
+
 def with_statement_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -233,6 +253,8 @@ def should_skip(meta, path=None):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and error_stack_path(path):
         feats.difference_update(ERROR_STACK_FEATURES)
+    if path is not None and error_cause_path(path):
+        feats.difference_update(ERROR_CAUSE_FEATURES)
     if path is not None and with_statement_path(path):
         feats.difference_update(WITH_STATEMENT_FEATURES)
     if feats & SKIP_FEATURES:

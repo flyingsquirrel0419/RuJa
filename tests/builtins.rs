@@ -3618,6 +3618,78 @@ fn error_to_string_requires_object_and_omits_empty_parts() {
 }
 
 #[test]
+fn error_cause_uses_has_property_get_and_message_order() {
+    assert_eq!(
+        run(r#"
+            var cause = { message: "root" };
+            var err = new Error("msg", { cause: cause });
+            var desc = Object.getOwnPropertyDescriptor(err, "cause");
+            [
+              err.cause === cause,
+              desc.value === cause,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable,
+              Object.prototype.hasOwnProperty.call(new Error("msg"), "cause"),
+              Object.prototype.hasOwnProperty.call(new Error("msg", { cause: undefined }), "cause")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true,true,true,false,true,false,true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var seq = [];
+            new Error(
+              { toString: function() { seq.push("toString"); return "msg"; } },
+              { get cause() { seq.push("cause"); return 1; } }
+            );
+            seq.join(",");
+        "#),
+        Value::String(Arc::from("toString,cause"))
+    );
+
+    assert!(run_err(
+        r#"
+        new Error("msg", new Proxy({}, {
+          has: function(target, key) {
+            if (key === "cause") throw new Error("has boom");
+            return key in target;
+          }
+        }));
+    "#
+    )
+    .contains("has boom"));
+
+    assert!(run_err(
+        r#"
+        new Error("msg", {
+          get cause() { throw new Error("get boom"); }
+        });
+    "#
+    )
+    .contains("get boom"));
+
+    assert_eq!(
+        run(r#"
+            var cause = { message: "root" };
+            var err = new AggregateError([1, 2], "agg", { cause: cause });
+            var causeDesc = Object.getOwnPropertyDescriptor(err, "cause");
+            var errorsDesc = Object.getOwnPropertyDescriptor(err, "errors");
+            [
+              AggregateError.length,
+              err.message,
+              err.cause === cause,
+              causeDesc.enumerable,
+              errorsDesc.enumerable,
+              err.errors.join(":")
+            ].join(",");
+        "#),
+        Value::String(Arc::from("2,agg,true,false,false,1:2"))
+    );
+}
+
+#[test]
 fn error_stack_accessor_uses_error_data_and_receiver_property() {
     assert_eq!(
         run(r#"

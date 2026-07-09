@@ -1895,11 +1895,17 @@ fn make_error_constructor_in_env(
     });
     let proto_idx = GcIdx(vm.heap.allocate(proto_obj)?);
 
+    let ctor_native = if name == "AggregateError" {
+        aggregate_error_constructor
+    } else {
+        error_constructor
+    };
+    let ctor_length = if name == "AggregateError" { 2 } else { 1 };
     let ctor_func = FunctionData {
         name: Some(Arc::from(name)),
         kind: FunctionKind::Native {
-            func: error_constructor,
-            length: 1,
+            func: ctor_native,
+            length: ctor_length,
         },
         closure: env,
         lexical_new_target: Value::Undefined,
@@ -1909,7 +1915,7 @@ fn make_error_constructor_in_env(
             Value::Object(_) => Some(vm.function_proto.clone()),
             _ => None,
         }),
-        props: Mutex::new(builtin_function_own_props(name, 1)),
+        props: Mutex::new(builtin_function_own_props(name, ctor_length)),
         extensible: AtomicBool::new(true),
         private_fields: Mutex::new(std::collections::HashMap::new()),
     };
@@ -4936,11 +4942,7 @@ fn new_error_object(vm: &mut Vm, proto: Value) -> error::Result<GcIdx> {
     Ok(GcIdx(vm.heap.allocate(obj)?))
 }
 
-fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
-    let msg = match args.first() {
-        Some(Value::Undefined) | None => None,
-        Some(v) => Some(vm.to_string(v)?),
-    };
+fn error_object_for_constructor(vm: &mut Vm, this: Option<Value>) -> error::Result<GcIdx> {
     // Use the `this` provided by `construct` (already linked to <Error>.prototype).
     // When called as a plain function (Error(msg) without `new`), `this` is
     // undefined (strict) or the global object (sloppy). In sloppy mode we
@@ -4948,7 +4950,7 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
     // `this` is None. Both cases create a fresh object. But `construct`
     // passes a fresh object with class_name=None, so we must NOT treat
     // that as "not an error" — only reject the global object.
-    let idx = match this {
+    match this {
         Some(Value::Object(i)) => {
             // Check if `this` is the global object (sloppy-mode plain call).
             // The global object has class_name "global". A fresh object from
@@ -4962,7 +4964,7 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
             });
             if is_global {
                 let proto = active_error_constructor_prototype(vm)?;
-                new_error_object(vm, proto)?
+                Ok(new_error_object(vm, proto)?)
             } else if vm.current_native_new_target.is_some() {
                 let (is_error_object, proto) = vm.heap.with_obj(i.0, |obj| {
                     (
@@ -4971,46 +4973,89 @@ fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error:
                     )
                 });
                 if is_error_object {
-                    i
+                    Ok(i)
                 } else {
                     let proto = proto.unwrap_or_else(|| vm.error_proto.clone());
-                    new_error_object(vm, proto)?
+                    Ok(new_error_object(vm, proto)?)
                 }
             } else {
-                i
+                Ok(i)
             }
         }
         _ => {
             // Called as Error(msg) or TypeError(msg) without new: create a
             // fresh object from the active constructor's prototype.
             let proto = active_error_constructor_prototype(vm)?;
-            new_error_object(vm, proto)?
+            Ok(new_error_object(vm, proto)?)
         }
-    };
-    // Optional `cause` from the options object (second argument).
-    let cause = args.get(1).and_then(|v| {
-        if let Value::Object(oi) = v {
-            vm.heap.with_obj(oi.0, |o| {
-                o.props()
-                    .lock()
-                    .get(&PropertyKey::from("cause"))
-                    .map(|d| d.value.clone())
-            })
-        } else {
-            None
-        }
-    });
+    }
+}
+
+fn install_error_message_and_cause(
+    vm: &mut Vm,
+    idx: GcIdx,
+    msg: Option<Arc<str>>,
+    options: Option<&Value>,
+) -> error::Result<()> {
     vm.heap.with_obj(idx.0, |obj| {
         if let HeapObj::Object(o) = obj {
             let mut props = o.props.lock();
             if let Some(msg) = msg {
                 props.insert(PropertyKey::from("message"), data_prop(Value::String(msg)));
             }
-            if let Some(c) = cause {
-                props.insert(PropertyKey::from("cause"), data_prop(c));
-            }
         }
     });
+    if let Some(options @ Value::Object(_)) = options {
+        if vm.has_property(options, "cause")? {
+            let cause = vm.get_property(options, "cause")?;
+            vm.define_own_property_or_throw(
+                &Value::Object(idx),
+                PropertyKey::from("cause"),
+                data_prop(cause),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn error_constructor(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let idx = error_object_for_constructor(vm, this)?;
+    let msg = match args.first() {
+        Some(Value::Undefined) | None => None,
+        Some(v) => Some(vm.to_string(v)?),
+    };
+    install_error_message_and_cause(vm, idx, msg, args.get(1))?;
+    Ok(Value::Object(idx))
+}
+
+fn aggregate_error_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let idx = error_object_for_constructor(vm, this)?;
+    let msg = match args.get(1) {
+        Some(Value::Undefined) | None => None,
+        Some(v) => Some(vm.to_string(v)?),
+    };
+    install_error_message_and_cause(vm, idx, msg, args.get(2))?;
+
+    let errors = args.first().cloned().unwrap_or(Value::Undefined);
+    let iterator = vm.make_iterator(&errors)?;
+    let mut list = Vec::new();
+    loop {
+        let (value, done) = vm.iterator_next(&iterator)?;
+        if done {
+            break;
+        }
+        list.push(value);
+    }
+    let errors_array = make_value_array(vm, list)?;
+    vm.define_own_property_or_throw(
+        &Value::Object(idx),
+        PropertyKey::from("errors"),
+        data_prop(errors_array),
+    )?;
     Ok(Value::Object(idx))
 }
 
