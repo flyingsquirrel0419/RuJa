@@ -190,6 +190,14 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   focused `built-ins/Error/isError` run improves from **0 pass / 10 fail / 2
   skip** to **10 pass / 0 fail / 2 skip**; the broader `built-ins/Error`
   diagnostic now reports **46 pass / 28 fail / 19 skip**.
+- **`Error.prototype.toString` edge cases**:
+  `Error.prototype.toString` now throws `TypeError` when called with a
+  primitive receiver and omits the separating colon when either the resolved
+  `name` or `message` string is empty. The focused
+  `built-ins/Error/prototype/toString` run now closes at **15 pass / 0 fail /
+  2 skip**, and the broader `built-ins/Error` diagnostic improves to **48 pass
+  / 26 fail / 19 skip** with the remaining failures isolated to
+  `Error.prototype.stack`.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

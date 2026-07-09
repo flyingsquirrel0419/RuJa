@@ -5695,6 +5695,11 @@ fn error_is_error(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
 
 fn error_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let this = this.unwrap_or(Value::Undefined);
+    if !this.is_object() {
+        return Err(Error::type_err(
+            "Error.prototype.toString called on non-object",
+        ));
+    }
     let name = vm.get_property(&this, "name")?;
     let name_str = if name.is_undefined() {
         "Error".to_string()
@@ -5707,7 +5712,9 @@ fn error_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::
     } else {
         vm.to_string(&msg)?.to_string()
     };
-    if msg_str.is_empty() {
+    if name_str.is_empty() {
+        Ok(Value::String(Arc::from(msg_str)))
+    } else if msg_str.is_empty() {
         Ok(Value::String(Arc::from(name_str)))
     } else {
         Ok(Value::String(Arc::from(format!(

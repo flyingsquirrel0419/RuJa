@@ -474,6 +474,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   `built-ins/Error/isError` run improves from **0 pass / 10 fail / 2 skip** to
   **10 pass / 0 fail / 2 skip**; the broader `built-ins/Error` diagnostic now
   reports **46 pass / 28 fail / 19 skip**.
+- **`Error.prototype.toString` edge cases** —
+  `Error.prototype.toString` now rejects primitive receivers with `TypeError`
+  and follows the spec's empty-string formatting rules, returning only the
+  message when `name` is empty and only the name when `message` is empty. The
+  focused `built-ins/Error/prototype/toString` run closes at **15 pass / 0
+  fail / 2 skip**, and the broader `built-ins/Error` diagnostic improves to
+  **48 pass / 26 fail / 19 skip**. The remaining failures are concentrated in
+  `Error.prototype.stack`.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

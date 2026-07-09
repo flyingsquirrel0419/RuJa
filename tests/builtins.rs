@@ -3300,6 +3300,40 @@ fn error_subclass_plain_call_uses_active_constructor_prototype() {
 }
 
 #[test]
+fn error_to_string_requires_object_and_omits_empty_parts() {
+    assert_eq!(
+        run(r#"
+            var e1 = new Error("message");
+            e1.name = "";
+            var e2 = new Error("");
+            var e3 = new Error("");
+            e3.name = "";
+            [
+              e1.toString(),
+              e2.toString(),
+              e3.toString(),
+              Error.prototype.toString.call({ name: undefined, message: "m" }),
+              Error.prototype.toString.call({ name: "N", message: undefined })
+            ].join("|");
+        "#),
+        Value::String(Arc::from("message|Error||Error: m|N"))
+    );
+    for src in [
+        "Error.prototype.toString.call(undefined);",
+        "Error.prototype.toString.call(null);",
+        "Error.prototype.toString.call(1);",
+        "Error.prototype.toString.call(true);",
+        "Error.prototype.toString.call('x');",
+        "Error.prototype.toString.call(Symbol());",
+    ] {
+        assert!(
+            run_err(src).contains("TypeError"),
+            "expected TypeError for {src}"
+        );
+    }
+}
+
+#[test]
 fn native_error_constructors_inherit_from_error_constructor() {
     assert_eq!(
         run(r#"[
