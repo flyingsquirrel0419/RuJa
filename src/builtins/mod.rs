@@ -1655,6 +1655,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         vm.new_native_function_in_env("get byteOffset", typed_array_byte_offset_get, 0, env)?;
     let typed_array_length_getter =
         vm.new_native_function_in_env("get length", typed_array_length_get, 0, env)?;
+    let typed_array_subarray_fn =
+        vm.new_native_function_in_env("subarray", typed_array_subarray, 2, env)?;
     if let Value::Object(idx) = &typed_array_proto {
         vm.heap.with_obj(idx.0, |obj| {
             let mut props = obj.props().lock();
@@ -1677,6 +1679,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("length"),
                 accessor_get_prop(Value::Object(typed_array_length_getter)),
+            );
+            props.insert(
+                PropertyKey::from("subarray"),
+                data_prop(Value::Object(typed_array_subarray_fn)),
             );
         });
     }

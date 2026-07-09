@@ -96,6 +96,16 @@ fn current_realm_array_buffer_constructor(vm: &mut Vm) -> error::Result<Value> {
         .ok_or_else(|| Error::type_err("ArrayBuffer constructor is not available"))
 }
 
+fn current_realm_typed_array_constructor(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+) -> error::Result<Value> {
+    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
+    crate::environment::get(&vm.heap, realm_env, kind.name())
+        .or_else(|| crate::environment::get(&vm.heap, vm.global, kind.name()))
+        .ok_or_else(|| Error::type_err("TypedArray constructor is not available"))
+}
+
 fn array_buffer_species_constructor(
     vm: &mut Vm,
     buffer: &Value,
@@ -116,6 +126,30 @@ fn array_buffer_species_constructor(
     }
     if !vm.is_constructor_value(&species) {
         return Err(Error::type_err("ArrayBuffer species is not a constructor"));
+    }
+    Ok(species)
+}
+
+fn typed_array_species_constructor(
+    vm: &mut Vm,
+    exemplar: &Value,
+    default_constructor: Value,
+) -> error::Result<Value> {
+    let constructor = vm.get_property(exemplar, "constructor")?;
+    if constructor.is_undefined() {
+        return Ok(default_constructor);
+    }
+    if !matches!(constructor, Value::Object(_)) {
+        return Err(Error::type_err("TypedArray constructor is not an object"));
+    }
+
+    let species_key = PropertyKey::Symbol(vm.well_known_symbols.species);
+    let species = vm.get_property_by_key(&constructor, &species_key)?;
+    if species.is_undefined() || matches!(species, Value::Null) {
+        return Ok(default_constructor);
+    }
+    if !vm.is_constructor_value(&species) {
+        return Err(Error::type_err("TypedArray species is not a constructor"));
     }
     Ok(species)
 }
@@ -1516,6 +1550,67 @@ pub(crate) fn typed_array_length_get(
     Ok(Value::Number(
         typed_array_element_count(kind, byte_length) as f64
     ))
+}
+
+fn typed_array_content_type(kind: crate::value::TypedArrayKind) -> &'static str {
+    match kind {
+        crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
+            "BigInt"
+        }
+        _ => "Number",
+    }
+}
+
+pub(crate) fn typed_array_subarray(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray subarray called without this"))?;
+    let (kind, viewed_array_buffer, byte_offset, byte_length) =
+        typed_array_slots(vm, Some(this.clone()), "subarray")?;
+    let source_buffer = viewed_array_buffer
+        .ok_or_else(|| Error::type_err("TypedArray subarray missing viewed ArrayBuffer"))?;
+    if is_detached_array_buffer(vm, &source_buffer) {
+        return Err(Error::type_err("TypedArray subarray on detached buffer"));
+    }
+
+    let length = typed_array_element_count(kind, byte_length);
+    let (start, end) = resolve_slice_bounds(vm, length, args.first(), args.get(1))?;
+    let new_length = end - start;
+    let new_byte_offset = byte_offset
+        .checked_add(
+            start
+                .checked_mul(kind.element_size())
+                .ok_or_else(|| Error::range("Invalid TypedArray subarray byte offset"))?,
+        )
+        .ok_or_else(|| Error::range("Invalid TypedArray subarray byte offset"))?;
+
+    let default_ctor = current_realm_typed_array_constructor(vm, kind)?;
+    let ctor = typed_array_species_constructor(vm, &this, default_ctor)?;
+    let construct_args = [
+        source_buffer.clone(),
+        Value::Number(new_byte_offset as f64),
+        Value::Number(new_length as f64),
+    ];
+    let pin_count = vm.pin(&source_buffer) + vm.pin(&ctor) + vm.pin_many(&construct_args);
+    let result = vm.construct(&ctor, &construct_args);
+    vm.unpin_many(pin_count);
+    let result = result?;
+
+    let (result_kind, _, _, result_byte_length) =
+        typed_array_slots(vm, Some(result.clone()), "subarray result")?;
+    if typed_array_content_type(result_kind) != typed_array_content_type(kind) {
+        return Err(Error::type_err(
+            "TypedArray species returned incompatible content type",
+        ));
+    }
+    if typed_array_element_count(result_kind, result_byte_length) < new_length {
+        return Err(Error::type_err(
+            "TypedArray species returned a shorter typed array",
+        ));
+    }
+    Ok(result)
 }
 
 pub(crate) fn to_uint8_element(n: f64) -> u8 {

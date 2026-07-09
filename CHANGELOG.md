@@ -129,6 +129,21 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   remaining failures are the missing `%TypedArray%.prototype.subarray` method.
   Under the same expanded diagnostic, broader `built-ins/TypedArrayConstructors`
   improves to **584 pass / 9 fail / 145 skip**.
+- **TypedArray `subarray()` inherited method**:
+  `%TypedArray%.prototype.subarray` now creates offset views over the same
+  ArrayBuffer, normalizes begin/end like slice bounds, rejects detached
+  buffers, and routes allocation through `@@species` while preserving
+  Number-vs-BigInt content type. Concrete typed-array prototypes inherit the
+  method without gaining own `subarray` properties. Focused
+  `built-ins/TypedArrayConstructors/prototype/subarray` now passes at
+  **2 pass / 0 fail / 0 skip**. With TypedArray, ArrayBuffer, DataView,
+  Reflect, and `Reflect.construct` skips temporarily lifted, focused
+  `built-ins/TypedArrayConstructors/internals/HasProperty` improves from
+  **22 pass / 2 fail / 8 skip** to **24 pass / 0 fail / 8 skip**, and broader
+  `built-ins/TypedArrayConstructors` improves to **586 pass / 7 fail / 145
+  skip**. The remaining broader failures are concentrated in
+  Integer-Indexed `[[OwnPropertyKeys]]` ordering, `Reflect.set` receiver
+  writes, and one typed-array-argument validation ordering case.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

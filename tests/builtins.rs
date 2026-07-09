@@ -1372,6 +1372,81 @@ fn typed_array_has_property_canonical_numeric_indices_follow_integer_indexed_exo
 }
 
 #[test]
+fn typed_array_subarray_creates_shared_offset_views() {
+    assert_eq!(
+        run(r#"
+            var TypedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+            var source = new Uint8Array([10, 20, 30, 40]);
+            var view = source.subarray(1, -1);
+            view[0] = 99;
+            [
+              typeof TypedArrayPrototype.subarray,
+              Uint8Array.prototype.hasOwnProperty("subarray"),
+              view instanceof Uint8Array,
+              view.buffer === source.buffer,
+              view.byteOffset,
+              view.byteLength,
+              view.length,
+              view[0],
+              view[1],
+              source[1]
+            ].join(",");
+        "#),
+        Value::String(Arc::from("function,false,true,true,1,2,2,99,30,99"))
+    );
+    assert_eq!(
+        run(r#"
+            var source = new BigInt64Array(3);
+            source[0] = 1n;
+            source[1] = 2n;
+            source[2] = 3n;
+            var view = source.subarray(-2);
+            view[0] = 9n;
+            [view.length, view[0], view[1], source[1]].join(",");
+        "#),
+        Value::String(Arc::from("2,9,3,9"))
+    );
+}
+
+#[test]
+fn typed_array_subarray_uses_species_and_rejects_detached_buffers() {
+    assert_eq!(
+        run(r#"
+            var source = new Uint8Array([10, 20, 30, 40]);
+            var calls = [];
+            function Species(buffer, offset, length) {
+              calls.push(buffer === source.buffer, offset, length);
+              return new Uint8Array(buffer, offset, length);
+            }
+            var holder = {};
+            holder[Symbol.species] = Species;
+            source.constructor = holder;
+            var view = source.subarray(1, 3);
+            [
+              calls.join(":"),
+              view.buffer === source.buffer,
+              view.byteOffset,
+              view.length,
+              view[0],
+              view[1]
+            ].join(",");
+        "#),
+        Value::String(Arc::from("true:1:2,true,1,2,20,30"))
+    );
+    assert!(
+        run_err(
+            r#"
+                var source = new Uint8Array([1]);
+                $262.detachArrayBuffer(source.buffer);
+                source.subarray(0);
+            "#
+        )
+        .contains("TypeError"),
+        "TypedArray.prototype.subarray should reject detached buffers"
+    );
+}
+
+#[test]
 fn typed_array_get_canonical_numeric_indices_follow_integer_indexed_exotic() {
     assert_eq!(
         run(r#"

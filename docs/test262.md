@@ -269,6 +269,23 @@ failures are the missing `%TypedArray%.prototype.subarray` method. Under the
 same expanded diagnostic, broader `built-ins/TypedArrayConstructors` reports
 **584 pass / 9 fail / 145 skip**.
 
+Focused TypedArray `subarray()` local check:
+`%TypedArray%.prototype.subarray` now lives on the shared intrinsic
+`%TypedArray%.prototype`, creates offset views over the same ArrayBuffer,
+normalizes begin/end bounds, rejects detached buffers, and uses `@@species`
+while preserving Number-vs-BigInt content type. Concrete typed-array
+prototypes still do not gain own `subarray` properties. With BigInt and
+TypedArray skips lifted for the focused prototype tests,
+`built-ins/TypedArrayConstructors/prototype/subarray` now reports **2 pass / 0
+fail / 0 skip**. With TypedArray, ArrayBuffer, DataView, Reflect, and
+`Reflect.construct` skips temporarily lifted,
+`built-ins/TypedArrayConstructors/internals/HasProperty` improves from **22
+pass / 2 fail / 8 skip** to **24 pass / 0 fail / 8 skip**. Under the same
+expanded diagnostic, broader `built-ins/TypedArrayConstructors` reports
+**586 pass / 7 fail / 145 skip**; the remaining failures are concentrated in
+Integer-Indexed `[[OwnPropertyKeys]]` ordering, `Reflect.set` receiver writes,
+and one typed-array-argument validation ordering case.
+
 Focused DataView constructor length local check:
 `built-ins/DataView/length.js` passes after `DataView.length` was corrected to
 the spec value `1` with the standard non-writable, non-enumerable,
