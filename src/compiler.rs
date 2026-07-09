@@ -2375,16 +2375,14 @@ impl Compiler {
     }
 
     fn store_current_value_to_member_target(&mut self, target: (usize, usize, bool)) {
-        let (obj_idx, key_idx, computed) = target;
+        let (obj_idx, key_idx, _computed) = target;
         self.chunk.emit(Op::LoadEnv(obj_idx), self.current_line);
         self.chunk.emit(Op::Swap, self.current_line);
         self.chunk.emit(Op::LoadEnv(key_idx), self.current_line);
         self.chunk.emit(Op::Swap, self.current_line);
-        if computed {
-            self.chunk.emit(Op::SetElem, self.current_line);
-        } else {
-            self.chunk.emit(Op::SetProp, self.current_line);
-        }
+        self.chunk
+            .emit(Op::MakePropertyRefForSet, self.current_line);
+        self.chunk.emit(Op::PutValue, self.current_line);
         self.chunk.emit(Op::Pop, self.current_line);
     }
 

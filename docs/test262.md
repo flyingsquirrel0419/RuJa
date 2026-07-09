@@ -201,6 +201,17 @@ semantics. The focused
 `language/expressions/{assignment,member-expression}` run reports **204 pass /
 0 fail / 282 skip**.
 
+Focused property Reference destructuring member-target local check:
+member targets nested inside destructuring assignment patterns now store
+through `MakePropertyRefForSet` and `PutValue` instead of the legacy
+`SetElem`/`SetProp` opcodes. This keeps `({ a: obj[key] } = rhs)` and
+`[obj[key]] = rhs` aligned with ordinary member assignment for Symbol keys
+returned from `@@toPrimitive`, Proxy receiver identity, strict failed-write
+behavior, and primitive sloppy no-op semantics. The focused
+`language/expressions/assignment/dstr` run remains closed at **90 pass / 0
+fail / 278 skip**; `language/expressions/{assignment,destructuring}` reports
+**203 pass / 0 fail / 282 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

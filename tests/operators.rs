@@ -659,6 +659,60 @@ fn assign_member_uses_property_reference_for_set() {
     );
 }
 
+#[test]
+fn destructuring_member_assignment_uses_property_reference_for_set() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var toPrimitiveSym = Symbol("toPrimitive");
+            var toPrimitiveKey = {};
+            Object.defineProperty(toPrimitiveKey, Symbol.toPrimitive, {
+              value: function() {
+                log.push("toPrimitiveKey");
+                return toPrimitiveSym;
+              }
+            });
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            var target = {};
+            var proxy = new Proxy(target, {
+              set: function(t, k, v, r) {
+                var label = k === toPrimitiveSym ? "toPrimitiveSym" : k;
+                log.push("set:" + label + ":" + v + ":" + (r === proxy));
+                t[k] = v;
+                return true;
+              }
+            });
+            ({ a: proxy[key], b: proxy[toPrimitiveKey] } = { a: 2, b: 9 });
+            [target.x, target[toPrimitiveSym], log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "2;9;key|set:x:2:true|toPrimitiveKey|set:toPrimitiveSym:9:true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var o = {};
+            Object.defineProperty(o, "x", { value: 1, writable: false });
+            var sloppy = ({ a: o.x } = { a: 2 });
+            var primitive = ({ a: "abc".x } = { a: 4 });
+            var strict;
+            try {
+              (function() { "use strict"; ({ a: o.x } = { a: 3 }); })();
+            } catch (e) {
+              strict = e.name;
+            }
+            sloppy.a + ":" + primitive.a + ":" + o.x + ":" + strict;
+            "#),
+        Value::String(Arc::from("2:4:1:TypeError"))
+    );
+}
+
 // --- compound assignment (numeric/bitwise) ---
 
 #[test]

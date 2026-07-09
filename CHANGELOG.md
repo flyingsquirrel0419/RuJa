@@ -49,6 +49,14 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   receiver identity, strict failed-write behavior, and primitive sloppy no-op
   semantics intact. The focused assignment/member-expression test262 cluster
   reports **204 pass / 0 fail / 282 skip**.
+- **Property Reference records for destructuring member targets**:
+  destructuring assignment targets such as `({ a: obj[key] } = rhs)` now finish
+  member writes through `MakePropertyRefForSet` and `PutValue` instead of the
+  legacy `SetElem`/`SetProp` opcodes. This preserves Symbol keys produced by
+  `@@toPrimitive`, Proxy receiver identity, strict failed-write behavior, and
+  primitive sloppy no-op semantics for member targets nested inside object and
+  array assignment patterns. The focused `language/expressions/assignment/dstr`
+  run remains closed at **90 pass / 0 fail / 278 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This
