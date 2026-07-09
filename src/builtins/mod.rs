@@ -1300,7 +1300,9 @@ pub(crate) fn install_symbol_static_properties(
 ) {
     let symbols = &vm.well_known_symbols;
     for (name, id) in [
+        ("asyncDispose", symbols.async_dispose),
         ("asyncIterator", symbols.async_iterator),
+        ("dispose", symbols.dispose),
         ("hasInstance", symbols.has_instance),
         ("isConcatSpreadable", symbols.is_concat_spreadable),
         ("iterator", symbols.iterator),

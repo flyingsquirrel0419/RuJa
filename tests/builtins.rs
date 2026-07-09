@@ -503,6 +503,8 @@ fn generated_symbols_do_not_collide_with_well_known_symbols() {
     assert_eq!(run("Symbol() === Symbol.match;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.unscopables;"), Value::Bool(false));
     assert_eq!(run("Symbol() === Symbol.species;"), Value::Bool(false));
+    assert_eq!(run("Symbol() === Symbol.dispose;"), Value::Bool(false));
+    assert_eq!(run("Symbol() === Symbol.asyncDispose;"), Value::Bool(false));
     assert_eq!(
         run("Symbol.for('x') === Symbol.for('x');"),
         Value::Bool(true)
@@ -532,6 +534,54 @@ fn symbol_species_is_exposed() {
     assert_eq!(
         run("String(Symbol.species);"),
         Value::String(Arc::from("Symbol(Symbol.species)"))
+    );
+}
+
+#[test]
+fn disposal_well_known_symbols_are_exposed() {
+    assert_eq!(
+        run(r#"
+            [
+              typeof Symbol.dispose,
+              typeof Symbol.asyncDispose,
+              String(Symbol.dispose),
+              String(Symbol.asyncDispose),
+              Symbol.keyFor(Symbol.dispose) === undefined,
+              Symbol.keyFor(Symbol.asyncDispose) === undefined,
+              Symbol.for("Symbol.dispose") !== Symbol.dispose,
+              Symbol.for("Symbol.asyncDispose") !== Symbol.asyncDispose
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "symbol|symbol|Symbol(Symbol.dispose)|Symbol(Symbol.asyncDispose)|true|true|true|true"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var disposeDesc = Object.getOwnPropertyDescriptor(Symbol, "dispose");
+            var asyncDisposeDesc = Object.getOwnPropertyDescriptor(Symbol, "asyncDispose");
+            [
+              disposeDesc.writable,
+              disposeDesc.enumerable,
+              disposeDesc.configurable,
+              disposeDesc.value === Symbol.dispose,
+              asyncDisposeDesc.writable,
+              asyncDisposeDesc.enumerable,
+              asyncDisposeDesc.configurable,
+              asyncDisposeDesc.value === Symbol.asyncDispose
+            ].join("|");
+        "#),
+        Value::String(Arc::from("false|false|false|true|false|false|false|true"))
+    );
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global.Symbol;
+            [
+              Symbol.dispose === other.dispose,
+              Symbol.asyncDispose === other.asyncDispose
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true"))
     );
 }
 

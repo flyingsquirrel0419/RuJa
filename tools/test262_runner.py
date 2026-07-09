@@ -41,6 +41,11 @@ SKIP_FEATURES = {
     "top-level-await", "u180e",
 }
 
+EXPLICIT_RESOURCE_MANAGEMENT_SYMBOL_PREFIXES = (
+    "built-ins/Symbol/asyncDispose/",
+    "built-ins/Symbol/dispose/",
+)
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -66,8 +71,18 @@ def parse_meta(src):
         meta['negative'] = {'phase': phase, 'type': typ}
     return meta
 
-def should_skip(meta):
+def explicit_resource_management_symbols_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(EXPLICIT_RESOURCE_MANAGEMENT_SYMBOL_PREFIXES)
+
+def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
+    if path is not None and explicit_resource_management_symbols_path(path):
+        feats.discard("explicit-resource-management")
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
@@ -105,7 +120,7 @@ def build_source(path):
 
 def run_test(path):
     full, meta = build_source(path)
-    if should_skip(meta):
+    if should_skip(meta, path):
         return 'skip'
     try:
         import tempfile

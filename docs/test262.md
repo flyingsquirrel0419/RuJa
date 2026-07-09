@@ -14,7 +14,9 @@ RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
 features (modules, TypedArrays, Atomics, Intl, etc.) are skipped via the
-runner's `SKIP_FEATURES` set.
+runner's `SKIP_FEATURES` set. The `explicit-resource-management` feature is
+still skipped for syntax/runtime coverage, with a narrow exception for the
+already-supported `Symbol.dispose` and `Symbol.asyncDispose` intrinsics.
 
 ## Three pass-rate scopes
 
@@ -49,7 +51,8 @@ blocks, default & rest parameters, destructuring (array/object/nested),
 template literals,
 tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
-Symbol.hasInstance, Symbol.unscopables, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
+Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
+Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 Promise, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
@@ -57,6 +60,8 @@ coalescing, logical assignment.
 SharedArrayBuffer, full TypedArray prototype method coverage beyond the
 constructor/index basics and ArrayBuffer/DataView support,
 WeakRef/FinalizationRegistry, Tail-call optimization.
+Explicit resource management syntax (`using` / `await using`) is not yet
+supported beyond the two well-known Symbol intrinsics.
 
 Conformance within this subset is the goal — not the raw test262
 percentage. The full-suite number includes thousands of tests for
@@ -1445,6 +1450,14 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   return the receiver, preserving subclass species lookup. With the `Symbol`
   skip temporarily lifted, the full `built-ins/Symbol` diagnostic runs at
   **67 pass / 0 fail / 31 skip**.
+- **Disposal well-known Symbols** —
+  `Symbol.dispose` and `Symbol.asyncDispose` are exposed as non-writable,
+  non-enumerable, non-configurable static properties, share identity across
+  `$262.createRealm()` realms, and remain outside the global Symbol registry.
+  The runner keeps `explicit-resource-management` syntax tests skipped, but
+  admits the focused `built-ins/Symbol/{dispose,asyncDispose}` intrinsic
+  coverage, which runs at **6 pass / 0 fail / 0 skip**. The default
+  `built-ins/Symbol` run now reports **47 pass / 0 fail / 51 skip**.
 - **`new.target` eval-context early errors** —
   Script/global code, indirect eval code, and direct eval code contained in
   arrow-function code now reject `new.target` with `SyntaxError`, while direct

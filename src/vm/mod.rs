@@ -123,6 +123,8 @@ pub struct WellKnownSymbols {
     pub split: u32,
     pub unscopables: u32,
     pub species: u32,
+    pub dispose: u32,
+    pub async_dispose: u32,
 }
 
 pub struct CallFrame {
@@ -350,7 +352,7 @@ impl Vm {
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
             current_yields: Vec::new(),
-            next_symbol_id: 14,
+            next_symbol_id: 16,
             next_private_name_id: 1,
             symbol_registry: HashMap::new(),
             symbol_descriptions: HashMap::new(),
@@ -368,6 +370,8 @@ impl Vm {
                 split: 11,
                 unscopables: 12,
                 species: 13,
+                dispose: 14,
+                async_dispose: 15,
             },
             global_names: HashMap::new(),
             global_constants: Vec::new(),
@@ -429,6 +433,14 @@ impl Vm {
         vm.symbol_descriptions.insert(
             vm.well_known_symbols.species,
             Some(Arc::from("Symbol.species")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.dispose,
+            Some(Arc::from("Symbol.dispose")),
+        );
+        vm.symbol_descriptions.insert(
+            vm.well_known_symbols.async_dispose,
+            Some(Arc::from("Symbol.asyncDispose")),
         );
         crate::builtins::setup_full(&mut vm)?;
         Ok(vm)

@@ -24,6 +24,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5060 pass / 0 fail / 0 timeout**.
 
+- **Disposal well-known Symbols**: `Symbol.dispose` and
+  `Symbol.asyncDispose` are now exposed as shared well-known Symbols with
+  spec-shaped static property descriptors and no global-registry keys.
+  `tools/test262_runner.py` and `tools/test262_analyze.py` keep broader
+  `explicit-resource-management` syntax coverage skipped while allowing the
+  focused `built-ins/Symbol/{dispose,asyncDispose}` intrinsic tests to run at
+  **6 pass / 0 fail / 0 skip**.
 - **`%ThrowTypeError%` Realm identity**: restricted
   `Function.prototype.caller`/`arguments` accessors and strict-mode unmapped
   arguments objects now reuse the same canonical Realm `%ThrowTypeError%`
