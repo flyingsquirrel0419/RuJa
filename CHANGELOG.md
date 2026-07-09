@@ -21,6 +21,10 @@
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
   `Symbol.iterator`-tagged `language/statements/for-of/` tests without
   unskipping broader Symbol iterator coverage.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `built-ins/TypedArrayConstructors/` coverage by lifting only the
+  TypedArray, ArrayBuffer, DataView, Reflect, and well-known Symbol feature
+  gates needed by that path.
 
 ### Runtime hardening
 
@@ -33,6 +37,12 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **TypedArray constructors coverage lift**: the runner now executes the
+  implemented `built-ins/TypedArrayConstructors/` tests under a path-scoped
+  feature exception instead of requiring ad hoc temporary skip removal. The
+  focused run reports **599 pass / 0 fail / 139 skip**; the remaining skips
+  stay concentrated in SharedArrayBuffer, resizable ArrayBuffer, Proxy, broad
+  Symbol iterator, and generator coverage.
 - **For-of iterator protocol edges**: `for...of` now caches the iterator
   `next` method at `GetIterator` time, rejects non-object iterator results,
   applies `ToBoolean` to `done`, validates `return()` results during

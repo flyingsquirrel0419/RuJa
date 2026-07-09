@@ -62,6 +62,20 @@ FOR_OF_SYMBOL_ITERATOR_PREFIXES = (
     "language/statements/for-of/",
 )
 
+TYPED_ARRAY_CONSTRUCTORS_PREFIXES = (
+    "built-ins/TypedArrayConstructors/",
+)
+
+TYPED_ARRAY_CONSTRUCTORS_FEATURES = {
+    "TypedArray",
+    "ArrayBuffer",
+    "DataView",
+    "Reflect",
+    "Reflect.construct",
+    "Symbol.toPrimitive",
+    "Symbol.toStringTag",
+}
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -119,6 +133,14 @@ def for_of_symbol_iterator_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(FOR_OF_SYMBOL_ITERATOR_PREFIXES)
 
+def typed_array_constructors_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(TYPED_ARRAY_CONSTRUCTORS_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -129,6 +151,8 @@ def should_skip(meta, path=None):
         feats.discard("Symbol")
     if path is not None and for_of_symbol_iterator_path(path):
         feats.discard("Symbol.iterator")
+    if path is not None and typed_array_constructors_path(path):
+        feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
