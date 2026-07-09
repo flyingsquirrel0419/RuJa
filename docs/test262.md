@@ -657,10 +657,9 @@ was detached by that observable lookup before returning the new view.
 `tools/test262_runner.py` and `tools/test262_analyze.py` now admit implemented
 `built-ins/DataView/` coverage with a path-scoped exception for DataView,
 ArrayBuffer, Float16Array, Reflect, `Reflect.construct`, Int8Array, Uint8Array,
-`Symbol.toPrimitive`, and `Symbol.toStringTag`. The normal runner now reports
-**415 pass / 0 fail / 146 skip** on that path. Remaining skips stay behind
-unsupported broad Symbol, SharedArrayBuffer, and resizable ArrayBuffer feature
-gates.
+Symbol, `Symbol.toPrimitive`, and `Symbol.toStringTag`. The normal runner now
+reports **492 pass / 0 fail / 69 skip** on that path. Remaining skips stay
+behind unsupported SharedArrayBuffer and resizable ArrayBuffer feature gates.
 
 | Metric | Latest confirmed count |
 |--------|------------------------|

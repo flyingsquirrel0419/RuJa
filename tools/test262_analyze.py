@@ -114,6 +114,7 @@ DATA_VIEW_FEATURES = {
     "Int8Array",
     "Reflect",
     "Reflect.construct",
+    "Symbol",
     "Symbol.toPrimitive",
     "Symbol.toStringTag",
     "Uint8Array",

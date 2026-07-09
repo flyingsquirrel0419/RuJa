@@ -392,9 +392,8 @@ Current supported subset count: **5947 pass / 0 fail / 14491 skip / 0 timeout**.
   validates invalid byte offsets before reading `newTarget.prototype`, and
   rechecks detached ArrayBuffers after the observable prototype lookup. The
   runner now executes implemented `built-ins/DataView/` coverage under a
-  path-scoped feature exception at **415 pass / 0 fail / 146 skip**; remaining
-  skips stay behind broad Symbol, SharedArrayBuffer, and resizable ArrayBuffer
-  coverage.
+  path-scoped feature exception at **492 pass / 0 fail / 69 skip**; remaining
+  skips stay behind SharedArrayBuffer and resizable ArrayBuffer coverage.
 - **TypedArray constructors coverage lift**: the runner now executes the
   implemented `built-ins/TypedArrayConstructors/` tests under a path-scoped
   feature exception instead of requiring ad hoc temporary skip removal. The
