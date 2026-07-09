@@ -460,6 +460,42 @@ fn destructure_default() {
 }
 
 #[test]
+fn destructuring_binding_defaults_infer_function_names() {
+    assert_eq!(
+        run("var [fn = function(){}, arrow = () => {}, cls = class {}, cover = (function(){})] = []; [fn.name, arrow.name, cls.name, cover.name].join(':');"),
+        Value::String(Arc::from("fn:arrow:cls:cover"))
+    );
+    assert_eq!(
+        run("let {fn = function(){}, arrow = () => {}, cls = class {}, cover = (function(){})} = {}; [fn.name, arrow.name, cls.name, cover.name].join(':');"),
+        Value::String(Arc::from("fn:arrow:cls:cover"))
+    );
+    assert_eq!(
+        run("let k = 'missing'; let {a: renamed = function(){}, [k]: computed = function(){}, 0: numeric = function(){}} = {}; [renamed.name, computed.name, numeric.name].join(':');"),
+        Value::String(Arc::from("renamed:computed:numeric"))
+    );
+    assert_eq!(
+        run("var result; for (const [fn = function(){}] = []; ; ) { result = fn.name; break; } result;"),
+        Value::String(Arc::from("fn"))
+    );
+}
+
+#[test]
+fn destructuring_binding_defaults_keep_existing_function_names() {
+    assert_eq!(
+        run("var [xFn = function x(){}, xCover = (0, function(){})] = []; [xFn.name, xCover.name].join(':');"),
+        Value::String(Arc::from("x:"))
+    );
+    assert_eq!(
+        run("const {xCls = class { static name() {} }} = {}; typeof xCls.name;"),
+        Value::String(Arc::from("function"))
+    );
+    assert_eq!(
+        run("let box = []; let {a: {name: extracted} = (box[0] = function(){})} = {}; box[0].name + ':' + extracted;"),
+        Value::String(Arc::from(":"))
+    );
+}
+
+#[test]
 fn destructure_rest() {
     assert_eq!(
         run("let [a, ...rest] = [1,2,3,4]; rest.length;"),

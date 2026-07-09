@@ -130,6 +130,16 @@ impl Compiler {
         }
     }
 
+    fn emit_binding_default_function_name(&mut self, pattern: &Pattern, default: &Expr) {
+        if Self::is_anonymous_function_definition(default) {
+            if let Pattern::Ident(name) = pattern {
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::SetFunctionNameConst(name_idx), self.current_line);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Compiler {
             chunk: Chunk::new(),
@@ -2024,6 +2034,7 @@ impl Compiler {
                 self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
                 self.compile_expr(default)?;
+                self.emit_binding_default_function_name(inner, default);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.fresh_temp("#d2");
@@ -2064,6 +2075,7 @@ impl Compiler {
                 self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
                 self.compile_expr(default)?;
+                self.emit_binding_default_function_name(inner, default);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#d2");
@@ -2096,6 +2108,7 @@ impl Compiler {
                 self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
                 self.compile_expr(default)?;
+                self.emit_binding_default_function_name(inner, default);
                 let after = self.chunk.code.len();
                 self.chunk.patch_jump(skip, after);
                 let t2 = self.intern("#d2");

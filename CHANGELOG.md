@@ -76,6 +76,13 @@ Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
   the `destructuring-binding` skip lifted for diagnostics, the focused
   `language/expressions/assignment/dstr` run now closes at **260 pass / 0 fail
   / 108 skip**.
+- **Binding destructuring default function names**: declaration and `for`
+  binding patterns now apply `SetFunctionName` when a direct binding
+  identifier's default initializer is an anonymous function, arrow function,
+  class, or parenthesized anonymous function. With only the
+  `destructuring-binding` skip lifted for diagnostics,
+  `language/statements/{variable,let,const,for}/dstr` now closes at **412 pass
+  / 0 fail / 156 skip** while the default supported subset remains green.
 - **Property Reference records for simple member assignment**: ordinary member
   assignment now lowers final writes through an explicit property Reference
   while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates
