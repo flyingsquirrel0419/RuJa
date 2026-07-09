@@ -235,6 +235,45 @@ fn public_class_field_direct_eval_uses_initializer_context() {
 }
 
 #[test]
+fn public_class_field_arrow_super_uses_field_home_object() {
+    assert_eq!(
+        run(r#"
+            class C {
+              func = () => { super.prop = "test262"; };
+              static staticFunc = () => { super.staticProp = "static test262"; };
+            }
+            var c = new C();
+            c.func();
+            C.staticFunc();
+            c.prop + ":" + C.staticProp;
+        "#),
+        Value::String(Arc::from("test262:static test262"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class Base {
+              get value() { return this.x; }
+              static get staticValue() { return this.x; }
+            }
+            class Derived extends Base {
+              x = 7;
+              read = () => super.value;
+              static x = 9;
+              static staticRead = () => super.staticValue;
+            }
+            new Derived().read() + ":" + Derived.staticRead();
+        "#),
+        Value::String(Arc::from("7:9"))
+    );
+
+    assert!(run_err(
+        "class Base{} class Derived extends Base { x = () => super(); } new Derived().x();"
+    )
+    .contains("SyntaxError"));
+}
+
+#[test]
 fn public_class_fields_use_define_own_property_semantics() {
     assert_eq!(
         run("class C{f=Object.freeze(this);g=1;}try{new C();false;}catch(e){e instanceof TypeError;}"),

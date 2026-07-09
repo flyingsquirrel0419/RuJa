@@ -55,6 +55,10 @@
   `language/expressions/compound-assignment/` and
   `language/expressions/logical-assignment/` by lifting only
   `class-fields-private` on those paths.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
+  implemented public instance/static class field coverage on
+  `language/{statements,expressions}/class/elements/` by lifting only
+  `class-fields-public` and `class-static-fields-public` on those paths.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -79,8 +83,18 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5947 pass / 0 fail / 14491 skip / 0 timeout**.
+Current supported subset count: **6328 pass / 0 fail / 14110 skip / 0 timeout**.
 
+- **Class field initializer arrow `super` context**: public class field
+  initializers now parse with the class field initializer `super` and
+  `new.target` context, allowing `super.prop` while continuing to reject
+  `super()` calls. Static public/private field initializer scopes now also
+  bind `#super` to the constructor, so arrows created by static field
+  initializers resolve `super.staticProp` through the class constructor home
+  object. The focused `language/{statements,expressions}/class/elements` run
+  now reports **422 pass / 0 fail / 2540 skip**, and the supported subset rises
+  to **6328 pass / 0 fail / 14110 skip** after admitting the implemented public
+  class field coverage.
 - **Class field initializer direct eval context**: direct eval calls emitted
   from public/private class field initializer values now carry initializer
   context through nested function chunks. Eval source containing `arguments`
@@ -88,10 +102,7 @@ Current supported subset count: **5947 pass / 0 fail / 14491 skip / 0 timeout**.
   remains valid, and `new.target` evaluates as `undefined` for instance field
   initializers instead of inheriting the constructor's `new.target`. With
   public class field skips temporarily lifted, the direct-eval class-elements
-  slice reports **82 pass / 0 fail / 94 skip**; the broader public field
-  diagnostic reports **420 pass / 2 fail / 2540 skip**, with the remaining
-  failures limited to the separate `super-access-from-arrow-func-on-field.js`
-  pair.
+  slice reports **82 pass / 0 fail / 94 skip**.
 - **For-of runner admission**: the `language/statements/for-of/` path
   exception now admits implemented destructuring-binding, object-rest,
   optional-chaining, Proxy, and `Symbol.iterator` coverage without opening

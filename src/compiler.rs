@@ -2876,6 +2876,10 @@ impl Compiler {
         let this_idx = self.intern("this");
         self.chunk.emit(Op::Dup, self.current_line);
         self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
+        let super_idx = self.intern("#super");
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.chunk
+            .emit(Op::DeclareEnv(super_idx), self.current_line);
         self.chunk.emit(Op::LoadEnv(key_tmp_idx), self.current_line);
         let init = field
             .init
@@ -2909,6 +2913,10 @@ impl Compiler {
         let this_idx = self.intern("this");
         self.chunk.emit(Op::Dup, self.current_line);
         self.chunk.emit(Op::DeclareEnv(this_idx), self.current_line);
+        let super_idx = self.intern("#super");
+        self.chunk.emit(Op::Dup, self.current_line);
+        self.chunk
+            .emit(Op::DeclareEnv(super_idx), self.current_line);
         let init = field
             .init
             .clone()

@@ -1145,6 +1145,20 @@ impl Parser {
         result
     }
 
+    fn parse_class_field_initializer(&mut self) -> error::Result<Expr> {
+        let saved_super = self.super_depth;
+        let saved_super_call = self.super_call_depth;
+        let saved_new_target_allowed = self.new_target_allowed;
+        self.super_depth += 1;
+        self.super_call_depth = 0;
+        self.new_target_allowed = true;
+        let result = self.parse_assign();
+        self.super_depth = saved_super;
+        self.super_call_depth = saved_super_call;
+        self.new_target_allowed = saved_new_target_allowed;
+        result
+    }
+
     fn parse_fn_body_inner_inherited_super(&mut self) -> error::Result<Vec<Stmt>> {
         self.expect(&TokenKind::LBrace, "{")?;
         let body_is_strict = self.peek_use_strict_directive();
@@ -5602,7 +5616,7 @@ impl Parser {
                     crate::ast::PropKind::Normal,
                 )?;
                 let init = if self.eat(&TokenKind::Assign) {
-                    let init = self.parse_assign()?;
+                    let init = self.parse_class_field_initializer()?;
                     Self::reject_class_field_initializer_contains_arguments(&init)?;
                     Some(Box::new(init))
                 } else {
@@ -5704,7 +5718,7 @@ impl Parser {
                     ));
                 }
                 let init = if self.eat(&TokenKind::Assign) {
-                    let mut init = self.parse_assign()?;
+                    let mut init = self.parse_class_field_initializer()?;
                     Self::reject_class_field_initializer_contains_arguments(&init)?;
                     if computed_name.is_none() {
                         Self::name_function_from_ident(&mut init, &method_name);

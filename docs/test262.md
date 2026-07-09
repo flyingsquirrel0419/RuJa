@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5947 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (6328 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -186,12 +186,19 @@ Eval source containing `arguments` is rejected as `SyntaxError`, `super()` is
 disallowed while `super.prop` remains valid, and instance field initializer
 `eval("new.target")` evaluates to `undefined` rather than the constructor. With
 `class-fields-public` and `class-static-fields-public` temporarily lifted, the
-direct-eval class-elements slice reports **82 pass / 0 fail / 94 skip**. The
-broader `language/{statements,expressions}/class/elements` diagnostic reports
-**420 pass / 2 fail / 2540 skip**; the two remaining failures are the separate
-`super-access-from-arrow-func-on-field.js` statement/expression pair. The
-default supported subset remains feature-gated for public fields until that
-follow-up lands.
+direct-eval class-elements slice reports **82 pass / 0 fail / 94 skip**.
+
+Focused class field initializer arrow `super` local check:
+public class field initializers now parse with the class field initializer
+`super` and `new.target` context, allowing `super.prop` while still rejecting
+`super()` calls. Static public/private field initializer scopes now bind
+`#super` to the constructor, so arrows created by static field initializers
+resolve `super.staticProp` through the class constructor home object. The
+runner now admits implemented public instance/static field coverage on
+`language/{statements,expressions}/class/elements` by lifting only
+`class-fields-public` and `class-static-fields-public` on those paths. The
+focused class-elements run reports **422 pass / 0 fail / 2540 skip**, and the
+supported subset rises to **6328 pass / 0 fail / 14110 skip**.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference
