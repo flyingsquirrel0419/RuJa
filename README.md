@@ -44,7 +44,7 @@ subset. See
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
 
-**Supported-subset pass rate: 100.0%** (5,003 tests in `language/statements`
+**Supported-subset pass rate: 100.0%** (5,057 tests in `language/statements`
 + `language/expressions`, unsupported-feature tests skipped). The
 full-suite rate is 33.6% — see [test262 conformance](docs/test262.md)
 for why these numbers differ.

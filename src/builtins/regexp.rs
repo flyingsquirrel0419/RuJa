@@ -1557,6 +1557,8 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     // going through make_builtin_constructor.
     let sym_tostring_idx = vm.new_native_function("toString", symbol_to_string, 0)?;
     let sym_valueof_idx = vm.new_native_function("valueOf", symbol_value_of, 0)?;
+    let sym_to_primitive_idx =
+        vm.new_native_function("[Symbol.toPrimitive]", symbol_to_primitive, 1)?;
     let sym_description_getter =
         vm.new_native_function("get description", symbol_description_get, 0)?;
     let mut sym_proto_props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
@@ -1571,6 +1573,30 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
     sym_proto_props.insert(
         PropertyKey::from("description"),
         accessor_get_prop(Value::Object(sym_description_getter)),
+    );
+    sym_proto_props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+        PropertyDescriptor {
+            value: Value::Object(sym_to_primitive_idx),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: None,
+            set: None,
+            is_accessor: false,
+        },
+    );
+    sym_proto_props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyDescriptor {
+            value: Value::String(Arc::from("Symbol")),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: None,
+            set: None,
+            is_accessor: false,
+        },
     );
     sym_proto_props.insert(
         PropertyKey::from("constructor"),

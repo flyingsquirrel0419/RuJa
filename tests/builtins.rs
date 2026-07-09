@@ -606,6 +606,23 @@ fn symbol_intrinsic_surface_descriptors_and_value_of() {
         run_err("Symbol.prototype.valueOf.call({});").contains("TypeError"),
         "Symbol.prototype.valueOf must reject non-symbol objects"
     );
+    assert_eq!(
+        run(r#"
+            [
+              Symbol.prototype[Symbol.toPrimitive].length,
+              Symbol.prototype[Symbol.toPrimitive].name,
+              Object.getOwnPropertyDescriptor(Symbol.prototype, Symbol.toPrimitive).writable,
+              Object.getOwnPropertyDescriptor(Symbol.prototype, Symbol.toPrimitive).configurable,
+              Symbol.prototype[Symbol.toPrimitive].call(Object(Symbol("p")), "default").toString(),
+              Symbol.prototype[Symbol.toStringTag],
+              Object.getOwnPropertyDescriptor(Symbol.prototype, Symbol.toStringTag).writable,
+              Object.getOwnPropertyDescriptor(Symbol.prototype, Symbol.toStringTag).configurable
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "1|[Symbol.toPrimitive]|false|true|Symbol(p)|Symbol|false|true"
+        ))
+    );
     assert!(
         run_err("Object.getPrototypeOf(null);").contains("TypeError"),
         "Object.getPrototypeOf(null) must throw"

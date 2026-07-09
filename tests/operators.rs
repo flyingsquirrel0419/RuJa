@@ -1219,3 +1219,15 @@ fn to_string_radix_undefined_and_abrupt_completion() {
     );
     assert!(res.contains("TypeError"), "got: {}", res);
 }
+
+#[test]
+fn unary_minus_uses_to_numeric_for_bigint_objects() {
+    assert_eq!(
+        run("(-Object(1n)).toString();"),
+        Value::String(Arc::from("-1"))
+    );
+    assert_eq!(
+        run(r#"(-{ [Symbol.toPrimitive]: function() { return 2n; } }).toString();"#),
+        Value::String(Arc::from("-2"))
+    );
+}

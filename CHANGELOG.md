@@ -22,8 +22,15 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5017 pass / 0 fail / 0 timeout**.
+Current supported subset count: **5057 pass / 0 fail / 0 timeout**.
 
+- **Symbol prototype well-known properties**: `Symbol.prototype[@@toPrimitive]`
+  and `Symbol.prototype[@@toStringTag]` now expose spec-shaped descriptors,
+  Symbol primitives can resolve symbol-keyed prototype properties, and unary
+  minus now uses `ToNumeric` so BigInt object wrappers negate as BigInt. The
+  `Symbol.toPrimitive` and `Symbol.toStringTag` test262 feature skips are
+  removed; the supported subset remains green while increasing to **5057 pass
+  / 0 fail / 0 timeout**.
 - **String exotic objects and coercion**: `String(object)` now performs
   observable `ToPrimitive` with string hint instead of bypassing overridden
   `toString` on arrays, while `OrdinaryToPrimitive` now skips non-callable

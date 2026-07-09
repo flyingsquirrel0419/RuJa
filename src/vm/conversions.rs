@@ -340,7 +340,28 @@ impl Vm {
         match key {
             Value::Symbol(id) => {
                 let pkey = crate::value::PropertyKey::Symbol(*id);
-                self.get_property_by_key(obj, &pkey)
+                match obj {
+                    Value::String(_)
+                    | Value::Number(_)
+                    | Value::BigInt(_)
+                    | Value::Bool(_)
+                    | Value::Symbol(_) => {
+                        let proto = match obj {
+                            Value::String(_) => self.string_proto.clone(),
+                            Value::Number(_) => self.number_proto.clone(),
+                            Value::BigInt(_) => self.bigint_proto.clone(),
+                            Value::Bool(_) => self.boolean_proto.clone(),
+                            Value::Symbol(_) => self.symbol_proto.clone(),
+                            _ => Value::Undefined,
+                        };
+                        if proto.is_undefined() {
+                            Ok(Value::Undefined)
+                        } else {
+                            self.get_property_key_rx(&proto, &pkey, obj.clone(), 0)
+                        }
+                    }
+                    _ => self.get_property_by_key(obj, &pkey),
+                }
             }
             other => {
                 let s = self.to_property_key(other)?;

@@ -1241,11 +1241,10 @@ impl Vm {
                 )?,
                 Op::Neg => {
                     let v = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let Value::BigInt(n) = v {
-                        self.stack.push(Value::BigInt(-n));
-                    } else {
-                        let n = self.to_number(&v)?;
-                        self.stack.push(Value::Number(-n));
+                    match self.to_numeric(&v)? {
+                        Value::BigInt(n) => self.stack.push(Value::BigInt(-n)),
+                        Value::Number(n) => self.stack.push(Value::Number(-n)),
+                        _ => unreachable!("ToNumeric returns Number or BigInt"),
                     }
                 }
                 Op::Not => {
