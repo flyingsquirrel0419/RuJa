@@ -83,6 +83,20 @@ impl Vm {
         });
     }
 
+    fn set_arguments_mapped_binding_for_key(
+        &self,
+        receiver_idx: usize,
+        pkey: &crate::value::PropertyKey,
+        value: &Value,
+    ) {
+        let Some(index) = pkey.as_str().and_then(crate::value::parse_array_index) else {
+            return;
+        };
+        if let Some((env, name)) = self.arguments_mapped_binding_for_index(receiver_idx, index) {
+            crate::environment::set(&self.heap, env, &name, value.clone());
+        }
+    }
+
     pub(crate) fn array_index_own_property_descriptor(
         &self,
         obj_idx: usize,
@@ -1224,7 +1238,17 @@ impl Vm {
             }
             let (desc, proto) = self.heap.with_obj(base_idx.0, |o| {
                 let ordinary = o.props().lock().get(pkey).cloned();
-                let string_exotic = ordinary.or_else(|| {
+                let array_dense = ordinary.or_else(|| {
+                    let HeapObj::Array(a) = o else {
+                        return None;
+                    };
+                    let index = pkey.as_str().and_then(crate::value::parse_array_index)?;
+                    if !a.is_dense_present(index) {
+                        return None;
+                    }
+                    Some(crate::value::PropertyDescriptor::data(Value::Undefined))
+                });
+                let string_exotic = array_dense.or_else(|| {
                     let HeapObj::Object(od) = o else {
                         return None;
                     };
@@ -1677,6 +1701,7 @@ impl Vm {
                         if !present && !extensible {
                             return Ok(false);
                         }
+                        self.set_arguments_mapped_binding_for_key(receiver_idx.0, &pkey, &value);
                         self.set_array_index(receiver_idx.0, index, value)?;
                         return Ok(true);
                     }
@@ -1692,11 +1717,15 @@ impl Vm {
             let props = o.props();
             let mut props = props.lock();
             if let Some(existing) = props.get_mut(&pkey) {
-                existing.value = value;
+                existing.value = value.clone();
             } else {
-                props.insert(pkey, crate::value::PropertyDescriptor::data(value));
+                props.insert(
+                    pkey.clone(),
+                    crate::value::PropertyDescriptor::data(value.clone()),
+                );
             }
         });
+        self.set_arguments_mapped_binding_for_key(receiver_idx.0, &pkey, &value);
         if let Some(key) = cache_key {
             self.ic_invalidate(receiver_idx.0, &key);
         }

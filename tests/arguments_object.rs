@@ -78,6 +78,59 @@ fn mapped_arguments_nonconfigurable_descriptor_keeps_parameter_map() {
 }
 
 #[test]
+fn mapped_arguments_index_write_updates_parameter_binding() {
+    assert_eq!(
+        run(r#"
+            function f(a, b, c) {
+              arguments[0] = 1;
+              arguments[1] = "str";
+              arguments[2] = 2.1;
+              return [a, b, c, arguments[0], arguments[1], arguments[2]].join(",");
+            }
+            f(10, "sss", 1);
+            "#),
+        Value::String(Arc::from("1,str,2.1,1,str,2.1"))
+    );
+}
+
+#[test]
+fn mapped_arguments_index_write_honors_redefined_data_descriptor() {
+    assert_eq!(
+        run(r#"
+            function f(a) {
+              Object.defineProperty(arguments, "0", { configurable: false });
+              arguments[0] = 2;
+              var d = Object.getOwnPropertyDescriptor(arguments, "0");
+              return [a, arguments[0], d.value, d.writable, d.enumerable, d.configurable].join(",");
+            }
+            f(1);
+            "#),
+        Value::String(Arc::from("2,2,2,true,true,false"))
+    );
+}
+
+#[test]
+fn mapped_arguments_index_write_ignores_prototype_setter() {
+    assert_eq!(
+        run(r#"
+            var data = "data";
+            Object.defineProperty(Object.prototype, "0", {
+              get: function() { return data; },
+              set: function(value) { data = value; },
+              configurable: true
+            });
+            var argObj = (function(a) {
+              arguments[0] = 2;
+              return [a, arguments[0], data].join(",");
+            })(1);
+            delete Object.prototype["0"];
+            argObj;
+            "#),
+        Value::String(Arc::from("2,2,data"))
+    );
+}
+
+#[test]
 fn mapped_arguments_writable_false_removes_parameter_map() {
     assert_eq!(
         run(r#"

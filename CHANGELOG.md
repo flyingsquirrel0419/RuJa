@@ -41,6 +41,13 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Mapped arguments object index writes**: property-Reference writes to sloppy
+  mapped arguments objects now update the linked parameter binding, including
+  writes after `Object.defineProperty(arguments, "0", ...)`. Dense arguments
+  indices are also treated as own data properties during `[[Set]]`, so
+  prototype numeric setters no longer intercept writes to `arguments[0]`. The
+  focused `language/arguments-object` test262 run now reports **126 pass / 0
+  fail / 137 skip**.
 - **Property Reference records for simple member assignment**: ordinary member
   assignment now lowers final writes through an explicit property Reference
   while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates

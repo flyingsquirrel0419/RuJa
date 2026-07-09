@@ -2832,6 +2832,13 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   skip**, the broader Reference-focused cluster stays at **900 pass / 0 fail /
   367 skip**, and the supported subset remains at **4470 pass / 0 fail / 0
   timeout**.
+- **Mapped arguments object index writes** — property Reference writes to
+  sloppy mapped arguments objects now update the linked parameter binding,
+  including writes after `Object.defineProperty(arguments, "0", ...)`. Dense
+  arguments indices are treated as own data properties during `[[Set]]`, so
+  prototype numeric setters no longer intercept writes to `arguments[0]`. The
+  focused `language/arguments-object` run now closes at **126 pass / 0 fail /
+  137 skip**.
 
 ## Why the full-suite rate is not higher
 
