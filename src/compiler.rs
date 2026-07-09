@@ -2004,7 +2004,7 @@ impl Compiler {
                         iter: iter_idx,
                         done: done_idx,
                         inner_continue: None,
-                        ignore_close_errors: true,
+                        ignore_close_errors: false,
                     },
                     self.current_line,
                 );
@@ -2283,7 +2283,7 @@ impl Compiler {
                         iter: iter_idx,
                         done: done_idx,
                         inner_continue: None,
-                        ignore_close_errors: true,
+                        ignore_close_errors: false,
                     },
                     self.current_line,
                 );

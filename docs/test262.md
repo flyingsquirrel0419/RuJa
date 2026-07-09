@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5939 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (5947 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -131,12 +131,15 @@ generator assignment destructuring now treats `yield]` as a bare
 `YieldExpression` before the closing array pattern bracket, so default
 initializers and rest-target computed keys can suspend and resume in generator
 assignment patterns. Generator shorthand `{ yield }` assignment targets are
-now rejected as syntax errors. The runner admits only the 24 generator-tagged
-`language/expressions/assignment/` files that pass, keeping the remaining
-iterator-close runtime cases skipped. The focused assignment path reports
-**477 pass / 0 fail / 8 skip**, the broader Reference-adjacent cluster
-reports **1190 pass / 0 fail / 8 skip**, and the supported subset rises to
-**5939 pass / 0 fail / 14499 skip**.
+now rejected as syntax errors. Array assignment destructuring now preserves
+iterator-close errors when a suspended generator is resumed through `return()`,
+while still preserving original throw completions, and lazy custom iterator
+`next` validation is delayed until `IteratorNext` so target reference
+evaluation can suspend before a missing `next` is observed. The runner now
+admits generator coverage on the whole `language/expressions/assignment/`
+path. The focused assignment path reports **485 pass / 0 fail / 0 skip**, the
+broader Reference-adjacent cluster reports **1198 pass / 0 fail / 0 skip**,
+and the supported subset rises to **5947 pass / 0 fail / 14491 skip**.
 
 Focused public class fields local check:
 `language/{statements,expressions}/class/elements` now parses public instance

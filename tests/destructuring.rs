@@ -423,6 +423,75 @@ fn object_assign_generator_rejects_yield_shorthand_target() {
 }
 
 #[test]
+fn array_assign_generator_return_reports_iterator_close_throw() {
+    assert_eq!(
+        run(r#"
+            var returnCount = 0;
+            var unreachable = 0;
+            var iterator = {
+              return: function() {
+                returnCount += 1;
+                throw "close";
+              }
+            };
+            var iterable = {};
+            iterable[Symbol.iterator] = function() { return iterator; };
+            function* g() {
+              [{}[yield]] = iterable;
+              unreachable += 1;
+            }
+            var iter = g();
+            var first = iter.next();
+            var caught = "";
+            try {
+              iter.return();
+            } catch (e) {
+              caught = e;
+            }
+            [first.done, returnCount, caught, unreachable].join(":");
+            "#),
+        Value::String(Arc::from("false:1:close:0"))
+    );
+}
+
+#[test]
+fn array_assign_generator_return_reports_iterator_close_non_object() {
+    assert_eq!(
+        run(r#"
+            var nextCount = 0;
+            var returnCount = 0;
+            var unreachable = 0;
+            var iterator = {
+              next: function() {
+                nextCount += 1;
+                return { done: false, value: undefined };
+              },
+              return: function() {
+                returnCount += 1;
+                return null;
+              }
+            };
+            var iterable = {};
+            iterable[Symbol.iterator] = function() { return iterator; };
+            function* g() {
+              [{} = yield] = iterable;
+              unreachable += 1;
+            }
+            var iter = g();
+            var first = iter.next();
+            var caughtTypeError = false;
+            try {
+              iter.return();
+            } catch (e) {
+              caughtTypeError = e instanceof TypeError;
+            }
+            [first.done, nextCount, returnCount, caughtTypeError, unreachable].join(":");
+            "#),
+        Value::String(Arc::from("false:1:1:true:0"))
+    );
+}
+
+#[test]
 fn array_assign_closes_iterator_on_target_throw_preserving_original_throw() {
     let src = r#"
         var log = [];

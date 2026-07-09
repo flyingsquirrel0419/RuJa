@@ -75,7 +75,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **5939 pass / 0 fail / 14499 skip / 0 timeout**.
+Current supported subset count: **5947 pass / 0 fail / 14491 skip / 0 timeout**.
 
 - **For-of runner admission**: the `language/statements/for-of/` path
   exception now admits implemented destructuring-binding, object-rest,
@@ -114,11 +114,15 @@ Current supported subset count: **5939 pass / 0 fail / 14499 skip / 0 timeout**.
 - **Generator assignment destructuring parser coverage**: generator assignment
   destructuring now parses bare `yield` before a closing array pattern bracket
   as a `YieldExpression`, and rejects generator shorthand `{ yield }`
-  assignment targets as syntax errors. The runner now admits only the 24
-  generator-tagged `language/expressions/assignment/` files that pass, leaving
-  the remaining iterator-close runtime cases skipped. The focused assignment
-  path reports **477 pass / 0 fail / 8 skip**, and the broader
-  Reference-adjacent cluster reports **1190 pass / 0 fail / 8 skip**.
+  assignment targets as syntax errors. Array assignment destructuring now
+  preserves iterator-close errors when a suspended generator is resumed through
+  `return()`, while still preserving original throw completions. Lazy custom
+  iterator `next` validation is delayed until `IteratorNext`, so target
+  reference evaluation can suspend before a missing `next` is observed. The
+  runner now admits generator coverage on the whole
+  `language/expressions/assignment/` path, which reports **485 pass / 0 fail /
+  0 skip**; the broader Reference-adjacent cluster reports **1198 pass / 0 fail
+  / 0 skip**.
 - **Private-field Reference runner admission**: compound and logical assignment
   paths now admit the already-implemented private-field Reference coverage
   without opening private class fields more broadly. The combined
@@ -127,7 +131,7 @@ Current supported subset count: **5939 pass / 0 fail / 14499 skip / 0 timeout**.
   skip**. The Reference-adjacent cluster
   `language/expressions/assignment language/expressions/compound-assignment
   language/expressions/logical-assignment language/expressions/update
-  language/statements/with` reports **1166 pass / 0 fail / 32 skip**.
+  language/statements/with` reports **1198 pass / 0 fail / 0 skip**.
 - **Error `cause` semantics**: `Error` and NativeError constructors now perform
   observable `HasProperty(options, "cause")` followed by `Get`, after installing
   the message property. `AggregateError` now uses its `(errors, message,

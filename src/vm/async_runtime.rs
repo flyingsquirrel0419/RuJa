@@ -1278,9 +1278,6 @@ impl Vm {
     /// JS object's `next()` method and reads its `value`/`done` properties.
     pub(crate) fn new_lazy_iterator(&mut self, iter_obj: Value) -> error::Result<Value> {
         let next = self.get_property(&iter_obj, "next")?;
-        if !crate::builtins::is_callable(&next, &self.heap) {
-            return Err(Error::type_err("Iterator next is not callable"));
-        }
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
@@ -1614,6 +1611,9 @@ impl Vm {
                 iter_obj.ok_or_else(|| Error::type_err("not an iterator".to_string()))?;
             let next_fn =
                 next_fn.ok_or_else(|| Error::type_err("Iterator next is not callable"))?;
+            if !crate::builtins::is_callable(&next_fn, &self.heap) {
+                return Err(Error::type_err("Iterator next is not callable"));
+            }
             let result = self.call_function(&next_fn, &[resume], Some(iter_obj))?;
             if !matches!(result, Value::Object(_)) {
                 return Err(Error::type_err("Iterator result is not an object"));
