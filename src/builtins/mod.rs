@@ -1834,7 +1834,17 @@ fn install_data_view_constructor_in_env(
 }
 
 pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(GcIdx, GcIdx)> {
-    let proto_parent = if matches!(vm.error_proto, Value::Object(_)) {
+    make_error_constructor_in_env(vm, name, vm.global)
+}
+
+fn make_error_constructor_in_env(
+    vm: &mut Vm,
+    name: &str,
+    env: GcIdx,
+) -> error::Result<(GcIdx, GcIdx)> {
+    let proto_parent = if name == "Error" {
+        vm.object_proto.clone()
+    } else if matches!(vm.error_proto, Value::Object(_)) {
         vm.error_proto.clone()
     } else {
         vm.object_proto.clone()
@@ -1855,7 +1865,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             func: error_constructor,
             length: 1,
         },
-        closure: vm.global,
+        closure: env,
         lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
@@ -1875,7 +1885,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
         );
     });
     if name == "Error" {
-        let is_error_fn = vm.new_native_function("isError", error_is_error, 1)?;
+        let is_error_fn = vm.new_native_function_in_env("isError", error_is_error, 1, env)?;
         vm.heap.with_obj(ctor_idx.0, |obj| {
             obj.props().lock().insert(
                 PropertyKey::from("isError"),
@@ -1883,7 +1893,7 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             );
         });
     }
-    let ts_fn = vm.new_native_function("toString", error_to_string, 0)?;
+    let ts_fn = vm.new_native_function_in_env("toString", error_to_string, 0, env)?;
     vm.heap.with_obj(proto_idx.0, |obj| {
         obj.props().lock().insert(
             PropertyKey::from("constructor"),
@@ -1902,6 +1912,18 @@ pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(
             data_prop(Value::Object(ts_fn)),
         );
     });
+    if name == "Error" {
+        let stack_get = vm.new_native_function_in_env("get stack", error_stack_get, 0, env)?;
+        let stack_set = vm.new_native_function_in_env("set stack", error_stack_set, 1, env)?;
+        vm.heap.with_obj(proto_idx.0, |obj| {
+            obj.props().lock().insert(
+                PropertyKey::from("stack"),
+                accessor_prop(Value::Object(stack_get), Value::Object(stack_set)),
+            );
+        });
+    }
+    vm.realm_error_prototypes
+        .insert((env.0, Arc::from(name)), Value::Object(proto_idx));
 
     Ok((ctor_idx, proto_idx))
 }
@@ -2125,8 +2147,18 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     if let Some(proxy) = crate::environment::get(&vm.heap, vm.global, "Proxy") {
         define_realm_global(vm, realm_env, &global, "Proxy", proxy);
     }
-    for name in [
+    let (realm_error_ctor, realm_error_proto) =
+        make_error_constructor_in_env(vm, "Error", realm_env)?;
+    define_realm_global(
+        vm,
+        realm_env,
+        &global,
         "Error",
+        Value::Object(realm_error_ctor),
+    );
+    let realm_error_ctor_value = Value::Object(realm_error_ctor);
+    let realm_error_proto_value = Value::Object(realm_error_proto);
+    for name in [
         "EvalError",
         "RangeError",
         "ReferenceError",
@@ -2135,9 +2167,16 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         "URIError",
         "AggregateError",
     ] {
-        if let Some(error_ctor) = crate::environment::get(&vm.heap, vm.global, name) {
-            define_realm_global(vm, realm_env, &global, name, error_ctor);
-        }
+        let (ctor, proto) = make_error_constructor_in_env(vm, name, realm_env)?;
+        vm.heap.with_obj(ctor.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                *f.proto.lock() = Some(realm_error_ctor_value.clone());
+            }
+        });
+        vm.heap.with_obj(proto.0, |obj| {
+            *obj.proto().lock() = Some(realm_error_proto_value.clone());
+        });
+        define_realm_global(vm, realm_env, &global, name, Value::Object(ctor));
     }
     let function_ctor_idx =
         vm.new_native_function_in_env("Function", function_constructor, 1, realm_env)?;
@@ -5691,6 +5730,81 @@ fn error_is_error(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::R
         _ => false,
     };
     Ok(Value::Bool(is_error))
+}
+
+fn error_has_error_data(vm: &Vm, value: &Value) -> bool {
+    match value {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| {
+            matches!(obj, HeapObj::Object(data) if data.class_name.as_deref() == Some("Error"))
+        }),
+        _ => false,
+    }
+}
+
+fn error_stack_home_prototype(vm: &mut Vm) -> Value {
+    let env = vm.native_callee_closure().unwrap_or(vm.global);
+    let Some(Value::Object(error_ctor)) = crate::environment::get(&vm.heap, env, "Error") else {
+        return vm.error_proto.clone();
+    };
+    vm.heap
+        .with_obj(error_ctor.0, |obj| {
+            obj.props()
+                .lock()
+                .get(&PropertyKey::from("prototype"))
+                .map(|desc| desc.value.clone())
+        })
+        .unwrap_or_else(|| vm.error_proto.clone())
+}
+
+fn error_stack_get(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if !this.is_object() {
+        return Err(Error::type_err(
+            "Error.prototype.stack getter called on non-object",
+        ));
+    }
+    if !error_has_error_data(vm, &this) {
+        return Ok(Value::Undefined);
+    }
+    Ok(Value::String(Arc::from("Error")))
+}
+
+fn error_stack_set(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let this = this.unwrap_or(Value::Undefined);
+    if !this.is_object() {
+        return Err(Error::type_err(
+            "Error.prototype.stack setter called on non-object",
+        ));
+    }
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if !matches!(value, Value::String(_)) {
+        return Err(Error::type_err(
+            "Error.prototype.stack setter requires a string",
+        ));
+    }
+    if this == error_stack_home_prototype(vm) {
+        return Err(Error::type_err("Cannot set Error.prototype.stack"));
+    }
+
+    let key = PropertyKey::from("stack");
+    if own_property_descriptor_for_key_or_throw(vm, &this, &key)?.is_none() {
+        let mut desc = PropertyDescriptor::data(value);
+        desc.writable = true;
+        desc.enumerable = true;
+        desc.configurable = true;
+        let desc_obj = from_property_descriptor(vm, desc)?;
+        object_define_property_result(
+            vm,
+            &[this, Value::String(Arc::from("stack")), desc_obj],
+            true,
+        )?;
+    } else {
+        let success = vm.try_set_property_key_with_receiver(&this, &key, value, &this)?;
+        if !success {
+            return Err(Error::type_err("Cannot set Error.prototype.stack"));
+        }
+    }
+    Ok(Value::Undefined)
 }
 
 fn error_to_string(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {

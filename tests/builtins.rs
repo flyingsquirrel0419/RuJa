@@ -3334,6 +3334,96 @@ fn error_to_string_requires_object_and_omits_empty_parts() {
 }
 
 #[test]
+fn error_stack_accessor_uses_error_data_and_receiver_property() {
+    assert_eq!(
+        run(r#"
+            var desc = Object.getOwnPropertyDescriptor(Error.prototype, "stack");
+            var err = new TypeError("msg");
+            var fake = Object.create(Error.prototype);
+            var other = $262.createRealm().global;
+            var otherDesc = Object.getOwnPropertyDescriptor(other.Error.prototype, "stack");
+            var otherOriginalTypeError = other.TypeError;
+            desc.set.call(err, "sentinel");
+            desc.set.call(fake, "plain");
+            [
+              typeof desc.get,
+              desc.get.name,
+              desc.get.length,
+              typeof desc.set,
+              desc.set.name,
+              desc.set.length,
+              desc.enumerable,
+              desc.configurable,
+              Object.prototype.hasOwnProperty.call(new Error("x"), "stack"),
+              typeof desc.get.call(new Error("x")),
+              desc.get.call({}) === undefined,
+              err.stack,
+              Object.getOwnPropertyDescriptor(err, "stack").enumerable,
+              fake.stack,
+              Error.prototype !== other.Error.prototype,
+              desc.get !== otherDesc.get,
+              desc.set !== otherDesc.set,
+              Object.getPrototypeOf(other.TypeError.prototype) === other.Error.prototype,
+              typeof desc.get.call(new other.Error("x")),
+              (function() {
+                try {
+                  desc.set.call(other.Error.prototype, "x");
+                } catch (e) {
+                  return e.constructor === other.TypeError &&
+                    Object.getPrototypeOf(e) === other.TypeError.prototype;
+                }
+                return false;
+              })(),
+              (function() {
+                try {
+                  otherDesc.get.call(1);
+                } catch (e) {
+                  return e.constructor === other.TypeError &&
+                    Object.getPrototypeOf(e) === other.TypeError.prototype;
+                }
+                return false;
+              })(),
+              (function() {
+                var original = TypeError;
+                TypeError = function FakeTypeError() {};
+                try {
+                  desc.set.call(Error.prototype, "x");
+                } catch (e) {
+                  return e.constructor === original &&
+                    Object.getPrototypeOf(e) === original.prototype;
+                }
+                return false;
+              })(),
+              (function() {
+                other.TypeError = function FakeOtherTypeError() {};
+                try {
+                  otherDesc.set.call(other.Error.prototype, "x");
+                } catch (e) {
+                  return e.constructor === otherOriginalTypeError &&
+                    Object.getPrototypeOf(e) === otherOriginalTypeError.prototype;
+                }
+                return false;
+              })()
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "function|get stack|0|function|set stack|1|false|true|false|string|true|sentinel|true|plain|true|true|true|true|string|true|true|true|true"
+        ))
+    );
+    for src in [
+        "Object.getOwnPropertyDescriptor(Error.prototype, 'stack').get.call(1);",
+        "Object.getOwnPropertyDescriptor(Error.prototype, 'stack').set.call(1, 'x');",
+        "Object.getOwnPropertyDescriptor(Error.prototype, 'stack').set.call(new Error(), 1);",
+        "Object.getOwnPropertyDescriptor(Error.prototype, 'stack').set.call(Error.prototype, 'x');",
+    ] {
+        assert!(
+            run_err(src).contains("TypeError"),
+            "expected TypeError for {src}"
+        );
+    }
+}
+
+#[test]
 fn native_error_constructors_inherit_from_error_constructor() {
     assert_eq!(
         run(r#"[

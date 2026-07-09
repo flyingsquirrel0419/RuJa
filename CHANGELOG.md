@@ -198,6 +198,19 @@ Current supported subset count: **5003 pass / 0 fail / 0 timeout**.
   2 skip**, and the broader `built-ins/Error` diagnostic improves to **48 pass
   / 26 fail / 19 skip** with the remaining failures isolated to
   `Error.prototype.stack`.
+- **`Error.prototype.stack` accessor**:
+  `%Error.prototype%` now exposes a Realm-local `stack` accessor that accepts
+  real Error objects, leaves newly constructed Error objects without an own
+  `stack` data property, defines receiver-local stack data properties through
+  the setter, and throws the receiver Realm's `TypeError` for forbidden
+  prototype writes. Native error synthesis now preserves the throwing native
+  callee's Realm and uses the Realm's original intrinsic Error prototypes
+  instead of mutable global `TypeError`/`Error` bindings. `$262.createRealm()`
+  now builds Realm-local Error and NativeError constructor/prototype chains for
+  those cross-Realm checks. The
+  focused `built-ins/Error/prototype/stack` run closes at **27 pass / 0 fail /
+  8 skip**, and the broader `built-ins/Error` diagnostic closes at **74 pass /
+  0 fail / 19 skip**.
 - **ArrayBuffer static surface**: `ArrayBuffer` now rejects calls without
   `new` before length coercion, exposes `ArrayBuffer.isView()` for typed-array
   and DataView receivers, provides the `ArrayBuffer[Symbol.species]` getter,

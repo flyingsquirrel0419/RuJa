@@ -87,6 +87,10 @@ pub struct Vm {
     /// Realm global environment index -> that Realm's intrinsic
     /// `%ThrowTypeError%` function object.
     pub(crate) realm_throw_type_errors: HashMap<usize, Value>,
+    /// Realm global environment index + native error constructor name -> that
+    /// Realm's original intrinsic Error prototype. Native errors must not
+    /// consult mutable global bindings such as `TypeError`.
+    pub(crate) realm_error_prototypes: HashMap<(usize, Arc<str>), Value>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
     /// Optional execution fuel: when set, each dispatched opcode decrements
     /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
@@ -365,6 +369,7 @@ impl Vm {
             global_constants: Vec::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
+            realm_error_prototypes: HashMap::new(),
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,
@@ -1242,17 +1247,27 @@ impl Vm {
         };
         // Native errors come from the active function's realm.
         let error_env = self.native_callee_closure().unwrap_or(self.global);
-        let proto = match crate::environment::get(&self.heap, error_env, ctor_name) {
-            Some(Value::Object(ci)) => self.heap.with_obj(ci.0, |o| {
-                o.props()
-                    .lock()
-                    .get(&crate::value::PropertyKey::from("prototype"))
-                    .map(|d| d.value.clone())
-            }),
-            _ => None,
-        }
-        .or_else(|| crate::environment::get(&self.heap, error_env, "Error"))
-        .unwrap_or(self.error_proto.clone());
+        let proto = self
+            .realm_error_prototypes
+            .get(&(error_env.0, Arc::from(ctor_name)))
+            .cloned()
+            .or_else(|| {
+                self.realm_error_prototypes
+                    .get(&(error_env.0, Arc::from("Error")))
+                    .cloned()
+            })
+            .or_else(
+                || match crate::environment::get(&self.heap, error_env, ctor_name) {
+                    Some(Value::Object(ci)) => self.heap.with_obj(ci.0, |o| {
+                        o.props()
+                            .lock()
+                            .get(&crate::value::PropertyKey::from("prototype"))
+                            .map(|d| d.value.clone())
+                    }),
+                    _ => None,
+                },
+            )
+            .unwrap_or(self.error_proto.clone());
         let mut props = IndexMap::new();
         props.insert(
             crate::value::PropertyKey::from("name"),

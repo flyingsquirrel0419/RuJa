@@ -482,6 +482,19 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   fail / 2 skip**, and the broader `built-ins/Error` diagnostic improves to
   **48 pass / 26 fail / 19 skip**. The remaining failures are concentrated in
   `Error.prototype.stack`.
+- **`Error.prototype.stack` accessor** —
+  `%Error.prototype%` now exposes a Realm-local `stack` accessor. The getter
+  returns an implementation-defined string for real Error objects and
+  `undefined` for ordinary objects, while the setter defines receiver-local
+  enumerable/writable/configurable data properties and rejects writes to the
+  home `%Error.prototype%` with that receiver Realm's `TypeError`.
+  Native error synthesis now preserves the throwing native callee's Realm and
+  uses that Realm's original intrinsic Error prototypes rather than mutable
+  global `TypeError`/`Error` bindings. `$262.createRealm()` now builds
+  Realm-local Error and NativeError constructor/prototype chains for those
+  cross-Realm stack checks. The focused `built-ins/Error/prototype/stack` run
+  closes at **27 pass / 0 fail / 8 skip**, and the broader `built-ins/Error`
+  diagnostic closes at **74 pass / 0 fail / 19 skip**.
 - **Class private-name identity** —
   Class evaluation now allocates a fresh opaque private-name key for each
   private field, method, and accessor name and stores the key in the class

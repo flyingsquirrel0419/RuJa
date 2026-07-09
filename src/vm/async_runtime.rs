@@ -560,7 +560,15 @@ impl Vm {
                     self.current_native_new_target_prototype.take();
                 self.current_native_new_target = self.pending_new_target.take();
                 self.current_native_new_target_prototype = self.pending_new_target_prototype.take();
-                let result = f(self, args, this);
+                let result = match f(self, args, this) {
+                    Err(err) if err.catchable() && err.thrown_value.is_none() => {
+                        match self.make_error_value(&err) {
+                            Ok(thrown) => Err(Error::thrown(thrown, &self.heap)),
+                            Err(err) => Err(err),
+                        }
+                    }
+                    result => result,
+                };
                 self.current_native_callee = saved_native_callee;
                 self.current_native_new_target = saved_native_new_target;
                 self.current_native_new_target_prototype = saved_native_new_target_prototype;
