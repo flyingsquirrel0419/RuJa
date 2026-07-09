@@ -1072,7 +1072,7 @@ impl Vm {
         }
     }
 
-    fn mirror_global_property_to_binding(
+    pub(crate) fn mirror_global_property_to_binding(
         &self,
         idx: GcIdx,
         key: &str,

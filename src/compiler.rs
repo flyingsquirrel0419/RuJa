@@ -4438,7 +4438,6 @@ impl Compiler {
                 if *computed {
                     self.compile_expr(property)?;
                     self.compile_expr(value)?;
-                    self.chunk.emit(Op::SetElem, self.current_line);
                 } else {
                     let key = if let Expr::String(s) = &**property {
                         s.to_string()
@@ -4450,8 +4449,10 @@ impl Compiler {
                         .add_constant(Value::String(Arc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                     self.compile_expr(value)?;
-                    self.chunk.emit(Op::SetProp, self.current_line);
                 }
+                self.chunk
+                    .emit(Op::MakePropertyRefForSet, self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
             }
             Expr::Ident(name) => {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));

@@ -41,6 +41,14 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5099 pass / 0 fail / 0 timeout**.
 
+- **Property Reference records for simple member assignment**: ordinary member
+  assignment now lowers final writes through an explicit property Reference
+  while preserving simple-assignment ordering. `obj[x] = rhs` still evaluates
+  the RHS before nullish-base failure and delays `ToPropertyKey` until after
+  the RHS, while `PutValue` now handles the final write with Symbol keys, Proxy
+  receiver identity, strict failed-write behavior, and primitive sloppy no-op
+  semantics intact. The focused assignment/member-expression test262 cluster
+  reports **204 pass / 0 fail / 282 skip**.
 - **Property Reference records for member logical assignment**: ordinary member
   logical assignments now preserve an explicit property Reference from
   `GetValue` through the conditional short-circuit and `PutValue` paths. This

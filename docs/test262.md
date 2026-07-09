@@ -190,6 +190,17 @@ coercion, Proxy receiver identity, strict failed-write behavior, and nullish
 base ordering. The focused `language/expressions/logical-assignment` run
 remains closed at **57 pass / 0 fail / 21 skip**.
 
+Focused property Reference simple member-assignment local check:
+ordinary simple member assignments now create a property Reference after the
+RHS has been evaluated, then complete the write through `PutValue`. This keeps
+simple-assignment ordering stable: computed key expressions run before the
+RHS, nullish-base failure happens after the RHS, and `ToPropertyKey` is still
+delayed until after the RHS. The same path preserves Symbol keys, Proxy
+receiver identity, strict failed-write behavior, and primitive sloppy no-op
+semantics. The focused
+`language/expressions/{assignment,member-expression}` run reports **204 pass /
+0 fail / 282 skip**.
+
 Focused private element duplicate-initialization local check:
 private fields, methods, and accessors now throw `TypeError` instead of
 overwriting an existing same-class private slot when a derived constructor

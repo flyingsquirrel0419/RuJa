@@ -1916,6 +1916,25 @@ impl Vm {
                         } else {
                             true
                         };
+                        if success {
+                            if let (Value::Object(idx), crate::value::PropertyKey::Str(s)) =
+                                (base.as_ref(), &r.name)
+                            {
+                                let is_global_this = self.heap.with_obj(idx.0, |o| {
+                                    matches!(
+                                        o,
+                                        HeapObj::Object(od)
+                                            if od.class_name.as_deref() == Some("global")
+                                    )
+                                });
+                                self.mirror_global_property_to_binding(
+                                    *idx,
+                                    s,
+                                    true,
+                                    is_global_this,
+                                );
+                            }
+                        }
                         if !success && r.strict {
                             match &r.name {
                                 crate::value::PropertyKey::Str(s) => {

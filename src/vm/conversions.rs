@@ -321,6 +321,17 @@ impl Vm {
         }
     }
 
+    pub(crate) fn coerce_property_key_record(
+        &mut self,
+        v: &Value,
+    ) -> error::Result<crate::value::PropertyKey> {
+        match self.to_property_key_value(v)? {
+            Value::String(s) => Ok(crate::value::PropertyKey::from_rc(s)),
+            Value::Symbol(id) => Ok(crate::value::PropertyKey::Symbol(id)),
+            _ => unreachable!("ToPropertyKey returns only String or Symbol"),
+        }
+    }
+
     /// Get a property by a `Value` key, supporting string keys (via the
     /// existing `get_property(&str)` path) and Symbol keys (looked up directly
     /// in the object's `props` map as `PropertyKey::Symbol`).

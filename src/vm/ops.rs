@@ -1094,11 +1094,25 @@ impl Vm {
                 Op::MakePropertyRef => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = match &key {
-                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
-                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
-                    };
+                    let name = self.coerce_property_key_record(&key)?;
                     let strict = self.current_strict();
+                    self.stack
+                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
+                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            name,
+                            strict,
+                        })));
+                }
+                Op::MakePropertyRefForSet => {
+                    let value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let base = self.stack.pop().unwrap_or(Value::Undefined);
+                    if base.is_nullish() {
+                        return Err(Error::type_err("Cannot set property of primitive"));
+                    }
+                    let name = self.coerce_property_key_record(&key)?;
+                    let strict = self.current_strict();
+                    self.stack.push(value);
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),

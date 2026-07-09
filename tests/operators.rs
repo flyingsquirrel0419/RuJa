@@ -491,6 +491,14 @@ fn update_member_uses_property_reference() {
     assert_eq!(
         run(r#"
             var log = [];
+            var toPrimitiveSym = Symbol("toPrimitive");
+            var toPrimitiveKey = {};
+            Object.defineProperty(toPrimitiveKey, Symbol.toPrimitive, {
+              value: function() {
+                log.push("toPrimitiveKey");
+                return toPrimitiveSym;
+              }
+            });
             var key = {
               toString: function() {
                 log.push("key");
@@ -591,6 +599,63 @@ fn assign_nullish_computed_property_evaluates_rhs_before_type_error_but_skips_ke
             log.join("|");
             "#),
         Value::String(Arc::from("prop|rhs|TypeError"))
+    );
+}
+
+#[test]
+fn assign_member_uses_property_reference_for_set() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var toPrimitiveSym = Symbol("toPrimitive");
+            var toPrimitiveKey = {};
+            Object.defineProperty(toPrimitiveKey, Symbol.toPrimitive, {
+              value: function() {
+                log.push("toPrimitiveKey");
+                return toPrimitiveSym;
+              }
+            });
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            var sym = Symbol("assign");
+            var target = {};
+            var proxy = new Proxy(target, {
+              set: function(t, k, v, r) {
+                var label = k === sym ? "sym" : (k === toPrimitiveSym ? "toPrimitiveSym" : k);
+                log.push("set:" + label + ":" + v + ":" + (r === proxy));
+                t[k] = v;
+                return true;
+              }
+            });
+            var result = proxy[(log.push("prop"), key)] = (log.push("rhs"), 2);
+            var symResult = proxy[sym] = (log.push("symrhs"), 8);
+            var primitiveSymResult = proxy[toPrimitiveKey] = (log.push("primitiveSymRhs"), 9);
+            [result, symResult, primitiveSymResult, target.x, target[sym], target[toPrimitiveSym], log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "2;8;9;2;8;9;prop|rhs|key|set:x:2:true|symrhs|set:sym:8:true|primitiveSymRhs|toPrimitiveKey|set:toPrimitiveSym:9:true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var o = {};
+            Object.defineProperty(o, "x", { value: 1, writable: false });
+            var sloppy = (o.x = 2);
+            var primitive = ("abc".x = 4);
+            var strict;
+            try {
+              (function() { "use strict"; o.x = 3; })();
+            } catch (e) {
+              strict = e.name;
+            }
+            sloppy + ":" + primitive + ":" + o.x + ":" + strict;
+            "#),
+        Value::String(Arc::from("2:4:1:TypeError"))
     );
 }
 
