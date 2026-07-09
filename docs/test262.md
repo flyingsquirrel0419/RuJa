@@ -179,6 +179,20 @@ expression class-element directories report **4 pass / 0 fail / 0 skip**. The
 fail / 978 skip** to **469 pass / 87 fail / 978 skip**. The default supported
 subset remains **5099 pass / 0 fail / 15339 skip**.
 
+Focused class field initializer direct eval local check:
+direct eval calls emitted from class field initializer values now carry
+initializer context, including through functions defined by the initializer.
+Eval source containing `arguments` is rejected as `SyntaxError`, `super()` is
+disallowed while `super.prop` remains valid, and instance field initializer
+`eval("new.target")` evaluates to `undefined` rather than the constructor. With
+`class-fields-public` and `class-static-fields-public` temporarily lifted, the
+direct-eval class-elements slice reports **82 pass / 0 fail / 94 skip**. The
+broader `language/{statements,expressions}/class/elements` diagnostic reports
+**420 pass / 2 fail / 2540 skip**; the two remaining failures are the separate
+`super-access-from-arrow-func-on-field.js` statement/expression pair. The
+default supported subset remains feature-gated for public fields until that
+follow-up lands.
+
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference
 before `GetValue` and preserve that Reference through `PutValue`, matching the

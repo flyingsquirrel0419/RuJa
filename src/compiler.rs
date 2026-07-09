@@ -40,6 +40,9 @@ pub struct Compiler {
     /// Current source line being compiled; emitted onto each `Op` so runtime
     /// errors can report `(at line N)`. Updated as `compile_stmt` enters a stmt.
     current_line: usize,
+    /// Nesting depth while compiling class field initializer values. Direct
+    /// eval emitted in this context uses initializer-specific semantics.
+    class_field_initializer_depth: usize,
 }
 
 #[allow(dead_code)]
@@ -166,6 +169,7 @@ impl Compiler {
             switch_val_depth: None,
             switch_ctx_stack: Vec::new(),
             current_line: 0,
+            class_field_initializer_depth: 0,
         }
     }
 
@@ -186,6 +190,43 @@ impl Compiler {
             self.chunk.constants.len()
         );
         self.intern(&name)
+    }
+
+    fn emit_call_eval(&mut self, arg_count: usize) {
+        if self.class_field_initializer_depth > 0 {
+            self.chunk
+                .emit(Op::CallEvalClassField(arg_count), self.current_line);
+        } else {
+            self.chunk.emit(Op::CallEval(arg_count), self.current_line);
+        }
+    }
+
+    fn emit_call_eval_ref(&mut self, arg_count: usize) {
+        if self.class_field_initializer_depth > 0 {
+            self.chunk
+                .emit(Op::CallEvalRefClassField(arg_count), self.current_line);
+        } else {
+            self.chunk
+                .emit(Op::CallEvalRef(arg_count), self.current_line);
+        }
+    }
+
+    fn emit_call_eval_spread(&mut self) {
+        if self.class_field_initializer_depth > 0 {
+            self.chunk
+                .emit(Op::CallEvalSpreadClassField, self.current_line);
+        } else {
+            self.chunk.emit(Op::CallEvalSpread, self.current_line);
+        }
+    }
+
+    fn emit_call_eval_ref_spread(&mut self) {
+        if self.class_field_initializer_depth > 0 {
+            self.chunk
+                .emit(Op::CallEvalRefSpreadClassField, self.current_line);
+        } else {
+            self.chunk.emit(Op::CallEvalRefSpread, self.current_line);
+        }
     }
 
     /// Whether the current scope is strict (inherited from the enclosing
@@ -2840,7 +2881,9 @@ impl Compiler {
             .init
             .clone()
             .unwrap_or_else(|| Box::new(Expr::Undefined));
+        self.class_field_initializer_depth += 1;
         let init_result = self.compile_expr(&init);
+        self.class_field_initializer_depth -= 1;
         self.chunk.emit(Op::PopScope, self.current_line);
         self.pop_scope();
         init_result?;
@@ -2870,7 +2913,9 @@ impl Compiler {
             .init
             .clone()
             .unwrap_or_else(|| Box::new(Expr::Undefined));
+        self.class_field_initializer_depth += 1;
         let init_result = self.compile_expr(&init);
+        self.class_field_initializer_depth -= 1;
         self.chunk.emit(Op::PopScope, self.current_line);
         self.pop_scope();
         init_result?;
@@ -3619,7 +3664,7 @@ impl Compiler {
                                 }
                             }
                             if is_eval_call {
-                                self.chunk.emit(Op::CallEvalRefSpread, self.current_line);
+                                self.emit_call_eval_ref_spread();
                             } else {
                                 self.chunk.emit(Op::CallRefSpread, self.current_line);
                             }
@@ -3631,8 +3676,7 @@ impl Compiler {
                                 }
                             }
                             if is_eval_call {
-                                self.chunk
-                                    .emit(Op::CallEvalRef(args.len()), self.current_line);
+                                self.emit_call_eval_ref(args.len());
                             } else {
                                 self.chunk.emit(Op::CallRef(args.len()), self.current_line);
                             }
@@ -3832,7 +3876,7 @@ impl Compiler {
                                 }
                             }
                             if is_eval_call {
-                                self.chunk.emit(Op::CallEvalSpread, self.current_line);
+                                self.emit_call_eval_spread();
                             } else {
                                 self.chunk.emit(Op::CallSpread, self.current_line);
                                 // pops argsArr then callee
@@ -3845,7 +3889,7 @@ impl Compiler {
                                 }
                             }
                             if is_eval_call {
-                                self.chunk.emit(Op::CallEval(args.len()), self.current_line);
+                                self.emit_call_eval(args.len());
                             } else {
                                 self.chunk.emit(Op::Call(args.len()), self.current_line);
                             }
@@ -4613,7 +4657,10 @@ impl Compiler {
                 kind,
             } => {
                 self.compile_expr(object)?;
-                self.compile_expr(value)?;
+                self.class_field_initializer_depth += 1;
+                let value_result = self.compile_expr(value);
+                self.class_field_initializer_depth -= 1;
+                value_result?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 if matches!(kind, crate::ast::PropKind::Method) {
                     self.chunk
@@ -4665,7 +4712,10 @@ impl Compiler {
                     let key_idx = self.chunk.add_constant(Value::String(name.clone()));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                 }
-                self.compile_expr(value)?;
+                self.class_field_initializer_depth += 1;
+                let value_result = self.compile_expr(value);
+                self.class_field_initializer_depth -= 1;
+                value_result?;
                 if Self::is_anonymous_function_definition(value) {
                     self.chunk
                         .emit(Op::SetFunctionNameFromKey(0), self.current_line);

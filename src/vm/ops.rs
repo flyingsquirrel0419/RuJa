@@ -2707,6 +2707,12 @@ impl Vm {
                 Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
                 Op::CallEval(arg_count) => self.op_call_eval(arg_count)?,
                 Op::CallEvalRef(arg_count) => self.op_call_eval_ref(arg_count)?,
+                Op::CallEvalClassField(arg_count) => {
+                    self.op_call_eval_with_context(arg_count, true)?
+                }
+                Op::CallEvalRefClassField(arg_count) => {
+                    self.op_call_eval_ref_with_context(arg_count, true)?
+                }
                 Op::YieldValue => {
                     // Lazy generator: pop the yielded value and suspend execution.
                     // The `yield` expression's *result* (the value sent in by the
@@ -2847,6 +2853,10 @@ impl Vm {
                 Op::CallRefSpread => self.op_call_ref_spread()?,
                 Op::CallEvalSpread => self.op_call_eval_spread()?,
                 Op::CallEvalRefSpread => self.op_call_eval_ref_spread()?,
+                Op::CallEvalSpreadClassField => self.op_call_eval_spread_with_context(true)?,
+                Op::CallEvalRefSpreadClassField => {
+                    self.op_call_eval_ref_spread_with_context(true)?
+                }
                 Op::New(arg_count) => self.op_new(arg_count)?,
                 Op::NewSpread => self.op_new_spread()?,
                 Op::MakeClosure(func_idx) => self.op_make_closure(func_idx)?,
@@ -3172,7 +3182,11 @@ impl Vm {
         }
     }
 
-    fn call_direct_eval_from_args(&mut self, args: &[Value]) -> error::Result<Value> {
+    fn call_direct_eval_from_args(
+        &mut self,
+        args: &[Value],
+        in_class_field_initializer: bool,
+    ) -> error::Result<Value> {
         let arg = args.first().cloned().unwrap_or(Value::Undefined);
         let src = match arg {
             Value::String(s) => s.to_string(),
@@ -3199,18 +3213,25 @@ impl Vm {
             ));
         self.eval_direct(
             &src,
-            caller_env,
-            this_val,
-            caller_strict,
-            caller_new_target,
-            new_target_allowed,
+            DirectEvalContext {
+                caller_env,
+                this_val,
+                caller_strict,
+                caller_new_target,
+                new_target_allowed,
+                in_class_field_initializer,
+            },
         )
     }
 
     /// `Op::CallEval(arg_count)`: unqualified `eval(...)`. The parser/compiler
     /// can identify the syntactic shape, but only runtime resolution can tell
     /// whether `eval` was shadowed by `with` or a mutable binding.
-    fn op_call_eval(&mut self, arg_count: usize) -> error::Result<()> {
+    fn op_call_eval_with_context(
+        &mut self,
+        arg_count: usize,
+        in_class_field_initializer: bool,
+    ) -> error::Result<()> {
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
             args.push(self.stack.pop().unwrap_or(Value::Undefined));
@@ -3219,7 +3240,7 @@ impl Vm {
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
         let result = if self.is_current_realm_eval(&callee, caller_env) {
-            self.call_direct_eval_from_args(&args)?
+            self.call_direct_eval_from_args(&args, in_class_field_initializer)?
         } else {
             self.call_function(&callee, &args, Some(Value::Undefined))?
         };
@@ -3227,11 +3248,19 @@ impl Vm {
         Ok(())
     }
 
+    fn op_call_eval(&mut self, arg_count: usize) -> error::Result<()> {
+        self.op_call_eval_with_context(arg_count, false)
+    }
+
     /// `Op::CallEvalRef(arg_count)`: direct `eval(...)` syntactic form with
     /// its IdentifierReference retained. Intrinsic eval stays direct; a
     /// shadowing callable reached through `with` receives the with object as
     /// `this`.
-    fn op_call_eval_ref(&mut self, arg_count: usize) -> error::Result<()> {
+    fn op_call_eval_ref_with_context(
+        &mut self,
+        arg_count: usize,
+        in_class_field_initializer: bool,
+    ) -> error::Result<()> {
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
             args.push(self.stack.pop().unwrap_or(Value::Undefined));
@@ -3241,13 +3270,17 @@ impl Vm {
         let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
         let result = if self.is_current_realm_eval(&callee, caller_env) {
-            self.call_direct_eval_from_args(&args)?
+            self.call_direct_eval_from_args(&args, in_class_field_initializer)?
         } else {
             let this = self.this_value_from_reference(&r#ref);
             self.call_function(&callee, &args, Some(this))?
         };
         self.stack.push(result);
         Ok(())
+    }
+
+    fn op_call_eval_ref(&mut self, arg_count: usize) -> error::Result<()> {
+        self.op_call_eval_ref_with_context(arg_count, false)
     }
 
     /// `Op::CallMethod(arg_count)`: `obj.key(...args)` (computed member call).
@@ -3303,7 +3336,10 @@ impl Vm {
     }
 
     /// `Op::CallEvalSpread`: spread form of unqualified `eval(...)`.
-    fn op_call_eval_spread(&mut self) -> error::Result<()> {
+    fn op_call_eval_spread_with_context(
+        &mut self,
+        in_class_field_initializer: bool,
+    ) -> error::Result<()> {
         let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
         let mut args = Vec::new();
@@ -3316,7 +3352,7 @@ impl Vm {
         }
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
         let result = if self.is_current_realm_eval(&callee, caller_env) {
-            self.call_direct_eval_from_args(&args)?
+            self.call_direct_eval_from_args(&args, in_class_field_initializer)?
         } else {
             self.call_function(&callee, &args, Some(Value::Undefined))?
         };
@@ -3324,9 +3360,16 @@ impl Vm {
         Ok(())
     }
 
+    fn op_call_eval_spread(&mut self) -> error::Result<()> {
+        self.op_call_eval_spread_with_context(false)
+    }
+
     /// `Op::CallEvalRefSpread`: spread form of Reference-preserving
     /// unqualified `eval(...)`.
-    fn op_call_eval_ref_spread(&mut self) -> error::Result<()> {
+    fn op_call_eval_ref_spread_with_context(
+        &mut self,
+        in_class_field_initializer: bool,
+    ) -> error::Result<()> {
         let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
         let callee = self.stack.pop().unwrap_or(Value::Undefined);
         let r#ref = self.stack.pop().unwrap_or(Value::Undefined);
@@ -3340,13 +3383,17 @@ impl Vm {
         }
         let caller_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
         let result = if self.is_current_realm_eval(&callee, caller_env) {
-            self.call_direct_eval_from_args(&args)?
+            self.call_direct_eval_from_args(&args, in_class_field_initializer)?
         } else {
             let this = self.this_value_from_reference(&r#ref);
             self.call_function(&callee, &args, Some(this))?
         };
         self.stack.push(result);
         Ok(())
+    }
+
+    fn op_call_eval_ref_spread(&mut self) -> error::Result<()> {
+        self.op_call_eval_ref_spread_with_context(false)
     }
 
     /// `Op::New(arg_count)`: constructor call.

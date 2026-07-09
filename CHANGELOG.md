@@ -81,6 +81,17 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **5947 pass / 0 fail / 14491 skip / 0 timeout**.
 
+- **Class field initializer direct eval context**: direct eval calls emitted
+  from public/private class field initializer values now carry initializer
+  context through nested function chunks. Eval source containing `arguments`
+  is rejected as `SyntaxError`, `super()` is disallowed while `super.prop`
+  remains valid, and `new.target` evaluates as `undefined` for instance field
+  initializers instead of inheriting the constructor's `new.target`. With
+  public class field skips temporarily lifted, the direct-eval class-elements
+  slice reports **82 pass / 0 fail / 94 skip**; the broader public field
+  diagnostic reports **420 pass / 2 fail / 2540 skip**, with the remaining
+  failures limited to the separate `super-access-from-arrow-func-on-field.js`
+  pair.
 - **For-of runner admission**: the `language/statements/for-of/` path
   exception now admits implemented destructuring-binding, object-rest,
   optional-chaining, Proxy, and `Symbol.iterator` coverage without opening

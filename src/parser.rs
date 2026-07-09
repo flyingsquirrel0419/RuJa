@@ -4279,6 +4279,21 @@ impl Parser {
         Ok(())
     }
 
+    pub fn reject_class_field_initializer_program_contains_arguments(
+        program: &Program,
+    ) -> error::Result<()> {
+        if program
+            .body
+            .iter()
+            .any(Self::class_field_initializer_contains_arguments_stmt)
+        {
+            return Err(error::Error::syntax(
+                "'arguments' is not allowed in class field initializer".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     fn class_field_initializer_contains_arguments_stmt(stmt: &Stmt) -> bool {
         match &stmt.node {
             StmtNode::VarDecl { decls, .. } => decls.iter().any(|(_, init)| {

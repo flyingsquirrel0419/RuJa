@@ -186,6 +186,15 @@ pub struct CallFrame {
     pub is_derived_ctor: bool,
 }
 
+pub(crate) struct DirectEvalContext {
+    pub caller_env: GcIdx,
+    pub this_val: Value,
+    pub caller_strict: bool,
+    pub caller_new_target: Value,
+    pub new_target_allowed: bool,
+    pub in_class_field_initializer: bool,
+}
+
 impl CallFrame {
     fn new(
         chunk: Arc<Chunk>,
@@ -789,24 +798,26 @@ impl Vm {
     /// caller's current environment, so it can read/assign the caller's
     /// variables. `var`/function declarations leak to the caller's function
     /// scope root (sloppy mode). `this_val` is the caller's `this`.
-    pub fn eval_direct(
+    pub(crate) fn eval_direct(
         &mut self,
         src: &str,
-        caller_env: GcIdx,
-        this_val: Value,
-        caller_strict: bool,
-        caller_new_target: Value,
-        new_target_allowed: bool,
+        ctx: DirectEvalContext,
     ) -> error::Result<Value> {
-        let super_allowed = crate::environment::has(&self.heap, caller_env, "#super");
-        let super_call_allowed = crate::environment::has(&self.heap, caller_env, "#superctor");
+        let super_allowed = crate::environment::has(&self.heap, ctx.caller_env, "#super");
+        let super_call_allowed = !ctx.in_class_field_initializer
+            && crate::environment::has(&self.heap, ctx.caller_env, "#superctor");
         let program = crate::parser::Parser::parse_direct_eval_inherited(
             src,
-            caller_strict,
+            ctx.caller_strict,
             super_allowed,
             super_call_allowed,
-            new_target_allowed,
+            ctx.new_target_allowed,
         )?;
+        if ctx.in_class_field_initializer {
+            crate::parser::Parser::reject_class_field_initializer_program_contains_arguments(
+                &program,
+            )?;
+        }
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
         let chunk = self.append_compiled_functions(chunk, funcs);
@@ -819,7 +830,7 @@ impl Vm {
         // the var/function names in the caller's variable environment (sloppy
         // only) so later name resolution can see the hoisted bindings; then run
         // the eval body in the child environment.
-        let is_strict = caller_strict || program.is_strict;
+        let is_strict = ctx.caller_strict || program.is_strict;
         let var_names = if is_strict {
             Vec::new()
         } else {
@@ -829,7 +840,7 @@ impl Vm {
             &program.body,
             program.is_strict,
         );
-        let var_env = crate::environment::function_scope_root(&self.heap, caller_env);
+        let var_env = crate::environment::function_scope_root(&self.heap, ctx.caller_env);
         if !is_strict && var_env == self.global {
             self.check_eval_global_declaration_instantiation(&program, var_env, &self.global_this)?;
         }
@@ -842,7 +853,7 @@ impl Vm {
                     .is_some_and(|frame| frame.in_parameter_initializers);
                 if declaring_arguments
                     && in_parameter_initializers
-                    && crate::environment::has_own_binding(&self.heap, caller_env, name)
+                    && crate::environment::has_own_binding(&self.heap, ctx.caller_env, name)
                 {
                     return Err(Error::syntax(
                         "Cannot declare 'arguments' from direct eval in parameter initializer",
@@ -856,7 +867,10 @@ impl Vm {
                     continue;
                 }
                 if crate::environment::has_lexical_declaration_between(
-                    &self.heap, caller_env, var_env, name,
+                    &self.heap,
+                    ctx.caller_env,
+                    var_env,
+                    name,
                 ) {
                     return Err(Error::syntax(format!(
                         "Identifier '{}' has already been declared",
@@ -865,14 +879,18 @@ impl Vm {
                 }
             }
         }
-        let eval_env = crate::environment::new_env(&self.heap, Some(caller_env), is_strict)?;
+        let eval_env = crate::environment::new_env(&self.heap, Some(ctx.caller_env), is_strict)?;
         let result = self.execute_chunk_scoped(
             chunk,
             eval_env,
-            this_val,
+            ctx.this_val,
             !is_strict && var_env == self.global,
             !is_strict && var_env != self.global,
-            caller_new_target,
+            if ctx.in_class_field_initializer {
+                Value::Undefined
+            } else {
+                ctx.caller_new_target
+            },
         );
         // After running, copy the var/function bindings that the eval body
         // established back into the caller's variable environment (they leak per
@@ -900,7 +918,10 @@ impl Vm {
             // Do not clobber an existing lexical (let/const) binding in the
             // caller: a same-named eval `var` is a no-op there per spec.
             if crate::environment::has_lexical_declaration_between(
-                &self.heap, caller_env, var_env, &name,
+                &self.heap,
+                ctx.caller_env,
+                var_env,
+                &name,
             ) {
                 continue;
             }

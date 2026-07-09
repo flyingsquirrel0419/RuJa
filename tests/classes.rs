@@ -130,6 +130,111 @@ fn public_class_fields_define_own_data_properties() {
 }
 
 #[test]
+fn public_class_field_direct_eval_uses_initializer_context() {
+    assert_eq!(
+        run(r#"
+            var rejectedArguments = false;
+            class ArgumentsCase {
+              x = eval("arguments");
+            }
+            try { new ArgumentsCase(); } catch (e) {
+              rejectedArguments = e instanceof SyntaxError;
+            }
+            rejectedArguments;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var rejectedSuperCall = false;
+            class Base {}
+            class Derived extends Base {
+              x = eval("super()");
+            }
+            try { new Derived(); } catch (e) {
+              rejectedSuperCall = e instanceof SyntaxError;
+            }
+            rejectedSuperCall;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            class C {
+              x = eval("new.target");
+            }
+            new C().x === undefined;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            class Base {
+              get value() { return 42; }
+            }
+            class Derived extends Base {
+              x = eval("super.value");
+            }
+            new Derived().x;
+        "#),
+        Value::Number(42.0)
+    );
+
+    assert_eq!(
+        run(r#"
+            var rejectedArguments = false;
+            try {
+              class StaticArgumentsCase {
+                static x = eval("arguments");
+              }
+            } catch (e) {
+              rejectedArguments = e instanceof SyntaxError;
+            }
+            rejectedArguments;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            try {
+              class ThrowsDuringStaticField {
+                static x = (function() { throw new Error("boom"); })();
+              }
+            } catch (e) {}
+            var ok = false;
+            try {
+              eval("var arguments = 1");
+              ok = arguments === 1;
+            } catch (e) {
+              ok = false;
+            }
+            ok;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            var rejectedNestedArguments = false;
+            class NestedFunctionCase {
+              x = function() { return eval("arguments"); };
+            }
+            try {
+              new NestedFunctionCase().x();
+            } catch (e) {
+              rejectedNestedArguments = e instanceof SyntaxError;
+            }
+            rejectedNestedArguments;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn public_class_fields_use_define_own_property_semantics() {
     assert_eq!(
         run("class C{f=Object.freeze(this);g=1;}try{new C();false;}catch(e){e instanceof TypeError;}"),

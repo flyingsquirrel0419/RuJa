@@ -203,12 +203,20 @@ pub enum Op {
     /// Reference-preserving unqualified `eval(...)`.
     /// Stack: [ref, callee, args...].
     CallEvalRef(usize), // arg count
+    /// Direct eval from a class field initializer value.
+    CallEvalClassField(usize),
+    /// Reference-preserving direct eval from a class field initializer value.
+    CallEvalRefClassField(usize),
     /// Spread form of unqualified `eval(...)`.
     /// Stack: [callee, argsArray].
     CallEvalSpread,
     /// Reference-preserving spread form of unqualified `eval(...)`.
     /// Stack: [ref, callee, argsArray].
     CallEvalRefSpread,
+    /// Spread direct eval from a class field initializer value.
+    CallEvalSpreadClassField,
+    /// Reference-preserving spread direct eval from a class field initializer value.
+    CallEvalRefSpreadClassField,
     CallSuperCtor(usize), // super(args): stack [this, superCtor, args...]
     CallSuperCtorSpread,  // super(...args): stack [this, superCtor, argsArray]
     CallSuper(usize),     // arg count: stack [this, superProto, key, args...]
