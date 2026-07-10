@@ -2486,10 +2486,12 @@ impl Vm {
                     Self::push_value_roots(&mut roots, resolve);
                     Self::push_value_roots(&mut roots, reject);
                 }
-                Microtask::Resolve { value, .. } => {
+                Microtask::Resolve { promise, value } => {
+                    roots.push(promise.0);
                     Self::push_value_roots(&mut roots, value);
                 }
-                Microtask::Reject { reason, .. } => {
+                Microtask::Reject { promise, reason } => {
+                    roots.push(promise.0);
                     Self::push_value_roots(&mut roots, reason);
                 }
             }

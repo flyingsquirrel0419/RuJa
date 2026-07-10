@@ -858,6 +858,38 @@ fn async_generator_yield_star_return_awaits_each_stage() {
 }
 
 #[test]
+fn async_generator_await_keeps_block_environment_alive_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var release;
+        var gate = new Promise(resolve => { release = resolve; });
+        async function* gen() {
+            {
+                let held = { value: 42 };
+                await gate;
+                yield held.value;
+            }
+        }
+        var iterator = gen();
+        var request = iterator.next();
+        "#,
+    )
+    .expect("failed to suspend async generator");
+
+    vm.gc();
+    vm.run("release();")
+        .expect("failed to resume async generator");
+    vm.run("var resumed; request.then(result => { resumed = result.value; });")
+        .expect("failed to observe async generator result");
+
+    assert_eq!(
+        vm.run("resumed;").expect("failed to read resumed value"),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
 fn async_generator_yield_star_getter_errors_reach_the_body_catch() {
     let src = r#"
         var returnToken = {};

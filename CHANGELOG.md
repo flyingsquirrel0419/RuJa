@@ -10,6 +10,10 @@
   boundary, yielded values and thenables settle in queue order, delegated
   return/getter errors reach the generator body, and broken Promise
   `constructor` access rejects the active request.
+- GC now traces suspended generators' current and catch environments, queued
+  async-generator capabilities, and the target Promises of pending resolve and
+  reject jobs. A collection between `await` suspension and resumption no longer
+  drops block-scoped bindings.
 
 ### Test tooling
 

@@ -226,6 +226,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         HeapObj::LazyGenerator(g) => {
             worklist.push(g.closure.0);
+            worklist.push(g.env.lock().0);
+            for (_, _, env) in g.catch_stack.lock().iter() {
+                worklist.push(env.0);
+            }
             for v in g.stack.lock().iter() {
                 push_value(v, worklist);
             }
