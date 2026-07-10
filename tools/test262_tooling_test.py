@@ -124,6 +124,9 @@ class AsyncAdmissionTests(unittest.TestCase):
             class_element_declaration = (
                 root / "test/language/statements/class/elements/case.js"
             )
+            class_definition = (
+                root / "test/language/statements/class/definition/case.js"
+            )
             outside = root / "test/language/expressions/async-arrow/case.js"
             meta = {"flags": ["async"], "features": []}
             feature_meta = {
@@ -170,6 +173,7 @@ class AsyncAdmissionTests(unittest.TestCase):
                     self.assertFalse(
                         tool.should_skip(class_element_meta, class_element_declaration)
                     )
+                    self.assertFalse(tool.should_skip(meta, class_definition))
                     self.assertTrue(tool.should_skip(meta, outside))
                     self.assertTrue(tool.should_skip(async_generator_meta, outside))
                     self.assertFalse(

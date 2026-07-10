@@ -677,6 +677,7 @@ def should_skip(meta, path=None):
     flags = meta.get('flags', [])
     async_admitted = path is not None and (
         class_elements_path(path)
+        or class_definition_path(path)
         or object_method_definition_path(path)
         or async_arrow_function_path(path)
         or async_function_path(path)

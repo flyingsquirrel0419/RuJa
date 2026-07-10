@@ -23,6 +23,11 @@
 
 ### Test tooling
 
+- Async completion is now admitted on the fully green
+  `language/statements/class/definition/` path. Its two async `super` method
+  tests move the focused path to **65 pass / 0 fail / 0 skip**, and the
+  supported subset reaches **11251 pass / 0 fail / 9188 skip / 20439 total**;
+  unrelated async paths remain gated.
 - Async-function result assimilation and scoped class-element async admission
   are confirmed by CI `29101286102` and `test262-full` `29101286000`; the
   supported-summary follow-up is confirmed by CI `29101459432` and
