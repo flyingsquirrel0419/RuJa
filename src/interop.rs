@@ -5,8 +5,6 @@
 use crate::error;
 use crate::value::{GcIdx, HeapObj, Value};
 use crate::vm::Vm;
-use indexmap::IndexMap;
-use parking_lot::Mutex;
 use std::sync::Arc;
 
 enum Either {
@@ -17,7 +15,9 @@ enum Either {
 /// Convert a `ruja::Value` into a `serde_json::Value`.
 pub fn to_json_value(vm: &mut Vm, v: &Value) -> serde_json::Value {
     match v {
-        Value::Undefined | Value::Symbol(_) => serde_json::Value::Null,
+        Value::Undefined | Value::Symbol(_) | Value::PrivateName(_) | Value::Reference(_) => {
+            serde_json::Value::Null
+        }
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Number(n) => {
@@ -68,6 +68,31 @@ pub fn to_json_value(vm: &mut Vm, v: &Value) -> serde_json::Value {
                 None => serde_json::Value::Null,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{
+        PrivateNameKey, PropertyKey, ReferenceBase, ReferenceRecord, ReferencedName,
+    };
+
+    #[test]
+    fn internal_values_convert_to_json_null() {
+        let mut vm = Vm::new().expect("failed to initialize VM");
+        let private = Value::PrivateName(PrivateNameKey {
+            id: 1,
+            description: Arc::from("field"),
+        });
+        let reference = Value::Reference(Box::new(ReferenceRecord {
+            base: ReferenceBase::Unresolvable,
+            name: ReferencedName::Property(PropertyKey::from("missing")),
+            strict: true,
+        }));
+
+        assert_eq!(to_json_value(&mut vm, &private), serde_json::Value::Null);
+        assert_eq!(to_json_value(&mut vm, &reference), serde_json::Value::Null);
     }
 }
 

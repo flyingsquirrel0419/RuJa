@@ -4,6 +4,11 @@
 
 ### Test tooling
 
+- The iterator-result descriptor fix is confirmed by `test262-full`
+  29096575687 on `42ac4c4` with no engine-outcome regressions.
+- The primary CI job now builds, tests, and runs clippy with all Cargo features
+  enabled, so the optional serde interop and feature-gated examples cannot
+  silently stop compiling.
 - The async-generator receiver-brand fix is confirmed by `test262-full`
   29095756104 on `43cc099` at **23277 pass / 6830 fail / 11 timeout / 0
   error / 18349 skip / 48467 total / 30107 ran**, retaining **77.3%** of
@@ -151,6 +156,11 @@
 
 ### Runtime hardening
 
+- Optional serde interop now handles internal PrivateName and Reference values
+  using the module's existing non-JSON-value policy (`null`), removes stale
+  imports, and compiles cleanly with the current `Value` enum. The serde embed
+  example also handles VM/function-registration failures correctly and runs
+  end to end again.
 - Iterator result objects created for generators, async generators, Array and
   collection iterators, RegExp String iterators, and delegation now expose
   `value` and `done` as writable, enumerable, configurable data properties, as

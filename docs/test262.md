@@ -234,6 +234,8 @@ Async-generator receiver-brand confirmation: `test262-full` 29095756104 on
 / 48467 total / 30107 ran**, retaining **77.3%** of executed files and
 **48.0%** of the matrix. The six newly passing receiver checks are part of the
 opt-in async diagnostic rather than the default full matrix.
+The iterator-result descriptor change is confirmed by `test262-full`
+29096575687 on `42ac4c4` with no engine-outcome regressions.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

@@ -120,6 +120,16 @@
 - `String()`/`Number()`/`Boolean()` as functions return primitives; `new` constructs
   a wrapper object with the correct prototype
 
+## Embedding
+
+- The optional `serde` Cargo feature converts between RuJa values and
+  `serde_json::Value`; arrays and enumerable string-keyed object properties are
+  traversed recursively, while non-JSON and internal-only values become
+  `null`.
+- `cargo run --example embed --features serde` demonstrates sandbox limits,
+  native Rust function registration, script execution, and JSON conversion.
+- CI builds, tests, and runs clippy with all Cargo features enabled.
+
 ## CLI
 
 - `ruja script.js` — run a file
