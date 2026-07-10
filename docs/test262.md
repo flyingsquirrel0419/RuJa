@@ -26,7 +26,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 41.7% of all matrix files; 74.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (6459 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -125,6 +125,10 @@ latest full baseline documentation check: `test262-full` 28937391393 on
 Latest improvement confirmation: `test262-full` 28962802017 on `6d6328e`.
 Latest improvement confirmation: `test262-full` 28964634961 on `05173b6`.
 Latest improvement confirmation: `test262-full` 29010097608 on `7ac8ba5`.
+Latest improvement confirmation: `test262-full` 29058987345 on `5ba07b5`;
+the aggregate reports **19897 pass / 6831 fail / 11 timeout / 0 error /
+20979 skip / 47718 total / 26728 ran**, or **74.4%** of executed files and
+**41.7%** of all matrix files.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
