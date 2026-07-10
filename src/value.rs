@@ -460,6 +460,7 @@ pub struct ArrayBufferData {
     pub bytes: Mutex<Vec<u8>>,
     pub detached: AtomicBool,
     pub immutable: AtomicBool,
+    pub shared: bool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

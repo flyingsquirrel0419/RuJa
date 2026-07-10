@@ -247,6 +247,38 @@ class WeakRefAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class SharedArrayBufferAdmissionTests(unittest.TestCase):
+    def test_shared_array_buffer_features_are_admitted_only_inside_builtin_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/SharedArrayBuffer/prototype/slice/case.js"
+            outside = root / "test/built-ins/Other/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "SharedArrayBuffer",
+                    "ArrayBuffer",
+                    "DataView",
+                    "TypedArray",
+                    "Int8Array",
+                    "Reflect",
+                    "Reflect.construct",
+                    "Symbol",
+                    "Symbol.species",
+                    "Symbol.toStringTag",
+                ],
+            }
+
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 class FinalizationRegistryAdmissionTests(unittest.TestCase):
     def test_finalization_registry_support_and_exact_path_exceptions(self):
         with tempfile.TemporaryDirectory() as temp_dir:

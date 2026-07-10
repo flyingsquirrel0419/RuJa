@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `SharedArrayBuffer` now has a distinct shared brand with constructor and
+  cross-Realm `new.target` prototype semantics, `byteLength`, `@@species`,
+  `@@toStringTag`, and species-aware `slice()`. Fixed-length shared buffers
+  back TypedArray and DataView views without detachment, while ordinary
+  ArrayBuffer accessors, transfer methods, and immutable operations reject the
+  shared brand. Growable SharedArrayBuffer and Atomics remain unsupported.
 - `FinalizationRegistry` now stores weak registration targets and unregister
   tokens alongside strongly traced held values and cleanup callbacks. GC sweep
   moves dead targets into cleanup jobs, unregister removes every matching
@@ -58,6 +64,13 @@
 
 ### Test tooling
 
+- The runner and analyzer now admit the exact `built-ins/SharedArrayBuffer/`
+  path without opening the broader SharedArrayBuffer or Atomics feature gates.
+  The fixed-length coverage reports **60 pass / 0 fail / 44 skip / 104 total**;
+  the 44 growable/resizable cases remain intentionally gated. Tooling tests
+  verify that the feature exception does not apply outside this built-in path,
+  and the supported language subset remains **11589 pass / 0 fail / 8850 skip
+  / 20439 total**.
 - `FinalizationRegistry` is removed from the global unsupported-feature gate.
   Its exact built-in path reports **47 pass / 0 fail / 0 skip**, the completed
   receiver-brand coverage raises `built-ins/WeakRef/` to **29 pass / 0 fail /

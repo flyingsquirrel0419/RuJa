@@ -37,9 +37,9 @@ ES5.1 + classes, async/await, generators, Promises with static combinators
 and `withResolvers`,
 destructuring,
 getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
-WeakRef/FinalizationRegistry, Reflect, Proxy, TypedArray constructors/indexing,
-BigInt, Date, regex, and more. RuJa does not claim full ES conformance —
-conformance is scoped to this subset. See
+WeakRef/FinalizationRegistry, Reflect, Proxy, fixed-length SharedArrayBuffer,
+TypedArray constructors/indexing, BigInt, Date, regex, and more. RuJa does not
+claim full ES conformance — conformance is scoped to this subset. See
 [test262 conformance](docs/test262.md#supported-subset) for the exact
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.

@@ -45,6 +45,10 @@ guarantees, run RuJa in a separately killable process as well.
   held values strongly, and schedules cleanup callbacks at VM job checkpoints
   after collection. As required by ECMAScript, callback timing is
   nondeterministic and embedders must not depend on cleanup running promptly.
+- Fixed-length `SharedArrayBuffer` instances share backing bytes with TypedArray
+  and DataView views and support species-aware `slice()`. Growable/resizable
+  shared buffers and Atomics operations are not implemented yet, so this is
+  shared-memory object compatibility rather than concurrent atomic execution.
 - Async generators serialize requests, and ordinary async functions preserve
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`

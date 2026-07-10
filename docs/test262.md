@@ -58,12 +58,13 @@ tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
-WeakRef, FinalizationRegistry, Promise, async/await, generators, for-of,
-optional chaining, nullish coalescing, logical assignment.
+WeakRef, FinalizationRegistry, fixed-length SharedArrayBuffer, Promise,
+async/await, generators, for-of, optional chaining, nullish coalescing,
+logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, Atomics,
-SharedArrayBuffer, full TypedArray prototype method coverage beyond the
-constructor/index basics and ArrayBuffer/DataView support,
+growable/resizable SharedArrayBuffer, full TypedArray prototype method coverage
+beyond the constructor/index basics and ArrayBuffer/DataView support,
 Tail-call optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
@@ -329,6 +330,17 @@ the supported language subset remains **11589 pass / 0 fail / 8850 skip /
 change. Downloaded artifacts aggregate to **25105 pass / 6830 fail / 11
 timeout / 0 error / 16521 skip / 48467 total / 31946 executed**, or **78.6%**
 of executed files and **51.8%** of the matrix.
+
+Focused SharedArrayBuffer coverage check:
+Fixed-length `SharedArrayBuffer` now has its own constructor brand, Realm-aware
+prototype fallback, `byteLength`, `@@species`, `@@toStringTag`, and a
+species-aware `slice()` that copies shared bytes. TypedArray and DataView views
+operate on the same backing bytes without detachment, while ordinary
+ArrayBuffer-only operations reject the shared brand. The exact
+`built-ins/SharedArrayBuffer/` path reports **60 pass / 0 fail / 44 skip / 104
+total**; all 44 skipped files require growable/resizable shared buffers and
+remain gated together with Atomics. The supported language subset remains
+**11589 pass / 0 fail / 8850 skip / 20439 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

@@ -1794,6 +1794,74 @@ fn install_array_buffer_constructor_in_env(
     Ok((array_buffer_ctor, array_buffer_proto))
 }
 
+fn install_shared_array_buffer_constructor_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+) -> error::Result<(Value, Value)> {
+    let (constructor, prototype) = make_builtin_constructor_with_in_env(
+        vm,
+        "SharedArrayBuffer",
+        1,
+        shared_array_buffer_constructor,
+        &[("slice", shared_array_buffer_slice, 2)],
+        env,
+    )?;
+    let byte_length_getter = vm.new_native_function_in_env(
+        "get byteLength",
+        shared_array_buffer_byte_length_get,
+        0,
+        env,
+    )?;
+    let species_getter =
+        vm.new_native_function_in_env("get [Symbol.species]", array_buffer_species_get, 0, env)?;
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
+    for function in [constructor, byte_length_getter, species_getter] {
+        set_function_object_proto(vm, function, &function_proto);
+    }
+    let slice = vm.heap.with_obj(prototype.0, |obj| {
+        obj.props()
+            .lock()
+            .get(&PropertyKey::from("slice"))
+            .map(|descriptor| descriptor.value.clone())
+    });
+    if let Some(Value::Object(slice)) = slice {
+        set_function_object_proto(vm, slice, &function_proto);
+    }
+    vm.heap.with_obj(constructor.0, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.species),
+            accessor_get_prop(Value::Object(species_getter)),
+        );
+    });
+    vm.heap.with_obj(prototype.0, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("byteLength"),
+            accessor_get_prop(Value::Object(byte_length_getter)),
+        );
+        let mut tag = data_prop(Value::String(Arc::from("SharedArrayBuffer")));
+        tag.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+
+    let constructor = Value::Object(constructor);
+    let prototype = Value::Object(prototype);
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "SharedArrayBuffer", constructor.clone());
+    } else {
+        define_global(vm, "SharedArrayBuffer", constructor.clone());
+    }
+    Ok((constructor, prototype))
+}
+
 fn install_data_view_constructor_in_env(
     vm: &mut Vm,
     env: GcIdx,
@@ -2491,6 +2559,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     define_realm_global(vm, realm_env, &global, "Symbol", Value::Object(symbol_idx));
 
     install_array_buffer_constructor_in_env(vm, realm_env, Some(&global), false)?;
+    install_shared_array_buffer_constructor_in_env(vm, realm_env, Some(&global))?;
     install_data_view_constructor_in_env(vm, realm_env, Some(&global))?;
     let (typed_array_ctor, typed_array_proto) = make_typed_array_intrinsic_in_env(vm, realm_env)?;
     for entry in typed_array_constructor_entries() {
@@ -5353,6 +5422,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     define_global(vm, "Proxy", Value::Object(proxy_ctor_idx));
 
     install_array_buffer_constructor_in_env(vm, vm.global, None, true)?;
+    install_shared_array_buffer_constructor_in_env(vm, vm.global, None)?;
     install_data_view_constructor_in_env(vm, vm.global, None)?;
     let (typed_array_ctor, typed_array_proto) = make_typed_array_intrinsic_in_env(vm, vm.global)?;
     for (name, constructor, kind) in typed_array_constructor_entries() {

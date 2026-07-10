@@ -136,6 +136,23 @@ DATA_VIEW_FEATURES = {
     "Uint8Array",
 }
 
+SHARED_ARRAY_BUFFER_PREFIXES = (
+    "built-ins/SharedArrayBuffer/",
+)
+
+SHARED_ARRAY_BUFFER_FEATURES = {
+    "ArrayBuffer",
+    "DataView",
+    "Int8Array",
+    "Reflect",
+    "Reflect.construct",
+    "SharedArrayBuffer",
+    "Symbol",
+    "Symbol.species",
+    "Symbol.toStringTag",
+    "TypedArray",
+}
+
 WEAK_REF_PREFIXES = (
     "built-ins/WeakRef/",
 )
@@ -539,6 +556,13 @@ def data_view_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(DATA_VIEW_PREFIXES)
 
+def shared_array_buffer_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(SHARED_ARRAY_BUFFER_PREFIXES)
+
 def weak_ref_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -731,6 +755,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
     if path is not None and data_view_path(path):
         feats.difference_update(DATA_VIEW_FEATURES)
+    if path is not None and shared_array_buffer_path(path):
+        feats.difference_update(SHARED_ARRAY_BUFFER_FEATURES)
     if path is not None and weak_ref_path(path):
         feats.difference_update(WEAK_REF_FEATURES)
     if path is not None and finalization_registry_path(path):

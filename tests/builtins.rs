@@ -7808,6 +7808,102 @@ fn finalization_registry_cleanup_runs_after_gc_and_unregister_suppresses_it() {
 }
 
 #[test]
+fn shared_array_buffer_surface_and_cross_realm_prototype_are_spec_shaped() {
+    assert_eq!(
+        run(
+            r#"
+            var buffer = new SharedArrayBuffer(8);
+            var length = Object.getOwnPropertyDescriptor(
+                SharedArrayBuffer.prototype,
+                "byteLength"
+            );
+            var tag = Object.getOwnPropertyDescriptor(
+                SharedArrayBuffer.prototype,
+                Symbol.toStringTag
+            );
+            var other = $262.createRealm().global;
+            var newTarget = new other.Function();
+            newTarget.prototype = undefined;
+            var crossRealm = Reflect.construct(SharedArrayBuffer, [4], newTarget);
+            [
+                typeof SharedArrayBuffer,
+                SharedArrayBuffer.length,
+                buffer.byteLength,
+                Object.getPrototypeOf(buffer) === SharedArrayBuffer.prototype,
+                Object.getPrototypeOf(SharedArrayBuffer) === Function.prototype,
+                length.get.length,
+                length.get.name,
+                length.enumerable,
+                length.configurable,
+                tag.value,
+                tag.writable,
+                tag.enumerable,
+                tag.configurable,
+                Object.getPrototypeOf(crossRealm) === other.SharedArrayBuffer.prototype
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "function|1|8|true|true|0|get byteLength|false|true|SharedArrayBuffer|false|false|true|true"
+        ))
+    );
+}
+
+#[test]
+fn shared_array_buffer_backs_typed_array_and_data_view_without_detachment() {
+    assert_eq!(
+        run(r#"
+            var buffer = new SharedArrayBuffer(4);
+            var bytes = new Uint8Array(buffer);
+            var view = new DataView(buffer);
+            bytes[0] = 7;
+            view.setUint8(1, 9);
+            var failures = 0;
+            try {
+                Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")
+                    .get.call(buffer);
+            } catch (error) { if (error instanceof TypeError) failures++; }
+            try {
+                Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength")
+                    .get.call(new ArrayBuffer(1));
+            } catch (error) { if (error instanceof TypeError) failures++; }
+            try { ArrayBuffer.prototype.transfer.call(buffer); }
+            catch (error) { if (error instanceof TypeError) failures++; }
+            [bytes[0], bytes[1], view.getUint8(0), failures].join("|");
+            "#,),
+        Value::String(Arc::from("7|9|7|3"))
+    );
+}
+
+#[test]
+fn shared_array_buffer_slice_uses_shared_species_and_copies_bytes() {
+    assert_eq!(
+        run(r#"
+            var source = new SharedArrayBuffer(4);
+            new Uint8Array(source)[1] = 42;
+            var sliced = source.slice(1, 3);
+            var values = new Uint8Array(sliced);
+            var failures = 0;
+            source.constructor = { [Symbol.species]: ArrayBuffer };
+            try { source.slice(); }
+            catch (error) { if (error instanceof TypeError) failures++; }
+            try { SharedArrayBuffer.prototype.slice.call(new ArrayBuffer(1)); }
+            catch (error) { if (error instanceof TypeError) failures++; }
+            try { SharedArrayBuffer(1); }
+            catch (error) { if (error instanceof TypeError) failures++; }
+            [
+                sliced instanceof SharedArrayBuffer,
+                sliced.byteLength,
+                values[0],
+                values[1],
+                failures
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("true|2|42|0|3"))
+    );
+}
+
+#[test]
 fn nested_async_functions_resume_outward() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

@@ -1386,6 +1386,7 @@ impl Vm {
                 Some("DataView")
                     | Some("WeakRef")
                     | Some("FinalizationRegistry")
+                    | Some("SharedArrayBuffer")
                     | Some("Int8Array")
                     | Some("Uint8Array")
                     | Some("Uint8ClampedArray")

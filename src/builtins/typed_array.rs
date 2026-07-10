@@ -28,6 +28,22 @@ fn to_index_length(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usiz
     Ok(integer as usize)
 }
 
+fn to_shared_array_buffer_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
+    let n = vm.to_number(value)?;
+    if n.is_nan() {
+        return Ok(0);
+    }
+    let integer = n.trunc();
+    if !integer.is_finite()
+        || integer < 0.0
+        || integer > MAX_SAFE_INTEGER
+        || integer > usize::MAX as f64
+    {
+        return Err(Error::range("Invalid SharedArrayBuffer length"));
+    }
+    Ok(integer as usize)
+}
+
 fn to_array_like_length(vm: &mut Vm, value: &Value) -> error::Result<usize> {
     let n = vm.to_number(value)?;
     if n.is_nan() || n <= 0.0 {
@@ -61,6 +77,43 @@ pub(crate) fn array_buffer_constructor(
             bytes: Mutex::new(vec![0; length]),
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
+            shared: false,
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+        }))?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
+pub(crate) fn shared_array_buffer_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err(
+            "SharedArrayBuffer constructor requires new",
+        ));
+    }
+
+    let length = match args.first() {
+        Some(value) => to_shared_array_buffer_length(vm, value)?,
+        None => 0,
+    };
+    let proto = native_constructor_prototype_with_default(
+        vm,
+        "SharedArrayBuffer",
+        vm.object_proto.clone(),
+    )?;
+    if length > MAX_ARRAY_BUFFER_LENGTH {
+        return Err(Error::range("Invalid SharedArrayBuffer length"));
+    }
+    let idx = vm
+        .heap
+        .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
+            bytes: Mutex::new(vec![0; length]),
+            detached: AtomicBool::new(false),
+            immutable: AtomicBool::new(false),
+            shared: true,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -94,6 +147,13 @@ fn current_realm_array_buffer_constructor(vm: &mut Vm) -> error::Result<Value> {
     crate::environment::get(&vm.heap, realm_env, "ArrayBuffer")
         .or_else(|| crate::environment::get(&vm.heap, vm.global, "ArrayBuffer"))
         .ok_or_else(|| Error::type_err("ArrayBuffer constructor is not available"))
+}
+
+fn current_realm_shared_array_buffer_constructor(vm: &mut Vm) -> error::Result<Value> {
+    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
+    crate::environment::get(&vm.heap, realm_env, "SharedArrayBuffer")
+        .or_else(|| crate::environment::get(&vm.heap, vm.global, "SharedArrayBuffer"))
+        .ok_or_else(|| Error::type_err("SharedArrayBuffer constructor is not available"))
 }
 
 fn current_realm_typed_array_constructor(
@@ -159,64 +219,90 @@ pub(crate) fn array_buffer_slice(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let this = this.ok_or_else(|| Error::type_err("ArrayBuffer slice called without this"))?;
+    array_buffer_slice_impl(vm, args, this, false)
+}
+
+pub(crate) fn shared_array_buffer_slice(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    array_buffer_slice_impl(vm, args, this, true)
+}
+
+fn array_buffer_slice_impl(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    expect_shared: bool,
+) -> error::Result<Value> {
+    let kind = if expect_shared {
+        "SharedArrayBuffer"
+    } else {
+        "ArrayBuffer"
+    };
+    let this = this.ok_or_else(|| Error::type_err(format!("{kind} slice called without this")))?;
     let (bytes, detached) = match &this {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::ArrayBuffer(buffer) = o {
-                Some((
-                    buffer.bytes.lock().clone(),
-                    buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
-                ))
-            } else {
-                None
+                if buffer.shared == expect_shared {
+                    return Some((
+                        buffer.bytes.lock().clone(),
+                        buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                    ));
+                }
             }
+            None
         }),
         _ => None,
     }
-    .ok_or_else(|| Error::type_err("ArrayBuffer.prototype.slice called on non-ArrayBuffer"))?;
+    .ok_or_else(|| Error::type_err(format!("{kind}.prototype.slice called on wrong receiver")))?;
     if detached {
-        return Err(Error::type_err(
-            "ArrayBuffer.prototype.slice on detached buffer",
-        ));
+        return Err(Error::type_err(format!(
+            "{kind}.prototype.slice on detached buffer"
+        )));
     }
 
     let len = bytes.len();
     let (from, to) = resolve_slice_bounds(vm, len, args.first(), args.get(1))?;
     let count = to - from;
 
-    let default_ctor = current_realm_array_buffer_constructor(vm)?;
+    let default_ctor = if expect_shared {
+        current_realm_shared_array_buffer_constructor(vm)?
+    } else {
+        current_realm_array_buffer_constructor(vm)?
+    };
     let ctor = array_buffer_species_constructor(vm, &this, default_ctor)?;
     let result = vm.construct(&ctor, &[Value::Number(count as f64)])?;
     if result == this {
-        return Err(Error::type_err(
-            "ArrayBuffer species returned the source buffer",
-        ));
+        return Err(Error::type_err("buffer species returned the source buffer"));
     }
 
     let (result_len, result_detached) = array_buffer_len_and_detached(vm, &result)
-        .ok_or_else(|| Error::type_err("ArrayBuffer species did not return an ArrayBuffer"))?;
-    if result_detached {
+        .ok_or_else(|| Error::type_err("buffer species did not return a buffer"))?;
+    if array_buffer_is_shared(vm, &result) != Some(expect_shared) {
         return Err(Error::type_err(
-            "ArrayBuffer species returned a detached buffer",
+            "buffer species returned the wrong buffer brand",
         ));
+    }
+    if result_detached {
+        return Err(Error::type_err("buffer species returned a detached buffer"));
     }
     let (_, _, result_immutable) = array_buffer_slots(vm, &result)
         .ok_or_else(|| Error::type_err("ArrayBuffer species did not return an ArrayBuffer"))?;
     if result_immutable {
         return Err(Error::type_err(
-            "ArrayBuffer species returned an immutable buffer",
+            "buffer species returned an immutable buffer",
         ));
     }
     if result_len < count {
         return Err(Error::type_err(
-            "ArrayBuffer species returned a buffer that is too small",
+            "buffer species returned a buffer that is too small",
         ));
     }
 
     let Value::Object(idx) = &result else {
-        return Err(Error::type_err(
-            "ArrayBuffer species did not return an object",
-        ));
+        return Err(Error::type_err("buffer species did not return an object"));
     };
     vm.heap.with_obj(idx.0, |o| {
         if let HeapObj::ArrayBuffer(buffer) = o {
@@ -237,12 +323,13 @@ pub(crate) fn array_buffer_immutable_get(
             .heap
             .with_obj(idx.0, |o| {
                 if let HeapObj::ArrayBuffer(buffer) = o {
-                    Some(Value::Bool(
-                        buffer.immutable.load(std::sync::atomic::Ordering::Relaxed),
-                    ))
-                } else {
-                    None
+                    if !buffer.shared {
+                        return Some(Value::Bool(
+                            buffer.immutable.load(std::sync::atomic::Ordering::Relaxed),
+                        ));
+                    }
                 }
+                None
             })
             .ok_or_else(|| Error::type_err("ArrayBuffer immutable getter on non-ArrayBuffer")),
         _ => Err(Error::type_err(
@@ -262,12 +349,13 @@ pub(crate) fn array_buffer_detached_get(
             .heap
             .with_obj(idx.0, |o| {
                 if let HeapObj::ArrayBuffer(buffer) = o {
-                    Some(Value::Bool(
-                        buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
-                    ))
-                } else {
-                    None
+                    if !buffer.shared {
+                        return Some(Value::Bool(
+                            buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                        ));
+                    }
                 }
+                None
             })
             .ok_or_else(|| Error::type_err("ArrayBuffer detached getter on non-ArrayBuffer")),
         _ => Err(Error::type_err("ArrayBuffer detached getter on non-object")),
@@ -319,6 +407,11 @@ fn array_buffer_slice_to_immutable_pinned(
     args: &[Value],
     this: Value,
 ) -> error::Result<Value> {
+    if array_buffer_is_shared(vm, &this) != Some(false) {
+        return Err(Error::type_err(
+            "ArrayBuffer.prototype.sliceToImmutable called on non-ArrayBuffer",
+        ));
+    }
     let (len, detached) = array_buffer_len_and_detached(vm, &this).ok_or_else(|| {
         Error::type_err("ArrayBuffer.prototype.sliceToImmutable called on non-ArrayBuffer")
     })?;
@@ -371,18 +464,46 @@ pub(crate) fn array_buffer_byte_length_get(
             .heap
             .with_obj(idx.0, |o| {
                 if let HeapObj::ArrayBuffer(buffer) = o {
-                    if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
-                        Some(Value::Number(0.0))
-                    } else {
-                        Some(Value::Number(buffer.bytes.lock().len() as f64))
+                    if !buffer.shared {
+                        return if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                            Some(Value::Number(0.0))
+                        } else {
+                            Some(Value::Number(buffer.bytes.lock().len() as f64))
+                        };
                     }
-                } else {
-                    None
                 }
+                None
             })
             .ok_or_else(|| Error::type_err("ArrayBuffer byteLength getter on non-ArrayBuffer")),
         _ => Err(Error::type_err(
             "ArrayBuffer byteLength getter on non-object",
+        )),
+    }
+}
+
+pub(crate) fn shared_array_buffer_byte_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this =
+        this.ok_or_else(|| Error::type_err("SharedArrayBuffer byteLength getter needs this"))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |o| {
+                if let HeapObj::ArrayBuffer(buffer) = o {
+                    if buffer.shared {
+                        return Some(Value::Number(buffer.bytes.lock().len() as f64));
+                    }
+                }
+                None
+            })
+            .ok_or_else(|| {
+                Error::type_err("SharedArrayBuffer byteLength getter on wrong receiver")
+            }),
+        _ => Err(Error::type_err(
+            "SharedArrayBuffer byteLength getter on non-object",
         )),
     }
 }
@@ -491,6 +612,19 @@ fn array_buffer_slots(vm: &Vm, value: &Value) -> Option<(usize, bool, bool)> {
     }
 }
 
+fn array_buffer_is_shared(vm: &Vm, value: &Value) -> Option<bool> {
+    match value {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ArrayBuffer(buffer) = o {
+                Some(buffer.shared)
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+}
+
 fn resolve_slice_bounds(
     vm: &mut Vm,
     len: usize,
@@ -545,6 +679,11 @@ fn array_buffer_copy_and_detach(
     immutable: bool,
 ) -> error::Result<Value> {
     let this = this.ok_or_else(|| Error::type_err("ArrayBuffer transfer called without this"))?;
+    if array_buffer_is_shared(vm, &this) != Some(false) {
+        return Err(Error::type_err(
+            "ArrayBuffer transfer called on non-ArrayBuffer",
+        ));
+    }
     let (old_len, _, _) = array_buffer_slots(vm, &this)
         .ok_or_else(|| Error::type_err("ArrayBuffer transfer called on non-ArrayBuffer"))?;
     let new_len = array_buffer_new_length(vm, old_len, args.first())?;
@@ -1858,6 +1997,7 @@ fn allocate_array_buffer_with_bytes_and_immutable(
             bytes: Mutex::new(bytes),
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(immutable),
+            shared: false,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
