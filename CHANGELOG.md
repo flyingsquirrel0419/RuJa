@@ -62,7 +62,11 @@
   Its exact built-in path reports **47 pass / 0 fail / 0 skip**, the completed
   receiver-brand coverage raises `built-ins/WeakRef/` to **29 pass / 0 fail /
   0 skip**, and the related `Object.seal` test passes. The supported language
-  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
+  `29111665821` and `test262-full` `29111666010` confirm the change; downloaded
+  artifacts report **25105 pass / 6830 fail / 11 timeout / 0 error / 16521
+  skip / 48467 total / 31946 executed**, or **78.6%** of executed files and
+  **51.8%** of the matrix.
 - The runner and analyzer now admit `built-ins/WeakRef/` through an exact-path
   feature exception. The focused path reports **28 pass / 0 fail / 1 skip / 29
   total**; the remaining test requires `FinalizationRegistry` solely to check
