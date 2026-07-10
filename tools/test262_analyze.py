@@ -254,6 +254,39 @@ PRIVATE_DIRECT_EVAL_FEATURES = {
     "class-static-methods-private",
 }
 
+PRIVATE_METHOD_AWAIT_EARLY_ERROR_DIRS = {
+    "language/expressions/class/elements/async-gen-private-method",
+    "language/expressions/class/elements/async-gen-private-method-static",
+    "language/expressions/class/elements/async-private-method",
+    "language/expressions/class/elements/async-private-method-static",
+    "language/statements/class/elements/async-gen-private-method",
+    "language/statements/class/elements/async-gen-private-method-static",
+    "language/statements/class/elements/async-private-method",
+    "language/statements/class/elements/async-private-method-static",
+}
+
+PRIVATE_METHOD_AWAIT_EARLY_ERROR_FILES = {
+    "await-as-binding-identifier-escaped.js",
+    "await-as-identifier-reference-escaped.js",
+    "await-as-label-identifier-escaped.js",
+}
+
+PRIVATE_METHOD_YIELD_EARLY_ERROR_DIRS = {
+    "language/expressions/class/elements/async-gen-private-method",
+    "language/expressions/class/elements/async-gen-private-method-static",
+    "language/expressions/class/elements/gen-private-method",
+    "language/expressions/class/elements/gen-private-method-static",
+    "language/statements/class/elements/async-gen-private-method",
+    "language/statements/class/elements/async-gen-private-method-static",
+    "language/statements/class/elements/gen-private-method",
+    "language/statements/class/elements/gen-private-method-static",
+}
+
+PRIVATE_METHOD_CONTEXTUAL_KEYWORD_FEATURES = {
+    "class-methods-private",
+    "class-static-methods-private",
+}
+
 def parse_meta(src):
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
     if not m:
@@ -407,6 +440,20 @@ def private_direct_eval_path(path):
         return False
     return rel.as_posix() in PRIVATE_DIRECT_EVAL_FILES
 
+def private_method_contextual_keyword_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    parent = rel.parent.as_posix()
+    return (
+        parent in PRIVATE_METHOD_AWAIT_EARLY_ERROR_DIRS
+        and rel.name in PRIVATE_METHOD_AWAIT_EARLY_ERROR_FILES
+    ) or (
+        parent in PRIVATE_METHOD_YIELD_EARLY_ERROR_DIRS
+        and rel.name == "yield-as-identifier-reference.js"
+    )
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -443,6 +490,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
     if path is not None and private_direct_eval_path(path):
         feats.difference_update(PRIVATE_DIRECT_EVAL_FEATURES)
+    if path is not None and private_method_contextual_keyword_path(path):
+        feats.difference_update(PRIVATE_METHOD_CONTEXTUAL_KEYWORD_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

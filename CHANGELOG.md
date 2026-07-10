@@ -64,6 +64,10 @@
   implemented private-name direct-eval visibility files under
   `language/statements/class/elements/` without lifting private class-element
   feature gates more broadly.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit only the
+  32 implemented contextual-keyword early-error files for private async,
+  generator, and async-generator methods without lifting broader private
+  class-element coverage.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -88,8 +92,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **6427 pass / 0 fail / 14011 skip / 0 timeout**.
+Current supported subset count: **6459 pass / 0 fail / 13979 skip / 0 timeout**.
 
+- **Private async/generator contextual-keyword early errors**: escaped
+  `await` is now rejected as a binding, identifier reference, or label inside
+  async method bodies, while a bare `yield` cannot be parsed as the direct
+  operand of a unary expression inside generator method bodies. Nested
+  ordinary functions and escaped property names retain their valid behavior.
+  The runner admits the 32 matching private method parse-negative files; the
+  focused class-elements run reports **553 pass / 0 fail / 2409 skip**, and
+  the supported subset rises to **6459 pass / 0 fail / 13979 skip**.
 - **Private-name direct eval visibility**: direct eval parsing now inherits
   private names visible through the caller's class environment, so
   `eval("this.#m")` is accepted in class methods, instance field

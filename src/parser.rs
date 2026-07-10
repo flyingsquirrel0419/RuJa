@@ -330,6 +330,16 @@ impl Parser {
                 name
             )));
         }
+        if name == "yield" && !self.yield_as_identifier_allowed() {
+            return Err(error::Error::syntax(
+                "'yield' cannot be used as a binding name here".to_string(),
+            ));
+        }
+        if name == "await" && !self.await_as_identifier_allowed() {
+            return Err(error::Error::syntax(
+                "'await' cannot be used as a binding name here".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -852,7 +862,9 @@ impl Parser {
             TokenKind::Ident(s)
                 if !(Self::is_reserved_identifier_reference_word(&s)
                     || self.is_strict_context
-                        && Self::is_strict_identifier_reference_reserved(&s)) =>
+                        && Self::is_strict_identifier_reference_reserved(&s))
+                    && (s != "await" || self.await_as_identifier_allowed())
+                    && (s != "yield" || self.yield_as_identifier_allowed()) =>
             {
                 Some(Arc::from(s.as_str()))
             }
@@ -2619,6 +2631,11 @@ impl Parser {
         };
         if let Some(op) = op {
             self.advance();
+            if self.generator_depth > 0 && matches!(self.peek(), TokenKind::Yield) {
+                return Err(error::Error::syntax(
+                    "Yield expression cannot be used directly as a unary operand".to_string(),
+                ));
+            }
             let e = self.parse_unary()?;
             if self.is_strict_context
                 && matches!(op, UnOp::Delete)
@@ -2996,6 +3013,14 @@ impl Parser {
                 self.parse_class_body(false).map(Expr::Class)
             }
             TokenKind::Ident(s) => {
+                if (s == "await" && !self.await_as_identifier_allowed())
+                    || (s == "yield" && !self.yield_as_identifier_allowed())
+                {
+                    return Err(error::Error::syntax(format!(
+                        "'{}' cannot be used as an identifier here",
+                        s
+                    )));
+                }
                 if Self::is_reserved_identifier_reference_word(&s) {
                     return Err(error::Error::syntax(format!(
                         "'{}' is a reserved word and cannot be used as an identifier",
@@ -6546,6 +6571,9 @@ mod tests {
         for src in [
             "function* g(yield) {}",
             "var obj = { *g(yield) {} };",
+            "function* g() { void yield; }",
+            "class C { *#g() { void yield; } }",
+            "class C { static async *#g() { void yield; } }",
             r#""use strict"; var yield = 1;"#,
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
@@ -6571,9 +6599,21 @@ mod tests {
             "async function f(await) {}",
             "async function f() { var await = 1; }",
             "async function f() { await = 1; }",
+            "async function f() { var \\u0061wait = 1; }",
+            "async function f() { void \\u0061wait; }",
+            "async function f() { \\u0061wait: ; }",
+            "class C { async #m() { var \\u0061wait; } }",
+            "class C { static async #m() { void \\u0061wait; } }",
             "async (await) => await;",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            "async function f() { function g() { var await = 1; return await; } }",
+            "class C { async #m() { return this.\\u0061wait; } }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
         }
     }
 

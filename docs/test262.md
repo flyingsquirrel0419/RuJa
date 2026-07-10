@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 35.9% of all matrix files; 70.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (6427 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (6459 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -220,6 +220,18 @@ classes with the same spelling. The runner now admits only the 12 implemented
 files by lifting private class-element feature gates on those exact paths. The
 focused class-elements run reports **521 pass / 0 fail / 2441 skip**, and the
 supported subset rises to **6427 pass / 0 fail / 14011 skip**.
+
+Focused private async/generator contextual-keyword early-error local check:
+escaped `await` identifiers are now rejected in binding, identifier-reference,
+and label positions inside async method bodies. Generator method bodies also
+reject a bare `yield` as the direct operand of a unary expression while still
+allowing parenthesized YieldExpressions and identifiers inside nested ordinary
+functions where the grammar permits them. The runner admits only the 32
+matching private async/generator method parse-negative files. The focused
+class-elements run reports **553 pass / 0 fail / 2409 skip**, the broader
+private-class diagnostic improves from **2161 pass / 42 fail / 759 skip** to
+**2193 pass / 10 fail / 759 skip**, and the supported subset rises to **6459
+pass / 0 fail / 13979 skip**.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference
@@ -1406,8 +1418,9 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   slots. With private class feature skips temporarily lifted, the
   focused `language/{statements,expressions}/class/elements` probe improves
   from **1045 pass / 587 fail / 1330 skip** to **1085 pass / 547 fail / 1330
-  skip**. Remaining same-spelling cross-class brand failures still need
-  per-evaluation private-name identity rather than textual `#name` slot keys.
+  skip**. A subsequent round replaced those textual slot keys with
+  per-evaluation private-name identities, closing the same-spelling
+  cross-class brand gap described by this intermediate probe.
 - **Object/Reflect preventExtensions semantics** —
   Array and arguments objects now carry their own `[[Extensible]]` state,
   assignment and receiver-set paths reject new indexed or named properties on
