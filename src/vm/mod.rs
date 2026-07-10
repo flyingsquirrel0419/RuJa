@@ -854,6 +854,11 @@ impl Vm {
                     .frames
                     .last()
                     .is_some_and(|frame| frame.in_parameter_initializers);
+                let conflicts_with_parameter = in_parameter_initializers
+                    && crate::environment::binding_env_and_kind(&self.heap, ctx.caller_env, name)
+                        .is_some_and(|(env, kind)| {
+                            env == ctx.caller_env && kind == crate::value::BindingKind::Param
+                        });
                 if declaring_arguments
                     && in_parameter_initializers
                     && crate::environment::has_own_binding(&self.heap, ctx.caller_env, name)
@@ -861,6 +866,12 @@ impl Vm {
                     return Err(Error::syntax(
                         "Cannot declare 'arguments' from direct eval in parameter initializer",
                     ));
+                }
+                if conflicts_with_parameter {
+                    return Err(Error::syntax(format!(
+                        "Identifier '{}' conflicts with a parameter binding",
+                        name
+                    )));
                 }
                 if var_env != self.global
                     && function_names

@@ -112,6 +112,29 @@ fn function_expression_names_use_their_own_yield_context() {
 }
 
 #[test]
+fn generator_parameter_eval_rejects_var_parameter_conflicts() {
+    assert_eq!(
+        run(r#"
+            var callCount = 0;
+            function* declaration(a = eval("var a = 42")) { callCount++; }
+            var expression = function*(a = eval("var a = 42")) { callCount++; };
+            function throwsSyntax(generator) {
+              try { generator(); return false; }
+              catch (error) { return error instanceof SyntaxError; }
+            }
+            function* valid(a = eval("var b = 42")) { return b; }
+            [
+              throwsSyntax(declaration),
+              throwsSyntax(expression),
+              callCount,
+              valid().next().value
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,true,0,42"))
+    );
+}
+
+#[test]
 fn gen_next_returns_value_done() {
     // The first next() yields the first value and is not done.
     let r = run("function* g(){ yield 7; } var it=g(); it.next().value;");

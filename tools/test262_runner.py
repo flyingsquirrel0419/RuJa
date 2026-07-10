@@ -256,7 +256,12 @@ GENERATOR_PREFIXES = (
 )
 
 GENERATOR_FEATURES = {
+    "default-parameters",
+    "destructuring-binding",
     "generators",
+    "object-rest",
+    "Symbol",
+    "Symbol.iterator",
 }
 
 CLASS_SUBCLASS_PREFIXES = (

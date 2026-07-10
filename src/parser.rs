@@ -70,6 +70,9 @@ pub struct Parser {
     /// keyword only inside generator parameter/body contexts; outside strict
     /// mode non-generator code it remains an ordinary identifier.
     generator_depth: usize,
+    /// YieldExpression is disabled while parsing generator formal parameters.
+    /// Nested generator bodies in parameter initializers re-enable it.
+    yield_expression_allowed: bool,
     /// Current async-function parsing depth. `await` is an expression keyword
     /// inside async parameter/body contexts; in sloppy non-async contexts it
     /// remains available as a contextual identifier.
@@ -124,6 +127,7 @@ impl Parser {
             function_depth: 0,
             new_target_allowed: false,
             generator_depth: 0,
+            yield_expression_allowed: true,
             async_depth: 0,
             lexical_declaration_allowed: true,
             super_depth: 0,
@@ -363,6 +367,18 @@ impl Parser {
         result
     }
 
+    fn with_yield_expression_context<T>(
+        &mut self,
+        allowed: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved = self.yield_expression_allowed;
+        self.yield_expression_allowed = allowed;
+        let result = f(self);
+        self.yield_expression_allowed = saved;
+        result
+    }
+
     fn with_async_context<T>(
         &mut self,
         enabled: bool,
@@ -401,9 +417,9 @@ impl Parser {
         self.super_depth = if super_property_allowed { 1 } else { 0 };
         self.super_call_depth = 0;
         self.new_target_allowed = true;
-        let params = match self
-            .with_function_context(generator_enabled, async_enabled, |p| p.parse_params())
-        {
+        let params = match self.with_function_context(generator_enabled, async_enabled, |p| {
+            p.with_yield_expression_context(false, |p| p.parse_params())
+        }) {
             Ok(params) => params,
             Err(err) => {
                 self.cur_param_defaults = saved_defaults;
@@ -944,6 +960,13 @@ impl Parser {
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = self.last_fn_body_use_strict_directive;
         let has_destructuring_params = !dstr_decls.is_empty();
+        if Self::has_non_simple_params(
+            &param_defaults,
+            rest_param.as_ref(),
+            has_destructuring_params,
+        ) {
+            Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
+        }
         Self::reject_use_strict_with_non_simple_params(
             body_contains_use_strict,
             &param_defaults,
@@ -1115,7 +1138,9 @@ impl Parser {
         async_body: bool,
     ) -> error::Result<Vec<Stmt>> {
         self.with_function_context(generator_body, async_body, |p| {
-            p.parse_fn_body_inner(super_allowed, super_call_allowed)
+            p.with_yield_expression_context(true, |p| {
+                p.parse_fn_body_inner(super_allowed, super_call_allowed)
+            })
         })
     }
 
@@ -2024,7 +2049,10 @@ impl Parser {
     }
 
     fn parse_assign_inner(&mut self) -> error::Result<Expr> {
-        if self.generator_depth > 0 && matches!(self.peek(), TokenKind::Yield) {
+        if self.generator_depth > 0
+            && self.yield_expression_allowed
+            && matches!(self.peek(), TokenKind::Yield)
+        {
             return self.parse_yield_expression();
         }
 
@@ -3660,6 +3688,13 @@ impl Parser {
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;
         let body_contains_use_strict = self.last_fn_body_use_strict_directive;
         let has_destructuring_params = !dstr_decls.is_empty();
+        if Self::has_non_simple_params(
+            &param_defaults,
+            rest_param.as_ref(),
+            has_destructuring_params,
+        ) {
+            Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
+        }
         Self::reject_use_strict_with_non_simple_params(
             body_contains_use_strict,
             &param_defaults,
@@ -6511,6 +6546,26 @@ mod tests {
             "function* g() { (yield) + (yield 4); }",
             "function* g() { (yield) ? yield : yield; }",
             "function* g() { `a${yield}b`; }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_generator_parameter_early_errors() {
+        for src in [
+            "function* f(x = 0, x) {}",
+            "var f = function*(x = 0, x) {};",
+            "function f(x = 0, x) {}",
+            "function* f(x = yield) {}",
+            "var f = function*(x = yield) {};",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            "function f(x, x) {}",
+            "function* f(x = function*() { yield 1; }) {}",
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }

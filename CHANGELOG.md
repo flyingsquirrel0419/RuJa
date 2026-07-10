@@ -5,7 +5,8 @@
 ### Test tooling
 
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
-  implemented `generators` feature only on
+  implemented generator, default-parameter, destructuring-binding, object-rest,
+  Symbol, and `Symbol.iterator` coverage only on
   `language/{statements,expressions}/generators/`; unrelated feature gates in
   those trees remain active.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
@@ -99,6 +100,11 @@
 
 ### Runtime hardening
 
+- Generator formal parameters now reject duplicate bound names in non-simple
+  parameter lists and reject `YieldExpression` before generator execution can
+  begin. Sloppy direct eval in a parameter initializer now raises `SyntaxError`
+  when an introduced `var` conflicts with that parameter binding, while
+  non-conflicting eval variables remain visible to the generator body.
 - `%GeneratorFunction.prototype%.prototype` now exposes the intrinsic
   GeneratorPrototype with the required descriptor and supplies the fallback
   prototype when a generator function has a non-object `prototype` value.
@@ -117,8 +123,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8339 pass / 0 fail / 12099 skip / 0 timeout**.
+Current supported subset count: **8740 pass / 0 fail / 11698 skip / 0 timeout**.
 
+- **Complete generator statement/expression admission**: non-simple formal
+  parameters reject duplicate bound names, generator parameter initializers
+  reject `yield`, and sloppy direct eval rejects a `var` that conflicts with a
+  parameter binding before the generator body runs. The runner now admits the
+  implemented default-parameter, destructuring-binding, object-rest, Symbol,
+  and `Symbol.iterator` coverage on the two generator paths. They rise from
+  **155 pass / 0 fail / 401 skip** to **556 pass / 0 fail / 0 skip**, and the
+  supported subset rises to **8740 pass / 0 fail / 11698 skip**.
 - **Generator function intrinsic and binding semantics**: generator objects
   now use the intrinsic GeneratorPrototype fallback, generator/async functions
   inherit restricted `caller` and `arguments` accessors, ordinary nested
