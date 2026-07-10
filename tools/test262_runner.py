@@ -620,7 +620,10 @@ def should_skip(meta, path=None):
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
-    if 'module' in flags or ('async' in flags and not RUN_ASYNC_TESTS):
+    async_admitted = path is not None and object_method_definition_path(path)
+    if 'module' in flags or (
+        'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)
+    ):
         return True
     return False
 

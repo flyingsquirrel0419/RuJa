@@ -9,8 +9,9 @@ parses `negative:` metadata so a test that expects a `SyntaxError`/
 `TypeError` (parse or runtime phase) passes when RuJa raises the matching
 error, honors `flags: [raw]` by running those files without any harness
 prelude, and keeps narrow path-scoped exceptions for feature-tagged coverage
-that RuJa already supports. Async tests are skipped by default; diagnostic
-runs inject a host `print` shim and test262's `doneprintHandle.js`, then require
+that RuJa already supports. Async tests remain skipped unless their exact path
+is explicitly admitted or `TEST262_RUN_ASYNC=1` enables a diagnostic run. Such
+tests inject a host `print` shim and test262's `doneprintHandle.js`, then require
 exactly one `Test262:AsyncTestComplete` marker while preserving failure,
 missing-marker, process-error, and timeout outcomes.
 
@@ -30,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.2% of all matrix files; 77.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9560 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9661 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -88,9 +89,13 @@ TEST262=/path/to/test262 python3 tools/test262_runner.py language/statements lan
 # Or run a narrower subtree:
 TEST262=/path/to/test262 python3 tools/test262_runner.py language/identifiers language/keywords
 
-# Diagnose async tests without changing the default conformance boundary:
-TEST262=/path/to/test262 TEST262_RUN_ASYNC=1 \
+# Run the admitted async object-method path:
+TEST262=/path/to/test262 \
   python3 tools/test262_runner.py language/expressions/object/method-definition
+
+# Diagnose async tests outside admitted paths without changing their boundary:
+TEST262=/path/to/test262 TEST262_RUN_ASYNC=1 \
+  python3 tools/test262_runner.py language/expressions/async-arrow
 ```
 
 For failure-bucket analysis with error samples, use the sibling analyzer:
@@ -272,9 +277,9 @@ runner/analyzer admission lifts `async-functions`, `async-iteration`,
 `language/expressions/object/method-definition/`. Together with the escaped
 `async` prefix early error above, the path moves from **52 pass / 0 fail / 251
 skip** to **202 pass / 0 fail / 101 skip**. All 101 residual skips carry the
-test262 `async` flag, which remains globally gated until the runner supports
-asynchronous completion. The supported subset moves to **9497 pass / 0 fail /
-10941 skip**.
+test262 `async` flag. This was the intermediate synchronous admission; those
+files are admitted by the completed async check below. The supported subset at
+this stage moved to **9497 pass / 0 fail / 10941 skip**.
 
 Focused synchronous `yield*` delegation local check:
 `yield*` now uses a dedicated VM state machine rather than a bytecode loop, so
@@ -300,7 +305,7 @@ prototype getter side effects, and a differential run over all **1130**
 admitted `built-ins/String` files reports **0 status regressions** against the
 previous green binary.
 
-Focused async object method-definition diagnostic:
+Focused async object method-definition check and admission:
 `TEST262_RUN_ASYNC=1` runs `flags: [async]` files with completion-marker
 classification instead of treating an empty process result as success. Across
 `language/expressions/object/method-definition/`, the opt-in diagnostic moves
@@ -311,9 +316,11 @@ awaited delegated value instead of forwarding its raw iterator-result object.
 Awaiting ordinary async-generator yields and preserving JavaScript Error
 objects for native async-function rejections closes the diagnostic at **303
 pass / 0 fail / 0 skip**. Synchronous `yield*` still forwards the original
-result without observing its `value` getter. Default conformance runs retain
-**202 pass / 0 fail / 101 skip** until the separate exact-path admission
-change; the diagnostic is not used to inflate the supported-subset rate.
+result without observing its `value` getter. Runner and analyzer now admit the
+async flag only on this exact path, so the default focused run is **303 pass /
+0 fail / 0 skip** while unrelated async paths remain gated. The 101-file
+admission raises the supported subset to **9661 pass / 0 fail / 10778 skip /
+20439 total**.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare

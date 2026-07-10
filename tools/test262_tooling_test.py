@@ -95,5 +95,29 @@ class HarnessAssemblyTests(unittest.TestCase):
                 self.assertEqual(positions, sorted(positions))
 
 
+class AsyncAdmissionTests(unittest.TestCase):
+    def test_object_method_async_flag_is_admitted_only_inside_exact_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = (
+                root
+                / "test/language/expressions/object/method-definition/case.js"
+            )
+            outside = root / "test/language/expressions/async-arrow/case.js"
+            meta = {"flags": ["async"], "features": []}
+
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                original_run_async = tool.RUN_ASYNC_TESTS
+                tool.TEST262 = str(root)
+                tool.RUN_ASYNC_TESTS = False
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+                    tool.RUN_ASYNC_TESTS = original_run_async
+
+
 if __name__ == "__main__":
     unittest.main()
