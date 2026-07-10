@@ -6,6 +6,11 @@
 
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented default-parameter, destructuring-binding, generator,
+  object-rest, and `Symbol.iterator` coverage only on
+  `language/expressions/arrow-function/`; those feature gates remain active
+  outside the ordinary arrow-function path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented default-parameter, destructuring-binding, generator,
   object-rest, private-field early-error, and `Symbol.iterator` coverage only
   on `language/{statements,expressions}/function/`; those feature gates remain
   active outside the two ordinary function paths.
@@ -135,8 +140,13 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **9148 pass / 0 fail / 11290 skip / 0 timeout**.
+Current supported subset count: **9347 pass / 0 fail / 11091 skip / 0 timeout**.
 
+- **Complete ordinary arrow-function admission**: the ordinary arrow path now
+  exercises all implemented default-parameter, destructuring-binding, nested
+  generator, object-rest, and `Symbol.iterator` cases. It rises from **144
+  pass / 0 fail / 199 skip** to **343 pass / 0 fail / 0 skip**, and the
+  supported subset rises to **9347 pass / 0 fail / 11091 skip**.
 - **Complete ordinary function declaration/expression admission**: the two
   ordinary function paths now exercise all implemented default-parameter,
   destructuring-binding, nested generator, object-rest, private-name
