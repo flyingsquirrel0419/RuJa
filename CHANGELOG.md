@@ -64,6 +64,11 @@
   feature gates remain in place outside the class-elements paths. The obsolete
   direct-eval, contextual-keyword, and initialization-order file allowlists
   have been removed.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented Symbol, Symbol iterator, TypedArray, WeakMap/WeakSet, Proxy,
+  async-function, generator, and async-iteration coverage only on
+  `language/statements/class/subclass/`; those feature gates remain in place
+  outside the subclass path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -88,8 +93,18 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8113 pass / 0 fail / 12325 skip / 0 timeout**.
+Current supported subset count: **8127 pass / 0 fail / 12311 skip / 0 timeout**.
 
+- **Subclass constructor classification**: interpreted async functions,
+  generators, and async generators are now consistently non-constructors;
+  async functions no longer receive an own `prototype`, while generator
+  functions retain theirs. `IsConstructor` rejection occurs before superclass
+  `prototype` lookup through direct, bound, and Proxy values. The Symbol
+  intrinsic carries the constructor identity required for class heritage but
+  rejects construction through `new.target`. The complete
+  `language/statements/class/subclass/` path reports **109 pass / 0 fail / 0
+  skip**, and the supported subset rises to **8127 pass / 0 fail / 12311
+  skip**.
 - **Private elements on Proxy and exotic receivers**: ECMAScript private
   elements now belong to the common GC cell rather than only ordinary-object
   and function payloads. Derived constructors can stamp fields, methods, and

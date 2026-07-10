@@ -407,6 +407,57 @@ fn class_element_early_errors_follow_static_semantics() {
 }
 
 #[test]
+fn symbol_can_be_extended_but_symbol_construction_throws() {
+    assert_eq!(
+        run(r#"
+            class SymbolSubclass extends Symbol {}
+            var direct = false;
+            var derived = false;
+            try { new Symbol(); } catch (error) { direct = error instanceof TypeError; }
+            try { new SymbolSubclass(); } catch (error) { derived = error instanceof TypeError; }
+            direct && derived && typeof Symbol("ok") === "symbol";
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn async_and_generator_superclasses_fail_before_prototype_lookup() {
+    assert_eq!(
+        run(r#"
+            var prototypeGets = 0;
+            function rejects(value) {
+              try { class Derived extends value {} return false; }
+              catch (error) { return error instanceof TypeError; }
+            }
+            function check(value) {
+              if (!rejects(value)) return false;
+              var bound = value.bind();
+              Object.defineProperty(bound, "prototype", {
+                get() { prototypeGets++; throw new Error("unreachable"); }
+              });
+              if (!rejects(bound)) return false;
+              var proxy = new Proxy(value, {
+                get() { prototypeGets++; throw new Error("unreachable"); }
+              });
+              return rejects(proxy);
+            }
+
+            var asyncFunction = async function() {};
+            var generatorFunction = function*() {};
+            var asyncGeneratorFunction = async function*() {};
+            var prototypeShape =
+              !asyncFunction.hasOwnProperty("prototype") &&
+              generatorFunction.hasOwnProperty("prototype") &&
+              asyncGeneratorFunction.hasOwnProperty("prototype");
+            prototypeShape && check(asyncFunction) && check(generatorFunction) &&
+              check(asyncGeneratorFunction) && prototypeGets === 0;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn static_block_local_bindings() {
     assert_eq!(
         run("class A{static{let x=100,y=200;this.sum=x+y;}}A.sum;"),

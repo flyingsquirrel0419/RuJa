@@ -1617,6 +1617,9 @@ pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {
             PropertyKey::from("prototype"),
             const_prop(Value::Object(sym_proto_idx)),
         );
+        if let HeapObj::Function(function) = obj {
+            *function.prototype.lock() = Some(Value::Object(sym_proto_idx));
+        }
     });
     Ok(())
 }

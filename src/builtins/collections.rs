@@ -1508,6 +1508,9 @@ pub(crate) fn symbol_constructor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
+    if vm.current_native_new_target.is_some() {
+        return Err(Error::type_err("Symbol is not a constructor"));
+    }
     let desc = match args.first().unwrap_or(&Value::Undefined) {
         Value::Undefined => None,
         value => Some(vm.to_string(value)?),

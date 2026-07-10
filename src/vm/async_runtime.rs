@@ -334,7 +334,7 @@ impl Vm {
         self.heap.with_obj(idx.0, |obj| match obj {
             HeapObj::Function(f) => match &f.kind {
                 crate::value::FunctionKind::Interpreted { func } => {
-                    !func.is_arrow && !func.is_method
+                    !func.is_arrow && !func.is_method && !func.is_async && !func.is_generator
                 }
                 crate::value::FunctionKind::Native { .. } => f.prototype.lock().is_some(),
                 crate::value::FunctionKind::Bound { target, .. } => {

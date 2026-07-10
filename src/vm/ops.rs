@@ -3283,9 +3283,10 @@ impl Vm {
             let fn_length = fdef.length;
             let fn_name = fdef.name.clone();
             let has_name_binding = fdef.has_name_binding && fn_name.is_some() && !is_arrow;
-            // Generator methods are non-constructors, but still have an own
-            // prototype. Other concise methods do not.
-            let has_prototype = !is_arrow && (!is_method || is_generator);
+            // Generator functions/methods have an own prototype even though
+            // they are not constructors. Async functions and other concise
+            // methods have no own prototype.
+            let has_prototype = !is_arrow && (is_generator || (!is_method && !fdef.is_async));
             let proto_val = if has_prototype {
                 let proto = HeapObj::Object(crate::value::ObjectData {
                     props: Mutex::new(IndexMap::new()),

@@ -2378,6 +2378,10 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             PropertyKey::from("prototype"),
             const_prop(vm.symbol_proto.clone()),
         );
+        drop(props);
+        if let HeapObj::Function(function) = obj {
+            *function.prototype.lock() = Some(vm.symbol_proto.clone());
+        }
     });
     define_realm_global(vm, realm_env, &global, "Symbol", Value::Object(symbol_idx));
 

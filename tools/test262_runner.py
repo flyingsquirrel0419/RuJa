@@ -241,6 +241,22 @@ CLASS_ELEMENTS_FEATURES = {
     "Proxy",
 }
 
+CLASS_SUBCLASS_PREFIXES = (
+    "language/statements/class/subclass/",
+)
+
+CLASS_SUBCLASS_FEATURES = {
+    "async-functions",
+    "async-iteration",
+    "generators",
+    "Proxy",
+    "Symbol",
+    "Symbol.iterator",
+    "TypedArray",
+    "WeakMap",
+    "WeakSet",
+}
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -391,6 +407,13 @@ def class_elements_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(CLASS_ELEMENTS_PREFIXES)
 
+def class_subclass_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(CLASS_SUBCLASS_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -425,6 +448,8 @@ def should_skip(meta, path=None):
         feats.difference_update(REFERENCE_PRIVATE_EXPRESSION_FEATURES)
     if path is not None and class_elements_path(path):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
+    if path is not None and class_subclass_path(path):
+        feats.difference_update(CLASS_SUBCLASS_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

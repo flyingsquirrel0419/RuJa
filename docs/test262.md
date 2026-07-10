@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 45.2% of all matrix files; 75.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8113 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8127 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -282,6 +282,17 @@ invoke handler traps. GC traces values reachable only through private elements
 and clears private brands before reclaimed cells are reused. The three private
 Proxy tests pass, the class-elements paths report **2207 pass / 0 fail / 755
 skip**, and the supported subset rises to **8113 pass / 0 fail / 12325 skip**.
+
+Focused subclass constructor-classification local check:
+class heritage now classifies interpreted async functions, generators, and
+async generators as non-constructors before reading their `prototype`,
+including through bound functions and Proxy wrappers. Async functions no
+longer receive an own `prototype`; generator and async-generator functions
+retain the prototype objects required by their call behavior. The Symbol
+intrinsic remains valid as a class heritage constructor identity while direct
+or derived construction rejects `new.target`. The complete
+`language/statements/class/subclass/` path reports **109 pass / 0 fail / 0
+skip**, and the supported subset rises to **8127 pass / 0 fail / 12311 skip**.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference
