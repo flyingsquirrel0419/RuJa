@@ -154,7 +154,13 @@ class AsyncAdmissionTests(unittest.TestCase):
             }
             class_element_meta = {
                 "flags": ["async"],
-                "features": ["async-functions", "class-methods-private"],
+                "features": [
+                    "async-functions",
+                    "class-methods-private",
+                    "Symbol",
+                    "Symbol.asyncIterator",
+                    "Symbol.iterator",
+                ],
             }
 
             for tool in (test262_runner, test262_analyze):
@@ -188,6 +194,7 @@ class AsyncAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.should_skip(meta, class_definition))
                     self.assertTrue(tool.should_skip(meta, outside))
                     self.assertTrue(tool.should_skip(async_generator_meta, outside))
+                    self.assertTrue(tool.should_skip(class_element_meta, outside))
                     self.assertFalse(
                         tool.should_skip(feature_meta, async_function_expression)
                     )

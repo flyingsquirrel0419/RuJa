@@ -245,6 +245,9 @@ CLASS_ELEMENTS_FEATURES = {
     "class-static-methods-private",
     "generators",
     "Proxy",
+    "Symbol",
+    "Symbol.asyncIterator",
+    "Symbol.iterator",
 }
 
 CLASS_DEFINITION_PREFIXES = (

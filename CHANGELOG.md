@@ -37,6 +37,11 @@
 
 ### Test tooling
 
+- The class-elements paths now admit their fully green `Symbol`,
+  `Symbol.iterator`, and `Symbol.asyncIterator` coverage. The focused paths
+  reach **2951 pass / 0 fail / 11 skip / 2962 total**, adding 256 tests to the
+  supported subset at **11545 pass / 0 fail / 8894 skip / 20439 total** while
+  keeping the exception scoped to class elements.
 - The fully green `language/expressions/await/` path is now admitted by default
   at **22 pass / 0 fail / 0 skip**. Together with resumable ordinary async
   functions, the supported subset reaches **11266 pass / 0 fail / 9173 skip /
