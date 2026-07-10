@@ -137,6 +137,10 @@ Latest improvement confirmation: `test262-full` 29061367736 on `c8cfa71`;
 the aggregate reports **21547 pass / 6831 fail / 11 timeout / 0 error /
 19329 skip / 47718 total / 28378 ran**, or **75.9%** of executed files and
 **45.2%** of the matrix after broad private class-element admission.
+Latest improvement confirmation: `test262-full` 29062576300 on `528d584`;
+the aggregate reports **21551 pass / 6831 fail / 11 timeout / 0 error /
+19325 skip / 47718 total / 28382 ran**, retaining **75.9%** of executed files
+and **45.2%** of the matrix after Proxy class-element admission.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
