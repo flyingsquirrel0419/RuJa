@@ -49,7 +49,11 @@
   **38 pass / 0 fail / 0 skip**, including its async cases. Class-elements now
   also admit optional-chaining and destructuring coverage, reaching **2957
   pass / 0 fail / 5 skip / 2962 total**. Together these add 44 tests to the
-  supported subset at **11589 pass / 0 fail / 8850 skip / 20439 total**.
+  supported subset at **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
+  `29108590113` and `test262-full` `29108590134` confirm the change; the full
+  aggregate is **25028 pass / 6830 fail / 11 timeout / 0 error / 16598 skip /
+  48467 total / 31869 ran**, or **78.5%** of executed files and **51.6%** of
+  the matrix.
 - The class-elements paths now admit their fully green `Symbol`,
   `Symbol.iterator`, and `Symbol.asyncIterator` coverage. The focused paths
   reach **2951 pass / 0 fail / 11 skip / 2962 total**, adding 256 tests to the
