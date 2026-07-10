@@ -5,6 +5,11 @@
 ### Test tooling
 
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented default-parameter, destructuring-binding, generator,
+  object-rest, private-field early-error, and `Symbol.iterator` coverage only
+  on `language/{statements,expressions}/function/`; those feature gates remain
+  active outside the two ordinary function paths.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented generator, default-parameter, destructuring-binding, object-rest,
   Symbol, and `Symbol.iterator` coverage only on
   `language/{statements,expressions}/generators/`; unrelated feature gates in
@@ -123,8 +128,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8740 pass / 0 fail / 11698 skip / 0 timeout**.
+Current supported subset count: **9148 pass / 0 fail / 11290 skip / 0 timeout**.
 
+- **Complete ordinary function declaration/expression admission**: the two
+  ordinary function paths now exercise all implemented default-parameter,
+  destructuring-binding, nested generator, object-rest, private-name
+  early-error, and `Symbol.iterator` cases. They rise from **307 pass / 0 fail
+  / 408 skip** to **715 pass / 0 fail / 0 skip**, and the supported subset
+  rises to **9148 pass / 0 fail / 11290 skip**.
 - **Complete generator statement/expression admission**: non-simple formal
   parameters reject duplicate bound names, generator parameter initializers
   reject `yield`, and sloppy direct eval rejects a `var` that conflicts with a

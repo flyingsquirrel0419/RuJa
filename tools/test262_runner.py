@@ -264,6 +264,20 @@ GENERATOR_FEATURES = {
     "Symbol.iterator",
 }
 
+FUNCTION_PREFIXES = (
+    "language/expressions/function/",
+    "language/statements/function/",
+)
+
+FUNCTION_FEATURES = {
+    "class-fields-private",
+    "default-parameters",
+    "destructuring-binding",
+    "generators",
+    "object-rest",
+    "Symbol.iterator",
+}
+
 CLASS_SUBCLASS_PREFIXES = (
     "language/statements/class/subclass/",
 )
@@ -468,6 +482,13 @@ def generator_path(path):
         return False
     return rel.as_posix().startswith(GENERATOR_PREFIXES)
 
+def function_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(FUNCTION_PREFIXES)
+
 def class_subclass_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -520,6 +541,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_DEFINITION_FEATURES)
     if path is not None and generator_path(path):
         feats.difference_update(GENERATOR_FEATURES)
+    if path is not None and function_path(path):
+        feats.difference_update(FUNCTION_FEATURES)
     if path is not None and class_subclass_path(path):
         feats.difference_update(CLASS_SUBCLASS_FEATURES)
     if path is not None and class_subclass_builtins_path(path):
