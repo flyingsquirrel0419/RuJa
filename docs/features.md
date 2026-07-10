@@ -124,11 +124,11 @@
 
 - The optional `serde` Cargo feature converts between RuJa values and
   `serde_json::Value`; arrays and enumerable string-keyed object properties are
-  traversed recursively, while non-JSON and internal-only values become
-  `null`.
+  traversed recursively. Undefined, symbols, unsupported heap objects, and
+  internal-only values become `null`; BigInts become decimal strings.
 - `cargo run --example embed --features serde` demonstrates sandbox limits,
   native Rust function registration, script execution, and JSON conversion.
-- CI builds, tests, and runs clippy with all Cargo features enabled.
+- CI builds, tests, and runs clippy across all Cargo targets and features.
 
 ## CLI
 
