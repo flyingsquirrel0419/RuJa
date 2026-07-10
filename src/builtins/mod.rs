@@ -1875,6 +1875,54 @@ fn install_data_view_constructor_in_env(
     Ok((data_view_ctor, data_view_proto))
 }
 
+fn install_weak_ref_constructor_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+) -> error::Result<(Value, Value)> {
+    let (constructor, prototype) = make_builtin_constructor_with_in_env(
+        vm,
+        "WeakRef",
+        1,
+        weak_ref_constructor,
+        &[("deref", weak_ref_deref, 0)],
+        env,
+    )?;
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
+    set_function_object_proto(vm, constructor, &function_proto);
+    let deref = vm.heap.with_obj(prototype.0, |obj| {
+        obj.props()
+            .lock()
+            .get(&PropertyKey::from("deref"))
+            .map(|descriptor| descriptor.value.clone())
+    });
+    if let Some(Value::Object(deref)) = deref {
+        set_function_object_proto(vm, deref, &function_proto);
+    }
+    vm.heap.with_obj(prototype.0, |obj| {
+        let mut props = obj.props().lock();
+        let mut tag = data_prop(Value::String(Arc::from("WeakRef")));
+        tag.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+
+    let constructor = Value::Object(constructor);
+    let prototype = Value::Object(prototype);
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "WeakRef", constructor.clone());
+    } else {
+        define_global(vm, "WeakRef", constructor.clone());
+    }
+    Ok((constructor, prototype))
+}
+
 pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(GcIdx, GcIdx)> {
     make_error_constructor_in_env(vm, name, vm.global)
 }
@@ -2398,6 +2446,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             &typed_array_proto,
         )?;
     }
+    install_weak_ref_constructor_in_env(vm, realm_env, Some(&global))?;
 
     Ok(global)
 }
@@ -5972,6 +6021,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         props.insert(PropertyKey::from("arguments"), restricted);
     });
     setup_collections(vm)?;
+    install_weak_ref_constructor_in_env(vm, vm.global, None)?;
     install_test262_host(vm)?;
     Ok(())
 }

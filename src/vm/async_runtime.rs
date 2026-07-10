@@ -1383,6 +1383,7 @@ impl Vm {
             matches!(
                 f.name.as_deref(),
                 Some("DataView")
+                    | Some("WeakRef")
                     | Some("Int8Array")
                     | Some("Uint8Array")
                     | Some("Uint8ClampedArray")

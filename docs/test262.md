@@ -58,13 +58,13 @@ tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
-Promise, async/await, generators, for-of, optional chaining, nullish
+WeakRef, Promise, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, Atomics,
 SharedArrayBuffer, full TypedArray prototype method coverage beyond the
 constructor/index basics and ArrayBuffer/DataView support,
-WeakRef/FinalizationRegistry, Tail-call optimization.
+FinalizationRegistry, Tail-call optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -299,6 +299,18 @@ CI `29108590113` and `test262-full` `29108590134` confirm the change. The full
 aggregate is **25028 pass / 6830 fail / 11 timeout / 0 error / 16598 skip /
 48467 total / 31869 ran**, or **78.5%** of executed files and **51.6%** of the
 matrix.
+Focused WeakRef coverage check:
+`WeakRef` now uses a dedicated weak heap object whose object target is omitted
+from normal marking and cleared during sweep. Construction and `deref()` add
+live object targets to the current job's kept roots; registered Symbols and
+non-weakly-holdable primitives are rejected while unregistered and well-known
+Symbols are accepted. Realm-specific prototype fallback and the standard
+constructor, prototype, method, and `@@toStringTag` descriptors are installed
+in both the main and test262-created Realms. The exact
+`built-ins/WeakRef/` path reports **28 pass / 0 fail / 1 skip / 29 total**.
+The remaining brand-check file also requires the still-unsupported
+`FinalizationRegistry`; the supported language subset remains **11589 pass / 0
+fail / 8850 skip / 20439 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
@@ -3488,6 +3500,6 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
-ES Modules, Intl, Atomics, full TypedArray prototype method coverage, WeakRef,
-and FinalizationRegistry. Those larger feature areas are tracked in
+ES Modules, Intl, Atomics, full TypedArray prototype method coverage, and
+FinalizationRegistry. Those larger feature areas are tracked in
 `HANDOFF.md` and will be pulled into support in later milestones.

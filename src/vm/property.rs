@@ -659,6 +659,9 @@ impl Vm {
             HeapObj::TypedArray(t) => t
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::WeakRef(wr) => wr
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
             _ => {}
         });
         Ok(true)
@@ -2540,7 +2543,20 @@ impl Vm {
         }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
         roots.extend_from_slice(&self.gc_pins);
+        roots.extend_from_slice(&self.kept_objects);
         roots
+    }
+
+    pub(crate) fn keep_during_job(&mut self, value: &Value) {
+        if let Value::Object(idx) = value {
+            if !self.kept_objects.contains(&idx.0) {
+                self.kept_objects.push(idx.0);
+            }
+        }
+    }
+
+    pub(crate) fn clear_kept_objects(&mut self) {
+        self.kept_objects.clear();
     }
 
     pub fn gc(&self) {
@@ -2640,41 +2656,9 @@ impl Vm {
         // order they were scheduled, so pop from the front. (Vec::remove(0) is
         // O(n), but microtask queues are typically small per drain cycle.)
         while let Some(task) = self.microtask_queue.pop_front() {
-            match task {
-                Microtask::Then {
-                    promise,
-                    on_fulfilled,
-                    on_rejected,
-                    derived,
-                    continuation,
-                } => match continuation {
-                    Some(crate::value::PromiseContinuation::AsyncGenerator { generator, kind }) => {
-                        crate::builtins::regexp::run_async_generator_reaction(
-                            self, generator, kind, promise,
-                        )?
-                    }
-                    Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
-                        capability,
-                        done,
-                    }) => self.run_async_from_sync_iterator_reaction(capability, done, promise)?,
-                    Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
-                        self.run_async_function_reaction(*frame, promise)?
-                    }
-                    None => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
-                },
-                Microtask::Thenable {
-                    thenable,
-                    then,
-                    resolve,
-                    reject,
-                } => self.run_thenable_job(thenable, then, resolve, reject)?,
-                Microtask::Resolve { promise, value } => {
-                    self.promise_resolve(promise.0, value);
-                }
-                Microtask::Reject { promise, reason } => {
-                    self.promise_reject(promise.0, reason);
-                }
-            }
+            let result = self.run_microtask(task);
+            self.clear_kept_objects();
+            result?;
         }
         Ok(())
     }
@@ -2685,44 +2669,52 @@ impl Vm {
     /// execution with other work, rather than draining all microtasks at once.
     pub fn tick(&mut self) -> error::Result<bool> {
         if let Some(task) = self.microtask_queue.pop_front() {
-            match task {
-                Microtask::Then {
-                    promise,
-                    on_fulfilled,
-                    on_rejected,
-                    derived,
-                    continuation,
-                } => match continuation {
-                    Some(crate::value::PromiseContinuation::AsyncGenerator { generator, kind }) => {
-                        crate::builtins::regexp::run_async_generator_reaction(
-                            self, generator, kind, promise,
-                        )?
-                    }
-                    Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
-                        capability,
-                        done,
-                    }) => self.run_async_from_sync_iterator_reaction(capability, done, promise)?,
-                    Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
-                        self.run_async_function_reaction(*frame, promise)?
-                    }
-                    None => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
-                },
-                Microtask::Thenable {
-                    thenable,
-                    then,
-                    resolve,
-                    reject,
-                } => self.run_thenable_job(thenable, then, resolve, reject)?,
-                Microtask::Resolve { promise, value } => {
-                    self.promise_resolve(promise.0, value);
-                }
-                Microtask::Reject { promise, reason } => {
-                    self.promise_reject(promise.0, reason);
-                }
-            }
+            let result = self.run_microtask(task);
+            self.clear_kept_objects();
+            result?;
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    fn run_microtask(&mut self, task: Microtask) -> error::Result<()> {
+        match task {
+            Microtask::Then {
+                promise,
+                on_fulfilled,
+                on_rejected,
+                derived,
+                continuation,
+            } => match continuation {
+                Some(crate::value::PromiseContinuation::AsyncGenerator { generator, kind }) => {
+                    crate::builtins::regexp::run_async_generator_reaction(
+                        self, generator, kind, promise,
+                    )
+                }
+                Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                    capability,
+                    done,
+                }) => self.run_async_from_sync_iterator_reaction(capability, done, promise),
+                Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
+                    self.run_async_function_reaction(*frame, promise)
+                }
+                None => self.run_then(promise, on_fulfilled, on_rejected, derived),
+            },
+            Microtask::Thenable {
+                thenable,
+                then,
+                resolve,
+                reject,
+            } => self.run_thenable_job(thenable, then, resolve, reject),
+            Microtask::Resolve { promise, value } => {
+                self.promise_resolve(promise.0, value);
+                Ok(())
+            }
+            Microtask::Reject { promise, reason } => {
+                self.promise_reject(promise.0, reason);
+                Ok(())
+            }
         }
     }
 

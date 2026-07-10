@@ -183,7 +183,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 }
             }
         }
-        HeapObj::WeakSet(_) => {}
+        HeapObj::WeakSet(_) | HeapObj::WeakRef(_) => {}
         HeapObj::Set(s) => {
             for k in s.items.lock().iter() {
                 push_value(&k.0, worklist);
@@ -430,7 +430,7 @@ impl Heap {
                 free.push(idx);
             }
         }
-        // Sweep dead entries from WeakMap/WeakSet.
+        // Sweep dead entries and targets from weak collections.
         for cell in cells.iter() {
             let obj_ref = cell.obj.lock();
             if let Some(obj) = obj_ref.as_ref() {
@@ -442,6 +442,14 @@ impl Heap {
                     }
                     HeapObj::WeakSet(ws) => {
                         ws.items.lock().retain(|k| *k < marked.len() && marked[*k]);
+                    }
+                    HeapObj::WeakRef(wr) => {
+                        let mut target = wr.target.lock();
+                        if matches!(target.as_ref(), Some(crate::value::Value::Object(idx))
+                            if idx.0 >= marked.len() || !marked[idx.0])
+                        {
+                            *target = None;
+                        }
                     }
                     _ => {}
                 }

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- `WeakRef` now has a dedicated weak heap exotic instead of a hidden strong
+  property. Object targets are cleared during GC sweep, unregistered and
+  well-known Symbol targets are accepted, registered Symbols and other
+  primitives are rejected, and `deref()` validates its receiver and keeps a
+  live target through the current job. Constructor/new-target prototype
+  selection, cross-Realm fallback, extensibility, and standard descriptors
+  follow the ECMAScript surface.
 - Optional chains now compile as one shared short-circuit boundary instead of
   closing each `?.` jump at the current member. Non-optional member/call tails
   are skipped with their arguments, grouped optional member calls preserve
@@ -45,6 +52,11 @@
 
 ### Test tooling
 
+- The runner and analyzer now admit `built-ins/WeakRef/` through an exact-path
+  feature exception. The focused path reports **28 pass / 0 fail / 1 skip / 29
+  total**; the remaining test requires `FinalizationRegistry` solely to check
+  `deref()` receiver branding. The supported language subset remains **11589
+  pass / 0 fail / 8850 skip / 20439 total**.
 - The complete `language/expressions/optional-chaining/` path is admitted at
   **38 pass / 0 fail / 0 skip**, including its async cases. Class-elements now
   also admit optional-chaining and destructuring coverage, reaching **2957

@@ -38,6 +38,10 @@ guarantees, run RuJa in a separately killable process as well.
 - Map/Set are backed by `IndexMap`/`IndexSet` with SameValueZero keys
   (`MapKey` wrapper), so `get`/`has`/`set` are O(1). `WeakMap`/`WeakSet`
   still use `Vec` (entries are keyed by heap index for GC integration).
+- `WeakRef` supports object, unregistered Symbol, and well-known Symbol
+  targets. Object targets are cleared by GC once unreachable and are kept
+  alive through the current job after construction or `deref()`.
+  `FinalizationRegistry` is not implemented yet.
 - Async generators serialize requests, and ordinary async functions preserve
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`

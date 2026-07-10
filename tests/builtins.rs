@@ -7519,6 +7519,107 @@ fn async_function_pending_await_keeps_block_environment_alive_across_gc() {
 }
 
 #[test]
+fn weak_ref_exposes_spec_shaped_constructor_and_deref() {
+    assert_eq!(
+        run(
+            r#"
+            var target = {};
+            var ref = new WeakRef(target);
+            var descriptor = Object.getOwnPropertyDescriptor(WeakRef, "prototype");
+            var tag = Object.getOwnPropertyDescriptor(
+                WeakRef.prototype,
+                Symbol.toStringTag
+            );
+            [
+                typeof WeakRef,
+                WeakRef.length,
+                WeakRef.name,
+                ref.deref() === target,
+                Object.getPrototypeOf(ref) === WeakRef.prototype,
+                ref instanceof WeakRef,
+                Object.isExtensible(ref),
+                descriptor.writable,
+                descriptor.enumerable,
+                descriptor.configurable,
+                WeakRef.prototype.deref.length,
+                WeakRef.prototype.deref.name,
+                tag.value,
+                tag.writable,
+                tag.enumerable,
+                tag.configurable
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "function|1|WeakRef|true|true|true|true|false|false|false|0|deref|WeakRef|false|false|true"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("target");
+            var ref = new WeakRef(symbol);
+            var failures = 0;
+            for (var value of [undefined, null, 1, "x", true, Symbol.for("registered")]) {
+                try { new WeakRef(value); } catch (error) {
+                    if (error instanceof TypeError) failures++;
+                }
+            }
+            [ref.deref() === symbol, failures].join("|");
+            "#,),
+        Value::String(Arc::from("true|6"))
+    );
+}
+
+#[test]
+fn weak_ref_validates_receivers_and_uses_new_target_realm() {
+    assert_eq!(
+        run(r#"
+            var failures = 0;
+            for (var value of [undefined, null, true, 1, "x", {}, WeakRef.prototype]) {
+                try { WeakRef.prototype.deref.call(value); } catch (error) {
+                    if (error instanceof TypeError) failures++;
+                }
+            }
+            try { WeakRef({}); } catch (error) {
+                if (error instanceof TypeError) failures++;
+            }
+            var other = $262.createRealm().global;
+            var newTarget = new other.Function();
+            newTarget.prototype = undefined;
+            var ref = Reflect.construct(WeakRef, [{}], newTarget);
+            [failures, Object.getPrototypeOf(ref) === other.WeakRef.prototype].join("|");
+            "#,),
+        Value::String(Arc::from("8|true"))
+    );
+}
+
+#[test]
+fn weak_ref_target_is_cleared_after_collection() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    assert_eq!(
+        vm.run(
+            r#"
+            var target = { value: 42 };
+            var ref = new WeakRef(target);
+            var observed = ref.deref() === target;
+            target = null;
+            observed;
+            "#,
+        )
+        .expect("failed to create WeakRef"),
+        Value::Bool(true)
+    );
+
+    vm.gc();
+    assert_eq!(
+        vm.run("ref.deref() === undefined;")
+            .expect("failed to dereference collected WeakRef target"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn nested_async_functions_resume_outward() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

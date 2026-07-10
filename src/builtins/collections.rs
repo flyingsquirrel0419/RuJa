@@ -893,6 +893,73 @@ pub(crate) fn weakset_delete(
     }
     Ok(Value::Bool(false))
 }
+
+// --- WeakRef --------------------------------------------------------------
+
+fn can_be_held_weakly(vm: &Vm, target: &Value) -> bool {
+    match target {
+        Value::Object(_) => true,
+        Value::Symbol(id) => !vm
+            .symbol_registry
+            .values()
+            .any(|registered| registered == id),
+        _ => false,
+    }
+}
+
+pub(crate) fn weak_ref_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err("WeakRef constructor requires new"));
+    }
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !can_be_held_weakly(vm, &target) {
+        return Err(Error::type_err("WeakRef target cannot be held weakly"));
+    }
+
+    let proto = native_constructor_prototype_with_default(vm, "WeakRef", vm.object_proto.clone())?;
+    let weak_ref = vm
+        .heap
+        .allocate(HeapObj::WeakRef(crate::value::WeakRefData {
+            target: Mutex::new(Some(target.clone())),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+        }))?;
+    vm.keep_during_job(&target);
+    Ok(Value::Object(GcIdx(weak_ref)))
+}
+
+pub(crate) fn weak_ref_deref(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err(
+            "WeakRef.prototype.deref called on incompatible receiver",
+        ));
+    };
+    let target = vm.heap.with_obj(idx.0, |obj| match obj {
+        HeapObj::WeakRef(weak_ref) => Some(weak_ref.target.lock().clone()),
+        _ => None,
+    });
+    let Some(target) = target else {
+        return Err(Error::type_err(
+            "WeakRef.prototype.deref called on incompatible receiver",
+        ));
+    };
+    if let Some(target) = target {
+        vm.keep_during_job(&target);
+        Ok(target)
+    } else {
+        Ok(Value::Undefined)
+    }
+}
+
 pub(crate) fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let idx = require_map_receiver(vm, this, "Map.prototype.clear")?;
     vm.heap.with_obj(idx.0, |obj| {

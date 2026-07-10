@@ -136,6 +136,18 @@ DATA_VIEW_FEATURES = {
     "Uint8Array",
 }
 
+WEAK_REF_PREFIXES = (
+    "built-ins/WeakRef/",
+)
+
+WEAK_REF_FEATURES = {
+    "Reflect",
+    "Reflect.construct",
+    "Symbol",
+    "Symbol.toStringTag",
+    "WeakRef",
+}
+
 ERROR_STACK_PREFIXES = (
     "built-ins/Error/prototype/stack/",
 )
@@ -509,6 +521,13 @@ def data_view_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(DATA_VIEW_PREFIXES)
 
+def weak_ref_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(WEAK_REF_PREFIXES)
+
 def error_stack_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -687,6 +706,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
     if path is not None and data_view_path(path):
         feats.difference_update(DATA_VIEW_FEATURES)
+    if path is not None and weak_ref_path(path):
+        feats.difference_update(WEAK_REF_FEATURES)
     if path is not None and error_stack_path(path):
         feats.difference_update(ERROR_STACK_FEATURES)
     if path is not None and aggregate_error_path(path):

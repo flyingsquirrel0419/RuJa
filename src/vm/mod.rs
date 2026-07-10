@@ -73,6 +73,8 @@ pub struct Vm {
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
     /// may itself trigger a GC). Push indices on entry, pop on exit.
     pub(crate) gc_pins: Vec<usize>,
+    /// WeakRef targets kept alive until the current ECMAScript job finishes.
+    pub(crate) kept_objects: Vec<usize>,
     /// Collected yield values while running a generator function body (eager,
     /// legacy fallback path). Lazy generators use per-frame gen-state instead.
     pub(crate) current_yields: Vec<Value>,
@@ -410,6 +412,7 @@ impl Vm {
             microtask_queue: std::collections::VecDeque::new(),
             ic: std::collections::HashMap::new(),
             gc_pins: Vec::new(),
+            kept_objects: Vec::new(),
             current_yields: Vec::new(),
             next_symbol_id: 16,
             next_private_name_id: 1,
@@ -549,6 +552,7 @@ impl Vm {
             Err(err) => err.thrown_value.iter().cloned().collect(),
         };
         let pinned_result = self.pin_many(&result_roots);
+        self.clear_kept_objects();
         // Drain microtasks (Promise callbacks) after the synchronous run.
         let microtask_result = if !self.microtask_queue.is_empty() {
             self.run_microtasks()

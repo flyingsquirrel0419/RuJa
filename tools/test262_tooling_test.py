@@ -220,5 +220,32 @@ class AsyncAdmissionTests(unittest.TestCase):
                     tool.RUN_ASYNC_TESTS = original_run_async
 
 
+class WeakRefAdmissionTests(unittest.TestCase):
+    def test_weak_ref_features_are_admitted_only_inside_builtin_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/WeakRef/prototype/deref/case.js"
+            outside = root / "test/built-ins/Other/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "WeakRef",
+                    "Reflect",
+                    "Reflect.construct",
+                    "Symbol",
+                    "Symbol.toStringTag",
+                ],
+            }
+
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 if __name__ == "__main__":
     unittest.main()

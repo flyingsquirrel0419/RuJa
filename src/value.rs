@@ -536,6 +536,7 @@ pub enum HeapObj {
     RegExpStringIterator(RegExpStringIteratorData),
     WeakMap(WeakMapData),
     WeakSet(WeakSetData),
+    WeakRef(WeakRefData),
     Promise(PromiseData),
     Generator(GeneratorData),
     Iterator(IteratorData),
@@ -749,6 +750,16 @@ pub struct WeakSetData {
     pub items: Mutex<Vec<usize>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+}
+
+/// A WeakRef target is deliberately omitted from normal GC tracing. Object
+/// targets are cleared during sweep; Symbol targets remain available because
+/// RuJa's Symbol table is not currently garbage-collected.
+pub struct WeakRefData {
+    pub target: Mutex<Option<Value>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
 }
 
 pub struct PromiseData {
@@ -1001,6 +1012,7 @@ impl HeapObj {
             HeapObj::RegExpStringIterator(i) => &i.props,
             HeapObj::WeakMap(w) => &w.props,
             HeapObj::WeakSet(ws) => &ws.props,
+            HeapObj::WeakRef(wr) => &wr.props,
             HeapObj::Promise(p) => &p.props,
             HeapObj::Generator(g) => &g.props,
             HeapObj::LazyGenerator(g) => &g.props,
@@ -1025,6 +1037,7 @@ impl HeapObj {
             HeapObj::RegExpStringIterator(i) => &i.proto,
             HeapObj::WeakMap(w) => &w.proto,
             HeapObj::WeakSet(ws) => &ws.proto,
+            HeapObj::WeakRef(wr) => &wr.proto,
             HeapObj::Promise(p) => &p.proto,
             HeapObj::Generator(g) => &g.proto,
             HeapObj::LazyGenerator(g) => &g.proto,
@@ -1075,6 +1088,7 @@ impl HeapObj {
             HeapObj::RegExpStringIterator(_) => "RegExp String Iterator",
             HeapObj::WeakMap(_) => "WeakMap",
             HeapObj::WeakSet(_) => "WeakSet",
+            HeapObj::WeakRef(_) => "WeakRef",
             HeapObj::Promise(_) => "Promise",
             HeapObj::Generator(_) => "Generator",
             HeapObj::LazyGenerator(_) => "Generator",
@@ -1096,6 +1110,7 @@ impl HeapObj {
             HeapObj::Array(a) => a.extensible.load(Ordering::Relaxed),
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
             HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
+            HeapObj::WeakRef(wr) => wr.extensible.load(Ordering::Relaxed),
             _ => true,
         }
     }
