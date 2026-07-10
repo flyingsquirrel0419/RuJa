@@ -4,10 +4,11 @@
 
 ### Test tooling
 
-- The async object method-definition admission is confirmed by the full matrix
-  at **23100 pass / 6830 fail / 11 timeout / 0 error / 17777 skip / 47718
-  total / 29930 ran**, or **77.2%** of executed files and **48.4%** of the
-  current matrix.
+- The async arrow-function admission is confirmed by the full matrix at
+  **23142 pass / 6830 fail / 11 timeout / 0 error / 17735 skip / 47718 total /
+  29972 ran**, or **77.2%** of executed files and **48.5%** of the current
+  matrix. The preceding async object method-definition admission reported
+  **23100 pass / 6830 fail / 17777 skip / 29930 ran**.
 - The preceding `test262-full` documentation confirmation recorded an upstream
   denominator contraction of 749 unsupported files. Engine outcomes remain
   **22999 pass / 6830 fail / 11 timeout / 0 error / 29829 ran**; the current
