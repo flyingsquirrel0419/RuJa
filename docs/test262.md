@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 45.2% of all matrix files; 75.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8109 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8113 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -267,6 +267,17 @@ The runner now admits all implemented private class-element feature tags on
 `language/{statements,expressions}/class/elements`, which reports **2203 pass /
 0 fail / 759 skip**; the supported subset rises to **8109 pass / 0 fail /
 12329 skip**.
+
+Focused Proxy/exotic private-element stamping local check:
+ECMAScript private elements now belong to the common GC object cell, allowing
+derived constructors to stamp fields, methods, and accessors onto Proxy,
+revoked Proxy, Array, collection, Promise, ArrayBuffer/DataView/TypedArray,
+iterator, and function receivers. The brand stays on the receiver itself;
+private initialization and access do not forward to Proxy target objects or
+invoke handler traps. GC traces values reachable only through private elements
+and clears private brands before reclaimed cells are reused. The three private
+Proxy tests pass, the class-elements paths report **2207 pass / 0 fail / 755
+skip**, and the supported subset rises to **8113 pass / 0 fail / 12325 skip**.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference

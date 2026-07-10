@@ -58,8 +58,10 @@
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
   implemented public and private instance/static class fields and methods,
   private-name `in`, generator methods, async methods, and async generator
-  methods across `language/{statements,expressions}/class/elements/` without
-  lifting those features outside the class-elements paths. The obsolete
+  methods across `language/{statements,expressions}/class/elements/`. Proxy
+  coverage is also admitted on those paths now that private elements can be
+  stamped directly onto Proxy receivers without invoking handler traps. These
+  feature gates remain in place outside the class-elements paths. The obsolete
   direct-eval, contextual-keyword, and initialization-order file allowlists
   have been removed.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
@@ -86,8 +88,18 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8109 pass / 0 fail / 12329 skip / 0 timeout**.
+Current supported subset count: **8113 pass / 0 fail / 12325 skip / 0 timeout**.
 
+- **Private elements on Proxy and exotic receivers**: ECMAScript private
+  elements now belong to the common GC cell rather than only ordinary-object
+  and function payloads. Derived constructors can stamp fields, methods, and
+  accessors onto Proxy, revoked Proxy, Array, collection, Promise,
+  ArrayBuffer/DataView/TypedArray, iterator, and function receivers without
+  forwarding private access to Proxy traps. GC traces cell-owned private
+  values and clears brands when cells are reclaimed. The three private Proxy
+  test262 files pass, class-elements reports **2207 pass / 0 fail / 755
+  skip**, and the supported subset rises to **8113 pass / 0 fail / 12325
+  skip**.
 - **Private assignment-target References**: private names are now represented
   directly in VM `ReferenceRecord`s, and private reads/writes flow through
   `GetValue`/`PutValue`. Destructuring and `for-in`/`for-of` preserve the

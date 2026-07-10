@@ -238,6 +238,7 @@ CLASS_ELEMENTS_FEATURES = {
     "class-static-fields-public",
     "class-static-methods-private",
     "generators",
+    "Proxy",
 }
 
 def parse_meta(src):

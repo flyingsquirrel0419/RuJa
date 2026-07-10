@@ -771,6 +771,73 @@ fn private_assignment_targets_apply_brand_checks_through_put_value() {
 }
 
 #[test]
+fn private_elements_stamp_proxy_and_exotic_receivers() {
+    assert_eq!(
+        run(r#"
+            class Base { constructor(receiver) { return receiver; } }
+            class Stamp extends Base {
+              #field = { value: 40 };
+              #method() { return this.#field.value + 1; }
+              get #accessor() { return this.#method() + 1; }
+              set #accessor(value) { this.#field = { value: value - 2 }; }
+              constructor(receiver) { super(receiver); }
+              static read(receiver) { return receiver.#accessor; }
+              static write(receiver, value) { receiver.#accessor = value; }
+            }
+
+            var trapCalls = 0;
+            var proxy = new Proxy({}, {
+              get() { trapCalls++; },
+              set() { trapCalls++; },
+              defineProperty() { trapCalls++; },
+              isExtensible() { trapCalls++; }
+            });
+            var revoked = Proxy.revocable({}, {});
+            revoked.revoke();
+            var receivers = [
+              proxy,
+              revoked.proxy,
+              [],
+              new Map(),
+              new Set(),
+              new WeakMap(),
+              new WeakSet(),
+              Promise.resolve(1),
+              new ArrayBuffer(4),
+              new DataView(new ArrayBuffer(4)),
+              new Uint8Array(4),
+              [1][Symbol.iterator](),
+              function() {}
+            ];
+            var ok = receivers.every(function(receiver) {
+              new Stamp(receiver);
+              if (Stamp.read(receiver) !== 42) return false;
+              Stamp.write(receiver, 52);
+              return Stamp.read(receiver) === 52;
+            });
+            ok && trapCalls === 0;
+        "#),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        run(r#"
+            class Base { constructor(receiver) { return receiver; } }
+            class Stamp extends Base {
+              #field = { value: 42 };
+              constructor(receiver) { super(receiver); }
+              static read(receiver) { return receiver.#field.value; }
+            }
+            var receiver = new Proxy({}, {});
+            new Stamp(receiver);
+            for (var i = 0; i < 3000; i++) ({ index: i });
+            Stamp.read(receiver);
+        "#),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
 fn shared_private_methods_keep_super_home_object() {
     assert_eq!(
         run("class B{m(){return this.x;}}class C extends B{constructor(x){super();this.x=x;}#m(){return super.m();}call(){return this.#m;}value(){return this.#m();}}let a=new C(1),b=new C(2);a.call()===b.call()&&a.value()===1&&b.value()===2;"),

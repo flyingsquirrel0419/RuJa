@@ -2338,68 +2338,24 @@ impl Vm {
                     let key = self.private_slot_key_from_name(name_idx)?;
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            let (fields, extensible) = match o {
-                                HeapObj::Object(od) => (&od.private_fields, &od.extensible),
-                                HeapObj::Function(f) => (&f.private_fields, &f.extensible),
-                                _ => {
-                                    return Err(Error::type_err(
-                                        "Private receiver is not an object",
-                                    ))
-                                }
-                            };
-                            let mut fields = fields.lock();
-                            if !extensible.load(Ordering::Relaxed) {
-                                return Err(Error::type_err(
-                                    "Cannot add private field to non-extensible object",
-                                ));
-                            }
-                            if fields.contains_key(&key) {
-                                return Err(Error::type_err(
-                                    "Cannot initialize private field twice",
-                                ));
-                            }
-                            fields.insert(key, crate::value::PrivateSlot::Value(value.clone()));
-                            Ok(())
-                        })?;
-                    } else {
-                        return Err(Error::type_err("Private receiver is not an object"));
-                    }
+                    self.add_private_element(
+                        &obj,
+                        key,
+                        crate::value::PrivateSlot::Value(value.clone()),
+                        "Cannot initialize private field twice",
+                    )?;
                     self.stack.push(value);
                 }
                 Op::InitPrivateMethod(name_idx) => {
                     let key = self.private_slot_key_from_name(name_idx)?;
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            let (fields, extensible) = match o {
-                                HeapObj::Object(od) => (&od.private_fields, &od.extensible),
-                                HeapObj::Function(f) => (&f.private_fields, &f.extensible),
-                                _ => {
-                                    return Err(Error::type_err(
-                                        "Private receiver is not an object",
-                                    ))
-                                }
-                            };
-                            let mut fields = fields.lock();
-                            if !extensible.load(Ordering::Relaxed) {
-                                return Err(Error::type_err(
-                                    "Cannot add private field to non-extensible object",
-                                ));
-                            }
-                            if fields.contains_key(&key) {
-                                return Err(Error::type_err(
-                                    "Cannot initialize private method twice",
-                                ));
-                            }
-                            fields.insert(key, crate::value::PrivateSlot::Method(value.clone()));
-                            Ok(())
-                        })?;
-                    } else {
-                        return Err(Error::type_err("Private receiver is not an object"));
-                    }
+                    self.add_private_element(
+                        &obj,
+                        key,
+                        crate::value::PrivateSlot::Method(value.clone()),
+                        "Cannot initialize private method twice",
+                    )?;
                     self.stack.push(value);
                 }
                 Op::SetPrivate(name_idx) => {
@@ -2421,73 +2377,7 @@ impl Vm {
                     let setter = self.stack.pop().unwrap_or(Value::Undefined);
                     let getter = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            let (fields, extensible) = match o {
-                                HeapObj::Object(od) => (&od.private_fields, &od.extensible),
-                                HeapObj::Function(f) => (&f.private_fields, &f.extensible),
-                                _ => {
-                                    return Err(Error::type_err(
-                                        "Private receiver is not an object",
-                                    ))
-                                }
-                            };
-                            let mut fields = fields.lock();
-                            if !fields.contains_key(&key) && !extensible.load(Ordering::Relaxed) {
-                                return Err(Error::type_err(
-                                    "Cannot add private field to non-extensible object",
-                                ));
-                            }
-                            match fields.get_mut(&key) {
-                                None => {
-                                    fields.insert(
-                                        key,
-                                        crate::value::PrivateSlot::Accessor {
-                                            get: if getter.is_undefined() {
-                                                None
-                                            } else {
-                                                Some(getter.clone())
-                                            },
-                                            set: if setter.is_undefined() {
-                                                None
-                                            } else {
-                                                Some(setter.clone())
-                                            },
-                                        },
-                                    );
-                                }
-                                Some(crate::value::PrivateSlot::Accessor { get, set }) => {
-                                    if !getter.is_undefined() {
-                                        if get.is_some() {
-                                            return Err(Error::type_err(
-                                                "Cannot initialize private accessor twice",
-                                            ));
-                                        }
-                                        *get = Some(getter.clone());
-                                    }
-                                    if !setter.is_undefined() {
-                                        if set.is_some() {
-                                            return Err(Error::type_err(
-                                                "Cannot initialize private accessor twice",
-                                            ));
-                                        }
-                                        *set = Some(setter.clone());
-                                    }
-                                }
-                                Some(
-                                    crate::value::PrivateSlot::Value(_)
-                                    | crate::value::PrivateSlot::Method(_),
-                                ) => {
-                                    return Err(Error::type_err(
-                                        "Cannot initialize private accessor twice",
-                                    ));
-                                }
-                            }
-                            Ok(())
-                        })?;
-                    } else {
-                        return Err(Error::type_err("Private receiver is not an object"));
-                    }
+                    self.define_private_accessor_element(&obj, key, getter, setter)?;
                     self.stack.push(Value::Undefined);
                 }
                 Op::CallPrivateMethod(name_idx, arg_count) => {
@@ -2500,36 +2390,14 @@ impl Vm {
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.private_slot_key_from_name(name_idx)?;
                     let method = if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            let method = if let HeapObj::Object(od) = o {
-                                od.private_fields
-                                    .lock()
-                                    .get(&key)
-                                    .and_then(|slot| match slot {
-                                        crate::value::PrivateSlot::Value(value)
-                                        | crate::value::PrivateSlot::Method(value) => {
-                                            Some(value.clone())
-                                        }
-                                        crate::value::PrivateSlot::Accessor { .. } => None,
-                                    })
-                                    .unwrap_or(Value::Undefined)
-                            } else if let HeapObj::Function(f) = o {
-                                f.private_fields
-                                    .lock()
-                                    .get(&key)
-                                    .and_then(|slot| match slot {
-                                        crate::value::PrivateSlot::Value(value)
-                                        | crate::value::PrivateSlot::Method(value) => {
-                                            Some(value.clone())
-                                        }
-                                        crate::value::PrivateSlot::Accessor { .. } => None,
-                                    })
-                                    .unwrap_or(Value::Undefined)
-                            } else {
-                                return Err(Error::type_err("Private receiver is not an object"));
-                            };
-                            Ok(method)
-                        })?
+                        self.heap
+                            .get_private_element(idx.0, &key)
+                            .and_then(|slot| match slot {
+                                crate::value::PrivateSlot::Value(value)
+                                | crate::value::PrivateSlot::Method(value) => Some(value),
+                                crate::value::PrivateSlot::Accessor { .. } => None,
+                            })
+                            .unwrap_or(Value::Undefined)
                     } else {
                         return Err(Error::type_err("Private receiver is not an object"));
                     };

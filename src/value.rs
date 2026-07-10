@@ -552,8 +552,9 @@ pub struct ObjectData {
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
     pub class_name: Option<Arc<str>>,
-    /// Private slot storage: `#name` -> field/method/accessor data. Isolated
-    /// from normal props (not enumerable, not accessible via [] or for...in).
+    /// Engine-internal hidden slots used by built-ins. ECMAScript class
+    /// private elements live on the owning `GcCell` so every object exotic
+    /// can carry them without exposing them through normal properties.
     pub private_fields: Mutex<std::collections::HashMap<PrivateSlotKey, PrivateSlot>>,
     /// Wrapped primitive for boxed primitives created via `new Boolean(x)`,
     /// `new Number(x)`, `new String(x)`, or `Object(x)`. `None` for ordinary
@@ -643,6 +644,7 @@ pub struct FunctionData {
     pub proto: Mutex<Option<Value>>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub extensible: AtomicBool,
+    /// Engine-internal hidden slots; class private elements are cell-owned.
     pub private_fields: Mutex<std::collections::HashMap<PrivateSlotKey, PrivateSlot>>,
 }
 

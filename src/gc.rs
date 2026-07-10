@@ -32,6 +32,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub struct GcCell {
     pub obj: Mutex<Option<HeapObj>>,
+    private_elements:
+        Mutex<std::collections::HashMap<crate::value::PrivateSlotKey, crate::value::PrivateSlot>>,
     pub marked: AtomicBool,
 }
 
@@ -43,6 +45,27 @@ pub struct Heap {
     /// Maximum number of live heap objects allowed. When this is exceeded,
     /// `allocate` returns `HeapLimitExceeded`. `0` means unlimited.
     max_objects: AtomicUsize,
+}
+
+fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize>) {
+    let push_value = |value: &crate::value::Value, worklist: &mut Vec<usize>| {
+        if let crate::value::Value::Object(idx) = value {
+            worklist.push(idx.0);
+        }
+    };
+    match slot {
+        crate::value::PrivateSlot::Value(value) | crate::value::PrivateSlot::Method(value) => {
+            push_value(value, worklist)
+        }
+        crate::value::PrivateSlot::Accessor { get, set } => {
+            if let Some(get) = get {
+                push_value(get, worklist);
+            }
+            if let Some(set) = set {
+                push_value(set, worklist);
+            }
+        }
+    }
 }
 
 /// Push reachable child indices of `obj` onto `worklist`. Called while NOT
@@ -106,18 +129,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
     match obj {
         HeapObj::Object(o) => {
             for slot in o.private_fields.lock().values() {
-                match slot {
-                    crate::value::PrivateSlot::Value(value)
-                    | crate::value::PrivateSlot::Method(value) => push_value(value, worklist),
-                    crate::value::PrivateSlot::Accessor { get, set } => {
-                        if let Some(get) = get {
-                            push_value(get, worklist);
-                        }
-                        if let Some(set) = set {
-                            push_value(set, worklist);
-                        }
-                    }
-                }
+                trace_private_slot(slot, worklist);
             }
         }
         HeapObj::Array(a) => {
@@ -135,18 +147,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(p, worklist);
             }
             for slot in f.private_fields.lock().values() {
-                match slot {
-                    crate::value::PrivateSlot::Value(value)
-                    | crate::value::PrivateSlot::Method(value) => push_value(value, worklist),
-                    crate::value::PrivateSlot::Accessor { get, set } => {
-                        if let Some(get) = get {
-                            push_value(get, worklist);
-                        }
-                        if let Some(set) = set {
-                            push_value(set, worklist);
-                        }
-                    }
-                }
+                trace_private_slot(slot, worklist);
             }
             if let crate::value::FunctionKind::Bound {
                 target,
@@ -297,6 +298,7 @@ impl Heap {
             if let Some(idx) = free.pop() {
                 let cells = self.cells.lock();
                 *cells[idx].obj.lock() = Some(obj);
+                cells[idx].private_elements.lock().clear();
                 cells[idx].marked.store(false, Ordering::Relaxed);
                 idx
             } else {
@@ -304,6 +306,7 @@ impl Heap {
                 let idx = cells.len();
                 cells.push(GcCell {
                     obj: Mutex::new(Some(obj)),
+                    private_elements: Mutex::new(std::collections::HashMap::new()),
                     marked: AtomicBool::new(false),
                 });
                 idx
@@ -351,6 +354,9 @@ impl Heap {
                         if let Some(obj) = obj_ref.as_ref() {
                             let mut w = Vec::new();
                             trace_obj(obj, &marked, &mut w);
+                            for slot in cell.private_elements.lock().values() {
+                                trace_private_slot(slot, &mut w);
+                            }
                             w
                         } else {
                             Vec::new()
@@ -375,6 +381,7 @@ impl Heap {
         for (idx, cell) in cells.iter_mut().enumerate() {
             if !marked[idx] && cell.obj.lock().is_some() {
                 *cell.obj.lock() = None;
+                cell.private_elements.lock().clear();
                 free.push(idx);
             }
         }
@@ -422,6 +429,29 @@ impl Heap {
 
     pub fn max_objects(&self) -> usize {
         self.max_objects.load(Ordering::Relaxed)
+    }
+
+    pub fn get_private_element(
+        &self,
+        idx: usize,
+        key: &crate::value::PrivateSlotKey,
+    ) -> Option<crate::value::PrivateSlot> {
+        let cells = self.cells.lock();
+        cells
+            .get(idx)
+            .and_then(|cell| cell.private_elements.lock().get(key).cloned())
+    }
+
+    pub fn with_private_elements<R>(
+        &self,
+        idx: usize,
+        f: impl FnOnce(
+            &mut std::collections::HashMap<crate::value::PrivateSlotKey, crate::value::PrivateSlot>,
+        ) -> R,
+    ) -> R {
+        let cells = self.cells.lock();
+        let mut private_elements = cells[idx].private_elements.lock();
+        f(&mut private_elements)
     }
 
     pub fn with_obj<R>(&self, idx: usize, f: impl FnOnce(&HeapObj) -> R) -> R {
@@ -475,5 +505,36 @@ impl Heap {
             *cell.obj.lock() = Some(obj);
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::value::{GcIdx, PrivateNameKey, PrivateSlot, PrivateSlotKey, Value};
+    use std::sync::Arc;
+
+    #[test]
+    fn private_elements_trace_values_and_clear_when_cells_are_reused() {
+        let heap = Heap::new();
+        let owner = heap.allocate(HeapObj::placeholder()).unwrap();
+        let child = heap.allocate(HeapObj::placeholder()).unwrap();
+        let key = PrivateSlotKey::Private(PrivateNameKey {
+            id: 1,
+            description: Arc::from("field"),
+        });
+        heap.with_private_elements(owner, |elements| {
+            elements.insert(key.clone(), PrivateSlot::Value(Value::Object(GcIdx(child))));
+        });
+
+        heap.collect(&[owner]);
+        assert_eq!(heap.live_count(), 2);
+
+        heap.collect(&[]);
+        assert_eq!(heap.live_count(), 0);
+        let first = heap.allocate(HeapObj::placeholder()).unwrap();
+        let second = heap.allocate(HeapObj::placeholder()).unwrap();
+        assert!(heap.get_private_element(first, &key).is_none());
+        assert!(heap.get_private_element(second, &key).is_none());
     }
 }
