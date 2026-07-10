@@ -281,6 +281,14 @@ prefers `Symbol.asyncIterator`, falls back to the sync iterator protocol,
 awaits each delegated result, and rejects the returned Promise for iterator
 protocol errors.
 
+Focused primitive String protocol dispatch check:
+`String.prototype.match`, `replace`, `replaceAll`, and `split` now query their
+well-known Symbol hook only for object arguments. The 16 test262
+`cstm-*-on-{string,number,boolean,bigint}-primitive.js` cases therefore avoid
+prototype getter side effects, and a differential run over all **1130**
+admitted `built-ins/String` files reports **0 status regressions** against the
+previous green binary.
+
 Focused async object method-definition diagnostic:
 `TEST262_RUN_ASYNC=1` runs `flags: [async]` files with completion-marker
 classification instead of treating an empty process result as success. Across

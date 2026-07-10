@@ -124,6 +124,11 @@
 
 ### Runtime hardening
 
+- `String.prototype.match`, `replace`, `replaceAll`, and `split` now consult
+  their well-known Symbol dispatch hooks only when the pattern/separator is an
+  object. Primitive String, Number, Boolean, and BigInt values proceed through
+  direct string conversion without touching prototype Symbol getters, matching
+  the current specification and test262.
 - `yield*` now runs as a VM delegation state machine that forwards the inner
   iterator's result object unchanged and routes outer `next`, `throw`, and
   `return` completions through the corresponding inner iterator methods. It
@@ -169,6 +174,11 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **9560 pass / 0 fail / 10878 skip / 0 timeout**.
 
+- **Primitive String protocol dispatch guards**: the 16 current test262 cases
+  covering primitive values passed to `match`, `replace`, `replaceAll`, and
+  `split` now avoid inherited Symbol hook access. The full admitted
+  `built-ins/String` comparison reports **1130 admitted files / 0 status
+  regressions** against the prior green baseline.
 - **Async object method-definition diagnostic**: with async execution enabled,
   the complete 303-file object method-definition path improves from **238 pass
   / 65 fail** before async-generator delegation fixes to **286 pass / 17 fail**.

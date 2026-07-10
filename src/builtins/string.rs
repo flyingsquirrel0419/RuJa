@@ -468,7 +468,7 @@ pub(crate) fn str_split(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     }
     let separator = args.first().cloned().unwrap_or(Value::Undefined);
     let limit_value = args.get(1).cloned().unwrap_or(Value::Undefined);
-    if !separator.is_nullish() {
+    if matches!(separator, Value::Object(_)) {
         let split_key = PropertyKey::Symbol(vm.well_known_symbols.split);
         let splitter = vm.get_property_by_key(&separator, &split_key)?;
         if !splitter.is_nullish() {
@@ -561,7 +561,11 @@ pub(crate) fn str_replace(
         ));
     }
     let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
-    if let Some(search_value) = args.first().filter(|value| !value.is_nullish()).cloned() {
+    if let Some(search_value) = args
+        .first()
+        .filter(|value| matches!(value, Value::Object(_)))
+        .cloned()
+    {
         let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
         let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
         if !replacer.is_nullish() {
@@ -912,7 +916,7 @@ pub(crate) fn str_match(vm: &mut Vm, args: &[Value], this: Option<Value>) -> err
     }
     let match_key = PropertyKey::Symbol(vm.well_known_symbols.r#match);
     let search_value = args.first().cloned().unwrap_or(Value::Undefined);
-    if !search_value.is_nullish() {
+    if matches!(search_value, Value::Object(_)) {
         let matcher = vm.get_property_by_key(&search_value, &match_key)?;
         if !matcher.is_nullish() {
             let is_callable = matches!(&matcher, Value::Object(idx) if {
@@ -1205,16 +1209,18 @@ pub(crate) fn str_replace_all(
             }
         }
 
-        let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
-        let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
-        if !replacer.is_nullish() {
-            let is_callable = matches!(&replacer, Value::Object(idx) if {
-                vm.heap.with_obj(idx.0, |o| o.is_function())
-            });
-            if !is_callable {
-                return Err(Error::type_err("Symbol.replace method is not callable"));
+        if matches!(search_value, Value::Object(_)) {
+            let replace_key = PropertyKey::Symbol(vm.well_known_symbols.replace);
+            let replacer = vm.get_property_by_key(&search_value, &replace_key)?;
+            if !replacer.is_nullish() {
+                let is_callable = matches!(&replacer, Value::Object(idx) if {
+                    vm.heap.with_obj(idx.0, |o| o.is_function())
+                });
+                if !is_callable {
+                    return Err(Error::type_err("Symbol.replace method is not callable"));
+                }
+                return vm.call_function(&replacer, &[receiver, replace_value], Some(search_value));
             }
-            return vm.call_function(&replacer, &[receiver, replace_value], Some(search_value));
         }
     }
 
