@@ -56,7 +56,10 @@
   feature exception. The focused path reports **28 pass / 0 fail / 1 skip / 29
   total**; the remaining test requires `FinalizationRegistry` solely to check
   `deref()` receiver branding. The supported language subset remains **11589
-  pass / 0 fail / 8850 skip / 20439 total**.
+  pass / 0 fail / 8850 skip / 20439 total**. CI `29110157712` and
+  `test262-full` `29110157754` confirm the change; downloaded artifacts report
+  **25056 pass / 6830 fail / 11 timeout / 0 error / 16570 skip / 48467 total /
+  31897 executed**, or **78.6%** of executed files and **51.7%** of the matrix.
 - The complete `language/expressions/optional-chaining/` path is admitted at
   **38 pass / 0 fail / 0 skip**, including its async cases. Class-elements now
   also admit optional-chaining and destructuring coverage, reaching **2957
