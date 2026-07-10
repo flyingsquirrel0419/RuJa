@@ -129,6 +129,10 @@ Latest improvement confirmation: `test262-full` 29058987345 on `5ba07b5`;
 the aggregate reports **19897 pass / 6831 fail / 11 timeout / 0 error /
 20979 skip / 47718 total / 26728 ran**, or **74.4%** of executed files and
 **41.7%** of all matrix files.
+Latest improvement confirmation: `test262-full` 29060028700 on `dfe9fc5`;
+the aggregate reports **19899 pass / 6831 fail / 11 timeout / 0 error /
+20977 skip / 47718 total / 26730 ran**, retaining **74.4%** of executed files
+and **41.7%** of all matrix files after the two-file admission.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
