@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- `Atomics` now exposes the synchronous `add`, `and`, `compareExchange`,
+  `exchange`, `isLockFree`, `load`, `or`, `store`, `sub`, and `xor`
+  operations for Number and BigInt integer TypedArrays. Each operation holds
+  the backing-buffer mutex across its complete read/modify/write sequence,
+  accepts mutable ArrayBuffer and SharedArrayBuffer backing stores, preserves
+  coercion and validation order, and permits `load` on immutable buffers.
+  Blocking `wait`/`notify`, `waitAsync`, `pause`, and multi-agent execution
+  remain unsupported.
+- `%TypedArray%.prototype.fill` now writes Number and BigInt elements through
+  ArrayBuffer and SharedArrayBuffer views with offset/range handling and
+  immutable-buffer rejection.
 - `SharedArrayBuffer` now has a distinct shared brand with constructor and
   cross-Realm `new.target` prototype semantics, `byteLength`, `@@species`,
   `@@toStringTag`, and species-aware `slice()`. Fixed-length shared buffers
@@ -64,6 +75,13 @@
 
 ### Test tooling
 
+- The runner and analyzer now keep `Atomics`, `Atomics.pause`, and
+  `Atomics.waitAsync` behind global feature gates, then admit only the ten
+  completed synchronous operation directories and three Atomics object-surface
+  files. The focused path reports **154 pass / 0 fail / 235 skip / 389 total**;
+  all skipped files belong to `wait`, `notify`, `waitAsync`, or `pause`. The
+  supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
+  total**.
 - The runner and analyzer now admit the exact `built-ins/SharedArrayBuffer/`
   path without opening the broader SharedArrayBuffer or Atomics feature gates.
   The fixed-length coverage reports **60 pass / 0 fail / 44 skip / 104 total**;

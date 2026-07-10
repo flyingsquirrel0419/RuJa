@@ -16,7 +16,7 @@ HARNESS = Path(TEST262) / "harness"
 RUN_ASYNC_TESTS = os.environ.get("TEST262_RUN_ASYNC") == "1"
 
 SKIP_FEATURES = {
-    "AggregateError", "ArrayBuffer", "DataView",
+    "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
     "Int32Array", "Intl", "Promise", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
@@ -151,6 +151,42 @@ SHARED_ARRAY_BUFFER_FEATURES = {
     "Symbol.species",
     "Symbol.toStringTag",
     "TypedArray",
+}
+
+ATOMICS_SYNC_PREFIXES = tuple(
+    f"built-ins/Atomics/{name}/"
+    for name in (
+        "add",
+        "and",
+        "compareExchange",
+        "exchange",
+        "isLockFree",
+        "load",
+        "or",
+        "store",
+        "sub",
+        "xor",
+    )
+)
+
+ATOMICS_SYNC_FILES = {
+    "built-ins/Atomics/Symbol.toStringTag.js",
+    "built-ins/Atomics/prop-desc.js",
+    "built-ins/Atomics/proto.js",
+}
+
+ATOMICS_SYNC_FEATURES = {
+    "ArrayBuffer",
+    "Atomics",
+    "BigInt",
+    "DataView",
+    "Reflect.construct",
+    "SharedArrayBuffer",
+    "Symbol",
+    "Symbol.toStringTag",
+    "TypedArray",
+    "arrow-function",
+    "immutable-arraybuffer",
 }
 
 WEAK_REF_PREFIXES = (
@@ -563,6 +599,14 @@ def shared_array_buffer_path(path):
         return False
     return rel.as_posix().startswith(SHARED_ARRAY_BUFFER_PREFIXES)
 
+def atomics_sync_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return rel_text.startswith(ATOMICS_SYNC_PREFIXES) or rel_text in ATOMICS_SYNC_FILES
+
 def weak_ref_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -757,6 +801,8 @@ def should_skip(meta, path=None):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and shared_array_buffer_path(path):
         feats.difference_update(SHARED_ARRAY_BUFFER_FEATURES)
+    if path is not None and atomics_sync_path(path):
+        feats.difference_update(ATOMICS_SYNC_FEATURES)
     if path is not None and weak_ref_path(path):
         feats.difference_update(WEAK_REF_FEATURES)
     if path is not None and finalization_registry_path(path):

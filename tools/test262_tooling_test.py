@@ -279,6 +279,39 @@ class SharedArrayBufferAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class AtomicsSyncAdmissionTests(unittest.TestCase):
+    def test_sync_atomics_paths_do_not_admit_waiting_operations(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            operation = root / "test/built-ins/Atomics/compareExchange/case.js"
+            surface = root / "test/built-ins/Atomics/Symbol.toStringTag.js"
+            wait = root / "test/built-ins/Atomics/wait/case.js"
+            outside = root / "test/built-ins/Other/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "Atomics",
+                    "ArrayBuffer",
+                    "SharedArrayBuffer",
+                    "TypedArray",
+                    "BigInt",
+                    "Symbol",
+                    "Symbol.toStringTag",
+                ],
+            }
+
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, operation))
+                    self.assertFalse(tool.should_skip(meta, surface))
+                    self.assertTrue(tool.should_skip(meta, wait))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 class FinalizationRegistryAdmissionTests(unittest.TestCase):
     def test_finalization_registry_support_and_exact_path_exceptions(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1669,6 +1669,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         vm.new_native_function_in_env("get length", typed_array_length_get, 0, env)?;
     let typed_array_subarray_fn =
         vm.new_native_function_in_env("subarray", typed_array_subarray, 2, env)?;
+    let typed_array_fill_fn = vm.new_native_function_in_env("fill", typed_array_fill, 1, env)?;
     if let Value::Object(idx) = &typed_array_proto {
         vm.heap.with_obj(idx.0, |obj| {
             let mut props = obj.props().lock();
@@ -1695,6 +1696,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("subarray"),
                 data_prop(Value::Object(typed_array_subarray_fn)),
+            );
+            props.insert(
+                PropertyKey::from("fill"),
+                data_prop(Value::Object(typed_array_fill_fn)),
             );
         });
     }
@@ -2572,6 +2577,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
             &typed_array_proto,
         )?;
     }
+    install_atomics_in_env(vm, realm_env, Some(&global))?;
     install_weak_ref_constructor_in_env(vm, realm_env, Some(&global))?;
     install_finalization_registry_constructor_in_env(vm, realm_env, Some(&global))?;
 
@@ -5435,6 +5441,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             &typed_array_proto,
         )?;
     }
+    install_atomics_in_env(vm, vm.global, None)?;
     // Date (minimal: now() and constructor returning a timestamp wrapper)
     let (date_ctor, date_proto) = make_builtin_constructor_with_proto_class(
         vm,

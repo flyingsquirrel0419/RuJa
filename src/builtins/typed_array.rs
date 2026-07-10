@@ -508,6 +508,340 @@ pub(crate) fn shared_array_buffer_byte_length_get(
     }
 }
 
+#[derive(Clone, Copy)]
+struct AtomicView {
+    kind: crate::value::TypedArrayKind,
+    buffer: GcIdx,
+    byte_offset: usize,
+    length: usize,
+}
+
+#[derive(Clone, Copy)]
+enum AtomicRmwOp {
+    Add,
+    Sub,
+    And,
+    Or,
+    Xor,
+    Exchange,
+}
+
+fn validate_atomic_view(
+    vm: &Vm,
+    value: &Value,
+    allow_immutable: bool,
+) -> error::Result<AtomicView> {
+    let Value::Object(idx) = value else {
+        return Err(Error::type_err("Atomics operation requires a TypedArray"));
+    };
+    let slots = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+        ))
+    });
+    let (kind, buffer, byte_offset, byte_length) =
+        slots.ok_or_else(|| Error::type_err("Atomics operation requires a TypedArray"))?;
+    if matches!(
+        kind,
+        crate::value::TypedArrayKind::Uint8Clamped
+            | crate::value::TypedArrayKind::Float32
+            | crate::value::TypedArrayKind::Float64
+    ) {
+        return Err(Error::type_err(
+            "Atomics operation requires an integer TypedArray",
+        ));
+    }
+    let Value::Object(buffer) = buffer
+        .ok_or_else(|| Error::type_err("Atomics operation requires a shared backing buffer"))?
+    else {
+        return Err(Error::type_err(
+            "Atomics operation requires a shared backing buffer",
+        ));
+    };
+    let usable = vm.heap.with_obj(buffer.0, |obj| {
+        matches!(
+            obj,
+            HeapObj::ArrayBuffer(data)
+                if !data.detached.load(std::sync::atomic::Ordering::Relaxed)
+                    && (allow_immutable
+                        || !data.immutable.load(std::sync::atomic::Ordering::Relaxed))
+        )
+    });
+    if !usable {
+        return Err(Error::type_err(
+            "Atomics operation requires a mutable ArrayBuffer backing store",
+        ));
+    }
+    Ok(AtomicView {
+        kind,
+        buffer,
+        byte_offset,
+        length: typed_array_element_count(kind, byte_length),
+    })
+}
+
+fn atomic_index(vm: &mut Vm, value: &Value, length: usize) -> error::Result<usize> {
+    let number = vm.to_number(value)?;
+    let integer = if number.is_nan() { 0.0 } else { number.trunc() };
+    if !integer.is_finite() || integer < 0.0 || integer > MAX_SAFE_INTEGER {
+        return Err(Error::range("Invalid atomic access index"));
+    }
+    let index = integer as usize;
+    if index >= length {
+        return Err(Error::range("Atomic access index is out of bounds"));
+    }
+    Ok(index)
+}
+
+fn atomic_operand(
+    vm: &mut Vm,
+    kind: crate::value::TypedArrayKind,
+    value: &Value,
+) -> error::Result<(Value, Vec<u8>)> {
+    let converted = match kind {
+        crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
+            Value::BigInt(vm.to_bigint(value)?)
+        }
+        _ => {
+            let number = vm.to_number(value)?;
+            Value::Number(if number.is_nan() || number == 0.0 {
+                0.0
+            } else {
+                number.trunc()
+            })
+        }
+    };
+    let bytes = typed_array_value_to_bytes(vm, kind, &converted)?;
+    Ok((converted, bytes))
+}
+
+fn atomic_location(view: AtomicView, index: usize) -> error::Result<(usize, usize)> {
+    let size = view.kind.element_size();
+    let offset = view
+        .byte_offset
+        .checked_add(
+            index
+                .checked_mul(size)
+                .ok_or_else(|| Error::range("Invalid atomic access index"))?,
+        )
+        .ok_or_else(|| Error::range("Invalid atomic access index"))?;
+    let end = offset
+        .checked_add(size)
+        .ok_or_else(|| Error::range("Invalid atomic access index"))?;
+    Ok((offset, end))
+}
+
+fn raw_atomic_value(bytes: &[u8]) -> u64 {
+    let mut raw = [0_u8; 8];
+    raw[..bytes.len()].copy_from_slice(bytes);
+    u64::from_ne_bytes(raw)
+}
+
+fn write_raw_atomic_value(bytes: &mut [u8], value: u64) {
+    bytes.copy_from_slice(&value.to_ne_bytes()[..bytes.len()]);
+}
+
+fn atomic_load_impl(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
+    let view = validate_atomic_view(vm, args.first().unwrap_or(&Value::Undefined), true)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let (offset, end) = atomic_location(view, index)?;
+    vm.heap.with_obj(view.buffer.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err("Invalid shared backing buffer"));
+        };
+        let bytes = buffer.bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("Atomic access index is out of bounds"));
+        }
+        typed_array_read_element(view.kind, &bytes[offset..end], 0)
+            .ok_or_else(|| Error::range("Atomic access index is out of bounds"))
+    })
+}
+
+fn atomic_store_impl(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
+    let view = validate_atomic_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let (converted, element) =
+        atomic_operand(vm, view.kind, args.get(2).unwrap_or(&Value::Undefined))?;
+    let (offset, end) = atomic_location(view, index)?;
+    vm.heap.with_obj(view.buffer.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err("Invalid shared backing buffer"));
+        };
+        let mut bytes = buffer.bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("Atomic access index is out of bounds"));
+        }
+        bytes[offset..end].copy_from_slice(&element);
+        Ok(converted)
+    })
+}
+
+fn atomic_rmw_impl(vm: &mut Vm, args: &[Value], operation: AtomicRmwOp) -> error::Result<Value> {
+    let view = validate_atomic_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let (_, operand) = atomic_operand(vm, view.kind, args.get(2).unwrap_or(&Value::Undefined))?;
+    let (offset, end) = atomic_location(view, index)?;
+    vm.heap.with_obj(view.buffer.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err("Invalid shared backing buffer"));
+        };
+        let mut bytes = buffer.bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("Atomic access index is out of bounds"));
+        }
+        let target = &mut bytes[offset..end];
+        let old = typed_array_read_element(view.kind, target, 0)
+            .ok_or_else(|| Error::range("Atomic access index is out of bounds"))?;
+        let current = raw_atomic_value(target);
+        let operand = raw_atomic_value(&operand);
+        let next = match operation {
+            AtomicRmwOp::Add => current.wrapping_add(operand),
+            AtomicRmwOp::Sub => current.wrapping_sub(operand),
+            AtomicRmwOp::And => current & operand,
+            AtomicRmwOp::Or => current | operand,
+            AtomicRmwOp::Xor => current ^ operand,
+            AtomicRmwOp::Exchange => operand,
+        };
+        write_raw_atomic_value(target, next);
+        Ok(old)
+    })
+}
+
+fn atomic_compare_exchange_impl(vm: &mut Vm, args: &[Value]) -> error::Result<Value> {
+    let view = validate_atomic_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let (_, expected) = atomic_operand(vm, view.kind, args.get(2).unwrap_or(&Value::Undefined))?;
+    let (_, replacement) = atomic_operand(vm, view.kind, args.get(3).unwrap_or(&Value::Undefined))?;
+    let (offset, end) = atomic_location(view, index)?;
+    vm.heap.with_obj(view.buffer.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err("Invalid shared backing buffer"));
+        };
+        let mut bytes = buffer.bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("Atomic access index is out of bounds"));
+        }
+        let target = &mut bytes[offset..end];
+        let old = typed_array_read_element(view.kind, target, 0)
+            .ok_or_else(|| Error::range("Atomic access index is out of bounds"))?;
+        if target == expected.as_slice() {
+            target.copy_from_slice(&replacement);
+        }
+        Ok(old)
+    })
+}
+
+pub(crate) fn atomics_add(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_rmw_impl(vm, args, AtomicRmwOp::Add)
+}
+
+pub(crate) fn atomics_and(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_rmw_impl(vm, args, AtomicRmwOp::And)
+}
+
+pub(crate) fn atomics_compare_exchange(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    atomic_compare_exchange_impl(vm, args)
+}
+
+pub(crate) fn atomics_exchange(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    atomic_rmw_impl(vm, args, AtomicRmwOp::Exchange)
+}
+
+pub(crate) fn atomics_is_lock_free(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let number = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
+    let size = if number.is_nan() { 0.0 } else { number.trunc() };
+    Ok(Value::Bool(matches!(size as i64, 1 | 2 | 4 | 8)))
+}
+
+pub(crate) fn atomics_load(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_load_impl(vm, args)
+}
+
+pub(crate) fn atomics_or(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_rmw_impl(vm, args, AtomicRmwOp::Or)
+}
+
+pub(crate) fn atomics_store(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_store_impl(vm, args)
+}
+
+pub(crate) fn atomics_sub(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_rmw_impl(vm, args, AtomicRmwOp::Sub)
+}
+
+pub(crate) fn atomics_xor(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    atomic_rmw_impl(vm, args, AtomicRmwOp::Xor)
+}
+
+pub(crate) fn install_atomics_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+) -> error::Result<Value> {
+    let entries: &[(&str, NativeFn, usize)] = &[
+        ("add", atomics_add, 3),
+        ("and", atomics_and, 3),
+        ("compareExchange", atomics_compare_exchange, 4),
+        ("exchange", atomics_exchange, 3),
+        ("isLockFree", atomics_is_lock_free, 1),
+        ("load", atomics_load, 2),
+        ("or", atomics_or, 3),
+        ("store", atomics_store, 3),
+        ("sub", atomics_sub, 3),
+        ("xor", atomics_xor, 3),
+    ];
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
+    let mut props = IndexMap::new();
+    for (name, function, length) in entries {
+        let function = vm.new_native_function_in_env(name, *function, *length, env)?;
+        set_function_object_proto(vm, function, &function_proto);
+        props.insert(PropertyKey::from(*name), data_prop(Value::Object(function)));
+    }
+    let mut tag = data_prop(Value::String(Arc::from("Atomics")));
+    tag.writable = false;
+    props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        tag,
+    );
+    let atomics = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(props),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Atomics")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?));
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "Atomics", atomics.clone());
+    } else {
+        define_global(vm, "Atomics", atomics.clone());
+    }
+    Ok(atomics)
+}
+
 pub(crate) fn data_view_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -1778,6 +2112,76 @@ pub(crate) fn typed_array_subarray(
         ));
     }
     Ok(result)
+}
+
+pub(crate) fn typed_array_fill(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray fill called without this"))?;
+    let (kind, viewed_array_buffer, byte_offset, byte_length) =
+        typed_array_slots(vm, Some(this.clone()), "fill")?;
+    let backing = viewed_array_buffer
+        .ok_or_else(|| Error::type_err("TypedArray fill missing viewed ArrayBuffer"))?;
+    let (detached, immutable) = match &backing {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| {
+            if let HeapObj::ArrayBuffer(buffer) = obj {
+                return Some((
+                    buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+                    buffer.immutable.load(std::sync::atomic::Ordering::Relaxed),
+                ));
+            }
+            None
+        }),
+        _ => None,
+    }
+    .ok_or_else(|| Error::type_err("TypedArray fill missing viewed ArrayBuffer"))?;
+    if detached {
+        return Err(Error::type_err("TypedArray fill on detached buffer"));
+    }
+    if immutable {
+        return Err(Error::type_err("TypedArray fill on immutable buffer"));
+    }
+
+    let element = typed_array_value_to_bytes(vm, kind, args.first().unwrap_or(&Value::Undefined))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let (start, end) = resolve_slice_bounds(vm, length, args.get(1), args.get(2))?;
+    let size = kind.element_size();
+    let start = byte_offset
+        .checked_add(
+            start
+                .checked_mul(size)
+                .ok_or_else(|| Error::range("Invalid TypedArray fill start"))?,
+        )
+        .ok_or_else(|| Error::range("Invalid TypedArray fill start"))?;
+    let end = byte_offset
+        .checked_add(
+            end.checked_mul(size)
+                .ok_or_else(|| Error::range("Invalid TypedArray fill end"))?,
+        )
+        .ok_or_else(|| Error::range("Invalid TypedArray fill end"))?;
+    let Value::Object(buffer_idx) = backing else {
+        return Err(Error::type_err(
+            "TypedArray fill missing viewed ArrayBuffer",
+        ));
+    };
+    vm.heap.with_obj(buffer_idx.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err(
+                "TypedArray fill missing viewed ArrayBuffer",
+            ));
+        };
+        let mut bytes = buffer.bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("TypedArray fill range is out of bounds"));
+        }
+        for chunk in bytes[start..end].chunks_exact_mut(size) {
+            chunk.copy_from_slice(&element);
+        }
+        Ok(())
+    })?;
+    Ok(this)
 }
 
 pub(crate) fn to_uint8_element(n: f64) -> u8 {

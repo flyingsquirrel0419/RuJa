@@ -7904,6 +7904,103 @@ fn shared_array_buffer_slice_uses_shared_species_and_copies_bytes() {
 }
 
 #[test]
+fn atomics_surface_has_spec_shaped_methods_and_tag() {
+    assert_eq!(
+        run(r#"
+            var names = [
+              ["add", 3], ["and", 3], ["compareExchange", 4],
+              ["exchange", 3], ["isLockFree", 1], ["load", 2],
+              ["or", 3], ["store", 3], ["sub", 3], ["xor", 3]
+            ];
+            var shaped = names.every(function(entry) {
+              var desc = Object.getOwnPropertyDescriptor(Atomics, entry[0]);
+              return typeof desc.value === "function" &&
+                desc.value.name === entry[0] && desc.value.length === entry[1] &&
+                desc.writable && !desc.enumerable && desc.configurable;
+            });
+            var tag = Object.getOwnPropertyDescriptor(Atomics, Symbol.toStringTag);
+            var failures = 0;
+            try { Atomics(); } catch (error) { if (error instanceof TypeError) failures++; }
+            try { new Atomics(); } catch (error) { if (error instanceof TypeError) failures++; }
+            [
+              typeof Atomics,
+              Object.getPrototypeOf(Atomics) === Object.prototype,
+              shaped,
+              tag.value,
+              tag.writable,
+              tag.enumerable,
+              tag.configurable,
+              failures
+            ].join("|");
+        "#),
+        Value::String(Arc::from("object|true|true|Atomics|false|false|true|2"))
+    );
+}
+
+#[test]
+fn atomics_number_and_bigint_operations_wrap_and_return_old_values() {
+    assert_eq!(
+        run(r#"
+            var bytes = new Int8Array(new SharedArrayBuffer(2));
+            var results = [
+              Atomics.store(bytes, 0, 127),
+              Atomics.add(bytes, 0, 1),
+              Atomics.load(bytes, 0),
+              Atomics.sub(bytes, 0, 1),
+              Atomics.exchange(bytes, 1, 15),
+              Atomics.and(bytes, 1, 6),
+              Atomics.or(bytes, 1, 8),
+              Atomics.xor(bytes, 1, 3),
+              Atomics.compareExchange(bytes, 1, 13, 7),
+              Atomics.load(bytes, 1)
+            ];
+            var big = new BigInt64Array(new SharedArrayBuffer(8));
+            results.push(Atomics.store(big, 0, 9223372036854775807n));
+            results.push(Atomics.add(big, 0, 1n));
+            results.push(Atomics.load(big, 0));
+            results.join("|");
+        "#),
+        Value::String(Arc::from(
+            "127|127|-128|-128|0|15|6|14|13|7|9223372036854775807|9223372036854775807|-9223372036854775808"
+        ))
+    );
+}
+
+#[test]
+fn atomics_accept_array_buffers_and_validate_immutable_and_index_order() {
+    assert_eq!(
+        run(r#"
+            var mutable = new Int32Array(new ArrayBuffer(4));
+            var stored = Atomics.store(mutable, 0, -0);
+            var immutable = new Int32Array(
+              (new ArrayBuffer(4)).transferToImmutable()
+            );
+            var order = [];
+            var index = { valueOf: function() { order.push("index"); return 0; } };
+            var value = { valueOf: function() { order.push("value"); return 1; } };
+            var failures = 0;
+            try { Atomics.store(immutable, index, value); }
+            catch (error) { if (error instanceof TypeError) failures++; }
+            try { Atomics.load(new Float32Array(new SharedArrayBuffer(4)), index); }
+            catch (error) { if (error instanceof TypeError) failures++; }
+            var shared = new Uint8Array(new SharedArrayBuffer(4));
+            shared.fill(9, 1, 3);
+            [
+              Object.is(stored, 0),
+              Atomics.load(mutable, 0),
+              Atomics.load(immutable, 0),
+              order.join(","),
+              failures,
+              [shared[0], shared[1], shared[2], shared[3]].join(","),
+              Atomics.isLockFree(4),
+              Atomics.isLockFree(3)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|0|0||2|0,9,9,0|true|false"))
+    );
+}
+
+#[test]
 fn nested_async_functions_resume_outward() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(
