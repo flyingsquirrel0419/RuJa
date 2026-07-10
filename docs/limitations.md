@@ -48,8 +48,9 @@ guarantees, run RuJa in a separately killable process as well.
 - Fixed-length `SharedArrayBuffer` instances share backing bytes with TypedArray
   and DataView views and support species-aware `slice()`. The ten synchronous
   Atomics load/store/read-modify-write operations serialize through the backing
-  buffer mutex. Growable/resizable shared buffers, blocking `wait`/`notify`,
-  `waitAsync`, `pause`, and a multi-agent execution model are not implemented.
+  buffer mutex; worker agents use FIFO Condvar-backed `wait`/`notify` queues on
+  the same Arc backing store. Growable/resizable shared buffers, `waitAsync`,
+  `pause`, and a public embedder-facing agent API are not implemented.
 - Async generators serialize requests, and ordinary async functions preserve
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`

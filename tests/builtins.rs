@@ -8001,6 +8001,61 @@ fn atomics_accept_array_buffers_and_validate_immutable_and_index_order() {
 }
 
 #[test]
+fn test262_agents_share_sab_and_notify_wakes_waiters() {
+    assert_eq!(
+        run(r#"
+            $262.agent.start(`
+              $262.agent.receiveBroadcast(function(sab) {
+                var view = new Int32Array(sab);
+                Atomics.add(view, 1, 1);
+                $262.agent.report(Atomics.wait(view, 0, 0, 1000));
+                $262.agent.leaving();
+              });
+            `);
+            var view = new Int32Array(new SharedArrayBuffer(8));
+            $262.agent.broadcast(view.buffer);
+            while (Atomics.load(view, 1) !== 1) {}
+            $262.agent.sleep(10);
+            var notified = Atomics.notify(view, 0, 1);
+            var report;
+            while ((report = $262.agent.getReport()) === null) {
+              $262.agent.sleep(1);
+            }
+            [Atomics.load(view, 1), report, notified].join("|");
+        "#),
+        Value::String(Arc::from("1|ok|1"))
+    );
+}
+
+#[test]
+fn atomics_wait_times_out_in_workers_and_main_agent_cannot_suspend() {
+    assert_eq!(
+        run(r#"
+            $262.agent.start(`
+              $262.agent.receiveBroadcast(function(sab) {
+                var view = new BigInt64Array(sab);
+                $262.agent.report(Atomics.wait(view, 0, 0n, 10));
+                $262.agent.leaving();
+              });
+            `);
+            var buffer = new SharedArrayBuffer(8);
+            $262.agent.broadcast(buffer);
+            var report;
+            while ((report = $262.agent.getReport()) === null) {
+              $262.agent.sleep(1);
+            }
+            var view = new Int32Array(buffer);
+            var mismatch = Atomics.wait(view, 0, 1, 0);
+            var blocked = false;
+            try { Atomics.wait(view, 0, 0, 0); }
+            catch (error) { blocked = error instanceof TypeError; }
+            [report, mismatch, blocked].join("|");
+        "#),
+        Value::String(Arc::from("timed-out|not-equal|true"))
+    );
+}
+
+#[test]
 fn nested_async_functions_resume_outward() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

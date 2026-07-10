@@ -74,7 +74,8 @@ pub(crate) fn array_buffer_constructor(
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
-            bytes: Mutex::new(vec![0; length]),
+            bytes: Arc::new(Mutex::new(vec![0; length])),
+            waiters: Arc::new(Mutex::new(std::collections::HashMap::new())),
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
             shared: false,
@@ -110,7 +111,34 @@ pub(crate) fn shared_array_buffer_constructor(
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
-            bytes: Mutex::new(vec![0; length]),
+            bytes: Arc::new(Mutex::new(vec![0; length])),
+            waiters: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            detached: AtomicBool::new(false),
+            immutable: AtomicBool::new(false),
+            shared: true,
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+        }))?;
+    Ok(Value::Object(GcIdx(idx)))
+}
+
+pub(crate) fn shared_array_buffer_from_agent_broadcast(
+    vm: &mut Vm,
+    broadcast: crate::vm::AgentBroadcast,
+) -> error::Result<Value> {
+    let constructor = crate::environment::get(&vm.heap, vm.global, "SharedArrayBuffer")
+        .ok_or_else(|| Error::type_err("SharedArrayBuffer constructor is not available"))?;
+    let proto = vm.get_property_by_key(&constructor, &PropertyKey::from("prototype"))?;
+    let proto = if matches!(proto, Value::Object(_)) {
+        proto
+    } else {
+        vm.object_proto.clone()
+    };
+    let idx = vm
+        .heap
+        .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
+            bytes: broadcast.bytes,
+            waiters: broadcast.waiters,
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
             shared: true,
@@ -738,6 +766,159 @@ fn atomic_compare_exchange_impl(vm: &mut Vm, args: &[Value]) -> error::Result<Va
     })
 }
 
+fn validate_waitable_view(
+    vm: &Vm,
+    value: &Value,
+    require_shared: bool,
+) -> error::Result<(AtomicView, bool)> {
+    let view = validate_atomic_view(vm, value, true)?;
+    if !matches!(
+        view.kind,
+        crate::value::TypedArrayKind::Int32 | crate::value::TypedArrayKind::BigInt64
+    ) {
+        return Err(Error::type_err(
+            "Atomics wait operation requires Int32Array or BigInt64Array",
+        ));
+    }
+    let shared = vm.heap.with_obj(
+        view.buffer.0,
+        |obj| matches!(obj, HeapObj::ArrayBuffer(buffer) if buffer.shared),
+    );
+    if require_shared && !shared {
+        return Err(Error::type_err("Atomics.wait requires a SharedArrayBuffer"));
+    }
+    Ok((view, shared))
+}
+
+fn atomics_count(vm: &mut Vm, value: Option<&Value>) -> error::Result<usize> {
+    let Some(value) = value else {
+        return Ok(usize::MAX);
+    };
+    if value.is_undefined() {
+        return Ok(usize::MAX);
+    }
+    let number = vm.to_number(value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    if number.is_infinite() || number >= usize::MAX as f64 {
+        return Ok(usize::MAX);
+    }
+    Ok(number.trunc() as usize)
+}
+
+pub(crate) fn atomics_notify(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let (view, shared) =
+        validate_waitable_view(vm, args.first().unwrap_or(&Value::Undefined), false)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let count = atomics_count(vm, args.get(2))?;
+    if !shared || count == 0 {
+        return Ok(Value::Number(0.0));
+    }
+    let (offset, _) = atomic_location(view, index)?;
+    let waiters = vm.heap.with_obj(view.buffer.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return None;
+        };
+        Some(buffer.waiters.clone())
+    });
+    let waiters = waiters.ok_or_else(|| Error::type_err("Invalid shared backing buffer"))?;
+    let mut lists = waiters.lock();
+    let Some(queue) = lists.get_mut(&offset) else {
+        return Ok(Value::Number(0.0));
+    };
+    let mut notified = 0_usize;
+    while notified < count {
+        let Some(waiter) = queue.pop_front() else {
+            break;
+        };
+        *waiter.notified.lock() = true;
+        waiter.wake.notify_one();
+        notified += 1;
+    }
+    if queue.is_empty() {
+        lists.remove(&offset);
+    }
+    Ok(Value::Number(notified as f64))
+}
+
+pub(crate) fn atomics_wait(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let (view, _) = validate_waitable_view(vm, args.first().unwrap_or(&Value::Undefined), true)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let (_, expected) = atomic_operand(vm, view.kind, args.get(2).unwrap_or(&Value::Undefined))?;
+    let timeout = match args.get(3) {
+        None => f64::INFINITY,
+        Some(value) => {
+            let number = vm.to_number(value)?;
+            if number.is_nan() {
+                f64::INFINITY
+            } else {
+                number.max(0.0)
+            }
+        }
+    };
+    let (offset, end) = atomic_location(view, index)?;
+    let (bytes, waiters) = vm
+        .heap
+        .with_obj(view.buffer.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return None;
+            };
+            Some((buffer.bytes.clone(), buffer.waiters.clone()))
+        })
+        .ok_or_else(|| Error::type_err("Invalid shared backing buffer"))?;
+
+    let mut lists = waiters.lock();
+    {
+        let bytes = bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("Atomic access index is out of bounds"));
+        }
+        if bytes[offset..end] != expected {
+            return Ok(Value::String(Arc::from("not-equal")));
+        }
+    }
+    if !vm.agent_can_block {
+        return Err(Error::type_err("This agent cannot suspend in Atomics.wait"));
+    }
+    if timeout == 0.0 {
+        return Ok(Value::String(Arc::from("timed-out")));
+    }
+
+    let waiter = Arc::new(crate::value::AtomicsWaiter {
+        notified: Mutex::new(false),
+        wake: parking_lot::Condvar::new(),
+    });
+    lists.entry(offset).or_default().push_back(waiter.clone());
+    drop(lists);
+
+    let mut notified = waiter.notified.lock();
+    if timeout.is_infinite() {
+        while !*notified {
+            waiter.wake.wait(&mut notified);
+        }
+    } else {
+        let duration = std::time::Duration::from_secs_f64(timeout / 1000.0);
+        let result = waiter.wake.wait_for(&mut notified, duration);
+        if result.timed_out() && !*notified {
+            drop(notified);
+            let mut lists = waiters.lock();
+            if let Some(queue) = lists.get_mut(&offset) {
+                queue.retain(|entry| !Arc::ptr_eq(entry, &waiter));
+                if queue.is_empty() {
+                    lists.remove(&offset);
+                }
+            }
+            return Ok(Value::String(Arc::from("timed-out")));
+        }
+    }
+    Ok(Value::String(Arc::from("ok")))
+}
+
 pub(crate) fn atomics_add(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     atomic_rmw_impl(vm, args, AtomicRmwOp::Add)
 }
@@ -804,9 +985,11 @@ pub(crate) fn install_atomics_in_env(
         ("exchange", atomics_exchange, 3),
         ("isLockFree", atomics_is_lock_free, 1),
         ("load", atomics_load, 2),
+        ("notify", atomics_notify, 3),
         ("or", atomics_or, 3),
         ("store", atomics_store, 3),
         ("sub", atomics_sub, 3),
+        ("wait", atomics_wait, 4),
         ("xor", atomics_xor, 3),
     ];
     let function_proto = vm
@@ -2398,7 +2581,8 @@ fn allocate_array_buffer_with_bytes_and_immutable(
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
-            bytes: Mutex::new(bytes),
+            bytes: Arc::new(Mutex::new(bytes)),
+            waiters: Arc::new(Mutex::new(std::collections::HashMap::new())),
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(immutable),
             shared: false,

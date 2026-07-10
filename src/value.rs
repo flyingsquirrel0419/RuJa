@@ -6,7 +6,7 @@
 
 use crate::ast::FunctionExpr;
 use indexmap::{IndexMap, IndexSet};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 use std::fmt;
@@ -457,12 +457,20 @@ pub struct TypedArrayData {
 }
 
 pub struct ArrayBufferData {
-    pub bytes: Mutex<Vec<u8>>,
+    pub bytes: Arc<Mutex<Vec<u8>>>,
+    pub waiters: Arc<
+        Mutex<std::collections::HashMap<usize, std::collections::VecDeque<Arc<AtomicsWaiter>>>>,
+    >,
     pub detached: AtomicBool,
     pub immutable: AtomicBool,
     pub shared: bool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
+}
+
+pub struct AtomicsWaiter {
+    pub notified: Mutex<bool>,
+    pub wake: Condvar,
 }
 
 pub struct DataViewData {

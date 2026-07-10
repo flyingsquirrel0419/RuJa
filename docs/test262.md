@@ -59,12 +59,13 @@ setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 WeakRef, FinalizationRegistry, fixed-length SharedArrayBuffer, Promise,
-synchronous Atomics load/store/read-modify-write operations, async/await,
-generators, for-of, optional chaining, nullish coalescing, logical assignment.
+synchronous Atomics load/store/read-modify-write operations and worker
+`wait`/`notify`, async/await, generators, for-of, optional chaining, nullish
+coalescing, logical assignment.
 
-**Intentionally unsupported**: ES Modules (import/export), Intl, blocking
-`Atomics.wait`/`notify`, `Atomics.waitAsync`, `Atomics.pause`, multi-agent
-execution, growable/resizable SharedArrayBuffer, full TypedArray prototype
+**Intentionally unsupported**: ES Modules (import/export), Intl,
+`Atomics.waitAsync`, `Atomics.pause`, a public multi-agent embedder API,
+growable/resizable SharedArrayBuffer, full TypedArray prototype
 method coverage beyond the constructor/index basics and ArrayBuffer/DataView support,
 Tail-call optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
@@ -346,19 +347,29 @@ remain gated together with Atomics. The supported language subset remains
 to **25165 pass / 6830 fail / 11 timeout / 0 error / 16461 skip / 48467 total /
 32006 executed**, or **78.6%** of executed files and **51.9%** of the matrix.
 
-Focused synchronous Atomics coverage check:
+Focused Atomics coverage check:
 `Atomics` now installs the ten synchronous Number/BigInt integer-TypedArray
 operations with standard names, lengths, descriptors, prototype, and
 `@@toStringTag`. Shared and ordinary mutable ArrayBuffers use one backing-store
 mutex across each complete operation; immutable buffers permit `load` but
 reject writes. Exact path admission closes these operations and the Atomics
-object surface at **154 pass / 0 fail / 235 skip / 389 total**. The 235 skipped
-files remain confined to `wait`, `notify`, `waitAsync`, and `pause`, and the
-supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
-total**. CI `29115320336` and `test262-full` `29115320329` confirm the change.
+object surface initially closed at **154 pass / 0 fail / 235 skip / 389
+total**. CI `29115320336` and `test262-full` `29115320329` confirmed that
+slice.
 Downloaded artifacts aggregate to **25319 pass / 6769 fail / 11 timeout / 0
 error / 16368 skip / 48467 total / 32099 executed**, or **78.9%** of executed
 files and **52.2%** of the matrix.
+
+SharedArrayBuffer backing stores now carry Arc-shared bytes and FIFO waiter
+lists across independent test262 worker VMs. The host supports agent start,
+broadcast, receive, report, sleep, and monotonic time, while runner metadata
+selects the main agent's `CanBlock` mode. Condvar-backed `Atomics.wait` and
+`notify` cover Number/BigInt waitable views, timeout and count conversion,
+non-shared notification, and ordered wakeups. Exact admission raises the
+focused path to **279 pass / 0 fail / 110 skip / 389 total**; the remaining 110
+files are 101 `waitAsync`, 5 `pause`, and 4 resizable-buffer cases. The
+supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
+total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

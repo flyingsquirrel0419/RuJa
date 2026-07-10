@@ -2636,12 +2636,167 @@ fn test262_detach_array_buffer(
     }
 }
 
+fn test262_agent_start(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let source = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    let cluster = vm.agent_cluster.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    cluster.broadcasts.lock().push(sender);
+    std::thread::Builder::new()
+        .name("ruja-test262-agent".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let mut worker = match Vm::new() {
+                Ok(worker) => worker,
+                Err(error) => {
+                    cluster
+                        .reports
+                        .lock()
+                        .push_back(format!("agent initialization failed: {error}"));
+                    return;
+                }
+            };
+            worker.agent_cluster = cluster.clone();
+            worker.agent_broadcast_rx = Some(receiver);
+            worker.agent_can_block = true;
+            if let Err(error) = worker.run(&source) {
+                cluster
+                    .reports
+                    .lock()
+                    .push_back(format!("agent execution failed: {error}"));
+            }
+        })
+        .map_err(|error| Error::internal(format!("failed to spawn test262 agent: {error}")))?;
+    Ok(Value::Undefined)
+}
+
+fn test262_agent_broadcast(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    let Value::Object(idx) = value else {
+        return Err(Error::type_err(
+            "$262.agent.broadcast requires SharedArrayBuffer",
+        ));
+    };
+    let broadcast = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return None;
+        };
+        if !buffer.shared {
+            return None;
+        }
+        Some(crate::vm::AgentBroadcast {
+            bytes: buffer.bytes.clone(),
+            waiters: buffer.waiters.clone(),
+        })
+    });
+    let broadcast = broadcast
+        .ok_or_else(|| Error::type_err("$262.agent.broadcast requires SharedArrayBuffer"))?;
+    vm.agent_cluster
+        .broadcasts
+        .lock()
+        .retain(|sender| sender.send(broadcast.clone()).is_ok());
+    Ok(Value::Undefined)
+}
+
+fn test262_agent_receive_broadcast(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err(
+            "$262.agent.receiveBroadcast requires a callback",
+        ));
+    }
+    let receiver = vm.agent_broadcast_rx.take().ok_or_else(|| {
+        Error::type_err("$262.agent.receiveBroadcast is only available in worker agents")
+    })?;
+    let broadcast = receiver
+        .recv()
+        .map_err(|_| Error::internal("test262 agent broadcast channel closed"))?;
+    vm.agent_broadcast_rx = Some(receiver);
+    let shared = shared_array_buffer_from_agent_broadcast(vm, broadcast)?;
+    vm.call_function(&callback, &[shared], Some(Value::Undefined))?;
+    Ok(Value::Undefined)
+}
+
+fn test262_agent_report(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let report = vm.to_string(args.first().unwrap_or(&Value::Undefined))?;
+    vm.agent_cluster
+        .reports
+        .lock()
+        .push_back(report.to_string());
+    Ok(Value::Undefined)
+}
+
+fn test262_agent_get_report(
+    vm: &mut Vm,
+    _args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    Ok(vm
+        .agent_cluster
+        .reports
+        .lock()
+        .pop_front()
+        .map(|report| Value::String(Arc::from(report)))
+        .unwrap_or(Value::Null))
+}
+
+fn test262_agent_sleep(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let milliseconds = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
+    if milliseconds.is_finite() && milliseconds > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(milliseconds / 1000.0));
+    }
+    Ok(Value::Undefined)
+}
+
+fn test262_agent_monotonic_now(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    Ok(Value::Number(
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_secs_f64()
+            * 1000.0,
+    ))
+}
+
+fn test262_agent_leaving(_vm: &mut Vm, _args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Undefined)
+}
+
 fn install_test262_host(vm: &mut Vm) -> error::Result<()> {
     let host = vm.new_object()?;
     let create_realm = vm.new_native_function("createRealm", test262_create_realm, 0)?;
     let eval_script = vm.new_native_function("evalScript", test262_eval_script, 1)?;
     let detach_array_buffer =
         vm.new_native_function("detachArrayBuffer", test262_detach_array_buffer, 1)?;
+    let agent = vm.new_object()?;
+    let agent_methods: &[(&str, NativeFn, usize)] = &[
+        ("start", test262_agent_start, 1),
+        ("broadcast", test262_agent_broadcast, 1),
+        ("receiveBroadcast", test262_agent_receive_broadcast, 1),
+        ("report", test262_agent_report, 1),
+        ("getReport", test262_agent_get_report, 0),
+        ("sleep", test262_agent_sleep, 1),
+        ("monotonicNow", test262_agent_monotonic_now, 0),
+        ("leaving", test262_agent_leaving, 0),
+    ];
+    let mut installed_agent_methods = Vec::with_capacity(agent_methods.len());
+    for (name, function, length) in agent_methods {
+        installed_agent_methods.push((*name, vm.new_native_function(name, *function, *length)?));
+    }
+    vm.heap.with_obj(agent.0, |obj| {
+        let mut props = obj.props().lock();
+        for (name, function) in installed_agent_methods {
+            props.insert(PropertyKey::from(name), data_prop(Value::Object(function)));
+        }
+    });
     vm.heap.with_obj(host.0, |obj| {
         let mut props = obj.props().lock();
         props.insert(
@@ -2660,6 +2815,7 @@ fn install_test262_host(vm: &mut Vm) -> error::Result<()> {
             PropertyKey::from("global"),
             data_prop(vm.global_this.clone()),
         );
+        props.insert(PropertyKey::from("agent"), data_prop(Value::Object(agent)));
     });
     define_global(vm, "$262", Value::Object(host));
     Ok(())

@@ -10,8 +10,14 @@
   the backing-buffer mutex across its complete read/modify/write sequence,
   accepts mutable ArrayBuffer and SharedArrayBuffer backing stores, preserves
   coercion and validation order, and permits `load` on immutable buffers.
-  Blocking `wait`/`notify`, `waitAsync`, `pause`, and multi-agent execution
-  remain unsupported.
+  `notify` and blocking `wait` use a FIFO waiter list and Condvar wakeups with
+  count, timeout, Number/BigInt, and `CanBlock` semantics. `waitAsync` and
+  `pause` remain unsupported.
+- SharedArrayBuffer backing bytes and waiter lists now use shared `Arc` storage.
+  The test262 host can start independent worker VMs, broadcast one SAB backing
+  store into each worker heap, collect reports, sleep, and expose monotonic
+  time. This exercises real cross-thread wait/notify behavior instead of
+  emulating agents inside one VM.
 - `%TypedArray%.prototype.fill` now writes Number and BigInt elements through
   ArrayBuffer and SharedArrayBuffer views with offset/range handling and
   immutable-buffer rejection.
@@ -20,7 +26,7 @@
   `@@toStringTag`, and species-aware `slice()`. Fixed-length shared buffers
   back TypedArray and DataView views without detachment, while ordinary
   ArrayBuffer accessors, transfer methods, and immutable operations reject the
-  shared brand. Growable SharedArrayBuffer and Atomics remain unsupported.
+  shared brand. Growable SharedArrayBuffer remains unsupported.
 - `FinalizationRegistry` now stores weak registration targets and unregister
   tokens alongside strongly traced held values and cleanup callbacks. GC sweep
   moves dead targets into cleanup jobs, unregister removes every matching
@@ -75,6 +81,12 @@
 
 ### Test tooling
 
+- `tools/test262_support.py` now forwards `CanBlockIsTrue` and
+  `CanBlockIsFalse` metadata to the RuJa host. Exact-path admission adds
+  `Atomics.notify` and `Atomics.wait`, raising the focused Atomics path to
+  **279 pass / 0 fail / 110 skip / 389 total**. The remaining files are 101
+  `waitAsync`, 5 `pause`, and 4 resizable-buffer cases. The supported language
+  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
 - The runner and analyzer now keep `Atomics`, `Atomics.pause`, and
   `Atomics.waitAsync` behind global feature gates, then admit only the ten
   completed synchronous operation directories and three Atomics object-surface

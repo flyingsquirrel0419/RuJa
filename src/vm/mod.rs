@@ -22,6 +22,25 @@ use std::sync::Arc;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
+#[derive(Clone)]
+pub(crate) struct AgentBroadcast {
+    pub bytes: Arc<Mutex<Vec<u8>>>,
+    pub waiters: Arc<
+        Mutex<
+            std::collections::HashMap<
+                usize,
+                std::collections::VecDeque<Arc<crate::value::AtomicsWaiter>>,
+            >,
+        >,
+    >,
+}
+
+#[derive(Default)]
+pub(crate) struct AgentCluster {
+    pub broadcasts: Mutex<Vec<std::sync::mpsc::Sender<AgentBroadcast>>>,
+    pub reports: Mutex<std::collections::VecDeque<String>>,
+}
+
 #[allow(dead_code)]
 pub struct Vm {
     pub(crate) heap: Heap,
@@ -112,6 +131,9 @@ pub struct Vm {
     /// Tagged-template object cache keyed by (chunk ptr, ip). Per spec the
     /// same template-literal site returns the same frozen template object.
     pub(crate) template_cache: std::collections::HashMap<(usize, usize), Value>,
+    pub(crate) agent_cluster: Arc<AgentCluster>,
+    pub(crate) agent_broadcast_rx: Option<std::sync::mpsc::Receiver<AgentBroadcast>>,
+    pub(crate) agent_can_block: bool,
 }
 
 pub struct WellKnownSymbols {
@@ -448,6 +470,9 @@ impl Vm {
             fuel: None,
             max_heap_objects: 0,
             template_cache: std::collections::HashMap::new(),
+            agent_cluster: Arc::new(AgentCluster::default()),
+            agent_broadcast_rx: None,
+            agent_can_block: false,
         };
         vm.symbol_descriptions.insert(
             vm.well_known_symbols.iterator,
@@ -518,6 +543,13 @@ impl Vm {
     /// between ticks. Coarse and cooperative, not preemption.
     pub fn set_fuel(&mut self, fuel: Option<i64>) {
         self.fuel = fuel;
+    }
+
+    /// Configure whether the current agent may synchronously suspend in
+    /// `Atomics.wait`. Browser main agents normally disable this while worker
+    /// agents enable it.
+    pub fn set_agent_can_block(&mut self, can_block: bool) {
+        self.agent_can_block = can_block;
     }
 
     /// Set the maximum number of live heap objects. When this limit is

@@ -42,10 +42,18 @@ fn print_value(vm: &mut Vm, v: &Value) {
     }
 }
 
+fn new_vm() -> Vm {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    if let Ok(value) = env::var("RUJA_AGENT_CAN_BLOCK") {
+        vm.set_agent_can_block(value == "1" || value.eq_ignore_ascii_case("true"));
+    }
+    vm
+}
+
 fn run_file(path: &str) -> i32 {
     match fs::read_to_string(path) {
         Ok(src) => {
-            let mut vm = Vm::new().expect("failed to initialize VM");
+            let mut vm = new_vm();
             match vm.run(&src) {
                 Ok(_) => 0,
                 Err(e) => {
@@ -62,7 +70,7 @@ fn run_file(path: &str) -> i32 {
 }
 
 fn run_eval(code: &str) -> i32 {
-    let mut vm = Vm::new().expect("failed to initialize VM");
+    let mut vm = new_vm();
     match vm.run(code) {
         Ok(v) => {
             print_value(&mut vm, &v);
@@ -76,7 +84,7 @@ fn run_eval(code: &str) -> i32 {
 }
 
 fn repl() -> i32 {
-    let mut vm = Vm::new().expect("failed to initialize VM");
+    let mut vm = new_vm();
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut buffer = String::new();

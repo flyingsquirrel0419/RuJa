@@ -62,6 +62,25 @@ class AsyncResultTests(unittest.TestCase):
         self.assertIn("debug", error)
 
 
+class CanBlockEnvironmentTests(unittest.TestCase):
+    def test_can_block_flags_are_forwarded_to_ruja(self):
+        result = subprocess.CompletedProcess(
+            ["ruja", "test.js"], 0, stdout="", stderr=""
+        )
+        for flag, expected in (("CanBlockIsTrue", "1"), ("CanBlockIsFalse", "0")):
+            with patch(
+                "test262_support.subprocess.run", return_value=result
+            ) as run_process:
+                self.assertEqual(
+                    execute_source("", {"flags": [flag]}, "ruja"),
+                    ("pass", ""),
+                )
+                self.assertEqual(
+                    run_process.call_args.kwargs["env"]["RUJA_AGENT_CAN_BLOCK"],
+                    expected,
+                )
+
+
 class HarnessAssemblyTests(unittest.TestCase):
     def test_strict_directive_precedes_async_harness_in_both_tools(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -280,12 +299,15 @@ class SharedArrayBufferAdmissionTests(unittest.TestCase):
 
 
 class AtomicsSyncAdmissionTests(unittest.TestCase):
-    def test_sync_atomics_paths_do_not_admit_waiting_operations(self):
+    def test_supported_atomics_paths_exclude_async_wait_and_pause(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             operation = root / "test/built-ins/Atomics/compareExchange/case.js"
             surface = root / "test/built-ins/Atomics/Symbol.toStringTag.js"
             wait = root / "test/built-ins/Atomics/wait/case.js"
+            notify = root / "test/built-ins/Atomics/notify/case.js"
+            wait_async = root / "test/built-ins/Atomics/waitAsync/case.js"
+            pause = root / "test/built-ins/Atomics/pause/case.js"
             outside = root / "test/built-ins/Other/case.js"
             meta = {
                 "flags": [],
@@ -306,7 +328,10 @@ class AtomicsSyncAdmissionTests(unittest.TestCase):
                 try:
                     self.assertFalse(tool.should_skip(meta, operation))
                     self.assertFalse(tool.should_skip(meta, surface))
-                    self.assertTrue(tool.should_skip(meta, wait))
+                    self.assertFalse(tool.should_skip(meta, wait))
+                    self.assertFalse(tool.should_skip(meta, notify))
+                    self.assertTrue(tool.should_skip(meta, wait_async))
+                    self.assertTrue(tool.should_skip(meta, pause))
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:
                     tool.TEST262 = original_root

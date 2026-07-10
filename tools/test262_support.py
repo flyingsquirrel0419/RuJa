@@ -63,8 +63,18 @@ def execute_source(source, meta, ruja, timeout=8):
             test_file.write(source)
             path = test_file.name
         try:
+            process_env = os.environ.copy()
+            flags = meta.get("flags", [])
+            if "CanBlockIsTrue" in flags:
+                process_env["RUJA_AGENT_CAN_BLOCK"] = "1"
+            elif "CanBlockIsFalse" in flags:
+                process_env["RUJA_AGENT_CAN_BLOCK"] = "0"
             result = subprocess.run(
-                [ruja, path], capture_output=True, text=True, timeout=timeout
+                [ruja, path],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=process_env,
             )
         finally:
             os.unlink(path)

@@ -38,9 +38,9 @@ and `withResolvers`,
 destructuring,
 getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, fixed-length SharedArrayBuffer,
-synchronous Atomics operations, TypedArray constructors/indexing, BigInt,
-Date, regex, and more. RuJa does not claim full ES conformance — conformance is
-scoped to this subset. See
+synchronous Atomics operations including worker `wait`/`notify`, TypedArray
+constructors/indexing, BigInt, Date, regex, and more. RuJa does not claim full
+ES conformance — conformance is scoped to this subset. See
 [test262 conformance](docs/test262.md#supported-subset) for the exact
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
