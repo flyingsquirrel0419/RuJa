@@ -1490,10 +1490,18 @@ impl Vm {
         }
         let done = self.get_property(&result, "done")?.is_truthy();
         if !done {
+            if await_result {
+                let value = self.get_property(&result, "value")?;
+                let value = self.await_value(value)?;
+                result = crate::builtins::regexp::gen_result(self, value, false, false)?;
+            }
             return Ok(DelegateOutcome::Yield(result));
         }
         self.mark_iterator_done(it);
-        let value = self.get_property(&result, "value")?;
+        let mut value = self.get_property(&result, "value")?;
+        if await_result {
+            value = self.await_value(value)?;
+        }
         if return_completion {
             Ok(DelegateOutcome::Return(value))
         } else {
@@ -1861,9 +1869,8 @@ impl Vm {
         self.iterator_next(it)
     }
 
-    /// Await a value: if it is a pending Promise, drain microtasks until it
-    /// settles and return the settled value (rejecting on rejection); otherwise
-    /// return the value as-is.
+    /// Await a value by resolving objects through their observable `then`
+    /// method, then draining Promise jobs until the resulting Promise settles.
     pub(crate) fn await_value(&mut self, v: Value) -> error::Result<Value> {
         if let Value::Object(idx) = &v {
             let is_promise = self
@@ -1882,6 +1889,39 @@ impl Vm {
                     return Err(Error::thrown(result, &self.heap));
                 }
                 return Ok(result);
+            }
+
+            let then = self.get_property(&v, "then")?;
+            if crate::builtins::is_callable(&then, &self.heap) {
+                let ctor = self.promise_ctor.clone();
+                let capability = crate::builtins::new_promise_capability(self, ctor)?;
+                let pins = self.pin_many(&[
+                    v.clone(),
+                    then.clone(),
+                    capability.promise.clone(),
+                    capability.resolve.clone(),
+                    capability.reject.clone(),
+                ]);
+                let call_result = self.call_function(
+                    &then,
+                    &[capability.resolve.clone(), capability.reject.clone()],
+                    Some(v),
+                );
+                if let Err(error) = call_result {
+                    let reason = error
+                        .thrown_value
+                        .clone()
+                        .unwrap_or_else(|| Value::String(Arc::from(error.message.as_str())));
+                    if let Err(reject_error) =
+                        self.call_function(&capability.reject, &[reason], Some(Value::Undefined))
+                    {
+                        self.unpin_many(pins);
+                        return Err(reject_error);
+                    }
+                }
+                let awaited = self.await_value(capability.promise.clone());
+                self.unpin_many(pins);
+                return awaited;
             }
         }
         Ok(v)

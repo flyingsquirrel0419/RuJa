@@ -12,7 +12,7 @@ use crate::bytecode::{Chunk, Op};
 use crate::environment as env;
 use crate::error::{self, Error};
 use crate::gc::Heap;
-use crate::value::{GcIdx, HeapObj, PromiseStatus, PropertyKey, Value};
+use crate::value::{GcIdx, HeapObj, PropertyKey, Value};
 use indexmap::IndexMap;
 use num_traits::Zero;
 use parking_lot::Mutex;

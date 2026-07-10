@@ -305,8 +305,12 @@ Focused async object method-definition diagnostic:
 classification instead of treating an empty process result as success. Across
 `language/expressions/object/method-definition/`, the opt-in diagnostic moves
 from **238 pass / 65 fail / 0 skip** before async-generator delegation fixes to
-**286 pass / 17 fail / 0 skip**. Default conformance runs retain **202 pass / 0
-fail / 101 skip** until those 17 engine failures are fixed; the diagnostic is
+**286 pass / 17 fail / 0 skip**, then to **296 pass / 7 fail / 0 skip** after
+`await` begins assimilating generic thenables and async `yield*` rewraps the
+awaited delegated value instead of forwarding its raw iterator-result object.
+Synchronous `yield*` still forwards the original result without observing its
+`value` getter. Default conformance runs retain **202 pass / 0 fail / 101
+skip** until the seven remaining engine failures are fixed; the diagnostic is
 not used to inflate the supported-subset rate.
 
 Focused generator assignment destructuring local check:

@@ -129,6 +129,11 @@
 
 ### Runtime hardening
 
+- `await` now assimilates generic thenables through their observable `then`
+  getter and call, including rejection and abrupt completion. Async `yield*`
+  awaits delegated iterator results and values, then creates a fresh outer
+  iterator-result object; synchronous `yield*` continues forwarding the raw
+  delegated result without observing its `value` getter.
 - `String.prototype.match`, `replace`, `replaceAll`, and `split` now consult
   their well-known Symbol dispatch hooks only when the pattern/separator is an
   object. Primitive String, Number, Boolean, and BigInt values proceed through
@@ -185,10 +190,11 @@ Current supported subset count: **9560 pass / 0 fail / 10878 skip / 0 timeout**.
   `built-ins/String` comparison reports **1130 admitted files / 0 status
   regressions** against the prior green baseline.
 - **Async object method-definition diagnostic**: with async execution enabled,
-  the complete 303-file object method-definition path improves from **238 pass
-  / 65 fail** before async-generator delegation fixes to **286 pass / 17 fail**.
-  Default conformance runs still skip the 101 `flags: [async]` files until the
-  remaining engine failures are resolved.
+  the complete 303-file object method-definition path first improved from
+  **238 pass / 65 fail** to **286 pass / 17 fail** with async-generator
+  delegation, then to **296 pass / 7 fail** after thenable assimilation and
+  async delegated-result rewrapping. Default conformance runs still skip the
+  101 `flags: [async]` files until the remaining engine failures are resolved.
 - **Complete synchronous `yield*` semantics and admission**: delegated
   iteration now preserves raw result objects, completion values, method
   receiver/arguments, getter and call errors, protocol-violation cleanup, and

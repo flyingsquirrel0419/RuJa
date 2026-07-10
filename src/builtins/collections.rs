@@ -1705,10 +1705,10 @@ fn create_promise_resolving_function(
     create_bound_native_function(vm, "", "", func, 1, promise)
 }
 
-struct PromiseCapability {
-    promise: Value,
-    resolve: Value,
-    reject: Value,
+pub(crate) struct PromiseCapability {
+    pub(crate) promise: Value,
+    pub(crate) resolve: Value,
+    pub(crate) reject: Value,
 }
 
 pub(crate) fn promise_capability_executor(
@@ -1748,7 +1748,7 @@ pub(crate) fn promise_capability_executor(
     })
 }
 
-fn new_promise_capability(vm: &mut Vm, ctor: Value) -> error::Result<PromiseCapability> {
+pub(crate) fn new_promise_capability(vm: &mut Vm, ctor: Value) -> error::Result<PromiseCapability> {
     if !vm.is_constructor_value(&ctor) {
         return Err(Error::type_err(
             "Promise capability receiver is not a constructor",

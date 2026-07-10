@@ -468,6 +468,28 @@ fn async_generator_await_inside_body() {
 }
 
 #[test]
+fn await_thenable_rejection_and_getter_error_propagate() {
+    let src = r#"
+        async function rejectedThenable() {
+            try {
+                await { then(resolve, reject) { reject("rejected"); } };
+            } catch (error) {
+                return error;
+            }
+        }
+        async function throwingGetter() {
+            try {
+                await { get then() { throw "getter"; } };
+            } catch (error) {
+                return error;
+            }
+        }
+        (await rejectedThenable()) + "|" + (await throwingGetter());
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("rejected|getter")));
+}
+
+#[test]
 fn async_generator_done_signal() {
     let src = r#"
         async function* gen() { yield "x"; }
@@ -521,6 +543,78 @@ fn async_generator_yield_star_selects_async_then_sync_iterator() {
         [a1.value, a2.value, b1.value, b2.value, log.join(",")].join("|");
     "#;
     assert_eq!(run(src), Value::String(Arc::from("1|9|2|8|async,sync")));
+}
+
+#[test]
+fn async_generator_yield_star_awaits_thenable_and_rewraps_result() {
+    let src = r#"
+        let log = [];
+        let delegated;
+        let iterable = {
+            [Symbol.asyncIterator]() {
+                return {
+                    next() {
+                        return {
+                            name: "thenable",
+                            get then() {
+                                log.push("get then");
+                                return function(resolve) {
+                                    log.push("call then:" + this.name + ":" + arguments.length);
+                                    delegated = {
+                                        get done() { log.push("get done"); return false; },
+                                        get value() { log.push("get value"); return 7; }
+                                    };
+                                    resolve(delegated);
+                                };
+                            }
+                        };
+                    }
+                };
+            }
+        };
+        async function* outer() { yield* iterable; }
+        let result = await outer().next();
+        [
+            result !== delegated,
+            result.value,
+            result.done,
+            log.join(",")
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "true|7|false|get then,call then:thenable:2,get done,get value"
+        ))
+    );
+}
+
+#[test]
+fn async_generator_yield_star_rewraps_sync_iterator_result() {
+    let src = r#"
+        let log = [];
+        let delegated;
+        let iterable = {
+            [Symbol.iterator]() {
+                return {
+                    next() {
+                        delegated = {
+                            get done() { log.push("get done"); return false; },
+                            get value() { log.push("get value"); return 8; }
+                        };
+                        return delegated;
+                    }
+                };
+            }
+        };
+        async function* outer() { yield* iterable; }
+        let result = await outer().next();
+        [result !== delegated, result.value, result.done, log.join(",")].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("true|8|false|get done,get value"))
+    );
 }
 
 #[test]
@@ -579,7 +673,8 @@ fn yield_star_forwards_resume_value() {
 #[test]
 fn yield_star_forwards_iterator_result_objects_and_completion_values() {
     let src = r#"
-        let first = { value: 1 };
+        let valueGets = 0;
+        let first = { get value() { valueGets++; return 1; } };
         let final = { value: 42, done: true };
         let calls = [];
         let iterator = {
@@ -596,6 +691,7 @@ fn yield_star_forwards_iterator_result_objects_and_completion_values() {
         [
             yielded === first,
             "done" in yielded,
+            valueGets,
             completed.value,
             completed.done,
             calls.join(",")
@@ -603,7 +699,7 @@ fn yield_star_forwards_iterator_result_objects_and_completion_values() {
     "#;
     assert_eq!(
         run(src),
-        Value::String(Arc::from("true|false|42|true|1:undefined,1:7"))
+        Value::String(Arc::from("true|false|0|42|true|1:undefined,1:7"))
     );
 }
 

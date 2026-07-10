@@ -3287,31 +3287,12 @@ impl Vm {
         Ok(())
     }
 
-    /// `Op::Await`: synchronous await. If the value is a pending Promise, drain
-    /// microtasks until it settles, then push its result (or rethrow rejection).
+    /// `Op::Await`: resolve Promises and generic thenables, then push the
+    /// fulfilled value or rethrow the rejection.
     fn op_await(&mut self) -> error::Result<()> {
         let v = self.stack.pop().unwrap_or(Value::Undefined);
-        if let Value::Object(idx) = &v {
-            let is_promise = self
-                .heap
-                .with_obj(idx.0, |o| matches!(o, HeapObj::Promise(_)));
-            if is_promise {
-                self.run_microtasks()?;
-                let (state, result) = self.heap.with_obj(idx.0, |o| {
-                    if let HeapObj::Promise(p) = o {
-                        (*p.state.lock(), p.result.lock().clone())
-                    } else {
-                        (PromiseStatus::Fulfilled, Value::Undefined)
-                    }
-                });
-                if state == PromiseStatus::Rejected {
-                    return Err(Error::thrown(result, &self.heap));
-                }
-                self.stack.push(result);
-                return Ok(());
-            }
-        }
-        self.stack.push(v);
+        let result = self.await_value(v)?;
+        self.stack.push(result);
         Ok(())
     }
 
