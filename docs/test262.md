@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.0% of all matrix files; 77.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9838 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11249 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
