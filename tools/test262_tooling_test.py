@@ -106,8 +106,18 @@ class AsyncAdmissionTests(unittest.TestCase):
             async_arrow = (
                 root / "test/language/expressions/async-arrow-function/case.js"
             )
+            async_function_expression = (
+                root / "test/language/expressions/async-function/case.js"
+            )
+            async_function_declaration = (
+                root / "test/language/statements/async-function/case.js"
+            )
             outside = root / "test/language/expressions/async-arrow/case.js"
             meta = {"flags": ["async"], "features": []}
+            feature_meta = {
+                "flags": [],
+                "features": ["async-functions", "default-parameters"],
+            }
 
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -117,7 +127,20 @@ class AsyncAdmissionTests(unittest.TestCase):
                 try:
                     self.assertFalse(tool.should_skip(meta, object_method))
                     self.assertFalse(tool.should_skip(meta, async_arrow))
+                    self.assertFalse(
+                        tool.should_skip(meta, async_function_expression)
+                    )
+                    self.assertFalse(
+                        tool.should_skip(meta, async_function_declaration)
+                    )
                     self.assertTrue(tool.should_skip(meta, outside))
+                    self.assertFalse(
+                        tool.should_skip(feature_meta, async_function_expression)
+                    )
+                    self.assertFalse(
+                        tool.should_skip(feature_meta, async_function_declaration)
+                    )
+                    self.assertTrue(tool.should_skip(feature_meta, outside))
                 finally:
                     tool.TEST262 = original_root
                     tool.RUN_ASYNC_TESTS = original_run_async

@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.5% of all matrix files; 77.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9703 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9838 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -342,6 +342,15 @@ pass / 0 fail / 42 skip** to **60 pass / 0 fail / 0 skip** under the default
 runner, and the analyzer reports no failure buckets. The supported subset
 rises to **9703 pass / 0 fail / 10736 skip / 20439 total** while unrelated
 async paths remain gated.
+
+Focused async function-form admission:
+runner/analyzer admission removes `async-functions`, default-parameter, and
+async-completion gates only on `language/expressions/async-function/` and
+`language/statements/async-function/`. Across the 93 expression files and 74
+declaration files, the default run moves from **32 pass / 0 fail / 135 skip**
+to **167 pass / 0 fail / 0 skip**, and the analyzer reports no failure buckets.
+The supported subset rises to **9838 pass / 0 fail / 10601 skip / 20439
+total** while unrelated async paths remain gated.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
