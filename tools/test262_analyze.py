@@ -239,11 +239,21 @@ CLASS_ELEMENTS_FEATURES = {
     "class-static-fields-private",
     "class-static-fields-public",
     "class-static-methods-private",
+    "destructuring-binding",
     "generators",
+    "optional-chaining",
     "Proxy",
     "Symbol",
     "Symbol.asyncIterator",
     "Symbol.iterator",
+}
+
+OPTIONAL_CHAINING_PREFIXES = (
+    "language/expressions/optional-chaining/",
+)
+
+OPTIONAL_CHAINING_FEATURES = {
+    "optional-chaining",
 }
 
 CLASS_DEFINITION_PREFIXES = (
@@ -561,6 +571,13 @@ def class_elements_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(CLASS_ELEMENTS_PREFIXES)
 
+def optional_chaining_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(OPTIONAL_CHAINING_PREFIXES)
+
 def class_definition_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -686,6 +703,8 @@ def should_skip(meta, path=None):
         feats.difference_update(REFERENCE_PRIVATE_EXPRESSION_FEATURES)
     if path is not None and class_elements_path(path):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
+    if path is not None and optional_chaining_path(path):
+        feats.difference_update(OPTIONAL_CHAINING_FEATURES)
     if path is not None and class_definition_path(path):
         feats.difference_update(CLASS_DEFINITION_FEATURES)
     if path is not None and arrow_function_path(path):
@@ -717,6 +736,7 @@ def should_skip(meta, path=None):
     flags = meta.get('flags', [])
     async_admitted = path is not None and (
         class_elements_path(path)
+        or optional_chaining_path(path)
         or class_definition_path(path)
         or object_method_definition_path(path)
         or async_arrow_function_path(path)

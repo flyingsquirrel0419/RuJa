@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 51.5% of all matrix files; 78.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11545 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -286,6 +286,15 @@ skip / 20439 total**. These feature exceptions remain scoped to
 `test262-full` `29106363581` confirm the admission. The full aggregate is
 **24984 pass / 6830 fail / 11 timeout / 0 error / 16642 skip / 48467 total /
 31825 ran**, or **78.5%** of executed files and **51.5%** of the matrix.
+Optional-chain compilation now shares a single short-circuit target across
+member, call, and private-field tails. Grouped member calls and super optional
+calls preserve their Reference receiver, while optional-chain tagged templates
+and private deletes are rejected during parsing. Optional delete short-circuits
+to `true` or deletes the final property on a live chain. The full
+`language/expressions/optional-chaining/` path reports **38 pass / 0 fail / 0
+skip**, and class-elements reaches **2957 pass / 0 fail / 5 skip / 2962
+total** after admitting its optional-chaining and destructuring cases. The
+supported subset rises to **11589 pass / 0 fail / 8850 skip / 20439 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

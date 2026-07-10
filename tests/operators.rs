@@ -1195,6 +1195,52 @@ fn optional_chain_deep() {
 }
 
 #[test]
+fn optional_chain_continues_through_non_optional_segments() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            function key() { calls++; return "x"; }
+            var root = null;
+            var member = root?.a.b;
+            var computed = root?.a[key()].b;
+            var call = root?.method(key()).result;
+            [member, computed, call, calls].join("|");
+        "#),
+        Value::String(Arc::from("|||0"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var root = { a: undefined };
+            try { root?.a.b; } catch (error) { error.name; }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var root = null;
+            try { (root?.a).b; } catch (error) { error.name; }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+}
+
+#[test]
+fn delete_optional_chain_deletes_only_after_a_live_base() {
+    assert_eq!(run("delete null?.x;"), Value::Bool(true));
+    assert_eq!(
+        run("var object = { x: 1 }; var deleted = delete object?.x; deleted && !('x' in object);"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run("var object = null; var calls = 0; delete object?.[calls++]; calls;"),
+        Value::Number(0.0)
+    );
+    assert!(run_err("class C { #x; remove(value) { delete value?.#x; } }").contains("SyntaxError"));
+}
+
+#[test]
 fn optional_chain_is_not_assignment_target() {
     for src in [
         "var a = {}; a?.b = 1;",
@@ -1305,6 +1351,14 @@ fn optional_method_call_preserves_receiver_when_present() {
     );
     assert_eq!(
         run("var o = {x: 3, m: function(a){ return this.x + a; }}; o.m?.(...[4]);"),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run("var o = {x: 3, m: function(a){ return this.x + a; }}; (o?.m)(4);"),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run("var o = {x: 3, m: function(a){ return this.x + a; }}; (o?.m)?.(4);"),
         Value::Number(7.0)
     );
 }

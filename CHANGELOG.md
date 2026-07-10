@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Optional chains now compile as one shared short-circuit boundary instead of
+  closing each `?.` jump at the current member. Non-optional member/call tails
+  are skipped with their arguments, grouped optional member calls preserve
+  their Reference receiver, `super.method?.()` preserves `this`, and private
+  forms such as `obj?.#field` and `obj?.receiver.#field` follow the same chain.
+  Optional delete now removes the final property only on a live chain, while
+  private delete and optional-chain tagged templates are rejected as early
+  errors.
 - Async-from-sync iteration now follows `AsyncFromSyncIteratorContinuation`:
   it creates an intrinsic Promise capability, observes and propagates abrupt
   Promise `constructor` access, and unwraps iterator values with the required
@@ -37,6 +45,11 @@
 
 ### Test tooling
 
+- The complete `language/expressions/optional-chaining/` path is admitted at
+  **38 pass / 0 fail / 0 skip**, including its async cases. Class-elements now
+  also admit optional-chaining and destructuring coverage, reaching **2957
+  pass / 0 fail / 5 skip / 2962 total**. Together these add 44 tests to the
+  supported subset at **11589 pass / 0 fail / 8850 skip / 20439 total**.
 - The class-elements paths now admit their fully green `Symbol`,
   `Symbol.iterator`, and `Symbol.asyncIterator` coverage. The focused paths
   reach **2951 pass / 0 fail / 11 skip / 2962 total**, adding 256 tests to the

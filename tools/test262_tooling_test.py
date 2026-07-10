@@ -126,6 +126,9 @@ class AsyncAdmissionTests(unittest.TestCase):
             class_element_declaration = (
                 root / "test/language/statements/class/elements/case.js"
             )
+            optional_chaining = (
+                root / "test/language/expressions/optional-chaining/case.js"
+            )
             class_definition = (
                 root / "test/language/statements/class/definition/case.js"
             )
@@ -157,10 +160,16 @@ class AsyncAdmissionTests(unittest.TestCase):
                 "features": [
                     "async-functions",
                     "class-methods-private",
+                    "destructuring-binding",
+                    "optional-chaining",
                     "Symbol",
                     "Symbol.asyncIterator",
                     "Symbol.iterator",
                 ],
+            }
+            optional_chaining_meta = {
+                "flags": ["async"],
+                "features": ["optional-chaining"],
             }
 
             for tool in (test262_runner, test262_analyze):
@@ -191,10 +200,14 @@ class AsyncAdmissionTests(unittest.TestCase):
                     self.assertFalse(
                         tool.should_skip(class_element_meta, class_element_declaration)
                     )
+                    self.assertFalse(
+                        tool.should_skip(optional_chaining_meta, optional_chaining)
+                    )
                     self.assertFalse(tool.should_skip(meta, class_definition))
                     self.assertTrue(tool.should_skip(meta, outside))
                     self.assertTrue(tool.should_skip(async_generator_meta, outside))
                     self.assertTrue(tool.should_skip(class_element_meta, outside))
+                    self.assertTrue(tool.should_skip(optional_chaining_meta, outside))
                     self.assertFalse(
                         tool.should_skip(feature_meta, async_function_expression)
                     )

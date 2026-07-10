@@ -1288,6 +1288,61 @@ fn private_methods_are_not_writable() {
 }
 
 #[test]
+fn optional_chains_support_private_fields_and_methods() {
+    assert_eq!(
+        run(r#"
+            class C {
+              #field = "field";
+              #method() { return this.#field; }
+              static readField(value) { return value?.#field; }
+              static callMethod(value) { return value?.#method(); }
+              readNested(value) { return value?.receiver.#field; }
+            }
+            var instance = new C();
+            [
+              C.readField(instance),
+              C.readField(null),
+              C.callMethod(instance),
+              C.callMethod(undefined),
+              instance.readNested({ receiver: instance }),
+              instance.readNested(null)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("field||field||field|"))
+    );
+
+    assert_eq!(
+        run(r#"
+            class C {
+              #field;
+              static read(value) { return value?.receiver.#field; }
+            }
+            try { C.read({ receiver: {} }); } catch (error) { error.name; }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+}
+
+#[test]
+fn optional_super_method_call_preserves_receiver() {
+    assert_eq!(
+        run(r#"
+            var receiver;
+            class Base {
+              method() { receiver = this; }
+            }
+            class Derived extends Base {
+              method() { super.method?.(); }
+            }
+            var instance = new Derived();
+            instance.method();
+            receiver === instance;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_names_follow_identifier_name_grammar() {
     assert_eq!(
         run(

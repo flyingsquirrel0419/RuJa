@@ -81,6 +81,7 @@ pub enum Expr {
     PrivateGet {
         object: Box<Expr>,
         name: Arc<str>,
+        optional: bool,
     },
     /// Private field write: `obj.#name = value`.
     PrivateSet {
@@ -138,6 +139,10 @@ pub enum Expr {
         optional: bool,
         optional_chain: bool,
     },
+    /// A complete optional-chain boundary. Inner Member/Call/PrivateGet nodes
+    /// share one short-circuit target; nested chains in keys/arguments get
+    /// their own wrapper.
+    OptionalChain(Box<Expr>),
     Spread(Box<Expr>),
     Sequence(Vec<Expr>),
     Regex(Arc<str>, Arc<str>),

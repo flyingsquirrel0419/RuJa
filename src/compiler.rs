@@ -1639,7 +1639,7 @@ impl Compiler {
                 if let StmtNode::ExprStmt(expr) = &left.node {
                     match expr {
                         Expr::Ident(name) => self.store_identifier_target_value(name),
-                        Expr::PrivateGet { object, name } => {
+                        Expr::PrivateGet { object, name, .. } => {
                             self.compile_expr(object)?;
                             let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                             self.chunk
@@ -2646,7 +2646,7 @@ impl Compiler {
                     computed,
                 }))
             }
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
@@ -3116,6 +3116,348 @@ impl Compiler {
         Ok(())
     }
 
+    fn optional_chain_continues(expr: &Expr) -> bool {
+        match expr {
+            Expr::Member { optional_chain, .. } | Expr::Call { optional_chain, .. } => {
+                *optional_chain
+            }
+            Expr::PrivateGet {
+                object, optional, ..
+            } => *optional || Self::optional_chain_continues(object),
+            _ => false,
+        }
+    }
+
+    fn emit_optional_chain_nullish_exit(
+        &mut self,
+        stack_values: usize,
+        exit_values: usize,
+        exits: &mut Vec<usize>,
+    ) {
+        self.chunk.emit(Op::Dup, self.current_line);
+        let continue_jump = self.chunk.code.len();
+        self.chunk.emit(Op::JumpIfNotNullish(0), self.current_line);
+        for _ in 0..stack_values {
+            self.chunk.emit(Op::Pop, self.current_line);
+        }
+        for _ in 0..exit_values {
+            self.chunk.emit(Op::Undefined, self.current_line);
+        }
+        let exit_jump = self.chunk.code.len();
+        self.chunk.emit(Op::Jump(0), self.current_line);
+        exits.push(exit_jump);
+        self.chunk.patch_jump(continue_jump, self.chunk.code.len());
+    }
+
+    fn compile_optional_chain_operand(
+        &mut self,
+        expr: &Expr,
+        exits: &mut Vec<usize>,
+        exit_values: usize,
+    ) -> error::Result<()> {
+        if Self::optional_chain_continues(expr) {
+            self.compile_optional_chain_component(expr, exits, exit_values)
+        } else {
+            self.compile_expr(expr)
+        }
+    }
+
+    fn compile_optional_chain_args(&mut self, args: &[Expr]) -> error::Result<bool> {
+        let has_spread = args.iter().any(|arg| matches!(arg, Expr::Spread(_)));
+        if has_spread {
+            self.chunk.emit(Op::NewArray(0), self.current_line);
+            for arg in args {
+                match arg {
+                    Expr::Spread(inner) => {
+                        self.compile_expr(inner)?;
+                        self.chunk.emit(Op::SpreadPush, self.current_line);
+                    }
+                    _ => {
+                        self.compile_expr(arg)?;
+                        self.chunk.emit(Op::ArrayPush, self.current_line);
+                    }
+                }
+            }
+        } else {
+            for arg in args {
+                self.compile_expr(arg)?;
+            }
+        }
+        Ok(has_spread)
+    }
+
+    fn compile_optional_chain_member_key(
+        &mut self,
+        property: &Expr,
+        computed: bool,
+    ) -> error::Result<()> {
+        if computed {
+            self.compile_expr(property)
+        } else {
+            let key = if let Expr::String(value) = property {
+                value.clone()
+            } else {
+                Arc::from("")
+            };
+            let key_idx = self.chunk.add_constant(Value::String(key));
+            self.chunk.emit(Op::Const(key_idx), self.current_line);
+            Ok(())
+        }
+    }
+
+    fn compile_optional_chain_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        call_optional: bool,
+        exits: &mut Vec<usize>,
+        exit_values: usize,
+    ) -> error::Result<()> {
+        match callee {
+            Expr::OptionalChain(inner) => {
+                self.compile_optional_chain_call_target(inner)?;
+                if call_optional {
+                    self.emit_optional_chain_nullish_exit(2, exit_values, exits);
+                }
+                let has_spread = self.compile_optional_chain_args(args)?;
+                if has_spread {
+                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                } else {
+                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                }
+            }
+            Expr::Ident(name) => {
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+                if call_optional {
+                    self.emit_optional_chain_nullish_exit(2, exit_values, exits);
+                }
+                let has_spread = self.compile_optional_chain_args(args)?;
+                if has_spread {
+                    self.chunk.emit(Op::CallRefSpread, self.current_line);
+                } else {
+                    self.chunk.emit(Op::CallRef(args.len()), self.current_line);
+                }
+            }
+            Expr::PrivateGet {
+                object,
+                name,
+                optional,
+            } => {
+                self.compile_optional_chain_operand(object, exits, exit_values)?;
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, exit_values, exits);
+                }
+                self.chunk.emit(Op::Dup, self.current_line);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+                if call_optional {
+                    self.emit_optional_chain_nullish_exit(2, exit_values, exits);
+                }
+                let has_spread = self.compile_optional_chain_args(args)?;
+                if has_spread {
+                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                } else {
+                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                }
+            }
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                ..
+            } if matches!(object.as_ref(), Expr::Super) => {
+                let this_idx = self.intern("this");
+                self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                let super_idx = self.intern("#super");
+                self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                self.chunk.emit(Op::GetProto, self.current_line);
+                self.compile_optional_chain_member_key(property, *computed)?;
+                self.chunk.emit(Op::GetSuperProp, self.current_line);
+                if *optional || call_optional {
+                    self.emit_optional_chain_nullish_exit(2, exit_values, exits);
+                }
+                let has_spread = self.compile_optional_chain_args(args)?;
+                if has_spread {
+                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                } else {
+                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                }
+            }
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                ..
+            } => {
+                self.compile_optional_chain_operand(object, exits, exit_values)?;
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, exit_values, exits);
+                }
+                self.compile_optional_chain_member_key(property, *computed)?;
+                self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                if call_optional {
+                    self.emit_optional_chain_nullish_exit(2, exit_values, exits);
+                }
+                let has_spread = self.compile_optional_chain_args(args)?;
+                if has_spread {
+                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                } else {
+                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                }
+            }
+            _ => {
+                self.compile_optional_chain_operand(callee, exits, exit_values)?;
+                if call_optional {
+                    self.emit_optional_chain_nullish_exit(1, exit_values, exits);
+                }
+                let has_spread = self.compile_optional_chain_args(args)?;
+                if has_spread {
+                    self.chunk.emit(Op::CallSpread, self.current_line);
+                } else {
+                    self.chunk.emit(Op::Call(args.len()), self.current_line);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_optional_chain_component(
+        &mut self,
+        expr: &Expr,
+        exits: &mut Vec<usize>,
+        exit_values: usize,
+    ) -> error::Result<()> {
+        match expr {
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                ..
+            } => {
+                self.compile_optional_chain_operand(object, exits, exit_values)?;
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, exit_values, exits);
+                }
+                self.compile_optional_chain_member_key(property, *computed)?;
+                self.chunk.emit(Op::GetElem, self.current_line);
+            }
+            Expr::PrivateGet {
+                object,
+                name,
+                optional,
+            } => {
+                self.compile_optional_chain_operand(object, exits, exit_values)?;
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, exit_values, exits);
+                }
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+            }
+            Expr::Call {
+                callee,
+                args,
+                optional,
+                ..
+            } => self.compile_optional_chain_call(callee, args, *optional, exits, exit_values)?,
+            _ => self.compile_expr(expr)?,
+        }
+        Ok(())
+    }
+
+    fn compile_optional_chain_call_target(&mut self, expr: &Expr) -> error::Result<()> {
+        let mut exits = Vec::new();
+        match expr {
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                ..
+            } => {
+                self.compile_optional_chain_operand(object, &mut exits, 2)?;
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, 2, &mut exits);
+                }
+                self.compile_optional_chain_member_key(property, *computed)?;
+                self.chunk.emit(Op::GetMethodForCall, self.current_line);
+            }
+            Expr::PrivateGet {
+                object,
+                name,
+                optional,
+            } => {
+                self.compile_optional_chain_operand(object, &mut exits, 2)?;
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, 2, &mut exits);
+                }
+                self.chunk.emit(Op::Dup, self.current_line);
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+            }
+            _ => {
+                self.compile_optional_chain_component(expr, &mut exits, 2)?;
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk.emit(Op::Swap, self.current_line);
+            }
+        }
+        let end = self.chunk.code.len();
+        for jump in exits {
+            self.chunk.patch_jump(jump, end);
+        }
+        Ok(())
+    }
+
+    fn compile_optional_chain_delete(&mut self, expr: &Expr) -> error::Result<()> {
+        if let Expr::Member {
+            object,
+            property,
+            computed,
+            optional,
+            ..
+        } = expr
+        {
+            let mut exits = Vec::new();
+            self.compile_optional_chain_operand(object, &mut exits, 0)?;
+            if *optional {
+                self.emit_optional_chain_nullish_exit(1, 0, &mut exits);
+            }
+            self.compile_optional_chain_member_key(property, *computed)?;
+            self.chunk.emit(Op::DeleteProp, self.current_line);
+            let success_jump = self.chunk.code.len();
+            self.chunk.emit(Op::Jump(0), self.current_line);
+
+            let short_circuit = self.chunk.code.len();
+            for jump in exits {
+                self.chunk.patch_jump(jump, short_circuit);
+            }
+            self.chunk.emit(Op::True, self.current_line);
+            self.chunk.patch_jump(success_jump, self.chunk.code.len());
+        } else {
+            let mut exits = Vec::new();
+            self.compile_optional_chain_component(expr, &mut exits, 1)?;
+            let end = self.chunk.code.len();
+            for jump in exits {
+                self.chunk.patch_jump(jump, end);
+            }
+            self.chunk.emit(Op::Pop, self.current_line);
+            self.chunk.emit(Op::True, self.current_line);
+        }
+        Ok(())
+    }
+
     fn compile_expr(&mut self, expr: &Expr) -> error::Result<()> {
         match expr {
             Expr::Number(n) => {
@@ -3170,6 +3512,14 @@ impl Compiler {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::LoadEnvName(name_idx), self.current_line);
+            }
+            Expr::OptionalChain(inner) => {
+                let mut exits = Vec::new();
+                self.compile_optional_chain_component(inner, &mut exits, 1)?;
+                let end = self.chunk.code.len();
+                for jump in exits {
+                    self.chunk.patch_jump(jump, end);
+                }
             }
             Expr::Update(op, prefix, target) => {
                 // `x++`/`++x`/`x--`/`--x`: evaluate the reference once, read
@@ -3244,7 +3594,7 @@ impl Compiler {
                     _ => {
                         // Identifier target.
                         // Private field target: `obj.#f++` / `++obj.#f`.
-                        if let Expr::PrivateGet { object, name } = target.as_ref() {
+                        if let Expr::PrivateGet { object, name, .. } = target.as_ref() {
                             // Evaluate the private reference base once and
                             // keep it for SetPrivate after GetPrivate consumes
                             // its copy.
@@ -3407,6 +3757,9 @@ impl Compiler {
                                     self.chunk.emit(Op::Const(key_idx), self.current_line);
                                     self.chunk.emit(Op::DeleteProp, self.current_line);
                                 }
+                            }
+                            Expr::OptionalChain(inner) => {
+                                self.compile_optional_chain_delete(inner)?;
                             }
                             #[allow(unreachable_patterns)]
                             _ => {
@@ -3674,6 +4027,23 @@ impl Compiler {
                     return Ok(());
                 }
                 match callee.as_ref() {
+                    Expr::OptionalChain(inner) => {
+                        self.compile_optional_chain_call_target(inner)?;
+                        let mut exits = Vec::new();
+                        if *call_opt {
+                            self.emit_optional_chain_nullish_exit(2, 1, &mut exits);
+                        }
+                        let has_spread = self.compile_optional_chain_args(args)?;
+                        if has_spread {
+                            self.chunk.emit(Op::CallThisSpread, self.current_line);
+                        } else {
+                            self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                        }
+                        let end = self.chunk.code.len();
+                        for jump in exits {
+                            self.chunk.patch_jump(jump, end);
+                        }
+                    }
                     Expr::Ident(name) => {
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
                         let is_eval_call = !*call_opt && &**name == "eval";
@@ -3735,7 +4105,7 @@ impl Compiler {
                         }
                     }
                     // `obj.#method(args)`: call a private method with this=obj.
-                    Expr::PrivateGet { object, name } => {
+                    Expr::PrivateGet { object, name, .. } => {
                         self.compile_expr(object)?; // [obj]
                         for a in args {
                             if let Expr::Spread(_) = a {
@@ -4658,7 +5028,7 @@ impl Compiler {
                     }
                 }
             }
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
@@ -4768,7 +5138,7 @@ impl Compiler {
     fn compile_assign_target_store(&mut self, target: &Expr, value: &Expr) -> error::Result<()> {
         match target {
             // Private field assignment: obj.#name = value
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
@@ -4851,7 +5221,7 @@ impl Compiler {
     fn compile_assign_target(&mut self, target: &Expr) -> error::Result<()> {
         match target {
             Expr::Ident(name) => self.store_identifier_target_value(name),
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
@@ -4906,7 +5276,7 @@ impl Compiler {
     ) -> error::Result<()> {
         let bin = self.assign_bin_op(op);
         match target {
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 self.chunk.emit(Op::Dup, self.current_line);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -5022,7 +5392,7 @@ impl Compiler {
         value: &Expr,
     ) -> error::Result<()> {
         match target {
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 self.chunk.emit(Op::Dup, self.current_line);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));

@@ -2734,10 +2734,13 @@ impl Parser {
                 ));
             }
             let e = self.parse_unary()?;
-            if self.is_strict_context
-                && matches!(op, UnOp::Delete)
-                && matches!(e, Expr::PrivateGet { .. })
-            {
+            let deletes_private = matches!(e, Expr::PrivateGet { .. })
+                || matches!(
+                    &e,
+                    Expr::OptionalChain(inner)
+                        if matches!(inner.as_ref(), Expr::PrivateGet { .. })
+                );
+            if self.is_strict_context && matches!(op, UnOp::Delete) && deletes_private {
                 return Err(error::Error::syntax(
                     "Cannot delete private field".to_string(),
                 ));
@@ -2804,6 +2807,7 @@ impl Parser {
                         e = Expr::PrivateGet {
                             object: Box::new(e),
                             name: Arc::from(name.as_str()),
+                            optional: false,
                         };
                     } else {
                         let name = self.read_property_name()?;
@@ -2822,7 +2826,7 @@ impl Parser {
                 }
                 TokenKind::QuestionDot => {
                     self.advance();
-                    match self.peek() {
+                    match self.peek().clone() {
                         TokenKind::LParen => {
                             self.advance();
                             let args = self.parse_args()?;
@@ -2844,6 +2848,14 @@ impl Parser {
                                 computed: true,
                                 optional: true,
                                 optional_chain: true,
+                            };
+                        }
+                        TokenKind::PrivateName(name) => {
+                            self.advance();
+                            e = Expr::PrivateGet {
+                                object: Box::new(e),
+                                name: Arc::from(name.as_str()),
+                                optional: true,
                             };
                         }
                         _ => {
@@ -2891,6 +2903,11 @@ impl Parser {
                     parenthesized_base = false;
                 }
                 TokenKind::TemplateString { cooked, raw } => {
+                    if !parenthesized_base && Self::continues_optional_chain(&e) {
+                        return Err(error::Error::syntax(
+                            "Optional chain cannot be used as a tagged template".to_string(),
+                        ));
+                    }
                     // Tagged template: tag`str${expr}str`
                     let quasi0: Option<Arc<str>> = cooked.map(|s| Arc::from(s.as_str()));
                     let raw0: Arc<str> = Arc::from(raw.as_str());
@@ -2902,7 +2919,11 @@ impl Parser {
                 _ => break,
             }
         }
-        Ok(e)
+        if Self::continues_optional_chain(&e) {
+            Ok(Expr::OptionalChain(Box::new(e)))
+        } else {
+            Ok(e)
+        }
     }
 
     fn continues_optional_chain(expr: &Expr) -> bool {
@@ -2910,6 +2931,9 @@ impl Parser {
             Expr::Member { optional_chain, .. } | Expr::Call { optional_chain, .. } => {
                 *optional_chain
             }
+            Expr::PrivateGet {
+                object, optional, ..
+            } => *optional || Self::continues_optional_chain(object),
             _ => false,
         }
     }
@@ -4582,7 +4606,8 @@ impl Parser {
             | Expr::Update(_, _, expr)
             | Expr::Spread(expr)
             | Expr::Await(expr)
-            | Expr::YieldDelegate(expr) => {
+            | Expr::YieldDelegate(expr)
+            | Expr::OptionalChain(expr) => {
                 Self::class_field_initializer_contains_arguments_expr(expr)
             }
             Expr::Yield(Some(expr)) => Self::class_field_initializer_contains_arguments_expr(expr),
@@ -4889,7 +4914,8 @@ impl Parser {
             Expr::Unary(_, expr)
             | Expr::Update(_, _, expr)
             | Expr::Spread(expr)
-            | Expr::YieldDelegate(expr) => Self::check_static_block_expr(expr),
+            | Expr::YieldDelegate(expr)
+            | Expr::OptionalChain(expr) => Self::check_static_block_expr(expr),
             Expr::Binary(_, left, right)
             | Expr::Logical(_, left, right)
             | Expr::Assign(_, left, right) => {
@@ -5289,7 +5315,7 @@ impl Parser {
                 Self::validate_private_names_function(func, names)
             }
             Expr::Class(cls) => Self::validate_private_names_class(cls, names),
-            Expr::PrivateGet { object, name } => {
+            Expr::PrivateGet { object, name, .. } => {
                 Self::validate_private_name_use(name, names)?;
                 if matches!(object.as_ref(), Expr::Super) {
                     return Err(error::Error::syntax(
@@ -5360,7 +5386,8 @@ impl Parser {
             | Expr::Update(_, _, inner)
             | Expr::Spread(inner)
             | Expr::Await(inner)
-            | Expr::YieldDelegate(inner) => Self::validate_private_names_expr(inner, names),
+            | Expr::YieldDelegate(inner)
+            | Expr::OptionalChain(inner) => Self::validate_private_names_expr(inner, names),
             Expr::Yield(Some(inner)) => Self::validate_private_names_expr(inner, names),
             Expr::Binary(_, left, right)
             | Expr::Logical(_, left, right)
@@ -6417,6 +6444,13 @@ mod tests {
 
         assert!(Parser::parse("(a?.b).c = 1;").is_ok());
         assert!(Parser::parse("for ((a?.b).c in {}) {}").is_ok());
+    }
+
+    #[test]
+    fn parse_optional_chain_rejects_tagged_template_tail() {
+        for src in ["a?.b`template`;", "a?.b\n`template`;", "a?.`template`;"] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
     }
 
     #[test]
