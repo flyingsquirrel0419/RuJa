@@ -7346,6 +7346,35 @@ fn await_non_promise() {
 }
 
 #[test]
+fn async_function_rejections_preserve_error_objects_and_thrown_values() {
+    assert_eq!(
+        run(r#"
+            let marker = {};
+            async function later(x = y, y) {}
+            async function selfRef(x = x) {}
+            async function evalConflict(a = eval("var a = 42")) {}
+            async function userThrow() { throw marker; }
+
+            let results = [];
+            try { await later(); } catch (error) {
+                results.push(error.constructor === ReferenceError);
+            }
+            try { await selfRef(); } catch (error) {
+                results.push(error.constructor === ReferenceError);
+            }
+            try { await evalConflict(); } catch (error) {
+                results.push(error.constructor === SyntaxError);
+            }
+            try { await userThrow(); } catch (error) {
+                results.push(error === marker);
+            }
+            results.join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
 fn await_is_contextual_identifier_in_sloppy_non_async_code() {
     assert_eq!(run("var await = 0; await = 1; await;"), Value::Number(1.0));
     assert_eq!(

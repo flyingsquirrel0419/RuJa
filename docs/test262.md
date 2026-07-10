@@ -308,10 +308,12 @@ from **238 pass / 65 fail / 0 skip** before async-generator delegation fixes to
 **286 pass / 17 fail / 0 skip**, then to **296 pass / 7 fail / 0 skip** after
 `await` begins assimilating generic thenables and async `yield*` rewraps the
 awaited delegated value instead of forwarding its raw iterator-result object.
-Synchronous `yield*` still forwards the original result without observing its
-`value` getter. Default conformance runs retain **202 pass / 0 fail / 101
-skip** until the seven remaining engine failures are fixed; the diagnostic is
-not used to inflate the supported-subset rate.
+Awaiting ordinary async-generator yields and preserving JavaScript Error
+objects for native async-function rejections closes the diagnostic at **303
+pass / 0 fail / 0 skip**. Synchronous `yield*` still forwards the original
+result without observing its `value` getter. Default conformance runs retain
+**202 pass / 0 fail / 101 skip** until the separate exact-path admission
+change; the diagnostic is not used to inflate the supported-subset rate.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare

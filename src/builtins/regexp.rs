@@ -1240,47 +1240,38 @@ pub(crate) fn generator_next(
             }
         }))
     };
-    let (value, done, forwarded_result) = match resumed {
-        Ok(result) => result,
-        Err(error) => return wrap_generator_error(vm, error, is_async_gen),
-    };
-    if forwarded_result {
-        return wrap_generator_result(vm, value, is_async_gen);
-    }
-    // return {value, done}
-    let obj_idx = vm.heap.allocate(HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    }))?;
-    vm.heap.with_obj(obj_idx, |o| {
-        if let HeapObj::Object(obj) = o {
-            obj.props
-                .lock()
-                .insert(PropertyKey::from("value"), data_prop(value));
-            obj.props
-                .lock()
-                .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
+    complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
+}
+
+fn complete_generator_resume(
+    vm: &mut Vm,
+    generator: GcIdx,
+    mut resumed: error::Result<(Value, bool, bool)>,
+    is_async_gen: bool,
+) -> error::Result<Value> {
+    loop {
+        let (value, done, forwarded_result) = match resumed {
+            Ok(result) => result,
+            Err(error) => return wrap_generator_error(vm, error, is_async_gen),
+        };
+        if forwarded_result {
+            return wrap_generator_result(vm, value, is_async_gen);
         }
-    });
-    let result_obj = Value::Object(GcIdx(obj_idx));
-    if is_async_gen {
-        // async function*: next() returns a Promise resolved with {value, done}.
-        let p_idx = vm
-            .heap
-            .allocate(HeapObj::Promise(crate::value::PromiseData {
-                state: Mutex::new(crate::value::PromiseStatus::Fulfilled),
-                result: Mutex::new(result_obj.clone()),
-                handlers: Mutex::new(Vec::new()),
-                props: Mutex::new(IndexMap::new()),
-                proto: Mutex::new(Some(vm.promise_proto.clone())),
-            }))?;
-        Ok(Value::Object(GcIdx(p_idx)))
-    } else {
-        Ok(result_obj)
+        if !is_async_gen {
+            return gen_result(vm, value, done, false);
+        }
+
+        match vm.await_value(value) {
+            Ok(value) => return gen_result(vm, value, done, true),
+            Err(error) if !done => {
+                let reason = error
+                    .thrown_value
+                    .clone()
+                    .unwrap_or_else(|| Value::String(Arc::from(error.message.as_str())));
+                resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Throw(reason));
+            }
+            Err(error) => return wrap_generator_error(vm, error, true),
+        }
     }
 }
 
@@ -1387,15 +1378,7 @@ pub(crate) fn generator_return(
     } else {
         Ok((ret.clone(), true, false))
     };
-    let (value, done, forwarded_result) = match resumed {
-        Ok(result) => result,
-        Err(error) => return wrap_generator_error(vm, error, is_async_gen),
-    };
-    if forwarded_result {
-        wrap_generator_result(vm, value, is_async_gen)
-    } else {
-        gen_result(vm, value, done, is_async_gen)
-    }
+    complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
 }
 
 /// `generator.throw(v)`: inject an exception into the suspended generator. The
@@ -1428,16 +1411,8 @@ pub(crate) fn generator_throw(
         let error = Error::thrown(exc, &vm.heap);
         return wrap_generator_error(vm, error, is_async_gen);
     }
-    let (value, done, forwarded_result) =
-        match vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Throw(exc)) {
-            Ok(result) => result,
-            Err(error) => return wrap_generator_error(vm, error, is_async_gen),
-        };
-    if forwarded_result {
-        wrap_generator_result(vm, value, is_async_gen)
-    } else {
-        gen_result(vm, value, done, is_async_gen)
-    }
+    let resumed = vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Throw(exc));
+    complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
 }
 
 pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {

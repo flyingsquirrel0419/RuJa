@@ -468,6 +468,61 @@ fn async_generator_await_inside_body() {
 }
 
 #[test]
+fn async_generator_awaits_yielded_and_returned_promises() {
+    let src = r#"
+        async function* gen() {
+            yield Promise.resolve(4);
+            return Promise.resolve(5);
+        }
+        let iter = gen();
+        let first = await iter.next();
+        let second = await iter.next();
+        [first.value, first.done, second.value, second.done].join("|");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("4|false|5|true")));
+}
+
+#[test]
+fn async_generator_yield_rejection_throws_into_body_or_closes_generator() {
+    let src = r#"
+        let error = {};
+        async function* uncaught() {
+            yield Promise.reject(error);
+            yield "unreachable";
+        }
+        async function* caught() {
+            try {
+                yield Promise.reject("bad");
+            } catch (reason) {
+                yield "caught:" + reason;
+            }
+        }
+
+        let uncaughtIter = uncaught();
+        let rejectedWithOriginal;
+        try {
+            await uncaughtIter.next();
+            rejectedWithOriginal = false;
+        } catch (reason) {
+            rejectedWithOriginal = reason === error;
+        }
+        let closed = await uncaughtIter.next();
+        let recovered = await caught().next();
+        [
+            rejectedWithOriginal,
+            closed.value === undefined,
+            closed.done,
+            recovered.value,
+            recovered.done
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("true|true|true|caught:bad|false"))
+    );
+}
+
+#[test]
 fn await_thenable_rejection_and_getter_error_propagate() {
     let src = r#"
         async function rejectedThenable() {

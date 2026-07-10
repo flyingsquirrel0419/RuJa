@@ -879,12 +879,14 @@ impl Vm {
                                 ))?;
                                 Ok(Value::Object(GcIdx(p_idx)))
                             }
+                            Err(err) if !err.catchable() => Err(err),
                             Err(err) => {
-                                // Extract the thrown JS value if present;
-                                // otherwise stringify the engine error.
+                                // Preserve explicit throw values. Native VM
+                                // errors become the matching JavaScript Error
+                                // object before they reject the async result.
                                 let reason = match &err.thrown_value {
                                     Some(v) => v.clone(),
-                                    None => Value::String(Arc::from(err.to_string().as_str())),
+                                    None => self.make_error_value(&err)?,
                                 };
                                 let p_idx = self.heap.allocate(HeapObj::Promise(
                                     crate::value::PromiseData {

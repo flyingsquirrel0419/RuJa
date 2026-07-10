@@ -129,6 +129,13 @@
 
 ### Runtime hardening
 
+- Async generators now await ordinary yielded and returned values before
+  creating their outer iterator-result object. A rejected yielded value is
+  thrown back into the suspended body so surrounding `catch` blocks can
+  recover; otherwise the request rejects and the generator closes. Interpreted
+  async functions now reject with native JavaScript Error objects for VM
+  `ReferenceError`/`SyntaxError` failures while preserving explicit throw
+  values and propagating non-catchable host aborts.
 - `await` now assimilates generic thenables through their observable `then`
   getter and call, including rejection and abrupt completion. Async `yield*`
   awaits delegated iterator results and values, then creates a fresh outer
@@ -193,8 +200,10 @@ Current supported subset count: **9560 pass / 0 fail / 10878 skip / 0 timeout**.
   the complete 303-file object method-definition path first improved from
   **238 pass / 65 fail** to **286 pass / 17 fail** with async-generator
   delegation, then to **296 pass / 7 fail** after thenable assimilation and
-  async delegated-result rewrapping. Default conformance runs still skip the
-  101 `flags: [async]` files until the remaining engine failures are resolved.
+  async delegated-result rewrapping, and finally to **303 pass / 0 fail** after
+  ordinary async-generator yield awaiting and native async rejection error
+  object fixes. Default conformance runs still skip the 101 `flags: [async]`
+  files until the path-scoped admission change.
 - **Complete synchronous `yield*` semantics and admission**: delegated
   iteration now preserves raw result objects, completion values, method
   receiver/arguments, getter and call errors, protocol-violation cleanup, and
