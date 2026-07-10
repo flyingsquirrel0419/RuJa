@@ -207,6 +207,9 @@ runner/analyzer admission lifts `default-parameters`,
 `class-fields-private`, and `Symbol.iterator` only on
 `language/{statements,expressions}/function/`. This exercises the complete
 ordinary function-form coverage while retaining those feature gates elsewhere.
+Formal-parameter grammar also now rejects `AwaitExpression` in async forms and
+outer `yield`/`await` expressions in arrow defaults, while nested ordinary
+arrow bodies receive their own Yield/Await context.
 The two paths move from **307 pass / 0 fail / 408 skip** to **715 pass / 0 fail
 / 0 skip**, and the supported subset moves to **9148 pass / 0 fail / 11290
 skip**.

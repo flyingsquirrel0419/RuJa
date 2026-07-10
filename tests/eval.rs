@@ -179,6 +179,33 @@ fn direct_eval_parameter_initializer_rejects_arguments_redeclaration() {
 }
 
 #[test]
+fn direct_eval_parameter_conflicts_cover_method_forms() {
+    assert_eq!(
+        run(r#"
+            var bodyCount = 0;
+            var ordinary = { m(a = eval("var a")) { bodyCount++; } };
+            var generator = { *m(a = eval("var a")) { bodyCount++; } };
+            function throwsSyntax(call) {
+              try { call(); return false; }
+              catch (error) { return error instanceof SyntaxError; }
+            }
+            class C {
+              m(a = eval("var a = 1; var b = 2")) {
+                return typeof b + "," + a;
+              }
+            }
+            [
+              throwsSyntax(function() { ordinary.m(); }),
+              throwsSyntax(function() { generator.m(); }),
+              bodyCount,
+              new C().m()
+            ].join("|");
+            "#),
+        Value::String(Arc::from("true|true|0|undefined,undefined"))
+    );
+}
+
+#[test]
 fn generator_parameter_initializers_run_at_call_time() {
     assert!(run_err(
         r#"

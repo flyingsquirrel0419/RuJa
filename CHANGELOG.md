@@ -105,6 +105,13 @@
 
 ### Runtime hardening
 
+- Formal-parameter parsing now disables both `YieldExpression` and
+  `AwaitExpression` for generator/async functions and arrow functions while
+  resetting those grammar contexts inside nested function and arrow bodies.
+  Expression-bodied ordinary arrows in generator parameter initializers may
+  therefore use sloppy `yield` as an identifier, while actual arrow defaults
+  still reject outer `yield`/`await` expressions. Parenthesized non-arrow
+  assignments continue to parse in their enclosing generator/async context.
 - Generator formal parameters now reject duplicate bound names in non-simple
   parameter lists and reject `YieldExpression` before generator execution can
   begin. Sloppy direct eval in a parameter initializer now raises `SyntaxError`

@@ -135,6 +135,20 @@ fn generator_parameter_eval_rejects_var_parameter_conflicts() {
 }
 
 #[test]
+fn generator_parameter_nested_arrow_uses_yield_as_identifier() {
+    assert_eq!(
+        run(r#"
+            function* g(callback = () => yield) {
+              try { return callback(); }
+              catch (error) { return error instanceof ReferenceError; }
+            }
+            g().next().value;
+            "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn gen_next_returns_value_done() {
     // The first next() yields the first value and is not done.
     let r = run("function* g(){ yield 7; } var it=g(); it.next().value;");

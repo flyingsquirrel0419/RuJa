@@ -77,6 +77,9 @@ pub struct Parser {
     /// inside async parameter/body contexts; in sloppy non-async contexts it
     /// remains available as a contextual identifier.
     async_depth: usize,
+    /// AwaitExpression is disabled while parsing async formal parameters.
+    /// Nested async function bodies in parameter initializers re-enable it.
+    await_expression_allowed: bool,
     /// Whether the current statement position accepts LexicalDeclaration as a
     /// StatementListItem. Single-statement bodies (`if (x) stmt`, labels,
     /// `with (x) stmt`, etc.) parse `let` with ExpressionStatement lookahead
@@ -129,6 +132,7 @@ impl Parser {
             generator_depth: 0,
             yield_expression_allowed: true,
             async_depth: 0,
+            await_expression_allowed: true,
             lexical_declaration_allowed: true,
             super_depth: 0,
             super_call_depth: 0,
@@ -391,6 +395,18 @@ impl Parser {
         result
     }
 
+    fn with_await_expression_context<T>(
+        &mut self,
+        allowed: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        let saved = self.await_expression_allowed;
+        self.await_expression_allowed = allowed;
+        let result = f(self);
+        self.await_expression_allowed = saved;
+        result
+    }
+
     fn with_function_context<T>(
         &mut self,
         generator_enabled: bool,
@@ -399,6 +415,24 @@ impl Parser {
     ) -> error::Result<T> {
         self.with_generator_context(generator_enabled, |p| {
             p.with_async_context(async_enabled, f)
+        })
+    }
+
+    fn with_formal_parameter_expression_context<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        self.with_yield_expression_context(false, |p| p.with_await_expression_context(false, f))
+    }
+
+    fn with_function_body_context<T>(
+        &mut self,
+        generator_enabled: bool,
+        async_enabled: bool,
+        f: impl FnOnce(&mut Self) -> error::Result<T>,
+    ) -> error::Result<T> {
+        self.with_function_context(generator_enabled, async_enabled, |p| {
+            p.with_yield_expression_context(true, |p| p.with_await_expression_context(true, f))
         })
     }
 
@@ -418,7 +452,7 @@ impl Parser {
         self.super_call_depth = 0;
         self.new_target_allowed = true;
         let params = match self.with_function_context(generator_enabled, async_enabled, |p| {
-            p.with_yield_expression_context(false, |p| p.parse_params())
+            p.with_formal_parameter_expression_context(|p| p.parse_params())
         }) {
             Ok(params) => params,
             Err(err) => {
@@ -1137,15 +1171,13 @@ impl Parser {
         generator_body: bool,
         async_body: bool,
     ) -> error::Result<Vec<Stmt>> {
-        self.with_function_context(generator_body, async_body, |p| {
-            p.with_yield_expression_context(true, |p| {
-                p.parse_fn_body_inner(super_allowed, super_call_allowed)
-            })
+        self.with_function_body_context(generator_body, async_body, |p| {
+            p.parse_fn_body_inner(super_allowed, super_call_allowed)
         })
     }
 
     fn parse_arrow_block_body(&mut self, async_body: bool) -> error::Result<Vec<Stmt>> {
-        self.with_function_context(false, async_body, |p| {
+        self.with_function_body_context(false, async_body, |p| {
             p.parse_fn_body_inner_inherited_super()
         })
     }
@@ -2900,6 +2932,11 @@ impl Parser {
     fn parse_primary(&mut self) -> error::Result<Expr> {
         match self.peek().clone() {
             TokenKind::Await => {
+                if self.async_depth > 0 && !self.await_expression_allowed {
+                    return Err(error::Error::syntax(
+                        "Await expression is not valid in formal parameters".to_string(),
+                    ));
+                }
                 if self.await_as_identifier_allowed() && self.await_token_is_identifier_ref() {
                     self.advance();
                     return Ok(Expr::Ident(Arc::from("await")));
@@ -2950,7 +2987,13 @@ impl Parser {
                     self.advance(); // async
                                     // Now at `(`; parse like a parenthesized arrow.
                     self.advance(); // (
-                    if self.with_async_context(true, |p| p.try_parse_arrow_params())? {
+                    if self.current_parenthesized_group_is_arrow_head()
+                        && self.with_async_context(true, |p| {
+                            p.with_formal_parameter_expression_context(|p| {
+                                p.try_parse_arrow_params()
+                            })
+                        })?
+                    {
                         let params = self.last_arrow_params.take().unwrap();
                         self.expect(&TokenKind::Arrow, "=>")?;
                         return self.parse_arrow_body_with_async(params, true);
@@ -3104,7 +3147,10 @@ impl Parser {
             TokenKind::LParen => {
                 // Could be arrow: (a, b) => ...
                 self.advance();
-                if self.try_parse_arrow_params()? {
+                if self.current_parenthesized_group_is_arrow_head()
+                    && self
+                        .with_formal_parameter_expression_context(|p| p.try_parse_arrow_params())?
+                {
                     let params = self.last_arrow_params.take().unwrap();
                     self.expect(&TokenKind::Arrow, "=>")?;
                     return self.parse_arrow_body(params);
@@ -3829,6 +3875,32 @@ impl Parser {
         }
     }
 
+    /// Return whether the already-consumed `(` closes immediately before an
+    /// arrow. This avoids applying formal-parameter grammar while speculatively
+    /// parsing an ordinary parenthesized expression.
+    fn current_parenthesized_group_is_arrow_head(&self) -> bool {
+        let mut depth = 1usize;
+        let mut index = self.pos;
+        while let Some(token) = self.tokens.get(index) {
+            match token.kind {
+                TokenKind::LParen => depth += 1,
+                TokenKind::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(
+                            self.tokens.get(index + 1).map(|token| &token.kind),
+                            Some(TokenKind::Arrow)
+                        );
+                    }
+                }
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            index += 1;
+        }
+        false
+    }
+
     /// After consuming `(`, try to parse arrow params followed by `) =>`.
     /// Returns true and sets `last_arrow_params` if it looks like an arrow function.
     fn try_parse_arrow_params(&mut self) -> error::Result<bool> {
@@ -4127,7 +4199,7 @@ impl Parser {
                 rest_param.as_ref(),
                 self.is_strict_context,
             )?;
-            let e = self.with_async_context(is_async, |p| p.parse_assign())?;
+            let e = self.with_function_body_context(false, is_async, |p| p.parse_assign())?;
             let mut body = Self::arrow_destructuring_prelude(dstr_decls);
             body.push(self.stmt(StmtNode::Return(Some(e))));
             Ok(Expr::Arrow(FunctionExpr {
@@ -6566,6 +6638,34 @@ mod tests {
         for src in [
             "function f(x, x) {}",
             "function* f(x = function*() { yield 1; }) {}",
+            "function* f(x = () => yield) {}",
+            "async function* f(x = () => yield) {}",
+            "function* f() { (x = yield 1); }",
+            "async function f() { (x = await 1); }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_async_and_arrow_parameter_expression_early_errors() {
+        for src in [
+            "async function f(a = await 1) {}",
+            "var f = async function(a = await 1) {};",
+            "var f = async (a = await 1) => {};",
+            "var o = { async m(a = await 1) {} };",
+            "class C { async m(a = await 1) {} }",
+            "async function* g(a = await 1) {}",
+            "function* g() { let f = (x = yield 1) => x; }",
+            "async function f() { let g = (x = await 1) => x; }",
+            "function* g() { let f = async (x = yield 1) => x; }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            "async function f(a = () => await) {}",
+            "async function f(a = async () => await 1) {}",
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }
