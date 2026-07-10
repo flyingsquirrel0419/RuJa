@@ -2728,7 +2728,11 @@ impl Vm {
                     let n = self.to_numeric(&v)?;
                     self.stack.push(n);
                 }
-                Op::Await => self.op_await()?,
+                Op::Await => {
+                    if self.op_await()? {
+                        return Ok(Value::Undefined);
+                    }
+                }
                 Op::TypeofVar(name_idx) => {
                     // `typeof name`: "undefined" if the name is unbound, but
                     // TDZ bindings still throw ReferenceError.
@@ -2797,7 +2801,19 @@ impl Vm {
                     let completion = self.current_frame()?.gen_delegate_resume.lock().take();
                     let completion = completion.unwrap_or(ResumeKind::Next(Value::Undefined));
                     let iterator = self.stack.last().cloned().unwrap_or(Value::Undefined);
-                    match self.iterator_delegate_step(&iterator, completion, await_result)? {
+                    let outcome =
+                        match self.iterator_delegate_step(&iterator, completion, await_result) {
+                            Ok(outcome) => outcome,
+                            Err(error) => {
+                                let frame = self.current_frame()?;
+                                frame.gen_delegating.store(false, Ordering::Relaxed);
+                                frame
+                                    .gen_yield_is_iterator_result
+                                    .store(false, Ordering::Relaxed);
+                                return Err(error);
+                            }
+                        };
+                    match outcome {
                         DelegateOutcome::Yield(result) => {
                             let resume_ip = self.current_frame()?.ip.saturating_sub(1);
                             self.current_frame_mut()?.ip = resume_ip;
@@ -3289,11 +3305,22 @@ impl Vm {
 
     /// `Op::Await`: resolve Promises and generic thenables, then push the
     /// fulfilled value or rethrow the rejection.
-    fn op_await(&mut self) -> error::Result<()> {
+    fn op_await(&mut self) -> error::Result<bool> {
         let v = self.stack.pop().unwrap_or(Value::Undefined);
+        if self
+            .frames
+            .last()
+            .is_some_and(|frame| frame.gen_mode.load(Ordering::Relaxed))
+        {
+            let frame = self.current_frame()?;
+            *frame.gen_yield.lock() = Some(v);
+            frame.gen_awaiting.store(true, Ordering::Relaxed);
+            frame.gen_suspended.store(true, Ordering::Relaxed);
+            return Ok(true);
+        }
         let result = self.await_value(v)?;
         self.stack.push(result);
-        Ok(())
+        Ok(false)
     }
 
     /// `Op::MakeClosure(func_idx)`: build a function object capturing the

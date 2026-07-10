@@ -402,6 +402,23 @@ expression call sites that share the helper. The supported subset remains
 built-in diagnostics remain **298 pass / 3 fail** and **63 pass / 21 fail**,
 respectively.
 
+Focused async generator request-queue diagnostic:
+async generators now retain a FIFO request queue and suspend their frames at
+`await` without draining the Promise job queue inline. Explicit
+`return expression` compilation emits the required Await, while implicit
+completion and bare `return;` remain direct. The previously failing return and
+`yield*` tick-order cases now pass, as do delegated iterator-value getter
+errors and broken Promise `constructor` access during return. With async
+generator gates temporarily lifted, the two async-generator language paths
+are **924 pass / 0 fail / 0 skip**, and the statement-only path is **301 pass /
+0 fail / 0 skip**. The related 84-file built-in diagnostic
+improves from **63 pass / 21 fail** to **73 pass / 11 fail**. The remaining
+failures are one general async-function pending-Await continuation case, one
+cross-Realm constructor-prototype case, and nine `Symbol.asyncDispose` cases,
+so the async-generator paths remain outside the default admission boundary.
+The default supported subset remains **9838 pass / 0 fail**; the current local
+test262 checkout reports **10600 skip / 20438 total**.
+
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
 `YieldExpression` before the closing array pattern bracket, so default

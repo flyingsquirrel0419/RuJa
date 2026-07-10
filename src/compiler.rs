@@ -861,6 +861,9 @@ impl Compiler {
             StmtNode::Return(e) => {
                 if let Some(e) = e {
                     self.compile_expr(e)?;
+                    if self.current_async_generator {
+                        self.chunk.emit(Op::Await, self.current_line);
+                    }
                 } else {
                     self.chunk.emit(Op::Undefined, self.current_line);
                 }

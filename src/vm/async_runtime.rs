@@ -10,6 +10,34 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 impl Vm {
+    pub(crate) fn run_thenable_job(
+        &mut self,
+        thenable: Value,
+        then: Value,
+        resolve: Value,
+        reject: Value,
+    ) -> error::Result<()> {
+        let pins = self.pin_many(&[
+            thenable.clone(),
+            then.clone(),
+            resolve.clone(),
+            reject.clone(),
+        ]);
+        let call_result = self.call_function(&then, &[resolve, reject.clone()], Some(thenable));
+        let result = if let Err(error) = call_result {
+            let reason = error
+                .thrown_value
+                .clone()
+                .unwrap_or_else(|| Value::String(Arc::from(error.message.as_str())));
+            self.call_function(&reject, &[reason], Some(Value::Undefined))
+                .map(|_| ())
+        } else {
+            Ok(())
+        };
+        self.unpin_many(pins);
+        result
+    }
+
     fn push_for_in_own_key(
         index_keys: &mut Vec<(usize, Arc<str>, bool)>,
         string_keys: &mut Vec<(Arc<str>, bool)>,
@@ -102,6 +130,7 @@ impl Vm {
                                             on_fulfilled: Value::Undefined,
                                             on_rejected: Value::Undefined,
                                             derived: Some(capability.clone()),
+                                            async_generator: None,
                                         });
                                     }
                                 });
@@ -111,6 +140,7 @@ impl Vm {
                                     on_fulfilled: Value::Undefined,
                                     on_rejected: Value::Undefined,
                                     derived: Some(capability),
+                                    async_generator: None,
                                 });
                             }
                             // Do NOT also resolve `derived` now: the adoption
@@ -802,6 +832,9 @@ impl Vm {
                             delegating: AtomicBool::new(false),
                             resume_value: Mutex::new(Value::Undefined),
                             is_async,
+                            async_queue: Mutex::new(std::collections::VecDeque::new()),
+                            async_processing: AtomicBool::new(false),
+                            async_suspended_yield: AtomicBool::new(false),
                             props: Mutex::new(IndexMap::new()),
                             proto: Mutex::new(Some(generator_instance_proto)),
                         },
@@ -1704,7 +1737,7 @@ impl Vm {
                 Value::Object(idx) => *idx,
                 _ => return Err(Error::type_err("not a generator".to_string())),
             };
-            let (mut value, mut done, forwarded_result) =
+            let (mut value, mut done, forwarded_result, _awaiting) =
                 self.resume_generator(g_idx, ResumeKind::Next(resume))?;
             if forwarded_result {
                 done = self.get_property(&value, "done")?.is_truthy();

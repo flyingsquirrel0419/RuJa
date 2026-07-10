@@ -213,6 +213,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                     push_value(&derived.resolve, worklist);
                     push_value(&derived.reject, worklist);
                 }
+                if let Some((generator, _)) = h.async_generator {
+                    worklist.push(generator.0);
+                }
             }
         }
         HeapObj::Generator(g) => {
@@ -235,6 +238,18 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(v, worklist);
             }
             push_value(&g.this_val.lock(), worklist);
+            for request in g.async_queue.lock().iter() {
+                match &request.kind {
+                    crate::value::AsyncGeneratorRequestKind::Next(value)
+                    | crate::value::AsyncGeneratorRequestKind::Return(value)
+                    | crate::value::AsyncGeneratorRequestKind::Throw(value) => {
+                        push_value(value, worklist);
+                    }
+                }
+                push_value(&request.capability.promise, worklist);
+                push_value(&request.capability.resolve, worklist);
+                push_value(&request.capability.reject, worklist);
+            }
         }
         HeapObj::Iterator(it) => {
             for v in it.items.lock().iter() {

@@ -3784,6 +3784,7 @@ pub(crate) fn promise_then(
         on_fulfilled: on_fulfilled.clone(),
         on_rejected: on_rejected.clone(),
         derived: Some(derived.clone()),
+        async_generator: None,
     };
     match state {
         crate::value::PromiseStatus::Pending => {
@@ -3800,6 +3801,7 @@ pub(crate) fn promise_then(
                 on_fulfilled,
                 on_rejected,
                 derived: Some(derived.clone()),
+                async_generator: None,
             });
         }
     }

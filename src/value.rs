@@ -777,6 +777,30 @@ pub struct PromiseHandler {
     pub on_fulfilled: Value,
     pub on_rejected: Value,
     pub derived: Option<PromiseReactionCapability>,
+    pub async_generator: Option<(GcIdx, AsyncGeneratorAwaitKind)>,
+}
+
+#[derive(Clone, Copy)]
+pub enum AsyncGeneratorAwaitKind {
+    Resume,
+    ResolveYield,
+    ResolveForwarded,
+    ResumeReturn,
+    ResumeReturnDelegated,
+    ResolveReturn,
+}
+
+#[derive(Clone)]
+pub enum AsyncGeneratorRequestKind {
+    Next(Value),
+    Return(Value),
+    Throw(Value),
+}
+
+#[derive(Clone)]
+pub struct AsyncGeneratorRequest {
+    pub kind: AsyncGeneratorRequestKind,
+    pub capability: PromiseReactionCapability,
 }
 
 pub struct GeneratorData {
@@ -831,6 +855,13 @@ pub struct LazyGeneratorData {
     pub resume_value: Mutex<Value>,
     /// True for `async function*`: `next()` wraps results in a Promise.
     pub is_async: bool,
+    /// Async generators serialize next/return/throw requests in call order.
+    pub async_queue: Mutex<std::collections::VecDeque<AsyncGeneratorRequest>>,
+    /// True while the queue front is executing or waiting on an Await job.
+    pub async_processing: AtomicBool,
+    /// True after AsyncGeneratorYield resolves the current request and the
+    /// body is waiting for the next request at the suspended yield point.
+    pub async_suspended_yield: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

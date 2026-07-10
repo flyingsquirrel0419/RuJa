@@ -1230,13 +1230,13 @@ pub(crate) fn generator_next(
                 let idx = g.ip.load(Ordering::Relaxed);
                 if idx < state.len() {
                     g.ip.store(idx + 1, Ordering::Relaxed);
-                    (state[idx].clone(), false, false)
+                    (state[idx].clone(), false, false, false)
                 } else {
                     g.done.store(true, Ordering::Relaxed);
-                    (Value::Undefined, true, false)
+                    (Value::Undefined, true, false, false)
                 }
             } else {
-                (Value::Undefined, true, false)
+                (Value::Undefined, true, false, false)
             }
         }))
     };
@@ -1269,19 +1269,571 @@ pub(crate) fn async_generator_next(
     this: Option<Value>,
 ) -> error::Result<Value> {
     match validate_async_generator_receiver(vm, this)? {
-        Ok(generator) => generator_next(vm, args, Some(Value::Object(generator))),
+        Ok(generator) => enqueue_async_generator_request(
+            vm,
+            generator,
+            crate::value::AsyncGeneratorRequestKind::Next(
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ),
+        ),
         Err(rejected) => Ok(rejected),
+    }
+}
+
+fn enqueue_async_generator_request(
+    vm: &mut Vm,
+    generator: GcIdx,
+    kind: crate::value::AsyncGeneratorRequestKind,
+) -> error::Result<Value> {
+    let generator_value = Value::Object(generator);
+    let generator_pin = vm.pin(&generator_value);
+    let constructor = vm.promise_ctor.clone();
+    let capability = match crate::builtins::new_promise_capability(vm, constructor) {
+        Ok(capability) => capability,
+        Err(error) => {
+            vm.unpin(generator_pin);
+            return Err(error);
+        }
+    };
+    let promise = capability.promise.clone();
+    let request = crate::value::AsyncGeneratorRequest {
+        kind,
+        capability: crate::value::PromiseReactionCapability {
+            promise: capability.promise,
+            resolve: capability.resolve,
+            reject: capability.reject,
+        },
+    };
+    let should_process = vm.heap.with_obj(generator.0, |obj| {
+        let HeapObj::LazyGenerator(data) = obj else {
+            return false;
+        };
+        data.async_queue.lock().push_back(request);
+        !data.async_processing.swap(true, Ordering::AcqRel)
+    });
+    if should_process {
+        let result = process_async_generator_queue(vm, generator);
+        vm.unpin(generator_pin);
+        result?;
+    } else {
+        vm.unpin(generator_pin);
+    }
+    Ok(promise)
+}
+
+fn process_async_generator_queue(vm: &mut Vm, generator: GcIdx) -> error::Result<()> {
+    loop {
+        let request = vm.heap.with_obj(generator.0, |obj| {
+            if let HeapObj::LazyGenerator(data) = obj {
+                data.async_queue.lock().front().cloned()
+            } else {
+                None
+            }
+        });
+        let Some(request) = request else {
+            vm.heap.with_obj(generator.0, |obj| {
+                if let HeapObj::LazyGenerator(data) = obj {
+                    data.async_processing.store(false, Ordering::Release);
+                }
+            });
+            return Ok(());
+        };
+
+        let (started, done, suspended_yield, delegating) = vm.heap.with_obj(generator.0, |obj| {
+            if let HeapObj::LazyGenerator(data) = obj {
+                (
+                    data.started.load(Ordering::Acquire),
+                    data.done.load(Ordering::Acquire),
+                    data.async_suspended_yield.load(Ordering::Acquire),
+                    data.delegating.load(Ordering::Acquire),
+                )
+            } else {
+                (true, true, false, false)
+            }
+        });
+
+        match request.kind {
+            crate::value::AsyncGeneratorRequestKind::Next(value) => {
+                if done {
+                    finish_async_generator_request(vm, generator, Value::Undefined, true, false)?;
+                    continue;
+                }
+                set_async_generator_suspended_yield(vm, generator, false);
+                let resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Next(value));
+                if handle_async_generator_resume(vm, generator, resumed, None)? {
+                    return Ok(());
+                }
+            }
+            crate::value::AsyncGeneratorRequestKind::Return(value) => {
+                if done || !started {
+                    begin_async_generator_await(
+                        vm,
+                        generator,
+                        value,
+                        crate::value::AsyncGeneratorAwaitKind::ResolveReturn,
+                    )?;
+                    return Ok(());
+                }
+                if suspended_yield {
+                    set_async_generator_suspended_yield(vm, generator, false);
+                    let await_kind = if delegating {
+                        crate::value::AsyncGeneratorAwaitKind::ResumeReturnDelegated
+                    } else {
+                        crate::value::AsyncGeneratorAwaitKind::ResumeReturn
+                    };
+                    begin_async_generator_await(vm, generator, value, await_kind)?;
+                    return Ok(());
+                }
+                let resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Return(value));
+                if handle_async_generator_resume(vm, generator, resumed, None)? {
+                    return Ok(());
+                }
+            }
+            crate::value::AsyncGeneratorRequestKind::Throw(reason) => {
+                if done || !started {
+                    vm.heap.with_obj(generator.0, |obj| {
+                        if let HeapObj::LazyGenerator(data) = obj {
+                            data.started.store(true, Ordering::Release);
+                            data.done.store(true, Ordering::Release);
+                        }
+                    });
+                    finish_async_generator_request(vm, generator, reason, true, true)?;
+                    continue;
+                }
+                set_async_generator_suspended_yield(vm, generator, false);
+                let resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Throw(reason));
+                if handle_async_generator_resume(vm, generator, resumed, None)? {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
+fn set_async_generator_suspended_yield(vm: &Vm, generator: GcIdx, value: bool) {
+    vm.heap.with_obj(generator.0, |obj| {
+        if let HeapObj::LazyGenerator(data) = obj {
+            data.async_suspended_yield.store(value, Ordering::Release);
+        }
+    });
+}
+
+/// Returns true when processing suspended on an Await job.
+fn handle_async_generator_resume(
+    vm: &mut Vm,
+    generator: GcIdx,
+    resumed: error::Result<(Value, bool, bool, bool)>,
+    source: Option<crate::value::AsyncGeneratorAwaitKind>,
+) -> error::Result<bool> {
+    let (value, done, forwarded_result, awaiting) = match resumed {
+        Ok(result) => result,
+        Err(error) => {
+            let reason = generator_error_reason(vm, &error)?;
+            finish_async_generator_request(vm, generator, reason, true, true)?;
+            return Ok(false);
+        }
+    };
+
+    if awaiting {
+        begin_async_generator_await(
+            vm,
+            generator,
+            value,
+            crate::value::AsyncGeneratorAwaitKind::Resume,
+        )?;
+        return Ok(true);
+    }
+
+    if forwarded_result {
+        begin_async_generator_await(
+            vm,
+            generator,
+            value,
+            crate::value::AsyncGeneratorAwaitKind::ResolveForwarded,
+        )?;
+        return Ok(true);
+    }
+
+    if done {
+        if matches!(
+            source,
+            Some(crate::value::AsyncGeneratorAwaitKind::ResumeReturnDelegated)
+        ) {
+            begin_async_generator_await(
+                vm,
+                generator,
+                value,
+                crate::value::AsyncGeneratorAwaitKind::ResolveReturn,
+            )?;
+            return Ok(true);
+        }
+        finish_async_generator_request(vm, generator, value, true, false)?;
+        return Ok(false);
+    }
+
+    begin_async_generator_await(
+        vm,
+        generator,
+        value,
+        crate::value::AsyncGeneratorAwaitKind::ResolveYield,
+    )?;
+    Ok(true)
+}
+
+fn begin_async_generator_await(
+    vm: &mut Vm,
+    generator: GcIdx,
+    value: Value,
+    kind: crate::value::AsyncGeneratorAwaitKind,
+) -> error::Result<()> {
+    let base_pins = vm.pin_many(&[Value::Object(generator), value.clone()]);
+    let result = begin_async_generator_await_pinned(vm, generator, value, kind);
+    vm.unpin_many(base_pins);
+    result
+}
+
+fn begin_async_generator_await_pinned(
+    vm: &mut Vm,
+    generator: GcIdx,
+    value: Value,
+    kind: crate::value::AsyncGeneratorAwaitKind,
+) -> error::Result<()> {
+    let native_promise = match &value {
+        Value::Object(idx)
+            if vm
+                .heap
+                .with_obj(idx.0, |obj| matches!(obj, HeapObj::Promise(_))) =>
+        {
+            Some(*idx)
+        }
+        _ => None,
+    };
+
+    let promise = if let Some(promise) = native_promise {
+        async_generator_promise_resolve_native(vm, promise, &value)?
+    } else {
+        let constructor = vm.promise_ctor.clone();
+        let capability = crate::builtins::new_promise_capability(vm, constructor)?;
+        let capability_pins = vm.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+        ]);
+        let promise = match &capability.promise {
+            Value::Object(idx) => *idx,
+            _ => unreachable!("Promise capability did not create an object"),
+        };
+        let setup = (|| -> error::Result<GcIdx> {
+            let then = if matches!(value, Value::Object(_)) {
+                match vm.get_property(&value, "then") {
+                    Ok(then) => Some(then),
+                    Err(error) => {
+                        let reason = generator_error_reason(vm, &error)?;
+                        vm.call_function(&capability.reject, &[reason], Some(Value::Undefined))?;
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            if let Some(then) = then {
+                if crate::builtins::is_callable(&then, &vm.heap) {
+                    vm.microtask_queue
+                        .push_back(crate::vm::Microtask::Thenable {
+                            thenable: value.clone(),
+                            then,
+                            resolve: capability.resolve.clone(),
+                            reject: capability.reject.clone(),
+                        });
+                } else {
+                    vm.call_function(
+                        &capability.resolve,
+                        std::slice::from_ref(&value),
+                        Some(Value::Undefined),
+                    )?;
+                }
+            } else {
+                let state = vm.heap.with_obj(promise.0, |obj| {
+                    if let HeapObj::Promise(data) = obj {
+                        *data.state.lock()
+                    } else {
+                        crate::value::PromiseStatus::Pending
+                    }
+                });
+                if state == crate::value::PromiseStatus::Pending {
+                    vm.call_function(
+                        &capability.resolve,
+                        std::slice::from_ref(&value),
+                        Some(Value::Undefined),
+                    )?;
+                }
+            }
+            Ok(promise)
+        })();
+        vm.unpin_many(capability_pins);
+        setup?
+    };
+
+    let state = vm.heap.with_obj(promise.0, |obj| {
+        if let HeapObj::Promise(data) = obj {
+            *data.state.lock()
+        } else {
+            crate::value::PromiseStatus::Fulfilled
+        }
+    });
+    let handler = crate::value::PromiseHandler {
+        on_fulfilled: Value::Undefined,
+        on_rejected: Value::Undefined,
+        derived: None,
+        async_generator: Some((generator, kind)),
+    };
+    if state == crate::value::PromiseStatus::Pending {
+        vm.heap.with_obj(promise.0, |obj| {
+            if let HeapObj::Promise(data) = obj {
+                data.handlers.lock().push(handler);
+            }
+        });
+    } else {
+        vm.microtask_queue.push_back(crate::vm::Microtask::Then {
+            promise,
+            on_fulfilled: Value::Undefined,
+            on_rejected: Value::Undefined,
+            derived: None,
+            async_generator: Some((generator, kind)),
+        });
+    }
+    Ok(())
+}
+
+fn async_generator_promise_resolve_native(
+    vm: &mut Vm,
+    native_promise: GcIdx,
+    value: &Value,
+) -> error::Result<GcIdx> {
+    let constructor = match vm.get_property(value, "constructor") {
+        Ok(constructor) => constructor,
+        Err(error) => {
+            let constructor = vm.promise_ctor.clone();
+            let capability = crate::builtins::new_promise_capability(vm, constructor)?;
+            let promise = match capability.promise {
+                Value::Object(idx) => idx,
+                _ => unreachable!("Promise capability did not create an object"),
+            };
+            let pins = vm.pin_many(&[Value::Object(promise), capability.reject.clone()]);
+            let reason = match generator_error_reason(vm, &error) {
+                Ok(reason) => reason,
+                Err(reason_error) => {
+                    vm.unpin_many(pins);
+                    return Err(reason_error);
+                }
+            };
+            let reason_pin = vm.pin(&reason);
+            let rejected = vm.call_function(&capability.reject, &[reason], Some(Value::Undefined));
+            vm.unpin(reason_pin);
+            vm.unpin_many(pins);
+            rejected?;
+            return Ok(promise);
+        }
+    };
+    if constructor == vm.promise_ctor {
+        return Ok(native_promise);
+    }
+
+    let promise_constructor = vm.promise_ctor.clone();
+    let capability = crate::builtins::new_promise_capability(vm, promise_constructor)?;
+    let derived = crate::value::PromiseReactionCapability {
+        promise: capability.promise,
+        resolve: capability.resolve,
+        reject: capability.reject,
+    };
+    let promise = match &derived.promise {
+        Value::Object(idx) => *idx,
+        _ => unreachable!("Promise capability did not create an object"),
+    };
+    let state = vm.heap.with_obj(native_promise.0, |obj| {
+        if let HeapObj::Promise(data) = obj {
+            *data.state.lock()
+        } else {
+            crate::value::PromiseStatus::Fulfilled
+        }
+    });
+    let handler = crate::value::PromiseHandler {
+        on_fulfilled: Value::Undefined,
+        on_rejected: Value::Undefined,
+        derived: Some(derived.clone()),
+        async_generator: None,
+    };
+    if state == crate::value::PromiseStatus::Pending {
+        vm.heap.with_obj(native_promise.0, |obj| {
+            if let HeapObj::Promise(data) = obj {
+                data.handlers.lock().push(handler);
+            }
+        });
+    } else {
+        vm.microtask_queue.push_back(crate::vm::Microtask::Then {
+            promise: native_promise,
+            on_fulfilled: Value::Undefined,
+            on_rejected: Value::Undefined,
+            derived: Some(derived),
+            async_generator: None,
+        });
+    }
+    Ok(promise)
+}
+
+fn finish_async_generator_request(
+    vm: &mut Vm,
+    generator: GcIdx,
+    value: Value,
+    done: bool,
+    rejected: bool,
+) -> error::Result<()> {
+    let settled_value = if rejected {
+        value
+    } else {
+        gen_result(vm, value, done, false)?
+    };
+    settle_async_generator_request(vm, generator, settled_value, rejected)
+}
+
+fn settle_async_generator_request(
+    vm: &mut Vm,
+    generator: GcIdx,
+    settled_value: Value,
+    rejected: bool,
+) -> error::Result<()> {
+    let capability = vm.heap.with_obj(generator.0, |obj| {
+        if let HeapObj::LazyGenerator(data) = obj {
+            data.async_queue
+                .lock()
+                .front()
+                .map(|request| request.capability.clone())
+        } else {
+            None
+        }
+    });
+    let Some(capability) = capability else {
+        return Ok(());
+    };
+    let function = if rejected {
+        capability.reject.clone()
+    } else {
+        capability.resolve.clone()
+    };
+    let pins = vm.pin_many(&[
+        Value::Object(generator),
+        capability.promise,
+        capability.resolve,
+        capability.reject,
+        function.clone(),
+        settled_value.clone(),
+    ]);
+    let result = vm.call_function(&function, &[settled_value], Some(Value::Undefined));
+    vm.unpin_many(pins);
+    result?;
+    vm.heap.with_obj(generator.0, |obj| {
+        if let HeapObj::LazyGenerator(data) = obj {
+            data.async_queue.lock().pop_front();
+        }
+    });
+    Ok(())
+}
+
+fn generator_error_reason(vm: &mut Vm, error: &Arc<Error>) -> error::Result<Value> {
+    match error.thrown_value.clone() {
+        Some(value) => Ok(value),
+        None => vm.make_error_value(error),
+    }
+}
+
+pub(crate) fn run_async_generator_reaction(
+    vm: &mut Vm,
+    generator: GcIdx,
+    kind: crate::value::AsyncGeneratorAwaitKind,
+    promise: GcIdx,
+) -> error::Result<()> {
+    let generator_pin = vm.pin(&Value::Object(generator));
+    let result = run_async_generator_reaction_pinned(vm, generator, kind, promise);
+    vm.unpin(generator_pin);
+    result
+}
+
+fn run_async_generator_reaction_pinned(
+    vm: &mut Vm,
+    generator: GcIdx,
+    kind: crate::value::AsyncGeneratorAwaitKind,
+    promise: GcIdx,
+) -> error::Result<()> {
+    let (state, result) = vm.heap.with_obj(promise.0, |obj| {
+        if let HeapObj::Promise(data) = obj {
+            (*data.state.lock(), data.result.lock().clone())
+        } else {
+            (crate::value::PromiseStatus::Fulfilled, Value::Undefined)
+        }
+    });
+
+    if state == crate::value::PromiseStatus::Rejected
+        && matches!(kind, crate::value::AsyncGeneratorAwaitKind::ResolveReturn)
+    {
+        finish_async_generator_request(vm, generator, result, true, true)?;
+        return process_async_generator_queue(vm, generator);
+    }
+
+    if state == crate::value::PromiseStatus::Fulfilled
+        && matches!(kind, crate::value::AsyncGeneratorAwaitKind::ResolveYield)
+    {
+        set_async_generator_suspended_yield(vm, generator, true);
+        finish_async_generator_request(vm, generator, result, false, false)?;
+        return process_async_generator_queue(vm, generator);
+    }
+
+    if state == crate::value::PromiseStatus::Fulfilled
+        && matches!(
+            kind,
+            crate::value::AsyncGeneratorAwaitKind::ResolveForwarded
+        )
+    {
+        set_async_generator_suspended_yield(vm, generator, true);
+        settle_async_generator_request(vm, generator, result, false)?;
+        return process_async_generator_queue(vm, generator);
+    }
+
+    if state == crate::value::PromiseStatus::Fulfilled
+        && matches!(kind, crate::value::AsyncGeneratorAwaitKind::ResolveReturn)
+    {
+        let resumed = vm.resume_generator(generator, crate::vm::ResumeKind::Return(result));
+        handle_async_generator_resume(vm, generator, resumed, None)?;
+        return process_async_generator_queue(vm, generator);
+    }
+
+    let resume = if state == crate::value::PromiseStatus::Rejected {
+        crate::vm::ResumeKind::Throw(result)
+    } else if matches!(
+        kind,
+        crate::value::AsyncGeneratorAwaitKind::ResumeReturn
+            | crate::value::AsyncGeneratorAwaitKind::ResumeReturnDelegated
+    ) {
+        crate::vm::ResumeKind::Return(result)
+    } else {
+        crate::vm::ResumeKind::Next(result)
+    };
+    let resumed = vm.resume_generator(generator, resume);
+    let waiting = handle_async_generator_resume(vm, generator, resumed, Some(kind))?;
+    if waiting {
+        Ok(())
+    } else {
+        process_async_generator_queue(vm, generator)
     }
 }
 
 fn complete_generator_resume(
     vm: &mut Vm,
     generator: GcIdx,
-    mut resumed: error::Result<(Value, bool, bool)>,
+    mut resumed: error::Result<(Value, bool, bool, bool)>,
     is_async_gen: bool,
 ) -> error::Result<Value> {
     loop {
-        let (value, done, forwarded_result) = match resumed {
+        let (value, done, forwarded_result, _awaiting) = match resumed {
             Ok(result) => result,
             Err(error) => return wrap_generator_error(vm, error, is_async_gen),
         };
@@ -1408,7 +1960,7 @@ pub(crate) fn generator_return(
     let resumed = if is_lazy {
         vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Return(ret.clone()))
     } else {
-        Ok((ret.clone(), true, false))
+        Ok((ret.clone(), true, false, false))
     };
     complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
 }
@@ -1419,7 +1971,13 @@ pub(crate) fn async_generator_return(
     this: Option<Value>,
 ) -> error::Result<Value> {
     match validate_async_generator_receiver(vm, this)? {
-        Ok(generator) => generator_return(vm, args, Some(Value::Object(generator))),
+        Ok(generator) => enqueue_async_generator_request(
+            vm,
+            generator,
+            crate::value::AsyncGeneratorRequestKind::Return(
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ),
+        ),
         Err(rejected) => Ok(rejected),
     }
 }
@@ -1464,7 +2022,13 @@ pub(crate) fn async_generator_throw(
     this: Option<Value>,
 ) -> error::Result<Value> {
     match validate_async_generator_receiver(vm, this)? {
-        Ok(generator) => generator_throw(vm, args, Some(Value::Object(generator))),
+        Ok(generator) => enqueue_async_generator_request(
+            vm,
+            generator,
+            crate::value::AsyncGeneratorRequestKind::Throw(
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ),
+        ),
         Err(rejected) => Ok(rejected),
     }
 }

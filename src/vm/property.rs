@@ -2460,6 +2460,7 @@ impl Vm {
                     on_fulfilled,
                     on_rejected,
                     derived,
+                    async_generator,
                     ..
                 } => {
                     roots.push(promise.0);
@@ -2470,6 +2471,20 @@ impl Vm {
                         Self::push_value_roots(&mut roots, &capability.resolve);
                         Self::push_value_roots(&mut roots, &capability.reject);
                     }
+                    if let Some((generator, _)) = async_generator {
+                        roots.push(generator.0);
+                    }
+                }
+                Microtask::Thenable {
+                    thenable,
+                    then,
+                    resolve,
+                    reject,
+                } => {
+                    Self::push_value_roots(&mut roots, thenable);
+                    Self::push_value_roots(&mut roots, then);
+                    Self::push_value_roots(&mut roots, resolve);
+                    Self::push_value_roots(&mut roots, reject);
                 }
                 Microtask::Resolve { value, .. } => {
                     Self::push_value_roots(&mut roots, value);
@@ -2558,6 +2573,7 @@ impl Vm {
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
                 derived: h.derived,
+                async_generator: h.async_generator,
             });
         }
     }
@@ -2582,6 +2598,7 @@ impl Vm {
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
                 derived: h.derived,
+                async_generator: h.async_generator,
             });
         }
     }
@@ -2598,7 +2615,22 @@ impl Vm {
                     on_fulfilled,
                     on_rejected,
                     derived,
-                } => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
+                    async_generator,
+                } => {
+                    if let Some((generator, kind)) = async_generator {
+                        crate::builtins::regexp::run_async_generator_reaction(
+                            self, generator, kind, promise,
+                        )?;
+                    } else {
+                        self.run_then(promise, on_fulfilled, on_rejected, derived)?;
+                    }
+                }
+                Microtask::Thenable {
+                    thenable,
+                    then,
+                    resolve,
+                    reject,
+                } => self.run_thenable_job(thenable, then, resolve, reject)?,
                 Microtask::Resolve { promise, value } => {
                     self.promise_resolve(promise.0, value);
                 }
@@ -2622,7 +2654,22 @@ impl Vm {
                     on_fulfilled,
                     on_rejected,
                     derived,
-                } => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
+                    async_generator,
+                } => {
+                    if let Some((generator, kind)) = async_generator {
+                        crate::builtins::regexp::run_async_generator_reaction(
+                            self, generator, kind, promise,
+                        )?;
+                    } else {
+                        self.run_then(promise, on_fulfilled, on_rejected, derived)?;
+                    }
+                }
+                Microtask::Thenable {
+                    thenable,
+                    then,
+                    resolve,
+                    reject,
+                } => self.run_thenable_job(thenable, then, resolve, reject)?,
                 Microtask::Resolve { promise, value } => {
                     self.promise_resolve(promise.0, value);
                 }

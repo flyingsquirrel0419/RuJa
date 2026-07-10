@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Async generators now serialize `next`, `return`, and `throw` requests and
+  resume suspended `await` operations through Promise jobs instead of draining
+  them synchronously. Explicit `return expr` observes its required Await
+  boundary, yielded values and thenables settle in queue order, delegated
+  return/getter errors reach the generator body, and broken Promise
+  `constructor` access rejects the active request.
+
 ### Test tooling
 
 - The iterator-result descriptor fix is confirmed by `test262-full`

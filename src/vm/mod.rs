@@ -150,6 +150,8 @@ pub struct CallFrame {
     pub gen_mode: AtomicBool,
     pub gen_yield: Mutex<Option<Value>>,
     pub gen_suspended: AtomicBool,
+    /// Distinguishes an Await suspension from a user-visible yield.
+    pub gen_awaiting: AtomicBool,
     pub gen_resume_value: Mutex<Value>,
     /// Whether this frame is suspended in the `yield*` state machine.
     pub gen_delegating: AtomicBool,
@@ -228,6 +230,7 @@ impl CallFrame {
             gen_mode: AtomicBool::new(false),
             gen_yield: Mutex::new(None),
             gen_suspended: AtomicBool::new(false),
+            gen_awaiting: AtomicBool::new(false),
             gen_resume_value: Mutex::new(Value::Undefined),
             gen_delegating: AtomicBool::new(false),
             gen_delegate_resume: Mutex::new(None),
@@ -288,6 +291,13 @@ pub enum Microtask {
         on_fulfilled: Value,
         on_rejected: Value,
         derived: Option<crate::value::PromiseReactionCapability>,
+        async_generator: Option<(GcIdx, crate::value::AsyncGeneratorAwaitKind)>,
+    },
+    Thenable {
+        thenable: Value,
+        then: Value,
+        resolve: Value,
+        reject: Value,
     },
     Resolve {
         promise: GcIdx,
@@ -1192,7 +1202,7 @@ impl Vm {
         &mut self,
         g_idx: GcIdx,
         kind: ResumeKind,
-    ) -> error::Result<(Value, bool, bool)> {
+    ) -> error::Result<(Value, bool, bool, bool)> {
         // Pull the saved execution state out of the generator object.
         let (
             fdef,
@@ -1236,8 +1246,8 @@ impl Vm {
 
         if done {
             return match &kind {
-                ResumeKind::Return(v) => Ok((v.clone(), true, false)),
-                _ => Ok((Value::Undefined, true, false)),
+                ResumeKind::Return(v) => Ok((v.clone(), true, false, false)),
+                _ => Ok((Value::Undefined, true, false, false)),
             };
         }
 
@@ -1253,7 +1263,7 @@ impl Vm {
                         g.started.store(true, Ordering::Relaxed);
                     }
                 });
-                return Ok((v.clone(), true, false));
+                return Ok((v.clone(), true, false, false));
             }
         }
 
@@ -1329,6 +1339,7 @@ impl Vm {
             *frame.gen_resume_value.lock() = resume_val.clone();
             frame.gen_mode.store(true, Ordering::Relaxed);
             frame.gen_suspended.store(false, Ordering::Relaxed);
+            frame.gen_awaiting.store(false, Ordering::Relaxed);
             frame.gen_delegating.store(delegating, Ordering::Relaxed);
             *frame.gen_yield.lock() = None;
             frame
@@ -1401,6 +1412,9 @@ impl Vm {
             let yielded_iterator_result = self.frames[target_depth]
                 .gen_yield_is_iterator_result
                 .load(Ordering::Relaxed);
+            let awaiting = self.frames[target_depth]
+                .gen_awaiting
+                .load(Ordering::Relaxed);
             // Pop the generator frame and save its state for the next resume.
             let frame = self.frames.pop().ok_or_else(|| {
                 crate::error::Error::internal("generator frame missing during resume")
@@ -1431,7 +1445,7 @@ impl Vm {
                 }
             });
 
-            Ok((yielded, false, yielded_iterator_result))
+            Ok((yielded, false, yielded_iterator_result, awaiting))
         } else {
             // Completed: the body returned or ran off the end. `result` holds
             // the return value; mark the generator done.
@@ -1443,7 +1457,7 @@ impl Vm {
                 }
             });
             let ret = result.unwrap_or(Value::Undefined);
-            Ok((ret, true, false))
+            Ok((ret, true, false, false))
         }
     }
 

@@ -4,7 +4,7 @@
 
 mod common;
 use common::run;
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
@@ -756,6 +756,148 @@ fn async_generator_protocol_errors_reject_next_promise() {
         rejected;
     "#;
     assert_eq!(run(src), Value::Bool(true));
+}
+
+#[test]
+fn async_generator_explicit_return_adds_await_boundary() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var actual = [];
+        async function* implicit() {}
+        async function* bare() { return; }
+        async function* explicit() { return undefined; }
+        async function* explicitVoid() { return void 0; }
+
+        Promise.resolve()
+            .then(() => actual.push("tick1"))
+            .then(() => actual.push("tick2"));
+        implicit().next().then(() => actual.push("implicit"));
+        bare().next().then(() => actual.push("bare"));
+        explicit().next().then(() => actual.push("explicit"));
+        explicitVoid().next().then(() => actual.push("explicitVoid"));
+        "#,
+    )
+    .expect("async generator scheduling failed");
+
+    assert_eq!(
+        vm.run("actual.join('|');")
+            .expect("failed to read scheduling log"),
+        Value::String(Arc::from("tick1|implicit|bare|tick2|explicit|explicitVoid"))
+    );
+}
+
+#[test]
+fn async_generator_return_then_getter_observes_job_order() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var actual = [];
+        async function* gen() {
+            actual.push("start");
+            yield 123;
+            actual.push("unreachable");
+        }
+
+        Promise.resolve()
+            .then(() => actual.push("tick1"))
+            .then(() => actual.push("tick2"));
+        var iterator = gen();
+        iterator.next();
+        iterator.return({
+            get then() { actual.push("get then"); }
+        });
+        "#,
+    )
+    .expect("async generator scheduling failed");
+
+    assert_eq!(
+        vm.run("actual.join('|');")
+            .expect("failed to read scheduling log"),
+        Value::String(Arc::from("start|tick1|get then|tick2"))
+    );
+}
+
+#[test]
+fn async_generator_yield_star_return_awaits_each_stage() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var actual = [];
+        var asyncIterator = {
+            [Symbol.asyncIterator]() { return this; },
+            next() { return { done: false }; },
+            get return() { actual.push("get return"); }
+        };
+        async function* gen() {
+            actual.push("start");
+            yield* asyncIterator;
+            actual.push("unreachable");
+        }
+
+        Promise.resolve()
+            .then(() => actual.push("tick1"))
+            .then(() => actual.push("tick2"))
+            .then(() => actual.push("tick3"));
+        var iterator = gen();
+        iterator.next();
+        iterator.return({
+            get then() { actual.push("get then"); }
+        });
+        "#,
+    )
+    .expect("async generator scheduling failed");
+
+    assert_eq!(
+        vm.run("actual.join('|');")
+            .expect("failed to read scheduling log"),
+        Value::String(Arc::from(
+            "start|tick1|get then|tick2|get return|get then|tick3"
+        ))
+    );
+}
+
+#[test]
+fn async_generator_yield_star_getter_errors_reach_the_body_catch() {
+    let src = r#"
+        var returnToken = {};
+        var throwToken = {};
+        function makeIterator(method, token) {
+            return {
+                [Symbol.asyncIterator]() { return this; },
+                next() { return { done: false, value: undefined }; },
+                [method]() {
+                    return {
+                        done: false,
+                        get value() { throw token; }
+                    };
+                }
+            };
+        }
+        async function* delegate(iterator) {
+            try {
+                yield* iterator;
+            } catch (error) {
+                return error;
+            }
+        }
+        var returnGenerator = delegate(makeIterator("return", returnToken));
+        var throwGenerator = delegate(makeIterator("throw", throwToken));
+        var actual = [];
+        returnGenerator.next()
+            .then(() => returnGenerator.return())
+            .then(result => actual.push(result.value === returnToken));
+        throwGenerator.next()
+            .then(() => throwGenerator.throw())
+            .then(result => actual.push(result.value === throwToken));
+    "#;
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(src).expect("delegated getter error test failed");
+    assert_eq!(
+        vm.run("actual.join('|');")
+            .expect("failed to read delegated getter results"),
+        Value::String(Arc::from("true|true"))
+    );
 }
 
 // ---- yield* resume forwarding + return value (#8 fix) ----
