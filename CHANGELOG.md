@@ -86,7 +86,11 @@
   `Atomics.notify` and `Atomics.wait`, raising the focused Atomics path to
   **279 pass / 0 fail / 110 skip / 389 total**. The remaining files are 101
   `waitAsync`, 5 `pause`, and 4 resizable-buffer cases. The supported language
-  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
+  `29117508967` and `test262-full` `29117508706` confirm the change;
+  downloaded artifacts report **25444 pass / 6769 fail / 11 timeout / 0 error
+  / 16243 skip / 48467 total / 32224 executed**, or **79.0%** of executed
+  files and **52.5%** of the matrix.
 - The runner and analyzer now keep `Atomics`, `Atomics.pause`, and
   `Atomics.waitAsync` behind global feature gates, then admit only the ten
   completed synchronous operation directories and three Atomics object-surface
