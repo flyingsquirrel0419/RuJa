@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.2% of all matrix files; 77.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.4% of all matrix files; 77.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9661 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -208,6 +208,13 @@ upstream snapshot no longer contains the 749 unsupported files added in the
 earlier snapshot, so the current aggregate is **17878 skip / 47718 total** and
 the all-matrix rate is **48.2%**; this denominator-only change is not an engine
 conformance gain.
+Async generator completion confirmation: `test262-full` 29078884750 on
+`3dfdaff` retains that aggregate after awaiting ordinary yielded values and
+preserving native async rejection Error objects. Latest improvement
+confirmation: `test262-full` 29079329840 on `45c2888`; the aggregate reports
+**23100 pass / 6830 fail / 11 timeout / 0 error / 17777 skip / 47718 total /
+29930 ran**, or **77.2%** of executed files and **48.4%** of the matrix after
+the complete async object method-definition admission.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
