@@ -247,5 +247,44 @@ class WeakRefAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class FinalizationRegistryAdmissionTests(unittest.TestCase):
+    def test_finalization_registry_support_and_exact_path_exceptions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = (
+                root
+                / "test/built-ins/FinalizationRegistry/prototype/register/case.js"
+            )
+            weak_ref_brand = (
+                root / "test/built-ins/WeakRef/prototype/deref/brand.js"
+            )
+            outside = root / "test/built-ins/Other/case.js"
+            feature_only = {"flags": [], "features": ["FinalizationRegistry"]}
+            combined = {
+                "flags": [],
+                "features": [
+                    "FinalizationRegistry",
+                    "Reflect",
+                    "Reflect.construct",
+                    "Symbol",
+                    "Symbol.toStringTag",
+                    "WeakMap",
+                    "WeakRef",
+                    "WeakSet",
+                ],
+            }
+
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(feature_only, outside))
+                    self.assertFalse(tool.should_skip(combined, inside))
+                    self.assertFalse(tool.should_skip(combined, weak_ref_brand))
+                    self.assertTrue(tool.should_skip(combined, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 if __name__ == "__main__":
     unittest.main()

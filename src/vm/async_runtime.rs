@@ -662,6 +662,7 @@ impl Vm {
         let max = self.max_heap_objects;
         if max > 0 && self.heap.live_count() >= max {
             self.heap.collect(&self.collect_roots());
+            self.schedule_finalization_cleanup_jobs();
         }
         Ok(GcIdx(self.heap.allocate(obj)?))
     }
@@ -1384,6 +1385,7 @@ impl Vm {
                 f.name.as_deref(),
                 Some("DataView")
                     | Some("WeakRef")
+                    | Some("FinalizationRegistry")
                     | Some("Int8Array")
                     | Some("Uint8Array")
                     | Some("Uint8ClampedArray")

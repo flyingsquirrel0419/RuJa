@@ -318,6 +318,9 @@ pub enum Microtask {
         promise: GcIdx,
         reason: Value,
     },
+    FinalizationCleanup {
+        registry: GcIdx,
+    },
 }
 
 impl Default for Vm {
@@ -554,7 +557,7 @@ impl Vm {
         let pinned_result = self.pin_many(&result_roots);
         self.clear_kept_objects();
         // Drain microtasks (Promise callbacks) after the synchronous run.
-        let microtask_result = if !self.microtask_queue.is_empty() {
+        let mut microtask_result = if !self.microtask_queue.is_empty() {
             self.run_microtasks()
         } else {
             Ok(())
@@ -564,6 +567,10 @@ impl Vm {
         if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
             self.heap.maybe_collect(&roots);
+            self.schedule_finalization_cleanup_jobs();
+        }
+        if microtask_result.is_ok() && !self.microtask_queue.is_empty() {
+            microtask_result = self.run_microtasks();
         }
         self.unpin_many(pinned_result);
         microtask_result?;
@@ -1060,6 +1067,7 @@ impl Vm {
             let pinned_result = self.pin_many(&result_roots);
             let roots = self.collect_roots();
             self.heap.maybe_collect(&roots);
+            self.schedule_finalization_cleanup_jobs();
             self.unpin_many(pinned_result);
         }
         result

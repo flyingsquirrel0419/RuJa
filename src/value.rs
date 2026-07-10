@@ -537,6 +537,7 @@ pub enum HeapObj {
     WeakMap(WeakMapData),
     WeakSet(WeakSetData),
     WeakRef(WeakRefData),
+    FinalizationRegistry(FinalizationRegistryData),
     Promise(PromiseData),
     Generator(GeneratorData),
     Iterator(IteratorData),
@@ -757,6 +758,21 @@ pub struct WeakSetData {
 /// RuJa's Symbol table is not currently garbage-collected.
 pub struct WeakRefData {
     pub target: Mutex<Option<Value>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+    pub extensible: AtomicBool,
+}
+
+pub struct FinalizationRegistryCell {
+    pub target: Option<Value>,
+    pub held_value: Value,
+    pub unregister_token: Option<Value>,
+}
+
+pub struct FinalizationRegistryData {
+    pub cleanup_callback: Value,
+    pub cells: Mutex<Vec<FinalizationRegistryCell>>,
+    pub cleanup_scheduled: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
     pub extensible: AtomicBool,
@@ -1013,6 +1029,7 @@ impl HeapObj {
             HeapObj::WeakMap(w) => &w.props,
             HeapObj::WeakSet(ws) => &ws.props,
             HeapObj::WeakRef(wr) => &wr.props,
+            HeapObj::FinalizationRegistry(registry) => &registry.props,
             HeapObj::Promise(p) => &p.props,
             HeapObj::Generator(g) => &g.props,
             HeapObj::LazyGenerator(g) => &g.props,
@@ -1038,6 +1055,7 @@ impl HeapObj {
             HeapObj::WeakMap(w) => &w.proto,
             HeapObj::WeakSet(ws) => &ws.proto,
             HeapObj::WeakRef(wr) => &wr.proto,
+            HeapObj::FinalizationRegistry(registry) => &registry.proto,
             HeapObj::Promise(p) => &p.proto,
             HeapObj::Generator(g) => &g.proto,
             HeapObj::LazyGenerator(g) => &g.proto,
@@ -1089,6 +1107,7 @@ impl HeapObj {
             HeapObj::WeakMap(_) => "WeakMap",
             HeapObj::WeakSet(_) => "WeakSet",
             HeapObj::WeakRef(_) => "WeakRef",
+            HeapObj::FinalizationRegistry(_) => "FinalizationRegistry",
             HeapObj::Promise(_) => "Promise",
             HeapObj::Generator(_) => "Generator",
             HeapObj::LazyGenerator(_) => "Generator",
@@ -1111,6 +1130,7 @@ impl HeapObj {
             HeapObj::Function(f) => f.extensible.load(Ordering::Relaxed),
             HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr.extensible.load(Ordering::Relaxed),
+            HeapObj::FinalizationRegistry(registry) => registry.extensible.load(Ordering::Relaxed),
             _ => true,
         }
     }

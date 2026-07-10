@@ -20,7 +20,7 @@ HARNESS = Path(TEST262) / "harness"
 RUN_ASYNC_TESTS = os.environ.get("TEST262_RUN_ASYNC") == "1"
 
 SKIP_FEATURES = {
-    "AggregateError", "ArrayBuffer", "DataView", "FinalizationRegistry",
+    "AggregateError", "ArrayBuffer", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
     "Int32Array", "Intl", "Promise", "SharedArrayBuffer",
     "Symbol", "Symbol.asyncIterator", "Symbol.iterator",
@@ -145,11 +145,29 @@ WEAK_REF_PREFIXES = (
 )
 
 WEAK_REF_FEATURES = {
+    "FinalizationRegistry",
     "Reflect",
     "Reflect.construct",
     "Symbol",
     "Symbol.toStringTag",
+    "WeakMap",
     "WeakRef",
+    "WeakSet",
+}
+
+FINALIZATION_REGISTRY_PREFIXES = (
+    "built-ins/FinalizationRegistry/",
+)
+
+FINALIZATION_REGISTRY_FEATURES = {
+    "FinalizationRegistry",
+    "Reflect",
+    "Reflect.construct",
+    "Symbol",
+    "Symbol.toStringTag",
+    "WeakMap",
+    "WeakRef",
+    "WeakSet",
 }
 
 ERROR_STACK_PREFIXES = (
@@ -536,6 +554,13 @@ def weak_ref_path(path):
         return False
     return rel.as_posix().startswith(WEAK_REF_PREFIXES)
 
+def finalization_registry_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(FINALIZATION_REGISTRY_PREFIXES)
+
 def error_stack_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -716,6 +741,8 @@ def should_skip(meta, path=None):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and weak_ref_path(path):
         feats.difference_update(WEAK_REF_FEATURES)
+    if path is not None and finalization_registry_path(path):
+        feats.difference_update(FINALIZATION_REGISTRY_FEATURES)
     if path is not None and error_stack_path(path):
         feats.difference_update(ERROR_STACK_FEATURES)
     if path is not None and aggregate_error_path(path):

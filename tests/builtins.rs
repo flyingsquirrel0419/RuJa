@@ -7620,6 +7620,194 @@ fn weak_ref_target_is_cleared_after_collection() {
 }
 
 #[test]
+fn finalization_registry_exposes_spec_shaped_surface() {
+    assert_eq!(
+        run(
+            r#"
+            var registry = new FinalizationRegistry(function() {});
+            var prototype = Object.getOwnPropertyDescriptor(
+                FinalizationRegistry,
+                "prototype"
+            );
+            var tag = Object.getOwnPropertyDescriptor(
+                FinalizationRegistry.prototype,
+                Symbol.toStringTag
+            );
+            [
+                typeof FinalizationRegistry,
+                FinalizationRegistry.length,
+                FinalizationRegistry.name,
+                registry instanceof FinalizationRegistry,
+                Object.isExtensible(registry),
+                Object.getPrototypeOf(registry) === FinalizationRegistry.prototype,
+                prototype.writable,
+                prototype.enumerable,
+                prototype.configurable,
+                FinalizationRegistry.prototype.register.length,
+                FinalizationRegistry.prototype.register.name,
+                FinalizationRegistry.prototype.unregister.length,
+                FinalizationRegistry.prototype.unregister.name,
+                tag.value,
+                tag.writable,
+                tag.enumerable,
+                tag.configurable
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "function|1|FinalizationRegistry|true|true|true|false|false|false|2|register|1|unregister|FinalizationRegistry|false|false|true"
+        ))
+    );
+}
+
+#[test]
+fn finalization_registry_validates_cells_tokens_and_realms() {
+    assert_eq!(
+        run(r#"
+            var registry = new FinalizationRegistry(function() {});
+            var target = {};
+            var token = {};
+            var symbolTarget = Symbol("target");
+            var symbolToken = Symbol("token");
+            var failures = 0;
+            for (var value of [undefined, null, true, 1, "x", Symbol.for("registered")]) {
+                try { registry.register(value); } catch (error) {
+                    if (error instanceof TypeError) failures++;
+                }
+                try { registry.unregister(value); } catch (error) {
+                    if (error instanceof TypeError) failures++;
+                }
+            }
+            try { registry.register(target, target); } catch (error) {
+                if (error instanceof TypeError) failures++;
+            }
+            try { FinalizationRegistry(function() {}); } catch (error) {
+                if (error instanceof TypeError) failures++;
+            }
+            try { new FinalizationRegistry({}); } catch (error) {
+                if (error instanceof TypeError) failures++;
+            }
+            var results = [
+                registry.register(target, "held", token),
+                registry.register(symbolTarget, 1, symbolToken),
+                registry.unregister(token),
+                registry.unregister(token),
+                registry.unregister(symbolToken),
+                registry.unregister(symbolToken)
+            ];
+            var other = $262.createRealm().global;
+            var newTarget = new other.Function();
+            newTarget.prototype = undefined;
+            var crossRealm = Reflect.construct(
+                FinalizationRegistry,
+                [function() {}],
+                newTarget
+            );
+            [
+                failures,
+                results.join(","),
+                Object.getPrototypeOf(crossRealm) === other.FinalizationRegistry.prototype
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("15|,,true,false,true,false|true"))
+    );
+}
+
+#[test]
+fn finalization_registry_cleanup_runs_after_gc_and_unregister_suppresses_it() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    vm.run(
+        r#"
+        var cleaned = [];
+        var registry = new FinalizationRegistry(function(held) {
+            cleaned.push(held.value);
+        });
+        var first = { target: 1 };
+        registry.register(first, { value: 42 });
+        first = null;
+        "#,
+    )
+    .expect("failed to register finalization target");
+
+    vm.gc();
+    vm.run_microtasks()
+        .expect("failed to run finalization cleanup job");
+    assert_eq!(
+        vm.run("cleaned.join(',');")
+            .expect("failed to inspect cleanup callback"),
+        Value::String(Arc::from("42"))
+    );
+
+    vm.run(
+        r#"
+        var second = { target: 2 };
+        var token = {};
+        registry.register(second, { value: 99 }, token);
+        var removed = registry.unregister(token);
+        second = null;
+        "#,
+    )
+    .expect("failed to unregister finalization target");
+    vm.gc();
+    vm.run_microtasks()
+        .expect("failed to drain post-unregister jobs");
+    assert_eq!(
+        vm.run("removed + '|' + cleaned.join(',');")
+            .expect("failed to inspect unregister behavior"),
+        Value::String(Arc::from("true|42"))
+    );
+
+    vm.run(
+        r#"
+        var nestedCleaned = [];
+        var nestedRegistry = new FinalizationRegistry(function(held) {
+            if (nestedCleaned.length === 0) forceGc();
+            nestedCleaned.push(held.value);
+        });
+        var nestedFirst = {};
+        var nestedSecond = {};
+        nestedRegistry.register(nestedFirst, { value: 1 });
+        nestedRegistry.register(nestedSecond, { value: 2 });
+        nestedFirst = null;
+        nestedSecond = null;
+        "#,
+    )
+    .expect("failed to register nested-GC cleanup targets");
+    vm.gc();
+    vm.run_microtasks()
+        .expect("failed to run cleanup callback containing GC");
+    assert_eq!(
+        vm.run("nestedCleaned.join(',');")
+            .expect("failed to inspect nested-GC holdings"),
+        Value::String(Arc::from("1,2"))
+    );
+
+    vm.run(
+        r#"
+        var throwingRegistry = new FinalizationRegistry(function() {
+            throw new Error("cleanup failure");
+        });
+        var third = {};
+        throwingRegistry.register(third, "held");
+        third = null;
+        "#,
+    )
+    .expect("failed to register throwing cleanup callback");
+    vm.gc();
+    vm.run_microtasks()
+        .expect("cleanup callback errors should be host-reported, not propagated");
+}
+
+#[test]
 fn nested_async_functions_resume_outward() {
     let mut vm = Vm::new().expect("failed to initialize VM");
     vm.run(

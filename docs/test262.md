@@ -58,13 +58,13 @@ tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
-WeakRef, Promise, async/await, generators, for-of, optional chaining, nullish
-coalescing, logical assignment.
+WeakRef, FinalizationRegistry, Promise, async/await, generators, for-of,
+optional chaining, nullish coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, Atomics,
 SharedArrayBuffer, full TypedArray prototype method coverage beyond the
 constructor/index basics and ArrayBuffer/DataView support,
-FinalizationRegistry, Tail-call optimization.
+Tail-call optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -307,13 +307,25 @@ non-weakly-holdable primitives are rejected while unregistered and well-known
 Symbols are accepted. Realm-specific prototype fallback and the standard
 constructor, prototype, method, and `@@toStringTag` descriptors are installed
 in both the main and test262-created Realms. The exact
-`built-ins/WeakRef/` path reports **28 pass / 0 fail / 1 skip / 29 total**.
-The remaining brand-check file also requires the still-unsupported
-`FinalizationRegistry`; the supported language subset remains **11589 pass / 0
-fail / 8850 skip / 20439 total**. CI `29110157712` and `test262-full`
-`29110157754` confirm the change. The downloaded full artifacts aggregate to
-**25056 pass / 6830 fail / 11 timeout / 0 error / 16570 skip / 48467 total /
-31897 executed**, or **78.6%** of executed files and **51.7%** of the matrix.
+`built-ins/WeakRef/` path initially reported **28 pass / 0 fail / 1 skip / 29
+total**. CI `29110157712` and `test262-full` `29110157754` confirmed that
+admission, with downloaded full artifacts at **25056 pass / 6830 fail / 11
+timeout / 0 error / 16570 skip / 48467 total / 31897 executed**.
+
+Focused FinalizationRegistry coverage check:
+`FinalizationRegistry` now uses registration cells with weak target and
+unregister-token slots plus strongly traced held values. GC sweep clears dead
+targets, schedules one cleanup job per registry, and invokes the captured
+callback at a VM job checkpoint; `unregister()` removes all cells sharing the
+same object or non-registered Symbol token. Constructor and method branding,
+target/held-value validation, cross-Realm prototype fallback, descriptors, and
+`@@toStringTag` are installed with the standard shape. Removing the global
+feature gate and admitting its exact Reflect/Symbol metadata closes
+`built-ins/FinalizationRegistry/` at **47 pass / 0 fail / 0 skip** and the
+previous WeakRef brand skip at **29 pass / 0 fail / 0 skip**. The related
+`built-ins/Object/seal/seal-finalizationregistry.js` file also passes, while
+the supported language subset remains **11589 pass / 0 fail / 8850 skip /
+20439 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
@@ -3504,5 +3516,5 @@ Key test262-driven bug fixes that raised the supported-subset rate from
 The supported subset currently has no known failures. The full-suite rate is
 still much lower because the full matrix includes unsupported features such as
 ES Modules, Intl, Atomics, full TypedArray prototype method coverage, and
-FinalizationRegistry. Those larger feature areas are tracked in
-`HANDOFF.md` and will be pulled into support in later milestones.
+tail-call optimization. Those larger feature areas are tracked in `HANDOFF.md`
+and will be pulled into support in later milestones.

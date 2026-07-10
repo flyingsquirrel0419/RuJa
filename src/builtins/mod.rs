@@ -1923,6 +1923,63 @@ fn install_weak_ref_constructor_in_env(
     Ok((constructor, prototype))
 }
 
+fn install_finalization_registry_constructor_in_env(
+    vm: &mut Vm,
+    env: GcIdx,
+    global: Option<&Value>,
+) -> error::Result<(Value, Value)> {
+    let (constructor, prototype) = make_builtin_constructor_with_in_env(
+        vm,
+        "FinalizationRegistry",
+        1,
+        finalization_registry_constructor,
+        &[
+            ("register", finalization_registry_register, 2),
+            ("unregister", finalization_registry_unregister, 1),
+        ],
+        env,
+    )?;
+    let function_proto = vm
+        .realm_function_prototypes
+        .get(&env.0)
+        .cloned()
+        .unwrap_or_else(|| vm.function_proto.clone());
+    set_function_object_proto(vm, constructor, &function_proto);
+    let methods = vm.heap.with_obj(prototype.0, |obj| {
+        let props = obj.props().lock();
+        ["register", "unregister"]
+            .iter()
+            .filter_map(|name| {
+                props
+                    .get(&PropertyKey::from(*name))
+                    .map(|descriptor| descriptor.value.clone())
+            })
+            .collect::<Vec<_>>()
+    });
+    for method in methods {
+        if let Value::Object(method) = method {
+            set_function_object_proto(vm, method, &function_proto);
+        }
+    }
+    vm.heap.with_obj(prototype.0, |obj| {
+        let mut tag = data_prop(Value::String(Arc::from("FinalizationRegistry")));
+        tag.writable = false;
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+    });
+
+    let constructor = Value::Object(constructor);
+    let prototype = Value::Object(prototype);
+    if let Some(global) = global {
+        define_realm_global(vm, env, global, "FinalizationRegistry", constructor.clone());
+    } else {
+        define_global(vm, "FinalizationRegistry", constructor.clone());
+    }
+    Ok((constructor, prototype))
+}
+
 pub(crate) fn make_error_constructor(vm: &mut Vm, name: &str) -> error::Result<(GcIdx, GcIdx)> {
     make_error_constructor_in_env(vm, name, vm.global)
 }
@@ -2447,6 +2504,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         )?;
     }
     install_weak_ref_constructor_in_env(vm, realm_env, Some(&global))?;
+    install_finalization_registry_constructor_in_env(vm, realm_env, Some(&global))?;
 
     Ok(global)
 }
@@ -6022,6 +6080,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     });
     setup_collections(vm)?;
     install_weak_ref_constructor_in_env(vm, vm.global, None)?;
+    install_finalization_registry_constructor_in_env(vm, vm.global, None)?;
     install_test262_host(vm)?;
     Ok(())
 }

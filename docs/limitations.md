@@ -41,7 +41,10 @@ guarantees, run RuJa in a separately killable process as well.
 - `WeakRef` supports object, unregistered Symbol, and well-known Symbol
   targets. Object targets are cleared by GC once unreachable and are kept
   alive through the current job after construction or `deref()`.
-  `FinalizationRegistry` is not implemented yet.
+  `FinalizationRegistry` stores targets and unregister tokens weakly, retains
+  held values strongly, and schedules cleanup callbacks at VM job checkpoints
+  after collection. As required by ECMAScript, callback timing is
+  nondeterministic and embedders must not depend on cleanup running promptly.
 - Async generators serialize requests, and ordinary async functions preserve
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`

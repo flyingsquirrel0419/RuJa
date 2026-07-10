@@ -662,6 +662,9 @@ impl Vm {
             HeapObj::WeakRef(wr) => wr
                 .extensible
                 .store(false, std::sync::atomic::Ordering::Relaxed),
+            HeapObj::FinalizationRegistry(registry) => registry
+                .extensible
+                .store(false, std::sync::atomic::Ordering::Relaxed),
             _ => {}
         });
         Ok(true)
@@ -2526,6 +2529,7 @@ impl Vm {
                     roots.push(promise.0);
                     Self::push_value_roots(&mut roots, reason);
                 }
+                Microtask::FinalizationCleanup { registry } => roots.push(registry.0),
             }
         }
         // Global constants are reachable for the program lifetime.
@@ -2559,9 +2563,19 @@ impl Vm {
         self.kept_objects.clear();
     }
 
-    pub fn gc(&self) {
+    pub(crate) fn schedule_finalization_cleanup_jobs(&mut self) {
+        for registry in self.heap.take_pending_finalization_registries() {
+            self.microtask_queue
+                .push_back(Microtask::FinalizationCleanup {
+                    registry: GcIdx(registry),
+                });
+        }
+    }
+
+    pub fn gc(&mut self) {
         let roots = self.collect_roots();
         self.heap.collect(&roots);
+        self.schedule_finalization_cleanup_jobs();
     }
 
     /// Pin a heap object as a temporary GC root. Returns the number of roots
@@ -2713,6 +2727,11 @@ impl Vm {
             }
             Microtask::Reject { promise, reason } => {
                 self.promise_reject(promise.0, reason);
+                Ok(())
+            }
+            Microtask::FinalizationCleanup { registry } => {
+                crate::builtins::run_finalization_registry_cleanup_job(self, registry)?;
+                self.schedule_finalization_cleanup_jobs();
                 Ok(())
             }
         }

@@ -960,6 +960,165 @@ pub(crate) fn weak_ref_deref(
     }
 }
 
+// --- FinalizationRegistry -------------------------------------------------
+
+fn require_finalization_registry(vm: &Vm, this: Option<Value>, name: &str) -> error::Result<GcIdx> {
+    let Some(Value::Object(idx)) = this else {
+        return Err(Error::type_err(format!(
+            "FinalizationRegistry.prototype.{name} called on incompatible receiver"
+        )));
+    };
+    if vm
+        .heap
+        .with_obj(idx.0, |obj| matches!(obj, HeapObj::FinalizationRegistry(_)))
+    {
+        Ok(idx)
+    } else {
+        Err(Error::type_err(format!(
+            "FinalizationRegistry.prototype.{name} called on incompatible receiver"
+        )))
+    }
+}
+
+pub(crate) fn finalization_registry_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    if vm.current_native_new_target.is_none() {
+        return Err(Error::type_err(
+            "FinalizationRegistry constructor requires new",
+        ));
+    }
+    let cleanup_callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&cleanup_callback, &vm.heap) {
+        return Err(Error::type_err(
+            "FinalizationRegistry cleanup callback is not callable",
+        ));
+    }
+    let proto = native_constructor_prototype_with_default(
+        vm,
+        "FinalizationRegistry",
+        vm.object_proto.clone(),
+    )?;
+    let registry = vm.heap.allocate(HeapObj::FinalizationRegistry(
+        crate::value::FinalizationRegistryData {
+            cleanup_callback,
+            cells: Mutex::new(Vec::new()),
+            cleanup_scheduled: AtomicBool::new(false),
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(proto)),
+            extensible: AtomicBool::new(true),
+        },
+    ))?;
+    Ok(Value::Object(GcIdx(registry)))
+}
+
+pub(crate) fn finalization_registry_register(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let registry = require_finalization_registry(vm, this, "register")?;
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+    if !can_be_held_weakly(vm, &target) {
+        return Err(Error::type_err(
+            "FinalizationRegistry target cannot be held weakly",
+        ));
+    }
+    let held_value = args.get(1).cloned().unwrap_or(Value::Undefined);
+    if target == held_value {
+        return Err(Error::type_err(
+            "FinalizationRegistry target and held value must differ",
+        ));
+    }
+    let unregister_token = match args.get(2).cloned().unwrap_or(Value::Undefined) {
+        Value::Undefined => None,
+        token if can_be_held_weakly(vm, &token) => Some(token),
+        _ => {
+            return Err(Error::type_err(
+                "FinalizationRegistry unregister token cannot be held weakly",
+            ))
+        }
+    };
+    vm.heap.with_obj(registry.0, |obj| {
+        if let HeapObj::FinalizationRegistry(registry) = obj {
+            registry
+                .cells
+                .lock()
+                .push(crate::value::FinalizationRegistryCell {
+                    target: Some(target),
+                    held_value,
+                    unregister_token,
+                });
+        }
+    });
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn finalization_registry_unregister(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let registry = require_finalization_registry(vm, this, "unregister")?;
+    let token = args.first().cloned().unwrap_or(Value::Undefined);
+    if !can_be_held_weakly(vm, &token) {
+        return Err(Error::type_err(
+            "FinalizationRegistry unregister token cannot be held weakly",
+        ));
+    }
+    let removed = vm.heap.with_obj(registry.0, |obj| {
+        let HeapObj::FinalizationRegistry(registry) = obj else {
+            return false;
+        };
+        let mut cells = registry.cells.lock();
+        let old_len = cells.len();
+        cells.retain(|cell| cell.unregister_token.as_ref() != Some(&token));
+        cells.len() != old_len
+    });
+    Ok(Value::Bool(removed))
+}
+
+pub(crate) fn run_finalization_registry_cleanup_job(
+    vm: &mut Vm,
+    registry: GcIdx,
+) -> error::Result<()> {
+    let registry_value = Value::Object(registry);
+    let pin_count = vm.pin(&registry_value);
+    let cleanup = vm.heap.with_obj(registry.0, |obj| {
+        let HeapObj::FinalizationRegistry(registry) = obj else {
+            return None;
+        };
+        registry
+            .cleanup_scheduled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let mut pending = Vec::new();
+        registry.cells.lock().retain(|cell| {
+            if cell.target.is_none() {
+                pending.push(cell.held_value.clone());
+                false
+            } else {
+                true
+            }
+        });
+        Some((registry.cleanup_callback.clone(), pending))
+    });
+    if let Some((callback, pending)) = cleanup {
+        let pending_pin_count = vm.pin_many(&pending);
+        for held_value in &pending {
+            let _ = vm.call_function(
+                &callback,
+                std::slice::from_ref(held_value),
+                Some(Value::Undefined),
+            );
+        }
+        vm.unpin_many(pending_pin_count);
+    }
+    vm.unpin(pin_count);
+    Ok(())
+}
+
 pub(crate) fn map_clear(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
     let idx = require_map_receiver(vm, this, "Map.prototype.clear")?;
     vm.heap.with_obj(idx.0, |obj| {

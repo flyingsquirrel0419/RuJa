@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `FinalizationRegistry` now stores weak registration targets and unregister
+  tokens alongside strongly traced held values and cleanup callbacks. GC sweep
+  moves dead targets into cleanup jobs, unregister removes every matching
+  registration, callback failures stay contained at the cleanup-job boundary,
+  and constructor, brand, Symbol-target, cross-Realm, extensibility, and
+  descriptor behavior follows the ECMAScript surface.
 - `WeakRef` now has a dedicated weak heap exotic instead of a hidden strong
   property. Object targets are cleared during GC sweep, unregistered and
   well-known Symbol targets are accepted, registered Symbols and other
@@ -52,6 +58,11 @@
 
 ### Test tooling
 
+- `FinalizationRegistry` is removed from the global unsupported-feature gate.
+  Its exact built-in path reports **47 pass / 0 fail / 0 skip**, the completed
+  receiver-brand coverage raises `built-ins/WeakRef/` to **29 pass / 0 fail /
+  0 skip**, and the related `Object.seal` test passes. The supported language
+  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
 - The runner and analyzer now admit `built-ins/WeakRef/` through an exact-path
   feature exception. The focused path reports **28 pass / 0 fail / 1 skip / 29
   total**; the remaining test requires `FinalizationRegistry` solely to check

@@ -184,6 +184,12 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
             }
         }
         HeapObj::WeakSet(_) | HeapObj::WeakRef(_) => {}
+        HeapObj::FinalizationRegistry(registry) => {
+            push_value(&registry.cleanup_callback, worklist);
+            for cell in registry.cells.lock().iter() {
+                push_value(&cell.held_value, worklist);
+            }
+        }
         HeapObj::Set(s) => {
             for k in s.items.lock().iter() {
                 push_value(&k.0, worklist);
@@ -451,6 +457,20 @@ impl Heap {
                             *target = None;
                         }
                     }
+                    HeapObj::FinalizationRegistry(registry) => {
+                        for cell in registry.cells.lock().iter_mut() {
+                            if matches!(cell.target.as_ref(), Some(crate::value::Value::Object(idx))
+                                if idx.0 >= marked.len() || !marked[idx.0])
+                            {
+                                cell.target = None;
+                            }
+                            if matches!(cell.unregister_token.as_ref(), Some(crate::value::Value::Object(idx))
+                                if idx.0 >= marked.len() || !marked[idx.0])
+                            {
+                                cell.unregister_token = None;
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -466,6 +486,30 @@ impl Heap {
         {
             self.collect(roots);
         }
+    }
+
+    pub fn take_pending_finalization_registries(&self) -> Vec<usize> {
+        let cells = self.cells.lock();
+        cells
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, cell)| {
+                let obj = cell.obj.lock();
+                let HeapObj::FinalizationRegistry(registry) = obj.as_ref()? else {
+                    return None;
+                };
+                let has_pending = registry
+                    .cells
+                    .lock()
+                    .iter()
+                    .any(|cell| cell.target.is_none());
+                if has_pending && !registry.cleanup_scheduled.swap(true, Ordering::Relaxed) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn live_count(&self) -> usize {
