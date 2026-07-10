@@ -5,6 +5,11 @@
 ### Test tooling
 
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented synchronous and parse-negative object method-definition
+  coverage only on `language/expressions/object/method-definition/`. The
+  global test262 `async` flag remains gated, so asynchronous completion tests
+  are still excluded until the runner can observe `$DONE` reliably.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented default-parameter, destructuring-binding, generator,
   object-rest, and `Symbol.iterator` coverage only on
   `language/expressions/arrow-function/`; those feature gates remain active
@@ -145,8 +150,14 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **9347 pass / 0 fail / 11091 skip / 0 timeout**.
+Current supported subset count: **9497 pass / 0 fail / 10941 skip / 0 timeout**.
 
+- **Synchronous object method-definition admission**: the focused object
+  method-definition path now exercises implemented async/generator grammar,
+  class-element contexts, default parameters, and Symbol-backed computed
+  names. It rises from **52 pass / 0 fail / 251 skip** to **202 pass / 0 fail /
+  101 skip**; every remaining skip carries the test262 `async` flag. The
+  supported subset rises to **9497 pass / 0 fail / 10941 skip**.
 - **Escaped object async-method prefix early error**: object literal method
   parsing now distinguishes the exact contextual `async` token from an
   escaped identifier. With the relevant method-definition feature skips

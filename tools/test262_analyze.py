@@ -258,6 +258,22 @@ ARROW_FUNCTION_FEATURES = {
     "Symbol.iterator",
 }
 
+OBJECT_METHOD_DEFINITION_PREFIXES = (
+    "language/expressions/object/method-definition/",
+)
+
+OBJECT_METHOD_DEFINITION_FEATURES = {
+    "async-functions",
+    "async-iteration",
+    "class-fields-public",
+    "class-methods-private",
+    "default-parameters",
+    "generators",
+    "Symbol",
+    "Symbol.asyncIterator",
+    "Symbol.iterator",
+}
+
 GENERATOR_PREFIXES = (
     "language/expressions/generators/",
     "language/statements/generators/",
@@ -486,6 +502,13 @@ def arrow_function_path(path):
         return False
     return rel.as_posix().startswith(ARROW_FUNCTION_PREFIXES)
 
+def object_method_definition_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(OBJECT_METHOD_DEFINITION_PREFIXES)
+
 def generator_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -552,6 +575,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_DEFINITION_FEATURES)
     if path is not None and arrow_function_path(path):
         feats.difference_update(ARROW_FUNCTION_FEATURES)
+    if path is not None and object_method_definition_path(path):
+        feats.difference_update(OBJECT_METHOD_DEFINITION_FEATURES)
     if path is not None and generator_path(path):
         feats.difference_update(GENERATOR_FEATURES)
     if path is not None and function_path(path):
