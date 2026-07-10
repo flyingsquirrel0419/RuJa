@@ -1325,10 +1325,11 @@ pub(crate) fn gen_result(
         if let HeapObj::Object(obj) = o {
             obj.props
                 .lock()
-                .insert(PropertyKey::from("value"), data_prop(value));
-            obj.props
-                .lock()
-                .insert(PropertyKey::from("done"), data_prop(Value::Bool(done)));
+                .insert(PropertyKey::from("value"), enumerable_data_prop(value));
+            obj.props.lock().insert(
+                PropertyKey::from("done"),
+                enumerable_data_prop(Value::Bool(done)),
+            );
         }
     });
     let result_obj = Value::Object(GcIdx(obj_idx));

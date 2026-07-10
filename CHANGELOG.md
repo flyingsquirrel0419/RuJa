@@ -4,6 +4,12 @@
 
 ### Test tooling
 
+- The async-generator receiver-brand fix is confirmed by `test262-full`
+  29095756104 on `43cc099` at **23277 pass / 6830 fail / 11 timeout / 0
+  error / 17600 skip / 47718 total / 30107 ran**, retaining **77.3%** of
+  executed files. The upstream checkout again omits the 749 unsupported,
+  skip-only files present in the preceding snapshot; engine outcomes are
+  unchanged apart from the six opt-in async receiver diagnostics.
 - The async iterator-kind semantic fix is confirmed by `test262-full`
   29094206133 on `a906242` at **23277 pass / 6830 fail / 11 timeout / 0
   error / 18349 skip / 48467 total / 30107 ran**, retaining **77.3%** of
@@ -146,6 +152,11 @@
 
 ### Runtime hardening
 
+- Iterator result objects created for generators, async generators, Array and
+  collection iterators, RegExp String iterators, and delegation now expose
+  `value` and `done` as writable, enumerable, configurable data properties, as
+  required by `CreateIterResultObject`. `Object.keys`, object spread,
+  `JSON.stringify`, and descriptor inspection no longer hide both fields.
 - `%AsyncGeneratorPrototype%` `next`, `return`, and `throw` now validate the
   async-generator internal brand before resuming. Incompatible primitive,
   ordinary object/function, async-generator function/prototype, and synchronous

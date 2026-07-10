@@ -998,6 +998,36 @@ fn async_generator_methods_reject_incompatible_receivers() {
     assert_eq!(run(src), Value::String(Arc::from("0|33")));
 }
 
+#[test]
+fn iterator_result_properties_are_enumerable_data_properties() {
+    let src = r#"
+        function shape(result) {
+            let value = Object.getOwnPropertyDescriptor(result, "value");
+            let done = Object.getOwnPropertyDescriptor(result, "done");
+            return [
+                Object.keys(result).join(","),
+                value.writable,
+                value.enumerable,
+                value.configurable,
+                done.writable,
+                done.enumerable,
+                done.configurable
+            ].join("|");
+        }
+
+        function* syncGenerator() { yield 1; }
+        async function* asyncGenerator() { yield 1; }
+        let expected = "value,done|true|true|true|true|true|true";
+        [
+            shape(syncGenerator().next()),
+            shape(await asyncGenerator().next()),
+            shape([1].values().next()),
+            shape("a".matchAll(/a/g).next())
+        ].every(result => result === expected);
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
 // ---- generator throw/return injection into the body ----
 
 #[test]
