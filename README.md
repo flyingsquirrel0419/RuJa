@@ -46,7 +46,7 @@ for intentionally-unsupported features.
 
 **Supported-subset pass rate: 100.0%** (11,545 tests in `language/statements`
 + `language/expressions`, unsupported-feature tests skipped). The latest full
-matrix is 51.0% of all files and 78.3% of executed files — see
+matrix is 51.5% of all files and 78.5% of executed files — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 

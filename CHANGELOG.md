@@ -41,7 +41,10 @@
   `Symbol.iterator`, and `Symbol.asyncIterator` coverage. The focused paths
   reach **2951 pass / 0 fail / 11 skip / 2962 total**, adding 256 tests to the
   supported subset at **11545 pass / 0 fail / 8894 skip / 20439 total** while
-  keeping the exception scoped to class elements.
+  keeping the exception scoped to class elements. CI `29106363624` and
+  `test262-full` `29106363581` confirm the admission; the full aggregate is
+  **24984 pass / 6830 fail / 11 timeout / 0 error / 16642 skip / 48467 total /
+  31825 ran**, or **78.5%** of executed files and **51.5%** of the matrix.
 - The fully green `language/expressions/await/` path is now admitted by default
   at **22 pass / 0 fail / 0 skip**. Together with resumable ordinary async
   functions, the supported subset reaches **11266 pass / 0 fail / 9173 skip /
