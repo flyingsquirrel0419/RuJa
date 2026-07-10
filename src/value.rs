@@ -862,6 +862,9 @@ pub struct IteratorData {
     /// Object where each `for...in` key was discovered. This is aligned with
     /// `items` for for-in iterators and empty for all other iterator kinds.
     pub for_in_key_sources: Mutex<Vec<Value>>,
+    /// True when this iterator is the internal adapter returned by
+    /// GetIterator(value, async) after falling back to the sync protocol.
+    pub async_from_sync: AtomicBool,
     pub done: AtomicBool,
 }
 

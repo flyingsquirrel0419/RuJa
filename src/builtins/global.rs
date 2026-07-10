@@ -334,7 +334,7 @@ pub(crate) fn function_constructor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    dynamic_function_constructor(vm, args, false)
+    dynamic_function_constructor(vm, args, false, false)
 }
 
 pub(crate) fn generator_function_constructor(
@@ -342,13 +342,22 @@ pub(crate) fn generator_function_constructor(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    dynamic_function_constructor(vm, args, true)
+    dynamic_function_constructor(vm, args, true, false)
+}
+
+pub(crate) fn async_generator_function_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    dynamic_function_constructor(vm, args, true, true)
 }
 
 fn dynamic_function_constructor(
     vm: &mut Vm,
     args: &[Value],
     is_generator: bool,
+    is_async: bool,
 ) -> error::Result<Value> {
     use crate::ast::FunctionExpr;
     use crate::value::{FunctionData, FunctionKind, PropertyDescriptor, PropertyKey};
@@ -376,10 +385,10 @@ fn dynamic_function_constructor(
     // Parse params + body together by wrapping in `function _f(PARAMS){ BODY }`,
     // so directives (e.g. "use strict") in the body are honored and the body
     // is parsed as a function statement list (not a top-level block).
-    let wrapped = if is_generator {
-        format!("function* _f({}) {{ {} }}", params_src, body_src)
-    } else {
-        format!("function _f({}) {{ {} }}", params_src, body_src)
+    let wrapped = match (is_async, is_generator) {
+        (true, true) => format!("async function* _f({}) {{ {} }}", params_src, body_src),
+        (false, true) => format!("function* _f({}) {{ {} }}", params_src, body_src),
+        _ => format!("function _f({}) {{ {} }}", params_src, body_src),
     };
     let prog = crate::parser::Parser::parse(&wrapped)?;
     let params_fn = prog
@@ -404,7 +413,7 @@ fn dynamic_function_constructor(
         rest_param,
         body,
         is_arrow: false,
-        is_async: false,
+        is_async,
         is_generator,
         param_decls: Vec::new(),
         is_strict,
@@ -423,7 +432,7 @@ fn dynamic_function_constructor(
         chunk: std::sync::Arc::new(chunk),
         num_locals: f.params.len() + 16,
         is_arrow: false,
-        is_async: false,
+        is_async,
         is_generator,
         has_parameter_expressions: crate::compiler::Compiler::has_parameter_expressions(&f),
         length: crate::compiler::Compiler::fn_length(&f),
@@ -437,7 +446,11 @@ fn dynamic_function_constructor(
     let proto = HeapObj::Object(crate::value::ObjectData {
         props: Mutex::new(IndexMap::new()),
         proto: Mutex::new(Some(if is_generator {
-            vm.generator_proto.clone()
+            if is_async {
+                vm.async_generator_proto.clone()
+            } else {
+                vm.generator_proto.clone()
+            }
         } else {
             vm.object_proto.clone()
         })),
@@ -447,16 +460,28 @@ fn dynamic_function_constructor(
         primitive: Mutex::new(None),
     });
     let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)?));
-    let fallback_function_proto =
-        if is_generator && matches!(vm.generator_function_proto, Value::Object(_)) {
+    let fallback_function_proto = if is_generator {
+        let proto = if is_async {
+            vm.async_generator_function_proto.clone()
+        } else {
             vm.generator_function_proto.clone()
+        };
+        if matches!(proto, Value::Object(_)) {
+            proto
         } else {
             let realm = crate::environment::global_env_root(&vm.heap, function_realm);
             vm.realm_function_prototypes
                 .get(&realm.0)
                 .cloned()
                 .unwrap_or_else(|| vm.function_proto.clone())
-        };
+        }
+    } else {
+        let realm = crate::environment::global_env_root(&vm.heap, function_realm);
+        vm.realm_function_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| vm.function_proto.clone())
+    };
     let function_object_proto = if let Some(proto) = vm.current_native_new_target_prototype.clone()
     {
         if matches!(proto, Value::Object(_)) {

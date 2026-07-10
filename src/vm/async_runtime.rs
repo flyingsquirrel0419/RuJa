@@ -774,6 +774,8 @@ impl Vm {
                             .unwrap_or(Value::Undefined);
                         if matches!(proto, Value::Object(_)) {
                             proto
+                        } else if is_async {
+                            self.async_generator_proto.clone()
                         } else {
                             self.generator_proto.clone()
                         }
@@ -1184,11 +1186,32 @@ impl Vm {
             // No async iterator: fall back to the sync iterator protocol. Each
             // `next()` is awaited (a non-Promise value awaits to itself).
             let it = self.make_iterator(iterable)?;
+            self.mark_async_from_sync(&it);
             return Ok(it);
         }
         // Primitives (strings etc.): use the sync iterator, awaited per step.
         let it = self.make_iterator(iterable)?;
+        self.mark_async_from_sync(&it);
         Ok(it)
+    }
+
+    fn mark_async_from_sync(&self, it: &Value) {
+        if let Value::Object(idx) = it {
+            self.heap.with_obj(idx.0, |obj| {
+                if let HeapObj::Iterator(data) = obj {
+                    data.async_from_sync.store(true, Ordering::Relaxed);
+                }
+            });
+        }
+    }
+
+    fn is_async_from_sync(&self, it: &Value) -> bool {
+        match it {
+            Value::Object(idx) => self.heap.with_obj(idx.0, |obj| {
+                matches!(obj, HeapObj::Iterator(data) if data.async_from_sync.load(Ordering::Relaxed))
+            }),
+            _ => false,
+        }
     }
 
     /// Build an iterator over an object's enumerable string keys (for `for...in`).
@@ -1287,6 +1310,7 @@ impl Vm {
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
             for_in_key_sources: Mutex::new(Vec::new()),
+            async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -1306,6 +1330,7 @@ impl Vm {
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
             for_in_key_sources: Mutex::new(Vec::new()),
+            async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -1325,6 +1350,7 @@ impl Vm {
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
             for_in_key_sources: Mutex::new(Vec::new()),
+            async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -1340,6 +1366,7 @@ impl Vm {
             array_like: Mutex::new(Some(source)),
             for_in_source: Mutex::new(None),
             for_in_key_sources: Mutex::new(Vec::new()),
+            async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -1360,6 +1387,7 @@ impl Vm {
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(Some(source)),
             for_in_key_sources: Mutex::new(key_sources),
+            async_from_sync: AtomicBool::new(false),
             done: std::sync::atomic::AtomicBool::new(false),
         });
         Ok(Value::Object(GcIdx(self.heap.allocate(it)?)))
@@ -1491,17 +1519,22 @@ impl Vm {
             return Err(Error::type_err("Iterator result is not an object"));
         }
         let done = self.get_property(&result, "done")?.is_truthy();
+        let await_value = await_result && self.is_async_from_sync(it);
         if !done {
             if await_result {
                 let value = self.get_property(&result, "value")?;
-                let value = self.await_value(value)?;
+                let value = if await_value {
+                    self.await_value(value)?
+                } else {
+                    value
+                };
                 result = crate::builtins::regexp::gen_result(self, value, false, false)?;
             }
             return Ok(DelegateOutcome::Yield(result));
         }
         self.mark_iterator_done(it);
         let mut value = self.get_property(&result, "value")?;
-        if await_result {
+        if await_value {
             value = self.await_value(value)?;
         }
         if return_completion {
@@ -1864,11 +1897,17 @@ impl Vm {
                 }
                 return Ok((Value::Undefined, true));
             }
-            let value = self.get_property(&result, "value")?;
+            let mut value = self.get_property(&result, "value")?;
+            if self.is_async_from_sync(it) {
+                value = self.await_value(value)?;
+            }
             return Ok((value, done));
         }
-        // Eager (Vec-backed) iterator: step directly, no awaiting needed.
-        self.iterator_next(it)
+        let (mut value, done) = self.iterator_next(it)?;
+        if !done && self.is_async_from_sync(it) {
+            value = self.await_value(value)?;
+        }
+        Ok((value, done))
     }
 
     /// Await a value by resolving objects through their observable `then`

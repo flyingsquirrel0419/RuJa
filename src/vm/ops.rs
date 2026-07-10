@@ -3304,6 +3304,7 @@ impl Vm {
             let is_arrow = fdef.is_arrow;
             let is_method = fdef.is_method;
             let is_generator = fdef.is_generator;
+            let is_async = fdef.is_async;
             let fn_length = fdef.length;
             let fn_name = fdef.name.clone();
             let has_name_binding = fdef.has_name_binding && fn_name.is_some() && !is_arrow;
@@ -3315,7 +3316,11 @@ impl Vm {
                 let proto = HeapObj::Object(crate::value::ObjectData {
                     props: Mutex::new(IndexMap::new()),
                     proto: Mutex::new(Some(if is_generator {
-                        self.generator_proto.clone()
+                        if is_async {
+                            self.async_generator_proto.clone()
+                        } else {
+                            self.generator_proto.clone()
+                        }
                     } else {
                         self.object_proto.clone()
                     })),
@@ -3336,7 +3341,11 @@ impl Vm {
                 env_idx
             };
             let function_object_proto = if is_generator {
-                self.generator_function_proto.clone()
+                if is_async {
+                    self.async_generator_function_proto.clone()
+                } else {
+                    self.generator_function_proto.clone()
+                }
             } else {
                 let realm = crate::environment::global_env_root(&self.heap, env_idx);
                 self.realm_function_prototypes

@@ -49,6 +49,33 @@ fn for_await_over_sync_iterable_fallback() {
 }
 
 #[test]
+fn for_await_only_unwraps_async_from_sync_values() {
+    let src = r#"
+        let nativePromise = Promise.resolve("native");
+        let nativeAsyncIterable = {
+            [Symbol.asyncIterator]() {
+                let done = false;
+                return {
+                    next() {
+                        if (done) return { value: undefined, done: true };
+                        done = true;
+                        return { value: nativePromise, done: false };
+                    }
+                };
+            }
+        };
+        let nativeValue;
+        for await (let value of nativeAsyncIterable) nativeValue = value;
+
+        let syncValue;
+        for await (let value of [Promise.resolve("sync")]) syncValue = value;
+
+        [nativeValue === nativePromise, syncValue].join("|");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true|sync")));
+}
+
+#[test]
 fn for_await_break_exits_early() {
     let src = r#"
         async function* gen() { yield 1; yield 2; yield 3; yield 4; }

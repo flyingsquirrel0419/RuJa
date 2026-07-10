@@ -2444,6 +2444,9 @@ impl Vm {
             &self.set_proto,
             &self.generator_proto,
             &self.generator_function_proto,
+            &self.async_iterator_proto,
+            &self.async_generator_proto,
+            &self.async_generator_function_proto,
         ] {
             Self::push_value_roots(&mut roots, proto);
         }

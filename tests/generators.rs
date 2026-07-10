@@ -601,6 +601,79 @@ fn async_generator_yield_star_selects_async_then_sync_iterator() {
 }
 
 #[test]
+fn async_generator_intrinsics_are_isolated_from_object_prototype() {
+    let src = r#"
+        let AsyncGeneratorFunction = (async function*() {}).constructor;
+        let AsyncGeneratorPrototype = AsyncGeneratorFunction.prototype.prototype;
+        let AsyncIteratorPrototype = Object.getPrototypeOf(AsyncGeneratorPrototype);
+        let functionConstructorDesc = Object.getOwnPropertyDescriptor(
+            AsyncGeneratorFunction.prototype,
+            "constructor"
+        );
+        let generatorConstructorDesc = Object.getOwnPropertyDescriptor(
+            AsyncGeneratorPrototype,
+            "constructor"
+        );
+        Object.defineProperty(AsyncIteratorPrototype, Symbol.iterator, {
+            get() { throw new Error("@@iterator accessed"); }
+        });
+        Object.defineProperty(AsyncIteratorPrototype, Symbol.asyncIterator, {
+            get() { throw new Error("@@asyncIterator accessed"); }
+        });
+        async function* gen() { yield* []; }
+        let result = await gen().next();
+        let dynamic = new AsyncGeneratorFunction("value", "yield value;");
+        let dynamicResult = await dynamic(7).next();
+        [
+            AsyncGeneratorFunction.name,
+            AsyncIteratorPrototype !== Object.prototype,
+            AsyncGeneratorFunction.prototype[Symbol.toStringTag],
+            AsyncGeneratorPrototype[Symbol.toStringTag],
+            AsyncGeneratorPrototype.constructor === AsyncGeneratorFunction.prototype,
+            AsyncGeneratorPrototype.next.length,
+            !functionConstructorDesc.writable && functionConstructorDesc.configurable,
+            !generatorConstructorDesc.writable && generatorConstructorDesc.configurable,
+            result.done,
+            result.value === undefined,
+            Object.getPrototypeOf(dynamic) === AsyncGeneratorFunction.prototype,
+            dynamicResult.value,
+            dynamicResult.done
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "AsyncGeneratorFunction|true|AsyncGeneratorFunction|AsyncGenerator|true|1|true|true|true|true|true|7|false"
+        ))
+    );
+}
+
+#[test]
+fn async_generator_yield_star_only_unwraps_async_from_sync_values() {
+    let src = r#"
+        let nativePromise = Promise.resolve("native");
+        let nativeAsyncIterator = {
+            [Symbol.asyncIterator]() { return this; },
+            next() { return { value: nativePromise, done: false }; }
+        };
+        let syncIterable = {
+            [Symbol.iterator]() {
+                return {
+                    next() {
+                        return { value: Promise.resolve("sync"), done: false };
+                    }
+                };
+            }
+        };
+        async function* delegate(value) { yield* value; }
+        let nativeResult = await delegate(nativeAsyncIterator).next();
+        let syncResult = await delegate(syncIterable).next();
+        [nativeResult.value === nativePromise, syncResult.value].join("|");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true|sync")));
+}
+
+#[test]
 fn async_generator_yield_star_awaits_thenable_and_rewraps_result() {
     let src = r#"
         let log = [];

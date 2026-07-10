@@ -22,9 +22,9 @@ pub(crate) mod proxy;
 pub(crate) mod typed_array;
 pub(crate) use function::*;
 pub(crate) use global::{
-    bigint_as_int_n, bigint_as_uint_n, bigint_to_string, bigint_value_of, function_constructor,
-    generator_function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan,
-    global_parse_float, global_parse_int,
+    async_generator_function_constructor, bigint_as_int_n, bigint_as_uint_n, bigint_to_string,
+    bigint_value_of, function_constructor, generator_function_constructor, global_bigint,
+    global_eval, global_is_finite, global_is_nan, global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
     build_json, build_reflect, date_constructor, date_get_component, date_get_time,
@@ -5808,6 +5808,113 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             const_prop(Value::Object(GcIdx(generator_function_proto_idx))),
         );
     });
+    // Async generator intrinsics are distinct from their synchronous
+    // counterparts. In particular, %AsyncIteratorPrototype% must not alias
+    // Object.prototype because user changes to it cannot affect arrays or
+    // other ordinary objects.
+    let async_iterator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("AsyncIterator")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let async_iterator_fn = vm.new_native_function(
+        "[Symbol.asyncIterator]",
+        collections::collection_iterator_this,
+        0,
+    )?;
+    vm.heap.with_obj(async_iterator_proto_idx, |obj| {
+        obj.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.async_iterator),
+            data_prop(Value::Object(async_iterator_fn)),
+        );
+    });
+    vm.async_iterator_proto = Value::Object(GcIdx(async_iterator_proto_idx));
+
+    let async_generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.async_iterator_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("AsyncGenerator")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let async_next_fn = vm.new_native_function("next", generator_next, 1)?;
+    let async_return_fn = vm.new_native_function("return", generator_return, 1)?;
+    let async_throw_fn = vm.new_native_function("throw", generator_throw, 1)?;
+    vm.heap.with_obj(async_generator_proto_idx, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("next"),
+            data_prop(Value::Object(async_next_fn)),
+        );
+        props.insert(
+            PropertyKey::from("return"),
+            data_prop(Value::Object(async_return_fn)),
+        );
+        props.insert(
+            PropertyKey::from("throw"),
+            data_prop(Value::Object(async_throw_fn)),
+        );
+        let mut tag_desc = data_prop(Value::String(Arc::from("AsyncGenerator")));
+        tag_desc.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag_desc,
+        );
+    });
+    vm.async_generator_proto = Value::Object(GcIdx(async_generator_proto_idx));
+
+    let async_generator_function_ctor_idx = vm.new_native_function(
+        "AsyncGeneratorFunction",
+        async_generator_function_constructor,
+        1,
+    )?;
+    let async_generator_function_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.function_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("AsyncGeneratorFunction")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.async_generator_function_proto = Value::Object(GcIdx(async_generator_function_proto_idx));
+    vm.heap.with_obj(async_generator_function_proto_idx, |obj| {
+        let mut props = obj.props().lock();
+        let mut constructor_desc = data_prop(Value::Object(async_generator_function_ctor_idx));
+        constructor_desc.writable = false;
+        props.insert(PropertyKey::from("constructor"), constructor_desc);
+        let mut prototype_desc = data_prop(vm.async_generator_proto.clone());
+        prototype_desc.writable = false;
+        props.insert(PropertyKey::from("prototype"), prototype_desc);
+        let mut tag_desc = data_prop(Value::String(Arc::from("AsyncGeneratorFunction")));
+        tag_desc.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag_desc,
+        );
+    });
+    vm.heap.with_obj(async_generator_proto_idx, |obj| {
+        let mut constructor_desc = data_prop(vm.async_generator_function_proto.clone());
+        constructor_desc.writable = false;
+        obj.props()
+            .lock()
+            .insert(PropertyKey::from("constructor"), constructor_desc);
+    });
+    vm.heap
+        .with_obj(async_generator_function_ctor_idx.0, |obj| {
+            if let HeapObj::Function(f) = obj {
+                f.prototype
+                    .lock()
+                    .replace(Value::Object(GcIdx(async_generator_function_proto_idx)));
+            }
+            obj.props().lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(Value::Object(GcIdx(async_generator_function_proto_idx))),
+            );
+        });
     // Install call/apply/bind on Function.prototype (allocated at the top of
     // setup_full) so every function inherits them via its [[Prototype]].
     let call_fn = vm.new_native_function("call", function_call, 1)?;

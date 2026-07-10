@@ -134,7 +134,7 @@ fn collection_iterator_proto(
     Ok(GcIdx(proto_idx))
 }
 
-fn collection_iterator_this(
+pub(crate) fn collection_iterator_this(
     _vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
