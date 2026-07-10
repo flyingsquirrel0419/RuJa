@@ -4,6 +4,12 @@
 
 ### Test tooling
 
+- The async iterator-kind semantic fix is confirmed by `test262-full`
+  29094206133 on `a906242` at **23277 pass / 6830 fail / 11 timeout / 0
+  error / 18349 skip / 48467 total / 30107 ran**, retaining **77.3%** of
+  executed files. The current upstream snapshot restores 749 unsupported,
+  skip-only files, so the all-matrix rate changes from **48.8%** to **48.0%**
+  without an engine outcome change.
 - The async function-form admission is confirmed by the full matrix at
   **23277 pass / 6830 fail / 11 timeout / 0 error / 17600 skip / 47718 total /
   30107 ran**, or **77.3%** of executed files and **48.8%** of the current
@@ -140,6 +146,12 @@
 
 ### Runtime hardening
 
+- Async generators now use distinct `%AsyncIteratorPrototype%`,
+  `%AsyncGeneratorPrototype%`, and `%AsyncGeneratorFunction.prototype%`
+  intrinsics instead of aliasing synchronous generator/Object prototypes.
+  Internal iterators also retain whether they are Async-from-Sync adapters, so
+  adapter values are awaited while manually implemented async iterators keep
+  yielded Promise identity.
 - Async generators now await ordinary yielded and returned values before
   creating their outer iterator-result object. A rejected yielded value is
   thrown back into the suspended body so surrounding `catch` blocks can
@@ -202,6 +214,11 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **9838 pass / 0 fail / 10601 skip / 0 timeout**.
 
+- **Async generator iterator-kind diagnostic**: with the two async-generator
+  paths fully opened only for diagnostics, distinct async intrinsics and
+  Async-from-Sync tracking improve the 924-file run from **919 pass / 5 fail**
+  to **921 pass / 3 fail**. The remaining failures are microtask-order checks;
+  the default supported subset remains unchanged until they are fixed.
 - **Primitive String protocol dispatch guards**: the 16 current test262 cases
   covering primitive values passed to `match`, `replace`, `replaceAll`, and
   `split` now avoid inherited Symbol hook access. The full admitted

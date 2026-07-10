@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.8% of all matrix files; 77.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 48.0% of all matrix files; 77.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9838 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -224,6 +224,11 @@ Latest improvement confirmation: `test262-full` 29081813828 on `3ebd528`;
 the aggregate reports **23277 pass / 6830 fail / 11 timeout / 0 error / 17600
 skip / 47718 total / 30107 ran**, or **77.3%** of executed files and **48.8%**
 of the matrix after complete async function expression/declaration admission.
+Async iterator-kind confirmation: `test262-full` 29094206133 on `a906242`
+retains **23277 pass / 6830 fail / 11 timeout / 0 error / 30107 ran**. The
+current upstream snapshot restores 749 unsupported, skip-only files, producing
+**18349 skip / 48467 total** and a denominator-only all-matrix rate of
+**48.0%**; the executed-file rate remains **77.3%**.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
@@ -355,6 +360,17 @@ declaration files, the default run moves from **32 pass / 0 fail / 135 skip**
 to **167 pass / 0 fail / 0 skip**, and the analyzer reports no failure buckets.
 The supported subset rises to **9838 pass / 0 fail / 10601 skip / 20439
 total** while unrelated async paths remain gated.
+
+Focused async generator iterator-kind diagnostic:
+with the gated features and async completion temporarily lifted only for
+`language/{expressions,statements}/async-generator/`, the 924-file run improves
+from **919 pass / 5 fail / 0 skip** to **921 pass / 3 fail / 0 skip**. Async
+generator functions now expose distinct async intrinsic prototypes, so changes
+to `%AsyncIteratorPrototype%` cannot leak onto Object.prototype. Internal
+iterator records also distinguish Async-from-Sync adapters from native async
+iterators: adapter values are awaited, while a Promise yielded by a manually
+implemented async iterator preserves its identity. The remaining three cases
+assert observable microtask ordering, so these paths are not admitted yet.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
