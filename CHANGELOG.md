@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Async-from-sync iteration now follows `AsyncFromSyncIteratorContinuation`:
+  it creates an intrinsic Promise capability, observes and propagates abrupt
+  Promise `constructor` access, and unwraps iterator values with the required
+  job ordering before producing iterator-result objects. `for await (async of
+  iterable)` is also accepted while the non-await `for (async of iterable)`
+  early error remains intact.
 - Ordinary async functions now suspend at pending `await` operations and resume
   from Promise reaction jobs. Continuations preserve operand/local stacks,
   lexical and catch/finally environments, `this`, `new.target`, and the result
@@ -33,13 +39,15 @@
 
 - The fully green `language/expressions/await/` path is now admitted by default
   at **22 pass / 0 fail / 0 skip**. Together with resumable ordinary async
-  functions and `for await` job ordering, the supported subset reaches
-  **11266 pass / 0 fail / 9173 skip / 20439 total**; the broader
-  `language/statements/for-await-of/` path remains gated for its three known
-  constructor-lookup and grammar failures. CI `29103907303` and
+  functions, the supported subset reaches **11266 pass / 0 fail / 9173 skip /
+  20439 total**. CI `29103907303` and
   `test262-full` `29103907305` confirm the change; the full aggregate is
   **24705 pass / 6830 fail / 11 timeout / 0 error / 16921 skip / 48467 total /
   31546 ran**, or **78.3%** of executed files and **51.0%** of the matrix.
+- The fully green `language/statements/for-await-of/` async-iteration slice is
+  now admitted by default at **23 pass / 0 fail / 1211 skip / 1234 total**.
+  The supported subset reaches **11289 pass / 0 fail / 9150 skip / 20439
+  total**.
 - Async completion is now admitted on the fully green
   `language/statements/class/definition/` path. Its two async `super` method
   tests move the focused path to **65 pass / 0 fail / 0 skip**, and the

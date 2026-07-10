@@ -218,6 +218,14 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                         crate::value::PromiseContinuation::AsyncGenerator { generator, .. } => {
                             worklist.push(generator.0)
                         }
+                        crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                            capability,
+                            ..
+                        } => {
+                            push_value(&capability.promise, worklist);
+                            push_value(&capability.resolve, worklist);
+                            push_value(&capability.reject, worklist);
+                        }
                         crate::value::PromiseContinuation::AsyncFunction(frame) => {
                             push_value(&frame.capability.promise, worklist);
                             push_value(&frame.capability.resolve, worklist);

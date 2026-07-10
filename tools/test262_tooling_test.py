@@ -113,6 +113,7 @@ class AsyncAdmissionTests(unittest.TestCase):
                 root / "test/language/statements/async-function/case.js"
             )
             await_expression = root / "test/language/expressions/await/case.js"
+            for_await_of = root / "test/language/statements/for-await-of/case.js"
             async_generator_expression = (
                 root / "test/language/expressions/async-generator/case.js"
             )
@@ -147,6 +148,10 @@ class AsyncAdmissionTests(unittest.TestCase):
                 "flags": ["async"],
                 "features": ["async-functions", "async-iteration", "generators"],
             }
+            for_await_meta = {
+                "flags": ["async"],
+                "features": ["async-iteration", "Symbol.asyncIterator"],
+            }
             class_element_meta = {
                 "flags": ["async"],
                 "features": ["async-functions", "class-methods-private"],
@@ -167,6 +172,7 @@ class AsyncAdmissionTests(unittest.TestCase):
                         tool.should_skip(meta, async_function_declaration)
                     )
                     self.assertFalse(tool.should_skip(await_meta, await_expression))
+                    self.assertFalse(tool.should_skip(for_await_meta, for_await_of))
                     self.assertFalse(
                         tool.should_skip(async_generator_meta, async_generator_expression)
                     )

@@ -2479,6 +2479,14 @@ impl Vm {
                             crate::value::PromiseContinuation::AsyncGenerator {
                                 generator, ..
                             } => roots.push(generator.0),
+                            crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                                capability,
+                                ..
+                            } => {
+                                Self::push_value_roots(&mut roots, &capability.promise);
+                                Self::push_value_roots(&mut roots, &capability.resolve);
+                                Self::push_value_roots(&mut roots, &capability.reject);
+                            }
                             crate::value::PromiseContinuation::AsyncFunction(frame) => {
                                 Self::push_value_roots(&mut roots, &frame.capability.promise);
                                 Self::push_value_roots(&mut roots, &frame.capability.resolve);
@@ -2645,6 +2653,10 @@ impl Vm {
                             self, generator, kind, promise,
                         )?
                     }
+                    Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                        capability,
+                        done,
+                    }) => self.run_async_from_sync_iterator_reaction(capability, done, promise)?,
                     Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
                         self.run_async_function_reaction(*frame, promise)?
                     }
@@ -2686,6 +2698,10 @@ impl Vm {
                             self, generator, kind, promise,
                         )?
                     }
+                    Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                        capability,
+                        done,
+                    }) => self.run_async_from_sync_iterator_reaction(capability, done, promise)?,
                     Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
                         self.run_async_function_reaction(*frame, promise)?
                     }

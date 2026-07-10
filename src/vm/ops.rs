@@ -2866,11 +2866,9 @@ impl Vm {
                 Op::IteratorUnpackAwait => {
                     let result = self.stack.pop().unwrap_or(Value::Undefined);
                     let it = self.stack.pop().unwrap_or(Value::Undefined);
-                    let (value, done, await_value) =
-                        self.iterator_unpack_await_result(&it, result)?;
+                    let (value, done) = self.iterator_unpack_await_result(&it, result)?;
                     self.stack.push(value);
                     self.stack.push(Value::Bool(done));
-                    self.stack.push(Value::Bool(await_value));
                 }
                 Op::IteratorCollectRest => {
                     // Pop the iterator, drain its remaining values into a new

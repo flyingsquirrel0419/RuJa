@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 51.0% of all matrix files; 78.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11266 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11289 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -260,15 +260,20 @@ active `catch`/`finally` state and GC-safe lexical environments. `for await`
 iterator-result waits use the same bytecode continuation instead of draining
 the microtask queue synchronously. The focused `language/expressions/await/`
 path is fully admitted at **22 pass / 0 fail / 0 skip**, and the supported
-subset reaches **11266 pass / 0 fail / 9173 skip / 20439 total**. The broader
-`language/statements/for-await-of/` diagnostic still has three known failures
-and remains gated.
+subset reaches **11266 pass / 0 fail / 9173 skip / 20439 total**.
 CI `29103907303` and `test262-full` `29103907305` confirm the implementation.
 The full aggregate is **24705 pass / 6830 fail / 11 timeout / 0 error / 16921
 skip / 48467 total / 31546 ran**, or **78.3%** of executed files and **51.0%**
 of the matrix. Relative to the preceding confirmation, pass increases by the
 15 newly admitted Await files while fail/error counts remain unchanged; the
 two additional built-ins timeouts are run-to-run execution variance.
+Async-from-sync iteration now applies Promise resolution before constructing
+each iterator-result object, preserving Promise `constructor` lookup errors and
+the specified reaction-job ordering. The `for await (async of iterable)`
+grammar case is also accepted. The exact async-iteration slice under
+`language/statements/for-await-of/` is admitted at **23 pass / 0 fail / 1211
+skip / 1234 total**, raising the supported subset to **11289 pass / 0 fail /
+9150 skip / 20439 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

@@ -145,6 +145,88 @@ fn for_await_interleaves_with_promise_jobs() {
 }
 
 #[test]
+fn for_await_allows_async_identifier_lhs() {
+    let source = r#"
+        let async;
+        async function assign() {
+            for await (async of [7]);
+        }
+        await assign();
+        async;
+    "#;
+    assert_eq!(run(source), Value::Number(7.0));
+}
+
+#[test]
+fn async_from_sync_observes_constructor_lookup_and_job_ticks() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var actual = [];
+        async function iterate() {
+            var promise = Promise.resolve(0);
+            actual.push("pre");
+            for await (var value of [promise]) actual.push("loop");
+            actual.push("post");
+        }
+        Promise.resolve(0)
+            .then(() => actual.push("tick 1"))
+            .then(() => actual.push("tick 2"))
+            .then(() => actual.push("tick 3"))
+            .then(() => actual.push("tick 4"));
+        Object.defineProperty(Promise.prototype, "constructor", {
+            get() {
+                actual.push("constructor");
+                return Promise;
+            },
+            configurable: true
+        });
+        iterate();
+        "#,
+    )
+    .expect("failed to run async-from-sync iterator");
+
+    assert_eq!(
+        vm.run("actual.join('|');")
+            .expect("failed to read async-from-sync job order"),
+        Value::String(Arc::from(
+            "pre|constructor|constructor|tick 1|tick 2|loop|constructor|tick 3|tick 4|post"
+        ))
+    );
+}
+
+#[test]
+fn async_from_sync_rejects_abrupt_promise_constructor_lookup() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var actual = [];
+        var marker = {};
+        async function iterate() {
+            var promise = Promise.resolve(0);
+            Object.defineProperty(promise, "constructor", {
+                get() { throw marker; }
+            });
+            actual.push("start");
+            for await (var value of [promise]);
+            actual.push("unreachable");
+        }
+        Promise.resolve(0)
+            .then(() => actual.push("tick 1"))
+            .then(() => actual.push("tick 2"));
+        iterate().catch(error => actual.push("catch:" + (error === marker)));
+        "#,
+    )
+    .expect("failed to run abrupt async-from-sync iterator");
+
+    assert_eq!(
+        vm.run("actual.join('|');")
+            .expect("failed to read async-from-sync rejection order"),
+        Value::String(Arc::from("start|tick 1|tick 2|catch:true"))
+    );
+}
+
+#[test]
 fn for_await_empty_async_generator() {
     let src = r#"
         async function* gen() {}

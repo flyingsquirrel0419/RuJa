@@ -107,38 +107,49 @@ impl Vm {
         result.map(|_| ())
     }
 
-    pub(crate) fn promise_resolve_for_await(&mut self, value: Value) -> error::Result<GcIdx> {
-        let native_promise = match &value {
-            Value::Object(idx)
-                if self
-                    .heap
-                    .with_obj(idx.0, |obj| matches!(obj, HeapObj::Promise(_))) =>
-            {
-                Some(*idx)
-            }
-            _ => None,
-        };
+    fn promise_resolve_intrinsic(&mut self, value: Value) -> error::Result<GcIdx> {
+        let value_pin = self.pin(&value);
+        let result = (|| -> error::Result<GcIdx> {
+            let native_promise = match &value {
+                Value::Object(idx)
+                    if self
+                        .heap
+                        .with_obj(idx.0, |obj| matches!(obj, HeapObj::Promise(_))) =>
+                {
+                    Some(*idx)
+                }
+                _ => None,
+            };
 
-        if let Some(promise) = native_promise {
-            match self.get_property(&value, "constructor") {
-                Ok(constructor) if constructor == self.promise_ctor => return Ok(promise),
-                Ok(_) => {}
-                Err(error) => {
-                    let capability = self.new_intrinsic_promise_capability()?;
-                    self.reject_promise_capability_error(&capability, &error)?;
-                    return match capability.promise {
-                        Value::Object(idx) => Ok(idx),
-                        _ => Err(Error::internal("Promise capability returned non-object")),
-                    };
+            if let Some(promise) = native_promise {
+                let constructor = self.get_property(&value, "constructor")?;
+                if constructor == self.promise_ctor {
+                    return Ok(promise);
                 }
             }
-        }
 
-        let capability = self.new_intrinsic_promise_capability()?;
-        self.resolve_promise_capability_value(&capability, value)?;
-        match capability.promise {
-            Value::Object(idx) => Ok(idx),
-            _ => Err(Error::internal("Promise capability returned non-object")),
+            let capability = self.new_intrinsic_promise_capability()?;
+            self.resolve_promise_capability_value(&capability, value)?;
+            match capability.promise {
+                Value::Object(idx) => Ok(idx),
+                _ => Err(Error::internal("Promise capability returned non-object")),
+            }
+        })();
+        self.unpin(value_pin);
+        result
+    }
+
+    pub(crate) fn promise_resolve_for_await(&mut self, value: Value) -> error::Result<GcIdx> {
+        match self.promise_resolve_intrinsic(value) {
+            Ok(promise) => Ok(promise),
+            Err(error) => {
+                let capability = self.new_intrinsic_promise_capability()?;
+                self.reject_promise_capability_error(&capability, &error)?;
+                match capability.promise {
+                    Value::Object(idx) => Ok(idx),
+                    _ => Err(Error::internal("Promise capability returned non-object")),
+                }
+            }
         }
     }
 
@@ -408,6 +419,40 @@ impl Vm {
         self.stack = caller_stack;
         self.unpin_many(capability_pins);
         self.unpin(source_pin);
+        settled
+    }
+
+    pub(crate) fn run_async_from_sync_iterator_reaction(
+        &mut self,
+        capability: PromiseReactionCapability,
+        done: bool,
+        promise: GcIdx,
+    ) -> error::Result<()> {
+        let (state, result) = self.heap.with_obj(promise.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                (*data.state.lock(), data.result.lock().clone())
+            } else {
+                (PromiseStatus::Fulfilled, Value::Undefined)
+            }
+        });
+        let pins = self.pin_many(&[
+            Value::Object(promise),
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            result.clone(),
+        ]);
+        let settled = if state == PromiseStatus::Rejected {
+            self.settle_promise_capability(&capability, result, true)
+        } else {
+            match crate::builtins::regexp::gen_result(self, result, done, false) {
+                Ok(iterator_result) => {
+                    self.settle_promise_capability(&capability, iterator_result, false)
+                }
+                Err(error) => self.reject_promise_capability_error(&capability, &error),
+            }
+        };
+        self.unpin_many(pins);
         settled
     }
 
@@ -2239,9 +2284,74 @@ impl Vm {
         }
     }
 
+    fn async_from_sync_iterator_next(&mut self, it: &Value) -> error::Result<Value> {
+        let capability = self.new_intrinsic_promise_capability()?;
+        let promise = capability.promise.clone();
+        let pins = self.pin_many(&[
+            promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            it.clone(),
+        ]);
+        let setup = (|| -> error::Result<()> {
+            let (value, done) = match self.iterator_next(it) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.reject_promise_capability_error(&capability, &error)?;
+                    return Ok(());
+                }
+            };
+            let value_wrapper = match self.promise_resolve_intrinsic(value) {
+                Ok(promise) => promise,
+                Err(error) => {
+                    self.reject_promise_capability_error(&capability, &error)?;
+                    return Ok(());
+                }
+            };
+            let state = self.heap.with_obj(value_wrapper.0, |object| {
+                if let HeapObj::Promise(data) = object {
+                    *data.state.lock()
+                } else {
+                    PromiseStatus::Fulfilled
+                }
+            });
+            let handler = crate::value::PromiseHandler {
+                on_fulfilled: Value::Undefined,
+                on_rejected: Value::Undefined,
+                derived: None,
+                continuation: Some(crate::value::PromiseContinuation::AsyncFromSyncIterator {
+                    capability: capability.clone(),
+                    done,
+                }),
+            };
+            if state == PromiseStatus::Pending {
+                self.heap.with_obj(value_wrapper.0, |object| {
+                    if let HeapObj::Promise(data) = object {
+                        data.handlers.lock().push(handler);
+                    }
+                });
+            } else {
+                self.microtask_queue.push_back(Microtask::Then {
+                    promise: value_wrapper,
+                    on_fulfilled: Value::Undefined,
+                    on_rejected: Value::Undefined,
+                    derived: None,
+                    continuation: handler.continuation,
+                });
+            }
+            Ok(())
+        })();
+        self.unpin_many(pins);
+        setup?;
+        Ok(promise)
+    }
+
     /// Call the next method used by `for await`, leaving Await to the bytecode
     /// interpreter so an async frame can suspend instead of draining jobs.
     pub(crate) fn iterator_next_await_start(&mut self, it: &Value) -> error::Result<Value> {
+        if self.is_async_from_sync(it) {
+            return self.async_from_sync_iterator_next(it);
+        }
         let lazy_or_gen = if let Value::Object(idx) = it {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(i) = o {
@@ -2290,31 +2400,24 @@ impl Vm {
         &mut self,
         it: &Value,
         result: Value,
-    ) -> error::Result<(Value, bool, bool)> {
+    ) -> error::Result<(Value, bool)> {
         if !matches!(result, Value::Object(_)) {
             return Err(Error::type_err("Iterator result is not an object"));
         }
         let done = self.get_property(&result, "done")?.is_truthy();
-        let async_from_sync = self.is_async_from_sync(it);
         if done {
             self.mark_iterator_done(it);
-            if !async_from_sync {
-                return Ok((Value::Undefined, true, false));
-            }
+            return Ok((Value::Undefined, true));
         }
         let value = self.get_property(&result, "value")?;
-        Ok((value, done, async_from_sync))
+        Ok((value, done))
     }
 
     /// Synchronous embedding helper for a complete `for await` iterator step.
     pub fn iterator_next_await(&mut self, it: &Value) -> error::Result<(Value, bool)> {
         let result = self.iterator_next_await_start(it)?;
         let result = self.await_value(result)?;
-        let (mut value, done, await_value) = self.iterator_unpack_await_result(it, result)?;
-        if await_value {
-            value = self.await_value(value)?;
-        }
-        Ok((value, done))
+        self.iterator_unpack_await_result(it, result)
     }
 
     /// Await a value by resolving objects through their observable `then`

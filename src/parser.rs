@@ -1714,6 +1714,7 @@ impl Parser {
                 ));
             }
             if matches!(self.peek(), TokenKind::Async)
+                && !is_await
                 && !self.peek_at_tok(0).had_escape
                 && self.is_raw_of_at(1)
                 && !matches!(self.peek_at_tok(2).kind, TokenKind::Arrow)
@@ -6894,6 +6895,7 @@ mod tests {
             "var async = { x: 0 }; for (async.x of [1]) ;",
             "let async; for ((async) of [7]) ;",
             "let async; for (\\u0061sync of [7]) ;",
+            "async function f() { for await (async of [7]) ; }",
         ] {
             assert!(Parser::parse(src).is_ok(), "{src}");
         }

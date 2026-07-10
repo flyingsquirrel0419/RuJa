@@ -291,7 +291,7 @@ pub enum Op {
     /// the iterator plus its raw result so `Await` can suspend the frame.
     IteratorNextAwait,
     /// Unpack an awaited iterator result. Pops `[iterator, result]` and pushes
-    /// `[value, done, await_value]`; async-from-sync values need one more Await.
+    /// `[value, done]`.
     IteratorUnpackAwait,
     /// Collect the remaining values from an iterator (already on the stack)
     /// into a fresh array. Used by rest elements in array destructuring

@@ -1096,12 +1096,6 @@ impl Compiler {
                     self.chunk.emit(Op::IteratorNextAwait, self.current_line);
                     self.chunk.emit(Op::Await, self.current_line);
                     self.chunk.emit(Op::IteratorUnpackAwait, self.current_line);
-                    let value_ready = self.chunk.code.len();
-                    self.chunk.emit(Op::JumpIfFalse(0), self.current_line);
-                    self.chunk.emit(Op::Swap, self.current_line);
-                    self.chunk.emit(Op::Await, self.current_line);
-                    self.chunk.emit(Op::Swap, self.current_line);
-                    self.chunk.patch_jump(value_ready, self.chunk.code.len());
                 } else {
                     // IteratorNext pops the iterator, pushes [value, done(bool)].
                     self.chunk.emit(Op::IteratorNext, self.current_line);

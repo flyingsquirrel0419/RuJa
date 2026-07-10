@@ -44,7 +44,7 @@ subset. See
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
 
-**Supported-subset pass rate: 100.0%** (11,266 tests in `language/statements`
+**Supported-subset pass rate: 100.0%** (11,289 tests in `language/statements`
 + `language/expressions`, unsupported-feature tests skipped). The latest full
 matrix is 51.0% of all files and 78.3% of executed files — see
 [test262 conformance](docs/test262.md)

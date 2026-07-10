@@ -785,6 +785,10 @@ pub enum PromiseContinuation {
         generator: GcIdx,
         kind: AsyncGeneratorAwaitKind,
     },
+    AsyncFromSyncIterator {
+        capability: PromiseReactionCapability,
+        done: bool,
+    },
     AsyncFunction(Box<AsyncFunctionContinuation>),
 }
 
