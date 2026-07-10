@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 45.2% of all matrix files; 75.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8127 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8161 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -298,6 +298,14 @@ intrinsic remains valid as a class heritage constructor identity while direct
 or derived construction rejects `new.target`. The complete
 `language/statements/class/subclass/` path reports **109 pass / 0 fail / 0
 skip**, and the supported subset rises to **8127 pass / 0 fail / 12311 skip**.
+
+Focused built-in subclass admission local check:
+the statement and expression `class/subclass-builtins/` paths now exercise
+subclass construction for implemented AggregateError,
+ArrayBuffer/DataView/TypedArray, Promise, and WeakMap/WeakSet constructors.
+The path-scoped exception does not admit SharedArrayBuffer or WeakRef, whose
+globals remain unimplemented. The combined paths report **68 pass / 0 fail / 4
+skip**, and the supported subset rises to **8161 pass / 0 fail / 12277 skip**.
 
 Focused property Reference member-compound local check:
 ordinary member compound assignments now create an explicit property Reference

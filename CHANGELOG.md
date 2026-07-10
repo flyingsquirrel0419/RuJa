@@ -69,6 +69,11 @@
   async-function, generator, and async-iteration coverage only on
   `language/statements/class/subclass/`; those feature gates remain in place
   outside the subclass path.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented AggregateError, ArrayBuffer/DataView/TypedArray, Promise, and
+  WeakMap/WeakSet coverage only on the statement and expression
+  `class/subclass-builtins/` paths. SharedArrayBuffer and WeakRef remain
+  skipped because those globals are not implemented yet.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -93,8 +98,15 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8127 pass / 0 fail / 12311 skip / 0 timeout**.
+Current supported subset count: **8161 pass / 0 fail / 12277 skip / 0 timeout**.
 
+- **Built-in subclass coverage admission**: generated class declaration and
+  expression tests now exercise subclass construction for the implemented
+  AggregateError, ArrayBuffer/DataView/TypedArray, Promise, and WeakMap/WeakSet
+  families. The two `class/subclass-builtins/` paths report **68 pass / 0 fail
+  / 4 skip**; only the SharedArrayBuffer and WeakRef declaration/expression
+  pairs remain skipped. The supported subset rises to **8161 pass / 0 fail /
+  12277 skip**.
 - **Subclass constructor classification**: interpreted async functions,
   generators, and async generators are now consistently non-constructors;
   async functions no longer receive an own `prototype`, while generator

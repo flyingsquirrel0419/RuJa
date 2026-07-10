@@ -257,6 +257,30 @@ CLASS_SUBCLASS_FEATURES = {
     "WeakSet",
 }
 
+CLASS_SUBCLASS_BUILTINS_PREFIXES = (
+    "language/expressions/class/subclass-builtins/",
+    "language/statements/class/subclass-builtins/",
+)
+
+CLASS_SUBCLASS_BUILTINS_FEATURES = {
+    "AggregateError",
+    "ArrayBuffer",
+    "DataView",
+    "Float32Array",
+    "Float64Array",
+    "Int8Array",
+    "Int16Array",
+    "Int32Array",
+    "Promise",
+    "TypedArray",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Uint16Array",
+    "Uint32Array",
+    "WeakMap",
+    "WeakSet",
+}
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -414,6 +438,13 @@ def class_subclass_path(path):
         return False
     return rel.as_posix().startswith(CLASS_SUBCLASS_PREFIXES)
 
+def class_subclass_builtins_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(CLASS_SUBCLASS_BUILTINS_PREFIXES)
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -450,6 +481,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
     if path is not None and class_subclass_path(path):
         feats.difference_update(CLASS_SUBCLASS_FEATURES)
+    if path is not None and class_subclass_builtins_path(path):
+        feats.difference_update(CLASS_SUBCLASS_BUILTINS_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
