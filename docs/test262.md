@@ -273,7 +273,10 @@ the specified reaction-job ordering. The `for await (async of iterable)`
 grammar case is also accepted. The exact async-iteration slice under
 `language/statements/for-await-of/` is admitted at **23 pass / 0 fail / 1211
 skip / 1234 total**, raising the supported subset to **11289 pass / 0 fail /
-9150 skip / 20439 total**.
+9150 skip / 20439 total**. CI `29105422326` and `test262-full` `29105422278`
+confirm the change. The full aggregate is **24728 pass / 6830 fail / 11
+timeout / 0 error / 16898 skip / 48467 total / 31569 ran**, or **78.3%** of
+executed files and **51.0%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

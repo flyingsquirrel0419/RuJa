@@ -47,7 +47,10 @@
 - The fully green `language/statements/for-await-of/` async-iteration slice is
   now admitted by default at **23 pass / 0 fail / 1211 skip / 1234 total**.
   The supported subset reaches **11289 pass / 0 fail / 9150 skip / 20439
-  total**.
+  total**. CI `29105422326` and `test262-full` `29105422278` confirm the
+  change; the full aggregate is **24728 pass / 6830 fail / 11 timeout / 0
+  error / 16898 skip / 48467 total / 31569 ran**, or **78.3%** of executed
+  files and **51.0%** of the matrix.
 - Async completion is now admitted on the fully green
   `language/statements/class/definition/` path. Its two async `super` method
   tests move the focused path to **65 pass / 0 fail / 0 skip**, and the
