@@ -152,6 +152,11 @@ the aggregate reports **21600 pass / 6830 fail / 11 timeout / 0 error /
 **44.6%** of the matrix after built-in subclass admission and an upstream
 test262 expansion of 749 unsupported files. Documentation confirmation run
 `test262-full` 29064961455 on `f0f8fdd` produced the same aggregate.
+Latest improvement confirmation: `test262-full` 29065804433 on `0b0a398`;
+the aggregate reports **21625 pass / 6830 fail / 11 timeout / 0 error /
+20001 skip / 48467 total / 28455 ran**, retaining **76.0%** of executed files
+and **44.6%** of the current matrix after class-definition generator grammar
+admission.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
