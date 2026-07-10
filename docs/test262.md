@@ -230,11 +230,10 @@ current upstream snapshot restores 749 unsupported, skip-only files, producing
 **18349 skip / 48467 total** and a denominator-only all-matrix rate of
 **48.0%**; the executed-file rate remains **77.3%**.
 Async-generator receiver-brand confirmation: `test262-full` 29095756104 on
-`43cc099` reports **23277 pass / 6830 fail / 11 timeout / 0 error / 17600 skip
-/ 47718 total / 30107 ran**, retaining **77.3%** of executed files. The
-all-matrix rate returns to **48.8%** because this upstream checkout again omits
-the 749 unsupported, skip-only files; the six newly passing receiver checks are
-part of the opt-in async diagnostic rather than the default full matrix.
+`43cc099` reports **23277 pass / 6830 fail / 11 timeout / 0 error / 18349 skip
+/ 48467 total / 30107 ran**, retaining **77.3%** of executed files and
+**48.0%** of the matrix. The six newly passing receiver checks are part of the
+opt-in async diagnostic rather than the default full matrix.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
