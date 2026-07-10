@@ -26,7 +26,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 47.0% of all matrix files; 76.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 47.3% of all matrix files; 77.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9497 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -179,6 +179,12 @@ the aggregate reports **22786 pass / 6830 fail / 11 timeout / 0 error /
 18840 skip / 48467 total / 29616 ran**, or **76.9%** of executed files and
 **47.0%** of the matrix after complete ordinary arrow-function admission and
 admission-rule deduplication.
+Escaped async-method parser confirmation: `test262-full` 29070658804 on
+`9513056` produced the same aggregate. Latest improvement confirmation:
+`test262-full` 29070781992 on `a4f5565`; the aggregate reports **22936 pass /
+6830 fail / 11 timeout / 0 error / 18690 skip / 48467 total / 29766 ran**, or
+**77.1%** of executed files and **47.3%** of the matrix after synchronous
+object method-definition admission.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
