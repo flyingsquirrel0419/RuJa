@@ -23,6 +23,12 @@
 
 ### Test tooling
 
+- Async-function result assimilation and scoped class-element async admission
+  are confirmed by CI `29101286102` and `test262-full` `29101286000`; the
+  supported-summary follow-up is confirmed by CI `29101459432` and
+  `test262-full` `29101459422`. The latest full aggregate is **24690 pass /
+  6830 fail / 9 timeout / 0 error / 16938 skip / 48467 total / 31520 ran**,
+  or **78.3%** of executed files and **50.9%** of the matrix.
 - Async execution is now admitted on the fully green
   `language/{expressions,statements}/class/elements/` paths. Combined with the
   async-generator admission, the supported subset reaches **11249 pass / 0
