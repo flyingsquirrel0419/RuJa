@@ -41,6 +41,18 @@ pub(crate) struct AgentCluster {
     pub reports: Mutex<std::collections::VecDeque<String>>,
 }
 
+pub(crate) struct ExternalPromiseJob {
+    pub resolve: Value,
+    pub value: Value,
+}
+
+#[derive(Default)]
+pub(crate) struct ExternalJobState {
+    pub jobs: std::collections::VecDeque<ExternalPromiseJob>,
+    pub wait_roots: HashMap<u64, Value>,
+    pub next_wait_id: u64,
+}
+
 #[allow(dead_code)]
 pub struct Vm {
     pub(crate) heap: Heap,
@@ -134,6 +146,7 @@ pub struct Vm {
     pub(crate) agent_cluster: Arc<AgentCluster>,
     pub(crate) agent_broadcast_rx: Option<std::sync::mpsc::Receiver<AgentBroadcast>>,
     pub(crate) agent_can_block: bool,
+    pub(crate) external_jobs: Arc<Mutex<ExternalJobState>>,
 }
 
 pub struct WellKnownSymbols {
@@ -473,6 +486,7 @@ impl Vm {
             agent_cluster: Arc::new(AgentCluster::default()),
             agent_broadcast_rx: None,
             agent_can_block: false,
+            external_jobs: Arc::new(Mutex::new(ExternalJobState::default())),
         };
         vm.symbol_descriptions.insert(
             vm.well_known_symbols.iterator,
@@ -550,6 +564,20 @@ impl Vm {
     /// agents enable it.
     pub fn set_agent_can_block(&mut self, can_block: bool) {
         self.agent_can_block = can_block;
+    }
+
+    pub fn run_external_jobs_until_idle(&mut self) -> error::Result<()> {
+        loop {
+            self.run_microtasks()?;
+            let pending_external = {
+                let external = self.external_jobs.lock();
+                !external.wait_roots.is_empty() || !external.jobs.is_empty()
+            };
+            if !pending_external && !self.has_pending_microtasks() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     /// Set the maximum number of live heap objects. When this limit is

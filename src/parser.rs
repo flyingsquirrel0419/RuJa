@@ -6128,10 +6128,15 @@ impl Parser {
                             PropertyKey::Computed(Box::new(e))
                         }
                         other => {
-                            return Err(error::Error::syntax(format!(
-                                "Expected property name in object pattern, got {:?}",
-                                other
-                            )))
+                            if let Some(keyword) = other.as_keyword_str() {
+                                self.advance();
+                                PropertyKey::Ident(Arc::from(keyword))
+                            } else {
+                                return Err(error::Error::syntax(format!(
+                                    "Expected property name in object pattern, got {:?}",
+                                    other
+                                )));
+                            }
                         }
                     };
                     // `key: target` renames; otherwise bind to same name (ident/string only).

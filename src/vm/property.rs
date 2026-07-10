@@ -2548,6 +2548,16 @@ impl Vm {
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
         roots.extend_from_slice(&self.gc_pins);
         roots.extend_from_slice(&self.kept_objects);
+        {
+            let external = self.external_jobs.lock();
+            for value in external.wait_roots.values() {
+                Self::push_value_roots(&mut roots, value);
+            }
+            for job in &external.jobs {
+                Self::push_value_roots(&mut roots, &job.resolve);
+                Self::push_value_roots(&mut roots, &job.value);
+            }
+        }
         roots
     }
 
@@ -2669,7 +2679,27 @@ impl Vm {
         // Drain in enqueue order (FIFO): Promise microtasks must fire in the
         // order they were scheduled, so pop from the front. (Vec::remove(0) is
         // O(n), but microtask queues are typically small per drain cycle.)
-        while let Some(task) = self.microtask_queue.pop_front() {
+        loop {
+            loop {
+                let job = {
+                    let mut external = self.external_jobs.lock();
+                    external.jobs.pop_front()
+                };
+                let Some(job) = job else {
+                    break;
+                };
+                self.call_function(
+                    &job.resolve,
+                    std::slice::from_ref(&job.value),
+                    Some(Value::Undefined),
+                )?;
+            }
+            let Some(task) = self.microtask_queue.pop_front() else {
+                if self.external_jobs.lock().jobs.is_empty() {
+                    break;
+                }
+                continue;
+            };
             let result = self.run_microtask(task);
             self.clear_kept_objects();
             result?;
@@ -2682,13 +2712,26 @@ impl Vm {
     /// (e.g. WASM, server runtimes) to cooperatively interleave JS microtask
     /// execution with other work, rather than draining all microtasks at once.
     pub fn tick(&mut self) -> error::Result<bool> {
+        let mut ran_external = false;
+        let external_job = {
+            let mut external = self.external_jobs.lock();
+            external.jobs.pop_front()
+        };
+        if let Some(job) = external_job {
+            self.call_function(
+                &job.resolve,
+                std::slice::from_ref(&job.value),
+                Some(Value::Undefined),
+            )?;
+            ran_external = true;
+        }
         if let Some(task) = self.microtask_queue.pop_front() {
             let result = self.run_microtask(task);
             self.clear_kept_objects();
             result?;
             Ok(true)
         } else {
-            Ok(false)
+            Ok(ran_external)
         }
     }
 
@@ -2739,7 +2782,7 @@ impl Vm {
 
     /// Returns true if there are pending microtasks in the queue.
     pub fn has_pending_microtasks(&self) -> bool {
-        !self.microtask_queue.is_empty()
+        !self.microtask_queue.is_empty() || !self.external_jobs.lock().jobs.is_empty()
     }
 
     /// Inline cache lookup: returns cached value if (obj_idx, key) was seen.

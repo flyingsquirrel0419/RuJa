@@ -255,7 +255,6 @@ class WeakRefAdmissionTests(unittest.TestCase):
                     "Symbol.toStringTag",
                 ],
             }
-
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
@@ -287,7 +286,6 @@ class SharedArrayBufferAdmissionTests(unittest.TestCase):
                     "Symbol.toStringTag",
                 ],
             }
-
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
@@ -321,6 +319,11 @@ class AtomicsSyncAdmissionTests(unittest.TestCase):
                     "Symbol.toStringTag",
                 ],
             }
+            wait_async_meta = {
+                "flags": ["async"],
+                "features": meta["features"]
+                + ["Atomics.waitAsync", "async-functions", "destructuring-binding"],
+            }
 
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -330,8 +333,12 @@ class AtomicsSyncAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.should_skip(meta, surface))
                     self.assertFalse(tool.should_skip(meta, wait))
                     self.assertFalse(tool.should_skip(meta, notify))
-                    self.assertTrue(tool.should_skip(meta, wait_async))
-                    self.assertTrue(tool.should_skip(meta, pause))
+                    self.assertFalse(tool.should_skip(wait_async_meta, wait_async))
+                    pause_meta = {
+                        "flags": [],
+                        "features": ["Atomics.pause", "Reflect.construct"],
+                    }
+                    self.assertFalse(tool.should_skip(pause_meta, pause))
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:
                     tool.TEST262 = original_root

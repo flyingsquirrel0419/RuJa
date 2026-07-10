@@ -55,7 +55,13 @@ fn run_file(path: &str) -> i32 {
         Ok(src) => {
             let mut vm = new_vm();
             match vm.run(&src) {
-                Ok(_) => 0,
+                Ok(_) => match vm.run_external_jobs_until_idle() {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        1
+                    }
+                },
                 Err(e) => {
                     eprintln!("{}", e);
                     1
@@ -73,6 +79,10 @@ fn run_eval(code: &str) -> i32 {
     let mut vm = new_vm();
     match vm.run(code) {
         Ok(v) => {
+            if let Err(e) = vm.run_external_jobs_until_idle() {
+                eprintln!("{}", e);
+                return 1;
+            }
             print_value(&mut vm, &v);
             0
         }

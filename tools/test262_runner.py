@@ -168,9 +168,11 @@ ATOMICS_SYNC_PREFIXES = tuple(
         "load",
         "notify",
         "or",
+        "pause",
         "store",
         "sub",
         "wait",
+        "waitAsync",
         "xor",
     )
 )
@@ -184,6 +186,8 @@ ATOMICS_SYNC_FILES = {
 ATOMICS_SYNC_FEATURES = {
     "ArrayBuffer",
     "Atomics",
+    "Atomics.waitAsync",
+    "Atomics.pause",
     "BigInt",
     "DataView",
     "Float32Array",
@@ -198,6 +202,8 @@ ATOMICS_SYNC_FEATURES = {
     "Uint8Array",
     "Uint8ClampedArray",
     "arrow-function",
+    "async-functions",
+    "destructuring-binding",
     "immutable-arraybuffer",
 }
 
@@ -880,6 +886,7 @@ def should_skip(meta, path=None):
         or await_expression_path(path)
         or for_await_of_path(path)
         or async_generator_path(path)
+        or atomics_sync_path(path)
     )
     if 'module' in flags or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)

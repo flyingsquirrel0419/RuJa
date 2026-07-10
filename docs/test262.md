@@ -59,15 +59,14 @@ setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 WeakRef, FinalizationRegistry, fixed-length SharedArrayBuffer, Promise,
-synchronous Atomics load/store/read-modify-write operations and worker
-`wait`/`notify`, async/await, generators, for-of, optional chaining, nullish
+fixed-length Atomics operations including worker `wait`/`notify`, `waitAsync`,
+and `pause`, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
-**Intentionally unsupported**: ES Modules (import/export), Intl,
-`Atomics.waitAsync`, `Atomics.pause`, a public multi-agent embedder API,
-growable/resizable SharedArrayBuffer, full TypedArray prototype
-method coverage beyond the constructor/index basics and ArrayBuffer/DataView support,
-Tail-call optimization.
+**Intentionally unsupported**: ES Modules (import/export), Intl, a public
+multi-agent embedder API, growable/resizable SharedArrayBuffer, full TypedArray
+prototype method coverage beyond the constructor/index basics and
+ArrayBuffer/DataView support, Tail-call optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -373,6 +372,15 @@ total**. CI `29117508967` and `test262-full` `29117508706` confirm the change.
 Downloaded artifacts aggregate to **25444 pass / 6769 fail / 11 timeout / 0
 error / 16243 skip / 48467 total / 32224 executed**, or **79.0%** of executed
 files and **52.5%** of the matrix.
+
+`Atomics.waitAsync` now returns the synchronous `not-equal` and zero-timeout
+records directly, while pending waits retain their Promise resolver as a GC
+root and settle through an external VM job after FIFO notification or timeout.
+Test262 worker VMs drain those jobs before exit. `Atomics.pause` is exposed as
+the implementation-defined no-op hint permitted by ECMAScript. The complete
+fixed-length Atomics path reports **384 pass / 0 fail / 5 skip / 389 total**;
+all five skipped files require growable or resizable buffers. The supported
+language subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

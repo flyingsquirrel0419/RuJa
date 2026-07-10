@@ -11,8 +11,10 @@
   accepts mutable ArrayBuffer and SharedArrayBuffer backing stores, preserves
   coercion and validation order, and permits `load` on immutable buffers.
   `notify` and blocking `wait` use a FIFO waiter list and Condvar wakeups with
-  count, timeout, Number/BigInt, and `CanBlock` semantics. `waitAsync` and
-  `pause` remain unsupported.
+  count, timeout, Number/BigInt, and `CanBlock` semantics. `waitAsync` returns
+  immediate records when it can settle synchronously and otherwise resolves an
+  externally queued Promise job after notification or timeout. `pause` is
+  available as the implementation-defined no-op hint permitted by ECMAScript.
 - SharedArrayBuffer backing bytes and waiter lists now use shared `Arc` storage.
   The test262 host can start independent worker VMs, broadcast one SAB backing
   store into each worker heap, collect reports, sleep, and expose monotonic
@@ -81,6 +83,12 @@
 
 ### Test tooling
 
+- The runner and analyzer now admit `Atomics.waitAsync`, `Atomics.pause`, and
+  their required async/destructuring metadata only on the completed Atomics
+  paths. Fixed-length Atomics reports **384 pass / 0 fail / 5 skip / 389
+  total**; all five skipped files require growable or resizable buffers. The
+  supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
+  total**.
 - `tools/test262_support.py` now forwards `CanBlockIsTrue` and
   `CanBlockIsFalse` metadata to the RuJa host. Exact-path admission adds
   `Atomics.notify` and `Atomics.wait`, raising the focused Atomics path to

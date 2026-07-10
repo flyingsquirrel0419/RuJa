@@ -7910,7 +7910,8 @@ fn atomics_surface_has_spec_shaped_methods_and_tag() {
             var names = [
               ["add", 3], ["and", 3], ["compareExchange", 4],
               ["exchange", 3], ["isLockFree", 1], ["load", 2],
-              ["or", 3], ["store", 3], ["sub", 3], ["xor", 3]
+              ["notify", 3], ["or", 3], ["pause", 0], ["store", 3],
+              ["sub", 3], ["wait", 4], ["waitAsync", 4], ["xor", 3]
             ];
             var shaped = names.every(function(entry) {
               var desc = Object.getOwnPropertyDescriptor(Atomics, entry[0]);
@@ -8052,6 +8053,52 @@ fn atomics_wait_times_out_in_workers_and_main_agent_cannot_suspend() {
             [report, mismatch, blocked].join("|");
         "#),
         Value::String(Arc::from("timed-out|not-equal|true"))
+    );
+}
+
+#[test]
+fn atomics_wait_async_returns_sync_results_for_immediate_outcomes() {
+    assert_eq!(
+        run(r#"
+            var view = new Int32Array(new SharedArrayBuffer(4));
+            var mismatch = Atomics.waitAsync(view, 0, 1, 100);
+            var timeout = Atomics.waitAsync(view, 0, 0, 0);
+            var { async, value } = mismatch;
+            [
+              async,
+              value,
+              timeout.async,
+              timeout.value,
+              Object.keys(mismatch).join(",")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("false|not-equal|false|timed-out|async,value"))
+    );
+}
+
+#[test]
+fn atomics_wait_async_resolves_notify_and_timeout_through_external_jobs() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var asyncResults = [];
+        var notified = new Int32Array(new SharedArrayBuffer(4));
+        var timed = new BigInt64Array(new SharedArrayBuffer(8));
+        var first = Atomics.waitAsync(notified, 0, 0, 1000);
+        var second = Atomics.waitAsync(timed, 0, 0n, 10);
+        first.value.then(function(value) { asyncResults.push("first:" + value); });
+        second.value.then(function(value) { asyncResults.push("second:" + value); });
+        for (var i = 0; i < 5000; i++) ({ index: i, payload: [i, i + 1] });
+        Atomics.notify(notified, 0, 1);
+    "#,
+    )
+    .expect("waitAsync setup should run");
+    vm.run_external_jobs_until_idle()
+        .expect("external waitAsync jobs should settle");
+    assert_eq!(
+        vm.run("asyncResults.sort().join('|')")
+            .expect("waitAsync results should remain observable"),
+        Value::String(Arc::from("first:ok|second:timed-out"))
     );
 }
 

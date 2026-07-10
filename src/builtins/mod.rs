@@ -2658,7 +2658,10 @@ fn test262_agent_start(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::
             worker.agent_cluster = cluster.clone();
             worker.agent_broadcast_rx = Some(receiver);
             worker.agent_can_block = true;
-            if let Err(error) = worker.run(&source) {
+            let result = worker
+                .run(&source)
+                .and_then(|_| worker.run_external_jobs_until_idle());
+            if let Err(error) = result {
                 cluster
                     .reports
                     .lock()

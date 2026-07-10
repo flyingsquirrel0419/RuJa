@@ -919,6 +919,137 @@ pub(crate) fn atomics_wait(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
     Ok(Value::String(Arc::from("ok")))
 }
 
+fn atomics_wait_async_result(
+    vm: &mut Vm,
+    asynchronous: bool,
+    value: Value,
+) -> error::Result<Value> {
+    let result = vm.new_object()?;
+    vm.heap.with_obj(result.0, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("async"),
+            PropertyDescriptor::data(Value::Bool(asynchronous)),
+        );
+        props.insert(PropertyKey::from("value"), PropertyDescriptor::data(value));
+    });
+    Ok(Value::Object(result))
+}
+
+pub(crate) fn atomics_wait_async(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    let (view, _) = validate_waitable_view(vm, args.first().unwrap_or(&Value::Undefined), true)?;
+    let index = atomic_index(vm, args.get(1).unwrap_or(&Value::Undefined), view.length)?;
+    let (_, expected) = atomic_operand(vm, view.kind, args.get(2).unwrap_or(&Value::Undefined))?;
+    let timeout = match args.get(3) {
+        None => f64::INFINITY,
+        Some(value) => {
+            let number = vm.to_number(value)?;
+            if number.is_nan() {
+                f64::INFINITY
+            } else {
+                number.max(0.0)
+            }
+        }
+    };
+    let (offset, end) = atomic_location(view, index)?;
+    let (bytes, waiters) = vm
+        .heap
+        .with_obj(view.buffer.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return None;
+            };
+            Some((buffer.bytes.clone(), buffer.waiters.clone()))
+        })
+        .ok_or_else(|| Error::type_err("Invalid shared backing buffer"))?;
+
+    let mut lists = waiters.lock();
+    {
+        let bytes = bytes.lock();
+        if end > bytes.len() {
+            return Err(Error::range("Atomic access index is out of bounds"));
+        }
+        if bytes[offset..end] != expected {
+            return atomics_wait_async_result(vm, false, Value::String(Arc::from("not-equal")));
+        }
+    }
+    if timeout == 0.0 {
+        return atomics_wait_async_result(vm, false, Value::String(Arc::from("timed-out")));
+    }
+
+    let capability = new_promise_capability(vm, vm.promise_ctor.clone())?;
+    let waiter = Arc::new(crate::value::AtomicsWaiter {
+        notified: Mutex::new(false),
+        wake: parking_lot::Condvar::new(),
+    });
+    lists.entry(offset).or_default().push_back(waiter.clone());
+    drop(lists);
+
+    let external_jobs = vm.external_jobs.clone();
+    let wait_id = {
+        let mut external = external_jobs.lock();
+        let wait_id = external.next_wait_id;
+        external.next_wait_id = external.next_wait_id.wrapping_add(1);
+        external
+            .wait_roots
+            .insert(wait_id, capability.resolve.clone());
+        wait_id
+    };
+    let waiters_for_thread = waiters.clone();
+    let waiter_for_thread = waiter.clone();
+    let spawn_result = std::thread::Builder::new()
+        .name("ruja-atomics-wait-async".to_string())
+        .spawn(move || {
+            let mut notified = waiter_for_thread.notified.lock();
+            let outcome = if timeout.is_infinite() {
+                while !*notified {
+                    waiter_for_thread.wake.wait(&mut notified);
+                }
+                "ok"
+            } else {
+                let duration = std::time::Duration::from_secs_f64(timeout / 1000.0);
+                let result = waiter_for_thread.wake.wait_for(&mut notified, duration);
+                if result.timed_out() && !*notified {
+                    drop(notified);
+                    let mut lists = waiters_for_thread.lock();
+                    if let Some(queue) = lists.get_mut(&offset) {
+                        queue.retain(|entry| !Arc::ptr_eq(entry, &waiter_for_thread));
+                        if queue.is_empty() {
+                            lists.remove(&offset);
+                        }
+                    }
+                    "timed-out"
+                } else {
+                    "ok"
+                }
+            };
+            let mut external = external_jobs.lock();
+            if let Some(resolve) = external.wait_roots.remove(&wait_id) {
+                external.jobs.push_back(crate::vm::ExternalPromiseJob {
+                    resolve,
+                    value: Value::String(Arc::from(outcome)),
+                });
+            }
+        });
+    if let Err(error) = spawn_result {
+        let mut lists = waiters.lock();
+        if let Some(queue) = lists.get_mut(&offset) {
+            queue.retain(|entry| !Arc::ptr_eq(entry, &waiter));
+            if queue.is_empty() {
+                lists.remove(&offset);
+            }
+        }
+        vm.external_jobs.lock().wait_roots.remove(&wait_id);
+        return Err(Error::internal(format!(
+            "failed to spawn Atomics.waitAsync waiter: {error}"
+        )));
+    }
+    atomics_wait_async_result(vm, true, capability.promise)
+}
+
 pub(crate) fn atomics_add(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     atomic_rmw_impl(vm, args, AtomicRmwOp::Add)
 }
@@ -961,6 +1092,14 @@ pub(crate) fn atomics_or(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
     atomic_rmw_impl(vm, args, AtomicRmwOp::Or)
 }
 
+pub(crate) fn atomics_pause(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::Undefined)
+}
+
 pub(crate) fn atomics_store(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
     atomic_store_impl(vm, args)
 }
@@ -987,9 +1126,11 @@ pub(crate) fn install_atomics_in_env(
         ("load", atomics_load, 2),
         ("notify", atomics_notify, 3),
         ("or", atomics_or, 3),
+        ("pause", atomics_pause, 0),
         ("store", atomics_store, 3),
         ("sub", atomics_sub, 3),
         ("wait", atomics_wait, 4),
+        ("waitAsync", atomics_wait_async, 4),
         ("xor", atomics_xor, 3),
     ];
     let function_proto = vm
