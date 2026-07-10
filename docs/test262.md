@@ -236,6 +236,12 @@ Async-generator receiver-brand confirmation: `test262-full` 29095756104 on
 opt-in async diagnostic rather than the default full matrix.
 The iterator-result descriptor change is confirmed by `test262-full`
 29096575687 on `42ac4c4` with no engine-outcome regressions.
+The complete async-generator language diagnostic against test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1` reports **924 pass / 0 fail / 0
+skip** across the statement and expression paths. Runner/analyzer admission is
+limited to those exact paths; unrelated async-iteration tests remain gated.
+The supported subset rises to **10761 pass / 0 fail / 9678 skip / 20439
+total**.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

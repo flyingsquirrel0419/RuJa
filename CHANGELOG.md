@@ -17,6 +17,10 @@
 
 ### Test tooling
 
+- The runner and analyzer now admit the fully green async-generator statement
+  and expression paths. Their async and feature exceptions remain scoped to
+  `language/{expressions,statements}/async-generator/`. The supported subset
+  rises to **10761 pass / 0 fail / 9678 skip / 20439 total**.
 - The iterator-result descriptor fix is confirmed by `test262-full`
   29096575687 on `42ac4c4` with no engine-outcome regressions.
 - The primary CI job now builds, tests, and runs clippy across all Cargo targets

@@ -112,11 +112,26 @@ class AsyncAdmissionTests(unittest.TestCase):
             async_function_declaration = (
                 root / "test/language/statements/async-function/case.js"
             )
+            async_generator_expression = (
+                root / "test/language/expressions/async-generator/case.js"
+            )
+            async_generator_declaration = (
+                root / "test/language/statements/async-generator/case.js"
+            )
             outside = root / "test/language/expressions/async-arrow/case.js"
             meta = {"flags": ["async"], "features": []}
             feature_meta = {
                 "flags": [],
                 "features": ["async-functions", "default-parameters"],
+            }
+            async_generator_meta = {
+                "flags": ["async"],
+                "features": [
+                    "async-functions",
+                    "async-iteration",
+                    "generators",
+                    "Symbol.asyncIterator",
+                ],
             }
 
             for tool in (test262_runner, test262_analyze):
@@ -133,7 +148,14 @@ class AsyncAdmissionTests(unittest.TestCase):
                     self.assertFalse(
                         tool.should_skip(meta, async_function_declaration)
                     )
+                    self.assertFalse(
+                        tool.should_skip(async_generator_meta, async_generator_expression)
+                    )
+                    self.assertFalse(
+                        tool.should_skip(async_generator_meta, async_generator_declaration)
+                    )
                     self.assertTrue(tool.should_skip(meta, outside))
+                    self.assertTrue(tool.should_skip(async_generator_meta, outside))
                     self.assertFalse(
                         tool.should_skip(feature_meta, async_function_expression)
                     )

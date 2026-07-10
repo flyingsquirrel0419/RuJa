@@ -283,6 +283,23 @@ ASYNC_FUNCTION_FEATURES = {
     "default-parameters",
 }
 
+ASYNC_GENERATOR_PREFIXES = (
+    "language/expressions/async-generator/",
+    "language/statements/async-generator/",
+)
+
+ASYNC_GENERATOR_FEATURES = {
+    "Reflect.construct",
+    "Symbol",
+    "Symbol.asyncIterator",
+    "Symbol.iterator",
+    "async-functions",
+    "async-iteration",
+    "default-parameters",
+    "generators",
+    "object-rest",
+}
+
 OBJECT_METHOD_DEFINITION_PREFIXES = (
     "language/expressions/object/method-definition/",
 )
@@ -550,6 +567,13 @@ def async_function_path(path):
         return False
     return rel.as_posix().startswith(ASYNC_FUNCTION_PREFIXES)
 
+def async_generator_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(ASYNC_GENERATOR_PREFIXES)
+
 def object_method_definition_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -634,6 +658,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ASYNC_ARROW_FUNCTION_FEATURES)
     if path is not None and async_function_path(path):
         feats.difference_update(ASYNC_FUNCTION_FEATURES)
+    if path is not None and async_generator_path(path):
+        feats.difference_update(ASYNC_GENERATOR_FEATURES)
     if path is not None and object_method_definition_path(path):
         feats.difference_update(OBJECT_METHOD_DEFINITION_FEATURES)
     if path is not None and yield_expression_path(path):
@@ -653,6 +679,7 @@ def should_skip(meta, path=None):
         object_method_definition_path(path)
         or async_arrow_function_path(path)
         or async_function_path(path)
+        or async_generator_path(path)
     )
     if 'module' in flags or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)
