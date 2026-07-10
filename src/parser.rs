@@ -3632,24 +3632,29 @@ impl Parser {
     fn parse_function_expr_with_async(&mut self, is_async: bool) -> error::Result<Expr> {
         self.advance(); // function
         let is_generator = self.eat(&TokenKind::Star);
-        let name = match self.peek().clone() {
-            TokenKind::Ident(s) => {
-                self.advance();
-                Some(Arc::from(s.as_str()))
+        // FunctionExpression names use the function's own Yield/Await grammar
+        // parameters rather than inheriting the surrounding function body.
+        let name = self.with_function_context(is_generator, is_async, |p| {
+            let name = match p.peek().clone() {
+                TokenKind::Ident(s) => {
+                    p.advance();
+                    Some(Arc::from(s.as_str()))
+                }
+                TokenKind::Await if p.await_as_identifier_allowed() => {
+                    p.advance();
+                    Some(Arc::from("await"))
+                }
+                TokenKind::Yield if p.yield_as_identifier_allowed() => {
+                    p.advance();
+                    Some(Arc::from("yield"))
+                }
+                _ => None,
+            };
+            if let Some(ref name) = name {
+                p.check_binding_name(name)?;
             }
-            TokenKind::Await if self.await_as_identifier_allowed() => {
-                self.advance();
-                Some(Arc::from("await"))
-            }
-            TokenKind::Yield if self.yield_as_identifier_allowed() => {
-                self.advance();
-                Some(Arc::from("yield"))
-            }
-            _ => None,
-        };
-        if let Some(ref name) = name {
-            self.check_binding_name(name)?;
-        }
+            Ok(name)
+        })?;
         let (params, param_defaults, rest_param, dstr_decls) =
             self.parse_params_scoped(is_generator, is_async, false)?;
         let mut body = self.parse_fn_body(false, false, is_generator, is_async)?;

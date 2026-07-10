@@ -1194,7 +1194,11 @@ impl Vm {
                     if let HeapObj::Function(f) = o {
                         if matches!(key, "caller" | "arguments") {
                             if let crate::value::FunctionKind::Interpreted { func } = &f.kind {
-                                if !func.is_arrow && !func.chunk.is_strict {
+                                if !func.is_arrow
+                                    && !func.is_async
+                                    && !func.is_generator
+                                    && !func.chunk.is_strict
+                                {
                                     return Some(key == "caller");
                                 }
                             }

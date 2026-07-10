@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 44.6% of all matrix files; 76.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8186 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8339 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -167,6 +167,17 @@ template substitution tails. The runner/analyzer lift `generators` and
 `async-functions` only on `language/statements/class/definition/`. That path
 moves from **38 pass / 0 fail / 27 skip** to **63 pass / 0 fail / 2 skip**,
 while the supported subset moves to **8186 pass / 0 fail / 12252 skip**.
+
+Focused generator function intrinsic and binding check:
+`%GeneratorFunction.prototype%.prototype` now exposes the intrinsic
+GeneratorPrototype and supplies the generator-object fallback when a function's
+own `prototype` is not an object. Generator and async functions inherit the
+restricted `caller`/`arguments` accessors, while ordinary FunctionExpression
+names parse under their own Yield/Await parameters and GeneratorExpression
+names still reject `yield`. Runner/analyzer admission removes only the
+`generators` gate on `language/{statements,expressions}/generators/`. The two
+paths report **155 pass / 0 fail / 401 skip**, and the supported subset moves
+to **8339 pass / 0 fail / 12099 skip**.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare

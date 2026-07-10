@@ -4,6 +4,10 @@
 
 ### Test tooling
 
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
+  implemented `generators` feature only on
+  `language/{statements,expressions}/generators/`; unrelated feature gates in
+  those trees remain active.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
   implemented generator and async-function coverage only on
   `language/statements/class/definition/`; those feature gates remain in
@@ -95,6 +99,13 @@
 
 ### Runtime hardening
 
+- `%GeneratorFunction.prototype%.prototype` now exposes the intrinsic
+  GeneratorPrototype with the required descriptor and supplies the fallback
+  prototype when a generator function has a non-object `prototype` value.
+  Generator and async functions inherit Function.prototype's restricted
+  `caller`/`arguments` accessors instead of taking the sloppy ordinary-function
+  legacy path, and FunctionExpression names use their own Yield/Await grammar
+  parameters rather than the surrounding generator context.
 - Generator `yield` now parses at AssignmentExpression precedence, honors the
   no-LineTerminator restriction before its operand and `*`, recognizes omitted
   operands before conditional/template delimiters, and rejects an
@@ -106,8 +117,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8186 pass / 0 fail / 12252 skip / 0 timeout**.
+Current supported subset count: **8339 pass / 0 fail / 12099 skip / 0 timeout**.
 
+- **Generator function intrinsic and binding semantics**: generator objects
+  now use the intrinsic GeneratorPrototype fallback, generator/async functions
+  inherit restricted `caller` and `arguments` accessors, ordinary nested
+  FunctionExpressions may use a sloppy `yield` name, and GeneratorExpressions
+  reject that name. The statement/expression generator paths move from **149
+  pass / 6 fail / 401 skip** with the generator gate temporarily lifted to
+  **155 pass / 0 fail / 401 skip** under the default runner. The supported
+  subset rises to **8339 pass / 0 fail / 12099 skip**.
 - **Generator yield grammar in class definitions**: `yield` now obeys its
   AssignmentExpression-level grammar in class generator methods, including
   bare yields before line terminators, conditional colons, and template

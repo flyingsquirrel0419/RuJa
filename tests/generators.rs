@@ -50,6 +50,68 @@ fn generator_function_instances_have_empty_prototype_descriptor() {
 }
 
 #[test]
+fn generator_intrinsic_prototype_is_the_non_object_fallback() {
+    assert_eq!(
+        run(r#"
+            var GeneratorFunctionPrototype = Object.getPrototypeOf(function*() {});
+            var GeneratorPrototype = GeneratorFunctionPrototype.prototype;
+            var desc = Object.getOwnPropertyDescriptor(
+                GeneratorFunctionPrototype,
+                "prototype"
+            );
+            function* g() {}
+            g.prototype = null;
+            [
+              Object.getPrototypeOf(g()) === GeneratorPrototype,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable
+            ].join(",");
+            "#),
+        Value::String(Arc::from("true,false,false,true"))
+    );
+}
+
+#[test]
+fn generator_and_async_functions_inherit_restricted_properties() {
+    assert_eq!(
+        run(r#"
+            function* generator() {}
+            var asyncFunction = async function() {};
+            function throws(getter) {
+              try { getter(); return false; }
+              catch (error) { return error instanceof TypeError; }
+            }
+            [
+              generator.hasOwnProperty("caller"),
+              generator.hasOwnProperty("arguments"),
+              throws(function() { return generator.caller; }),
+              throws(function() { generator.arguments = {}; }),
+              throws(function() { return asyncFunction.caller; }),
+              throws(function() { asyncFunction.arguments = {}; })
+            ].join(",");
+            "#),
+        Value::String(Arc::from("false,false,true,true,true,true"))
+    );
+}
+
+#[test]
+fn function_expression_names_use_their_own_yield_context() {
+    assert_eq!(
+        run(r#"
+            function* outer() {
+              return (function yield() { return yield.name; })();
+            }
+            var rejected = false;
+            try { eval("var bad = function* yield() {};"); }
+            catch (error) { rejected = error instanceof SyntaxError; }
+            outer().next().value + "," + rejected;
+            "#),
+        Value::String(Arc::from("yield,true"))
+    );
+}
+
+#[test]
 fn gen_next_returns_value_done() {
     // The first next() yields the first value and is not done.
     let r = run("function* g(){ yield 7; } var it=g(); it.next().value;");

@@ -5788,10 +5788,14 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     }))?;
     vm.generator_function_proto = Value::Object(GcIdx(generator_function_proto_idx));
     vm.heap.with_obj(generator_function_proto_idx, |obj| {
-        obj.props().lock().insert(
+        let mut props = obj.props().lock();
+        props.insert(
             PropertyKey::from("constructor"),
             data_prop(Value::Object(generator_function_ctor_idx)),
         );
+        let mut prototype_desc = data_prop(vm.generator_proto.clone());
+        prototype_desc.writable = false;
+        props.insert(PropertyKey::from("prototype"), prototype_desc);
     });
     vm.heap.with_obj(generator_function_ctor_idx.0, |obj| {
         if let HeapObj::Function(f) = obj {

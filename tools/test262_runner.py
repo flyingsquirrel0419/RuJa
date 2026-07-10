@@ -250,6 +250,15 @@ CLASS_DEFINITION_FEATURES = {
     "generators",
 }
 
+GENERATOR_PREFIXES = (
+    "language/expressions/generators/",
+    "language/statements/generators/",
+)
+
+GENERATOR_FEATURES = {
+    "generators",
+}
+
 CLASS_SUBCLASS_PREFIXES = (
     "language/statements/class/subclass/",
 )
@@ -447,6 +456,13 @@ def class_definition_path(path):
         return False
     return rel.as_posix().startswith(CLASS_DEFINITION_PREFIXES)
 
+def generator_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(GENERATOR_PREFIXES)
+
 def class_subclass_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -497,6 +513,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
     if path is not None and class_definition_path(path):
         feats.difference_update(CLASS_DEFINITION_FEATURES)
+    if path is not None and generator_path(path):
+        feats.difference_update(GENERATOR_FEATURES)
     if path is not None and class_subclass_path(path):
         feats.difference_update(CLASS_SUBCLASS_FEATURES)
     if path is not None and class_subclass_builtins_path(path):
