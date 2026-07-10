@@ -9,7 +9,10 @@ any per-test `includes:`) rather than a hand-rolled stub, so tests relying on
 import os, re, sys
 from pathlib import Path
 
-from test262_support import append_async_harness, execute_source
+try:
+    from test262_support import append_async_harness, execute_source
+except ModuleNotFoundError:
+    from tools.test262_support import append_async_harness, execute_source
 
 RUJA = str(Path(__file__).resolve().parent.parent / "target/release/ruja")
 TEST262 = os.environ.get("TEST262", "/root/test262")
@@ -281,6 +284,15 @@ OBJECT_METHOD_DEFINITION_FEATURES = {
     "Symbol.iterator",
 }
 
+YIELD_EXPRESSION_PREFIXES = (
+    "language/expressions/yield/",
+)
+
+YIELD_EXPRESSION_FEATURES = {
+    "generators",
+    "Symbol.iterator",
+}
+
 GENERATOR_PREFIXES = (
     "language/expressions/generators/",
     "language/statements/generators/",
@@ -520,6 +532,13 @@ def object_method_definition_path(path):
         return False
     return rel.as_posix().startswith(OBJECT_METHOD_DEFINITION_PREFIXES)
 
+def yield_expression_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(YIELD_EXPRESSION_PREFIXES)
+
 def generator_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -588,6 +607,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ARROW_FUNCTION_FEATURES)
     if path is not None and object_method_definition_path(path):
         feats.difference_update(OBJECT_METHOD_DEFINITION_FEATURES)
+    if path is not None and yield_expression_path(path):
+        feats.difference_update(YIELD_EXPRESSION_FEATURES)
     if path is not None and generator_path(path):
         feats.difference_update(GENERATOR_FEATURES)
     if path is not None and function_path(path):

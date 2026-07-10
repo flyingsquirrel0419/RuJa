@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 47.3% of all matrix files; 77.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9497 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (9560 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -271,9 +271,12 @@ the delegated iterator result object is forwarded unchanged and outer
 `next`, `throw`, and `return` completions invoke the corresponding inner
 methods with spec receiver and argument semantics. Final values, abrupt
 getters/calls, non-object results, missing-`throw` cleanup, and primitive
-well-known Symbol lookup are preserved. With `generators` and
-`Symbol.iterator` temporarily lifted, `language/expressions/yield` moves from
-**34 pass / 29 fail** to **63 pass / 0 fail**. Async-generator delegation also
+well-known Symbol lookup are preserved. Runner/analyzer admission now lifts
+`generators` and `Symbol.iterator` only on
+`language/expressions/yield/`; the path moves from **34 pass / 29 fail** in
+the prior relaxed diagnostic to **63 pass / 0 fail / 0 skip** under the
+default runner, raising the supported subset to **9560 pass / 0 fail / 10878
+skip**. Async-generator delegation also
 prefers `Symbol.asyncIterator`, falls back to the sync iterator protocol,
 awaits each delegated result, and rejects the returned Promise for iterator
 protocol errors.

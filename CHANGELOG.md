@@ -4,6 +4,9 @@
 
 ### Test tooling
 
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
+  `generators` and `Symbol.iterator` only on
+  `language/expressions/yield/`, where the complete synchronous path is green.
 - The runner and analyzer now share test262 async harness assembly and process
   classification. Async files receive a host `print` shim plus
   `doneprintHandle.js`; exactly one completion marker is required, failure,
@@ -164,19 +167,20 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **9497 pass / 0 fail / 10941 skip / 0 timeout**.
+Current supported subset count: **9560 pass / 0 fail / 10878 skip / 0 timeout**.
 
 - **Async object method-definition diagnostic**: with async execution enabled,
   the complete 303-file object method-definition path improves from **238 pass
   / 65 fail** before async-generator delegation fixes to **286 pass / 17 fail**.
   Default conformance runs still skip the 101 `flags: [async]` files until the
   remaining engine failures are resolved.
-- **Complete synchronous `yield*` semantics**: delegated iteration now
-  preserves raw result objects, completion values, method receiver/arguments,
-  getter and call errors, protocol-violation cleanup, and primitive
-  `Symbol.iterator` lookup. With `generators` and `Symbol.iterator`
-  temporarily lifted, `language/expressions/yield` improves from **34 pass /
-  29 fail** to **63 pass / 0 fail**.
+- **Complete synchronous `yield*` semantics and admission**: delegated
+  iteration now preserves raw result objects, completion values, method
+  receiver/arguments, getter and call errors, protocol-violation cleanup, and
+  primitive `Symbol.iterator` lookup. `language/expressions/yield` improves
+  from **34 pass / 29 fail** under the prior relaxed diagnostic to **63 pass /
+  0 fail / 0 skip** under the default runner, raising the supported subset to
+  **9560 pass / 0 fail / 10878 skip**.
 - **Synchronous object method-definition admission**: the focused object
   method-definition path now exercises implemented async/generator grammar,
   class-element contexts, default parameters, and Symbol-backed computed
