@@ -26,7 +26,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 44.9% of all matrix files; 76.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 45.8% of all matrix files; 76.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8740 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -161,6 +161,11 @@ Latest improvement confirmation: `test262-full` 29066783354 on `37c7f5d`;
 the aggregate reports **21778 pass / 6830 fail / 11 timeout / 0 error /
 19848 skip / 48467 total / 28608 ran**, or **76.1%** of executed files and
 **44.9%** of the matrix after generator-function intrinsic and binding
+admission.
+Latest improvement confirmation: `test262-full` 29067742201 on `4d28c86`;
+the aggregate reports **22179 pass / 6830 fail / 11 timeout / 0 error /
+19447 skip / 48467 total / 29009 ran**, or **76.5%** of executed files and
+**45.8%** of the matrix after complete statement/expression generator-path
 admission.
 
 Focused class-definition generator grammar check:
