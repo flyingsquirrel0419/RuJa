@@ -56,21 +56,12 @@
   `language/expressions/logical-assignment/` by lifting only
   `class-fields-private` on those paths.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
-  implemented public instance/static class field, generator method, async
-  method, and async generator method coverage on
-  `language/{statements,expressions}/class/elements/` without lifting those
-  features outside the class-elements paths.
-- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the 12
-  implemented private-name direct-eval visibility files under
-  `language/statements/class/elements/` without lifting private class-element
-  feature gates more broadly.
-- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit only the
-  32 implemented contextual-keyword early-error files for private async,
-  generator, and async-generator methods without lifting broader private
-  class-element coverage.
-- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the two
-  implemented private-method initialization-order files without lifting the
-  remaining private class-element assignment-target coverage.
+  implemented public and private instance/static class fields and methods,
+  private-name `in`, generator methods, async methods, and async generator
+  methods across `language/{statements,expressions}/class/elements/` without
+  lifting those features outside the class-elements paths. The obsolete
+  direct-eval, contextual-keyword, and initialization-order file allowlists
+  have been removed.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -95,8 +86,16 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **6461 pass / 0 fail / 13977 skip / 0 timeout**.
+Current supported subset count: **8109 pass / 0 fail / 12329 skip / 0 timeout**.
 
+- **Private assignment-target References**: private names are now represented
+  directly in VM `ReferenceRecord`s, and private reads/writes flow through
+  `GetValue`/`PutValue`. Destructuring and `for-in`/`for-of` preserve the
+  private target before source access, defer brand checks until the write, and
+  raise `TypeError` for missing private slots. All 14 `privatefieldset-*`
+  files pass, the full class-elements paths report **2203 pass / 0 fail / 759
+  skip**, and broad private class-element admission raises the supported
+  subset to **8109 pass / 0 fail / 12329 skip**.
 - **Instance private method initialization order**: constructors now install
   all instance private methods and accessors before running any public or
   private field initializer, while preserving field source order and the

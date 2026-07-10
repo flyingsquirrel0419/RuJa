@@ -1107,7 +1107,7 @@ impl Vm {
                         let strict = self.current_strict();
                         let r#ref = Value::Reference(Box::new(crate::value::ReferenceRecord {
                             base: crate::value::ReferenceBase::Environment(env),
-                            name: crate::value::PropertyKey::from(name.as_str()),
+                            name: crate::value::PropertyKey::from(name.as_str()).into(),
                             strict,
                         }));
                         self.put_value(&r#ref, value)?;
@@ -1140,7 +1140,7 @@ impl Vm {
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),
-                            name,
+                            name: name.into(),
                             strict,
                         })));
                 }
@@ -1157,7 +1157,25 @@ impl Vm {
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),
-                            name,
+                            name: name.into(),
+                            strict,
+                        })));
+                }
+                Op::MakePrivateRef(name_idx) => {
+                    let name = match self.private_slot_key_from_name(name_idx)? {
+                        crate::value::PrivateSlotKey::Private(name) => name,
+                        crate::value::PrivateSlotKey::Internal(_) => {
+                            return Err(Error::internal(
+                                "class private reference resolved to an internal slot",
+                            ));
+                        }
+                    };
+                    let base = self.stack.pop().unwrap_or(Value::Undefined);
+                    let strict = self.current_strict();
+                    self.stack
+                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
+                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            name: crate::value::ReferencedName::Private(name),
                             strict,
                         })));
                 }
@@ -2288,32 +2306,16 @@ impl Vm {
                     self.stack.push(result);
                 }
                 Op::GetPrivate(name_idx) => {
-                    let key = self.private_slot_key_from_name(name_idx)?;
+                    let name = match self.private_slot_key_from_name(name_idx)? {
+                        crate::value::PrivateSlotKey::Private(name) => name,
+                        crate::value::PrivateSlotKey::Internal(_) => {
+                            return Err(Error::internal(
+                                "class private get resolved to an internal slot",
+                            ));
+                        }
+                    };
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let slot = if let Value::Object(idx) = &obj {
-                        self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::Object(od) = o {
-                                od.private_fields.lock().get(&key).cloned()
-                            } else if let HeapObj::Function(f) = o {
-                                f.private_fields.lock().get(&key).cloned()
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    };
-                    let v = match slot {
-                        Some(crate::value::PrivateSlot::Value(value))
-                        | Some(crate::value::PrivateSlot::Method(value)) => value,
-                        Some(crate::value::PrivateSlot::Accessor { get: Some(get), .. }) => {
-                            self.call_function(&get, &[], Some(obj.clone()))?
-                        }
-                        Some(crate::value::PrivateSlot::Accessor { get: None, .. }) => {
-                            return Err(Error::type_err("Private accessor has no getter"));
-                        }
-                        None => return Err(Error::type_err("Private field is not present")),
-                    };
+                    let v = self.get_private_value(&obj, &name)?;
                     self.stack.push(v);
                 }
                 Op::CreatePrivateName(name_idx) => {
@@ -2401,72 +2403,17 @@ impl Vm {
                     self.stack.push(value);
                 }
                 Op::SetPrivate(name_idx) => {
-                    let key = self.private_slot_key_from_name(name_idx)?;
+                    let name = match self.private_slot_key_from_name(name_idx)? {
+                        crate::value::PrivateSlotKey::Private(name) => name,
+                        crate::value::PrivateSlotKey::Internal(_) => {
+                            return Err(Error::internal(
+                                "class private set resolved to an internal slot",
+                            ));
+                        }
+                    };
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    if let Value::Object(idx) = &obj {
-                        let setter = self.heap.with_obj(idx.0, |o| {
-                            if let HeapObj::Object(od) = o {
-                                let mut fields = od.private_fields.lock();
-                                match fields.get(&key) {
-                                    Some(crate::value::PrivateSlot::Accessor {
-                                        set: Some(setter),
-                                        ..
-                                    }) => Ok(Some(setter.clone())),
-                                    Some(crate::value::PrivateSlot::Accessor {
-                                        set: None, ..
-                                    }) => Err(Error::type_err("Private accessor has no setter")),
-                                    Some(crate::value::PrivateSlot::Value(_)) => {
-                                        fields.insert(
-                                            key.clone(),
-                                            crate::value::PrivateSlot::Value(value.clone()),
-                                        );
-                                        Ok(None)
-                                    }
-                                    Some(crate::value::PrivateSlot::Method(_)) => {
-                                        Err(Error::type_err("Cannot assign to private method"))
-                                    }
-                                    None => Err(Error::type_err("Private field is not present")),
-                                }
-                            } else {
-                                if let HeapObj::Function(f) = o {
-                                    let mut fields = f.private_fields.lock();
-                                    match fields.get(&key) {
-                                        Some(crate::value::PrivateSlot::Accessor {
-                                            set: Some(setter),
-                                            ..
-                                        }) => Ok(Some(setter.clone())),
-                                        Some(crate::value::PrivateSlot::Accessor {
-                                            set: None,
-                                            ..
-                                        }) => {
-                                            Err(Error::type_err("Private accessor has no setter"))
-                                        }
-                                        Some(crate::value::PrivateSlot::Value(_)) => {
-                                            fields.insert(
-                                                key.clone(),
-                                                crate::value::PrivateSlot::Value(value.clone()),
-                                            );
-                                            Ok(None)
-                                        }
-                                        Some(crate::value::PrivateSlot::Method(_)) => {
-                                            Err(Error::type_err("Cannot assign to private method"))
-                                        }
-                                        None => {
-                                            Err(Error::type_err("Private field is not present"))
-                                        }
-                                    }
-                                } else {
-                                    Err(Error::type_err("Private receiver is not an object"))
-                                }
-                            }
-                        })?;
-                        if let Some(setter) = setter {
-                            self.call_function(&setter, std::slice::from_ref(&value), Some(obj))?;
-                        }
-                    } else {
-                        return Err(Error::type_err("Private receiver is not an object"));
-                    }
+                    self.set_private_value(&obj, &name, value.clone())?;
                     self.stack.push(value);
                 }
                 Op::DefinePrivateAccessor(name_idx) => {

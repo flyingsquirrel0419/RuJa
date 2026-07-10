@@ -88,6 +88,7 @@ enum RestExcludeKey {
 #[derive(Clone, Copy)]
 enum AssignTargetTemp {
     IdentRef(usize),
+    PrivateRef(usize),
     Member {
         obj_idx: usize,
         key_idx: usize,
@@ -1629,6 +1630,14 @@ impl Compiler {
                 if let StmtNode::ExprStmt(expr) = &left.node {
                     match expr {
                         Expr::Ident(name) => self.store_identifier_target_value(name),
+                        Expr::PrivateGet { object, name } => {
+                            self.compile_expr(object)?;
+                            let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                            self.chunk
+                                .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                            self.chunk.emit(Op::PutValue, self.current_line);
+                            self.chunk.emit(Op::Pop, self.current_line);
+                        }
                         Expr::Member {
                             object,
                             property,
@@ -2529,6 +2538,16 @@ impl Compiler {
                 }
                 self.chunk.emit(Op::Pop, self.current_line);
             }
+            Expr::PrivateGet { .. } => {
+                let Some(AssignTargetTemp::PrivateRef(ref_idx)) = target_temp else {
+                    return Err(error::Error::internal(
+                        "expected pre-evaluated private assignment target",
+                    ));
+                };
+                self.load_path(value_idx, &[]);
+                self.store_current_value_to_identifier_target(ref_idx);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
             Expr::Member { .. } => {
                 let target = match target_temp {
                     Some(AssignTargetTemp::Member {
@@ -2539,7 +2558,7 @@ impl Compiler {
                     None => self
                         .compile_assign_member_target_temps(target)?
                         .ok_or_else(|| error::Error::internal("expected member target"))?,
-                    Some(AssignTargetTemp::IdentRef(_)) => {
+                    Some(AssignTargetTemp::IdentRef(_) | AssignTargetTemp::PrivateRef(_)) => {
                         return Err(error::Error::internal("expected member target"));
                     }
                 };
@@ -2614,6 +2633,15 @@ impl Compiler {
                     key_idx,
                     computed,
                 }))
+            }
+            Expr::PrivateGet { object, name } => {
+                self.compile_expr(object)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                let ref_idx = self.intern("#dtarget_private_ref");
+                self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
+                Ok(Some(AssignTargetTemp::PrivateRef(ref_idx)))
             }
             _ => Ok(None),
         }
@@ -4645,7 +4673,9 @@ impl Compiler {
             Expr::PrivateGet { object, name } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::GetPrivate(name_idx), self.current_line);
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
             }
             Expr::PrivateSet {
                 object,
@@ -4653,9 +4683,12 @@ impl Compiler {
                 value,
             } => {
                 self.compile_expr(object)?;
-                self.compile_expr(value)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
             }
             Expr::PrivateInit {
                 object,
@@ -4749,9 +4782,12 @@ impl Compiler {
             // Private field assignment: obj.#name = value
             Expr::PrivateGet { object, name } => {
                 self.compile_expr(object)?;
-                self.compile_expr(value)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk.emit(Op::SetPrivate(name_idx), self.current_line);
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
             }
             // Destructuring assignment: `[a, b] = expr` / `{a, b} = expr`.
             Expr::Array(_) | Expr::Object(_) => {
@@ -4827,6 +4863,13 @@ impl Compiler {
     fn compile_assign_target(&mut self, target: &Expr) -> error::Result<()> {
         match target {
             Expr::Ident(name) => self.store_identifier_target_value(name),
+            Expr::PrivateGet { object, name } => {
+                self.compile_expr(object)?;
+                let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                self.chunk
+                    .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
+            }
             Expr::Member {
                 object,
                 property,

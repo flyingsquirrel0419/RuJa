@@ -1647,7 +1647,80 @@ impl Vm {
                 base = crate::value::ReferenceBase::Environment(self.global);
             }
         }
-        Ok(crate::value::ReferenceRecord { base, name, strict })
+        Ok(crate::value::ReferenceRecord {
+            base,
+            name: name.into(),
+            strict,
+        })
+    }
+
+    pub(crate) fn get_private_value(
+        &mut self,
+        obj: &Value,
+        name: &crate::value::PrivateNameKey,
+    ) -> error::Result<Value> {
+        let key = crate::value::PrivateSlotKey::Private(name.clone());
+        let slot = if let Value::Object(idx) = obj {
+            self.heap.with_obj(idx.0, |object| match object {
+                HeapObj::Object(data) => data.private_fields.lock().get(&key).cloned(),
+                HeapObj::Function(function) => function.private_fields.lock().get(&key).cloned(),
+                _ => None,
+            })
+        } else {
+            None
+        };
+        match slot {
+            Some(crate::value::PrivateSlot::Value(value))
+            | Some(crate::value::PrivateSlot::Method(value)) => Ok(value),
+            Some(crate::value::PrivateSlot::Accessor { get: Some(get), .. }) => {
+                self.call_function(&get, &[], Some(obj.clone()))
+            }
+            Some(crate::value::PrivateSlot::Accessor { get: None, .. }) => {
+                Err(Error::type_err("Private accessor has no getter"))
+            }
+            None => Err(Error::type_err("Private field is not present")),
+        }
+    }
+
+    pub(crate) fn set_private_value(
+        &mut self,
+        obj: &Value,
+        name: &crate::value::PrivateNameKey,
+        value: Value,
+    ) -> error::Result<()> {
+        let key = crate::value::PrivateSlotKey::Private(name.clone());
+        let setter = if let Value::Object(idx) = obj {
+            self.heap.with_obj(idx.0, |object| {
+                let fields = match object {
+                    HeapObj::Object(data) => &data.private_fields,
+                    HeapObj::Function(function) => &function.private_fields,
+                    _ => return Err(Error::type_err("Private receiver is not an object")),
+                };
+                let mut fields = fields.lock();
+                match fields.get(&key) {
+                    Some(crate::value::PrivateSlot::Accessor {
+                        set: Some(setter), ..
+                    }) => Ok(Some(setter.clone())),
+                    Some(crate::value::PrivateSlot::Accessor { set: None, .. }) => {
+                        Err(Error::type_err("Private accessor has no setter"))
+                    }
+                    Some(crate::value::PrivateSlot::Value(_)) => {
+                        fields.insert(key, crate::value::PrivateSlot::Value(value.clone()));
+                        Ok(None)
+                    }
+                    Some(crate::value::PrivateSlot::Method(_)) => {
+                        Err(Error::type_err("Cannot assign to private method"))
+                    }
+                    None => Err(Error::type_err("Private field is not present")),
+                }
+            })?
+        } else {
+            return Err(Error::type_err("Private receiver is not an object"));
+        };
+        if let Some(setter) = setter {
+            self.call_function(&setter, std::slice::from_ref(&value), Some(obj.clone()))?;
+        }
+        Ok(())
     }
 
     /// Spec GetValue (6.2.4.2): if `v` is a Reference, resolve it to its
@@ -1737,12 +1810,19 @@ impl Vm {
                             Err(Error::reference(format!("{} is not defined", name)))
                         }
                     }
-                    crate::value::ReferenceBase::Value(base) => {
-                        let key = Self::property_key_to_value(&r.name);
-                        self.get_property_key(base, &key)
-                    }
+                    crate::value::ReferenceBase::Value(base) => match &r.name {
+                        crate::value::ReferencedName::Property(name) => {
+                            let key = Self::property_key_to_value(name);
+                            self.get_property_key(base, &key)
+                        }
+                        crate::value::ReferencedName::Private(name) => {
+                            self.get_private_value(base, name)
+                        }
+                    },
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::PropertyKey::Str(s) => {
+                        crate::value::ReferencedName::Property(crate::value::PropertyKey::Str(
+                            s,
+                        )) => {
                             if !self.has_property(base, s)? {
                                 if r.strict {
                                     return Err(Error::reference(format!("{} is not defined", s)));
@@ -1751,9 +1831,12 @@ impl Vm {
                             }
                             self.get_property(base, s)
                         }
-                        crate::value::PropertyKey::Symbol(id) => {
-                            self.get_property(base, &format!("[Symbol {}]", id))
-                        }
+                        crate::value::ReferencedName::Property(
+                            crate::value::PropertyKey::Symbol(id),
+                        ) => self.get_property(base, &format!("[Symbol {}]", id)),
+                        crate::value::ReferencedName::Private(_) => Err(Error::internal(
+                            "private reference cannot use an object environment base",
+                        )),
                     },
                 }
             }
@@ -1983,8 +2066,14 @@ impl Vm {
                         self.set_property(&global_this, &name, value)?;
                     }
                     crate::value::ReferenceBase::Value(base) => {
+                        let crate::value::ReferencedName::Property(name) = &r.name else {
+                            let crate::value::ReferencedName::Private(name) = &r.name else {
+                                unreachable!()
+                            };
+                            return self.set_private_value(base, name, value);
+                        };
                         let success = if matches!(base.as_ref(), Value::Object(_)) {
-                            self.try_set_property_key_with_receiver(base, &r.name, value, base)?
+                            self.try_set_property_key_with_receiver(base, name, value, base)?
                         } else if base.is_nullish() || r.strict {
                             return Err(Error::type_err(
                                 "Cannot set property of primitive".to_string(),
@@ -1994,7 +2083,7 @@ impl Vm {
                         };
                         if success {
                             if let (Value::Object(idx), crate::value::PropertyKey::Str(s)) =
-                                (base.as_ref(), &r.name)
+                                (base.as_ref(), name)
                             {
                                 let is_global_this = self.heap.with_obj(idx.0, |o| {
                                     matches!(
@@ -2012,7 +2101,7 @@ impl Vm {
                             }
                         }
                         if !success && r.strict {
-                            match &r.name {
+                            match name {
                                 crate::value::PropertyKey::Str(s) => {
                                     return Err(Error::type_err(format!(
                                         "Cannot assign to read only property '{}' of object",
@@ -2028,7 +2117,9 @@ impl Vm {
                         }
                     }
                     crate::value::ReferenceBase::ObjectEnvironment(base) => match &r.name {
-                        crate::value::PropertyKey::Str(s) => {
+                        crate::value::ReferencedName::Property(crate::value::PropertyKey::Str(
+                            s,
+                        )) => {
                             if !self.has_property(base, s)? {
                                 if r.strict {
                                     return Err(Error::reference(format!("{} is not defined", s)));
@@ -2036,8 +2127,13 @@ impl Vm {
                             }
                             self.set_object_environment_property(base, s, value)?
                         }
-                        crate::value::PropertyKey::Symbol(id) => {
-                            self.set_property_key(base, &Value::Symbol(*id), value)?
+                        crate::value::ReferencedName::Property(
+                            crate::value::PropertyKey::Symbol(id),
+                        ) => self.set_property_key(base, &Value::Symbol(*id), value)?,
+                        crate::value::ReferencedName::Private(_) => {
+                            return Err(Error::internal(
+                                "private reference cannot use an object environment base",
+                            ));
                         }
                     },
                 }

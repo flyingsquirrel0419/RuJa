@@ -711,6 +711,66 @@ fn private_methods_and_accessors_initialize_before_fields() {
 }
 
 #[test]
+fn private_destructuring_targets_preserve_reference_evaluation_order() {
+    assert_eq!(
+        run(r#"
+            class Base { constructor(receiver) { return receiver; } }
+            class C extends Base {
+              #field;
+              assign() {
+                var initialize = () => new C(this);
+                var source = { get value() { initialize(); return "pass"; } };
+                ({ value: this.#field } = source);
+                return this.#field;
+              }
+            }
+            C.prototype.assign.call({});
+        "#),
+        Value::String(Arc::from("pass"))
+    );
+    assert_eq!(
+        run(r#"
+            var getterCalled = false;
+            class C extends class {} {
+              #field;
+              constructor() {
+                var source = { get value() { getterCalled = true; } };
+                ({ value: this.#field } = source);
+              }
+            }
+            var referenceError = false;
+            try { new C(); } catch (error) { referenceError = error instanceof ReferenceError; }
+            referenceError && !getterCalled;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn private_assignment_targets_apply_brand_checks_through_put_value() {
+    assert_eq!(
+        run(r#"
+            class C {
+              #field;
+              array(object) { [object.#field] = [1]; }
+              arrayRest(object) { [...object.#field] = []; }
+              object(object) { ({ value: object.#field } = { value: 1 }); }
+              objectRest(object) { ({ ...object.#field } = {}); }
+              forOf(object) { for (object.#field of [1]) {} }
+              forIn(object) { for (object.#field in { value: 1 }) {} }
+            }
+            var instance = new C();
+            var methods = ["array", "arrayRest", "object", "objectRest", "forOf", "forIn"];
+            methods.every(function(name) {
+              try { instance[name]({}); return false; }
+              catch (error) { return error instanceof TypeError; }
+            });
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn shared_private_methods_keep_super_home_object() {
     assert_eq!(
         run("class B{m(){return this.x;}}class C extends B{constructor(x){super();this.x=x;}#m(){return super.m();}call(){return this.#m;}value(){return this.#m();}}let a=new C(1),b=new C(2);a.call()===b.call()&&a.value()===1&&b.value()===2;"),

@@ -207,10 +207,32 @@ pub struct ReferenceRecord {
     /// The base value: an environment record (GcIdx) for identifier references,
     /// or a Value (Object/with) for property references.
     pub base: ReferenceBase,
-    /// The referenced name (string key or Symbol id).
-    pub name: PropertyKey,
+    /// The referenced name (property key or lexically resolved private name).
+    pub name: ReferencedName,
     /// Whether the reference is strict (unresolved puts throw ReferenceError).
     pub strict: bool,
+}
+
+/// The [[ReferencedName]] component of a Reference Record.
+#[derive(Clone, Debug)]
+pub enum ReferencedName {
+    Property(PropertyKey),
+    Private(PrivateNameKey),
+}
+
+impl ReferencedName {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            ReferencedName::Property(key) => key.as_str(),
+            ReferencedName::Private(_) => None,
+        }
+    }
+}
+
+impl From<PropertyKey> for ReferencedName {
+    fn from(key: PropertyKey) -> Self {
+        ReferencedName::Property(key)
+    }
 }
 
 /// The base of a Reference: either an environment record (for identifier

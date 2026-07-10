@@ -387,6 +387,7 @@ pub enum Op {
     LoadRef(usize),   // push a Reference record for the named binding
     MakePropertyRef,  // pop [base, propertyKey], push a property Reference
     MakePropertyRefForSet, // pop [base, propertyKey, value], push [value, property Reference]
+    MakePrivateRef(usize), // pop base, push private Reference; arg = name constant idx
     GetValue,         // pop a Reference, push its resolved value
     PutValue,         // pop [Reference, value], store value into the Reference
 
