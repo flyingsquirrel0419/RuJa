@@ -70,7 +70,10 @@
   the 44 growable/resizable cases remain intentionally gated. Tooling tests
   verify that the feature exception does not apply outside this built-in path,
   and the supported language subset remains **11589 pass / 0 fail / 8850 skip
-  / 20439 total**.
+  / 20439 total**. CI `29113667245` and `test262-full` `29113667267`
+  confirm the change; downloaded artifacts report **25165 pass / 6830 fail /
+  11 timeout / 0 error / 16461 skip / 48467 total / 32006 executed**, or
+  **78.6%** of executed files and **51.9%** of the matrix.
 - `FinalizationRegistry` is removed from the global unsupported-feature gate.
   Its exact built-in path reports **47 pass / 0 fail / 0 skip**, the completed
   receiver-brand coverage raises `built-ins/WeakRef/` to **29 pass / 0 fail /

@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 51.8% of all matrix files; 78.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 51.9% of all matrix files; 78.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -340,7 +340,10 @@ ArrayBuffer-only operations reject the shared brand. The exact
 `built-ins/SharedArrayBuffer/` path reports **60 pass / 0 fail / 44 skip / 104
 total**; all 44 skipped files require growable/resizable shared buffers and
 remain gated together with Atomics. The supported language subset remains
-**11589 pass / 0 fail / 8850 skip / 20439 total**.
+**11589 pass / 0 fail / 8850 skip / 20439 total**. CI `29113667245` and
+`test262-full` `29113667267` confirm the change. Downloaded artifacts aggregate
+to **25165 pass / 6830 fail / 11 timeout / 0 error / 16461 skip / 48467 total /
+32006 executed**, or **78.6%** of executed files and **51.9%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
