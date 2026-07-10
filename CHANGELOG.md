@@ -4,6 +4,11 @@
 
 ### Test tooling
 
+- The latest `test262-full` documentation confirmation records an upstream
+  denominator contraction of 749 unsupported files. Engine outcomes remain
+  **22999 pass / 6830 fail / 11 timeout / 0 error / 29829 ran**; the current
+  snapshot reports **17878 skip / 47718 total** instead of treating the
+  denominator-only change as an engine improvement.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
   `generators` and `Symbol.iterator` only on
   `language/expressions/yield/`, where the complete synchronous path is green.
