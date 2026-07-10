@@ -233,6 +233,14 @@ only on `language/expressions/arrow-function/`. The path moves from **144 pass
 / 0 fail / 199 skip** to **343 pass / 0 fail / 0 skip**, and the supported
 subset moves to **9347 pass / 0 fail / 11091 skip**.
 
+Focused escaped object async-method prefix local check:
+object literal parsing now requires the contextual `async` method prefix to be
+an unescaped token. An escaped identifier such as `\u0061sync` remains valid
+as an ordinary method, property, or shorthand name, but cannot introduce a
+second method name. With the relevant method-definition feature skips
+temporarily lifted, `language/expressions/object/method-definition/` improves
+from **158 pass / 1 fail / 144 skip** to **159 pass / 0 fail / 144 skip**.
+
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
 `YieldExpression` before the closing array pattern bracket, so default

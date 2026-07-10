@@ -3396,6 +3396,7 @@ impl Parser {
             // Async method: `async foo() {}` / `async *foo() {}` / async
             // generator. Detect `async` followed by a property-name start.
             let is_async_method = matches!(self.peek(), TokenKind::Ident(s) if s == "async")
+                && !self.peek_at_tok(0).had_escape
                 && !self.peek_at_tok(1).preceded_by_newline
                 && matches!(
                     self.peek_at_tok(1).kind,
@@ -6743,6 +6744,24 @@ mod tests {
             "({ async\nfoo() {} });",
         ] {
             assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_object_async_method_prefix_rejects_escaped_keyword() {
+        for src in [
+            r#"({ \u0061sync method() {} });"#,
+            r#"({ \u0061sync *method() {} });"#,
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            r#"({ \u0061sync() {} });"#,
+            r#"({ \u0061sync: 1 });"#,
+            r#"var async = 1; ({ \u0061sync });"#,
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
         }
     }
 

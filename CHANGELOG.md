@@ -110,6 +110,11 @@
 
 ### Runtime hardening
 
+- Object literal method parsing no longer treats an escaped identifier such as
+  `\u0061sync` as the contextual `async` method prefix. Escaped `async`
+  followed by another method name is now rejected during parsing, while an
+  ordinary method, property, or shorthand property actually named `async`
+  remains valid.
 - Formal-parameter parsing now disables both `YieldExpression` and
   `AwaitExpression` for generator/async functions and arrow functions while
   resetting those grammar contexts inside nested function and arrow bodies.
@@ -142,6 +147,11 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **9347 pass / 0 fail / 11091 skip / 0 timeout**.
 
+- **Escaped object async-method prefix early error**: object literal method
+  parsing now distinguishes the exact contextual `async` token from an
+  escaped identifier. With the relevant method-definition feature skips
+  temporarily lifted, the focused path improves from **158 pass / 1 fail /
+  144 skip** to **159 pass / 0 fail / 144 skip**.
 - **Complete ordinary arrow-function admission**: the ordinary arrow path now
   exercises all implemented default-parameter, destructuring-binding, nested
   generator, object-rest, and `Symbol.iterator` cases. It rises from **144
