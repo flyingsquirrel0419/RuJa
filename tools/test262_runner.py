@@ -268,6 +268,15 @@ ARROW_FUNCTION_FEATURES = {
     "Symbol.iterator",
 }
 
+ASYNC_ARROW_FUNCTION_PREFIXES = (
+    "language/expressions/async-arrow-function/",
+)
+
+ASYNC_ARROW_FUNCTION_FEATURES = {
+    "async-functions",
+    "default-parameters",
+}
+
 OBJECT_METHOD_DEFINITION_PREFIXES = (
     "language/expressions/object/method-definition/",
 )
@@ -525,6 +534,13 @@ def arrow_function_path(path):
         return False
     return rel.as_posix().startswith(ARROW_FUNCTION_PREFIXES)
 
+def async_arrow_function_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(ASYNC_ARROW_FUNCTION_PREFIXES)
+
 def object_method_definition_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -605,6 +621,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_DEFINITION_FEATURES)
     if path is not None and arrow_function_path(path):
         feats.difference_update(ARROW_FUNCTION_FEATURES)
+    if path is not None and async_arrow_function_path(path):
+        feats.difference_update(ASYNC_ARROW_FUNCTION_FEATURES)
     if path is not None and object_method_definition_path(path):
         feats.difference_update(OBJECT_METHOD_DEFINITION_FEATURES)
     if path is not None and yield_expression_path(path):
@@ -620,7 +638,9 @@ def should_skip(meta, path=None):
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
-    async_admitted = path is not None and object_method_definition_path(path)
+    async_admitted = path is not None and (
+        object_method_definition_path(path) or async_arrow_function_path(path)
+    )
     if 'module' in flags or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)
     ):

@@ -27,6 +27,9 @@
   complete synchronous, parse-negative, and async object method-definition
   coverage only on `language/expressions/object/method-definition/`. Async
   files remain gated everywhere else unless an opt-in diagnostic is requested.
+- The runner and analyzer now admit `async-functions`, default parameters, and
+  async completion only on `language/expressions/async-arrow-function/`, while
+  preserving those gates outside the exact path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented default-parameter, destructuring-binding, generator,
   object-rest, and `Symbol.iterator` coverage only on
@@ -193,7 +196,7 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **9661 pass / 0 fail / 10778 skip / 0 timeout**.
+Current supported subset count: **9703 pass / 0 fail / 10736 skip / 0 timeout**.
 
 - **Primitive String protocol dispatch guards**: the 16 current test262 cases
   covering primitive values passed to `match`, `replace`, `replaceAll`, and
@@ -212,6 +215,10 @@ Current supported subset count: **9661 pass / 0 fail / 10778 skip / 0 timeout**.
   newly admitted async files raise the supported subset to **9661 pass / 0
   fail / 10778 skip / 20439 total** while all other async paths retain their
   existing gate.
+- **Complete async arrow-function admission**: the exact 60-file path moves
+  from **18 pass / 0 fail / 42 skip** to **60 pass / 0 fail / 0 skip** under
+  the default runner. The supported subset rises to **9703 pass / 0 fail /
+  10736 skip / 20439 total** without opening async coverage elsewhere.
 - **Complete synchronous `yield*` semantics and admission**: delegated
   iteration now preserves raw result objects, completion values, method
   receiver/arguments, getter and call errors, protocol-violation cleanup, and
