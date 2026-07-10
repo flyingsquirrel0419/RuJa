@@ -27,7 +27,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 44.6% of all matrix files; 76.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8161 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (8186 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -152,6 +152,16 @@ the aggregate reports **21600 pass / 6830 fail / 11 timeout / 0 error /
 **44.6%** of the matrix after built-in subclass admission and an upstream
 test262 expansion of 749 unsupported files. Documentation confirmation run
 `test262-full` 29064961455 on `f0f8fdd` produced the same aggregate.
+
+Focused class-definition generator grammar check:
+`yield` is now parsed as an AssignmentExpression alternative instead of a
+PrimaryExpression. This preserves its weak binding, treats a line terminator
+after `yield` as an omitted operand, rejects a newline before the `*` in
+`yield*`, and recognizes omitted operands before conditional colons and
+template substitution tails. The runner/analyzer lift `generators` and
+`async-functions` only on `language/statements/class/definition/`. That path
+moves from **38 pass / 0 fail / 27 skip** to **63 pass / 0 fail / 2 skip**,
+while the supported subset moves to **8186 pass / 0 fail / 12252 skip**.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare

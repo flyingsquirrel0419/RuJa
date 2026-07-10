@@ -4,6 +4,10 @@
 
 ### Test tooling
 
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit
+  implemented generator and async-function coverage only on
+  `language/statements/class/definition/`; those feature gates remain in
+  place outside that path.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now honor the
   test262 `raw` flag by running those files without harness/include prelude
   injection, so directive-prologue parse-negative tests are evaluated from
@@ -91,6 +95,10 @@
 
 ### Runtime hardening
 
+- Generator `yield` now parses at AssignmentExpression precedence, honors the
+  no-LineTerminator restriction before its operand and `*`, recognizes omitted
+  operands before conditional/template delimiters, and rejects an
+  unparenthesized nested `yield` in higher-precedence expressions.
 - The VM call-stack guard now trips at a more conservative depth before
   recursive interpreted calls can exhaust smaller debug/CI thread stacks,
   preserving the catchable `RangeError` behavior for runaway recursion.
@@ -98,8 +106,15 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **8161 pass / 0 fail / 12277 skip / 0 timeout**.
+Current supported subset count: **8186 pass / 0 fail / 12252 skip / 0 timeout**.
 
+- **Generator yield grammar in class definitions**: `yield` now obeys its
+  AssignmentExpression-level grammar in class generator methods, including
+  bare yields before line terminators, conditional colons, and template
+  substitution tails. Newlines before `yield*` and unparenthesized nested
+  yields are rejected during parsing. `language/statements/class/definition`
+  rises from **38 pass / 0 fail / 27 skip** to **63 pass / 0 fail / 2 skip**,
+  and the supported subset rises to **8186 pass / 0 fail / 12252 skip**.
 - **Built-in subclass coverage admission**: generated class declaration and
   expression tests now exercise subclass construction for the implemented
   AggregateError, ArrayBuffer/DataView/TypedArray, Promise, and WeakMap/WeakSet

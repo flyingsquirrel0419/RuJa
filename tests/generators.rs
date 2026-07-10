@@ -142,6 +142,33 @@ fn gen_yield_undefined() {
 }
 
 #[test]
+fn generator_yield_respects_line_terminators_and_omitted_operands() {
+    assert_eq!(
+        run(r#"
+            class C {
+                *newline() { yield
+                    1; }
+                *omitted() { return (yield) ? yield : yield; }
+                *template() { return `a${yield}b`; }
+            }
+            let newline = new C().newline();
+            let omitted = new C().omitted();
+            let template = new C().template();
+            [
+                newline.next().value,
+                newline.next().done,
+                omitted.next().value,
+                omitted.next(false).value,
+                omitted.next(7).done,
+                template.next().value,
+                template.next(3).value
+            ].join(",");
+            "#,),
+        Value::String(Arc::from(",true,,,true,,a3b"))
+    );
+}
+
+#[test]
 fn gen_closure_capture() {
     assert_eq!(
         run("function* gen(n){ for(let i=0;i<n;i++) yield i*i; } var g=gen(3); g.next().value + g.next().value + g.next().value;"),

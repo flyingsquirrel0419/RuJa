@@ -2024,6 +2024,10 @@ impl Parser {
     }
 
     fn parse_assign_inner(&mut self) -> error::Result<Expr> {
+        if self.generator_depth > 0 && matches!(self.peek(), TokenKind::Yield) {
+            return self.parse_yield_expression();
+        }
+
         let left_start = self.pos;
         let left = self.parse_ternary()?;
         let left_is_parenthesized_pattern = matches!(
@@ -2100,6 +2104,38 @@ impl Parser {
             Self::reject_duplicate_proto_assignment_pattern(&left)?;
         }
         Ok(Expr::Assign(op, Box::new(left), Box::new(right)))
+    }
+
+    fn parse_yield_expression(&mut self) -> error::Result<Expr> {
+        self.advance();
+
+        // Both YieldExpression productions have a no-LineTerminator-here
+        // restriction after `yield`. A line break therefore makes this the
+        // operand-less form and leaves the following token for ASI.
+        if self.at_newline_before() {
+            return Ok(Expr::Yield(None));
+        }
+
+        if self.eat(&TokenKind::Star) {
+            return Ok(Expr::YieldDelegate(Box::new(self.parse_assign()?)));
+        }
+
+        let inner = if matches!(
+            self.peek(),
+            TokenKind::Semicolon
+                | TokenKind::RBrace
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::Comma
+                | TokenKind::Colon
+                | TokenKind::TemplateExprEnd
+                | TokenKind::Eof
+        ) {
+            None
+        } else {
+            Some(Box::new(self.parse_assign()?))
+        };
+        Ok(Expr::Yield(inner))
     }
 
     fn is_assignment_target(target: &Expr) -> bool {
@@ -2861,35 +2897,9 @@ impl Parser {
                     self.advance();
                     return Ok(Expr::Ident(Arc::from("yield")));
                 }
-                if self.generator_depth == 0 {
-                    return Err(error::Error::syntax(
-                        "'yield' is not allowed outside a generator".to_string(),
-                    ));
-                }
-                self.advance();
-                // `yield* expr` - delegate to another iterable/generator.
-                if matches!(self.peek(), TokenKind::Star) {
-                    self.advance(); // consume '*'
-                    let inner = self.parse_assign()?;
-                    return Ok(Expr::YieldDelegate(Box::new(inner)));
-                }
-                let inner = if matches!(
-                    self.peek(),
-                    TokenKind::Semicolon
-                        | TokenKind::RBrace
-                        | TokenKind::RParen
-                        | TokenKind::RBracket
-                        | TokenKind::Comma
-                        | TokenKind::Eof
-                ) {
-                    None
-                } else {
-                    // Per spec, `yield` is a low-precedence operator: its
-                    // operand extends through the assignment-expression level,
-                    // so `yield 1 + 1` means `yield (1 + 1)`, not `(yield 1) + 1`.
-                    Some(Box::new(self.parse_assign()?))
-                };
-                Ok(Expr::Yield(inner))
+                Err(error::Error::syntax(
+                    "Yield expression is not valid in this expression position".to_string(),
+                ))
             }
             TokenKind::Async => {
                 // `async function ...` expression; `async () =>` arrow; otherwise
@@ -6479,6 +6489,25 @@ mod tests {
                 assert_eq!(f.params.len(), 2);
             }
             other => panic!("{:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_yield_at_assignment_expression_precedence() {
+        for src in [
+            "function* g() { yield 3 + yield 4; }",
+            "class C { *g() { yield 3 + yield 4; } }",
+            "function* g() { yield\n* 1; }",
+        ] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            "function* g() { (yield) + (yield 4); }",
+            "function* g() { (yield) ? yield : yield; }",
+            "function* g() { `a${yield}b`; }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
         }
     }
 
