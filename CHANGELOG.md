@@ -68,6 +68,9 @@
   32 implemented contextual-keyword early-error files for private async,
   generator, and async-generator methods without lifting broader private
   class-element coverage.
+- `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the two
+  implemented private-method initialization-order files without lifting the
+  remaining private class-element assignment-target coverage.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the five
   implemented `error-cause` files for `Error`, NativeError, and `AggregateError`
   without unskipping broader AggregateError coverage.
@@ -92,8 +95,15 @@
 ### test262 conformance improvements
 
 Supported-subset pass rate: **100.0%** (up from 88.6%).
-Current supported subset count: **6459 pass / 0 fail / 13979 skip / 0 timeout**.
+Current supported subset count: **6461 pass / 0 fail / 13977 skip / 0 timeout**.
 
+- **Instance private method initialization order**: constructors now install
+  all instance private methods and accessors before running any public or
+  private field initializer, while preserving field source order and the
+  derived-constructor `super()` boundary. The focused class-elements run
+  reports **555 pass / 0 fail / 2407 skip**, the relaxed private-class
+  diagnostic improves to **2195 pass / 8 fail / 759 skip**, and the supported
+  subset rises to **6461 pass / 0 fail / 13977 skip**.
 - **Private async/generator contextual-keyword early errors**: escaped
   `await` is now rejected as a binding, identifier reference, or label inside
   async method bodies, while a bare `yield` cannot be parsed as the direct

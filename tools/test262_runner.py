@@ -291,6 +291,16 @@ PRIVATE_METHOD_CONTEXTUAL_KEYWORD_FEATURES = {
     "class-static-methods-private",
 }
 
+PRIVATE_METHOD_INITIALIZE_ORDER_FILES = {
+    "language/expressions/class/elements/private-methods/prod-private-method-initialize-order.js",
+    "language/statements/class/elements/private-methods/prod-private-method-initialize-order.js",
+}
+
+PRIVATE_METHOD_INITIALIZE_ORDER_FEATURES = {
+    "class-fields-private",
+    "class-methods-private",
+}
+
 def parse_meta(src):
     """Parse the /*--- ... ---*/ metadata block, handling multi-line lists."""
     m = re.search(r'/\*---\n(.*?)\n---\*/', src, re.DOTALL)
@@ -462,6 +472,13 @@ def private_method_contextual_keyword_path(path):
         and rel.name == "yield-as-identifier-reference.js"
     )
 
+def private_method_initialize_order_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in PRIVATE_METHOD_INITIALIZE_ORDER_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -500,6 +517,8 @@ def should_skip(meta, path=None):
         feats.difference_update(PRIVATE_DIRECT_EVAL_FEATURES)
     if path is not None and private_method_contextual_keyword_path(path):
         feats.difference_update(PRIVATE_METHOD_CONTEXTUAL_KEYWORD_FEATURES)
+    if path is not None and private_method_initialize_order_path(path):
+        feats.difference_update(PRIVATE_METHOD_INITIALIZE_ORDER_FEATURES)
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])

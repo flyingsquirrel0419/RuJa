@@ -678,6 +678,39 @@ fn private_method_functions_are_shared_across_instances() {
 }
 
 #[test]
+fn private_methods_and_accessors_initialize_before_fields() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+              a = (log.push("a"), this.#m());
+              seen = 0;
+              b = (log.push("b"), this.#g);
+              trigger = (this.#s = 9);
+              #m() { return 42; }
+              get #g() { return 7; }
+              set #s(value) { this.seen = value; }
+            }
+            var c = new C();
+            [c.a, c.b, c.seen, log.join(",")].join(":");
+        "#),
+        Value::String(Arc::from("42:7:9:a,b"))
+    );
+    assert_eq!(
+        run(r#"
+            class Base { constructor(receiver) { return receiver; } }
+            class Derived extends Base {
+              value = this.#m();
+              #m() { return 42; }
+              constructor(receiver) { super(receiver); }
+            }
+            new Derived({}).value;
+        "#),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
 fn shared_private_methods_keep_super_home_object() {
     assert_eq!(
         run("class B{m(){return this.x;}}class C extends B{constructor(x){super();this.x=x;}#m(){return super.m();}call(){return this.#m;}value(){return this.#m();}}let a=new C(1),b=new C(2);a.call()===b.call()&&a.value()===1&&b.value()===2;"),

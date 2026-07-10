@@ -4283,6 +4283,75 @@ impl Compiler {
                             })
                             .unwrap_or_default();
                         let mut init_stmts = Vec::new();
+                        // InitializeInstanceElements installs every own private
+                        // method/accessor before running any field initializer.
+                        for element in &cls.elements {
+                            let crate::ast::ClassElement::Method(idx) = element else {
+                                continue;
+                            };
+                            let method = &cls.methods[*idx];
+                            if !method.is_private || method.is_static {
+                                continue;
+                            }
+                            if matches!(method.kind, crate::ast::PropKind::Method) {
+                                let binding = instance_private_method_bindings
+                                    .iter()
+                                    .find(|(method_idx, _)| *method_idx == *idx)
+                                    .map(|(_, binding)| binding.clone())
+                                    .unwrap_or_else(|| {
+                                        Arc::from(
+                                            format!("#private_method_{}_{}", idx, method.name)
+                                                .as_str(),
+                                        )
+                                    });
+                                init_stmts.push(Stmt {
+                                    line: 0,
+                                    node: StmtNode::ExprStmt(Expr::PrivateInit {
+                                        object: Box::new(Expr::This),
+                                        name: method.name.clone(),
+                                        value: Box::new(Expr::Ident(binding)),
+                                        kind: method.kind,
+                                    }),
+                                });
+                            } else {
+                                let fn_expr = Expr::Function(FunctionExpr {
+                                    name: Some(Self::private_method_function_name(
+                                        &method.name,
+                                        method.kind,
+                                    )),
+                                    params: method.params.clone(),
+                                    param_defaults: method.param_defaults.clone(),
+                                    rest_param: method.rest_param.clone(),
+                                    body: method.body.clone(),
+                                    is_arrow: false,
+                                    is_async: method.is_async,
+                                    is_generator: false,
+                                    param_decls: Vec::new(),
+                                    is_strict: true,
+                                    is_method: false,
+                                    has_name_binding: false,
+                                });
+                                init_stmts.push(Stmt {
+                                    line: 0,
+                                    node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
+                                        object: Box::new(Expr::This),
+                                        name: method.name.clone(),
+                                        get: if matches!(method.kind, crate::ast::PropKind::Get) {
+                                            Some(Box::new(fn_expr.clone()))
+                                        } else {
+                                            None
+                                        },
+                                        set: if matches!(method.kind, crate::ast::PropKind::Set) {
+                                            Some(Box::new(fn_expr))
+                                        } else {
+                                            None
+                                        },
+                                    }),
+                                });
+                            }
+                        }
+
+                        // Fields still initialize in their original source order.
                         for element in &cls.elements {
                             match element {
                                 crate::ast::ClassElement::PublicField(idx) => {
@@ -4325,78 +4394,8 @@ impl Compiler {
                                         }),
                                     });
                                 }
-                                crate::ast::ClassElement::Method(idx) => {
-                                    let method = &cls.methods[*idx];
-                                    if !method.is_private || method.is_static {
-                                        continue;
-                                    }
-                                    if matches!(method.kind, crate::ast::PropKind::Method) {
-                                        let binding = instance_private_method_bindings
-                                            .iter()
-                                            .find(|(method_idx, _)| *method_idx == *idx)
-                                            .map(|(_, binding)| binding.clone())
-                                            .unwrap_or_else(|| {
-                                                Arc::from(
-                                                    format!(
-                                                        "#private_method_{}_{}",
-                                                        idx, method.name
-                                                    )
-                                                    .as_str(),
-                                                )
-                                            });
-                                        init_stmts.push(Stmt {
-                                            line: 0,
-                                            node: StmtNode::ExprStmt(Expr::PrivateInit {
-                                                object: Box::new(Expr::This),
-                                                name: method.name.clone(),
-                                                value: Box::new(Expr::Ident(binding)),
-                                                kind: method.kind,
-                                            }),
-                                        });
-                                    } else {
-                                        let fn_expr = Expr::Function(FunctionExpr {
-                                            name: Some(Self::private_method_function_name(
-                                                &method.name,
-                                                method.kind,
-                                            )),
-                                            params: method.params.clone(),
-                                            param_defaults: method.param_defaults.clone(),
-                                            rest_param: method.rest_param.clone(),
-                                            body: method.body.clone(),
-                                            is_arrow: false,
-                                            is_async: method.is_async,
-                                            is_generator: false,
-                                            param_decls: Vec::new(),
-                                            is_strict: true,
-                                            is_method: false,
-                                            has_name_binding: false,
-                                        });
-                                        init_stmts.push(Stmt {
-                                            line: 0,
-                                            node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
-                                                object: Box::new(Expr::This),
-                                                name: method.name.clone(),
-                                                get: if matches!(
-                                                    method.kind,
-                                                    crate::ast::PropKind::Get
-                                                ) {
-                                                    Some(Box::new(fn_expr.clone()))
-                                                } else {
-                                                    None
-                                                },
-                                                set: if matches!(
-                                                    method.kind,
-                                                    crate::ast::PropKind::Set
-                                                ) {
-                                                    Some(Box::new(fn_expr))
-                                                } else {
-                                                    None
-                                                },
-                                            }),
-                                        });
-                                    }
-                                }
-                                crate::ast::ClassElement::StaticBlock(_) => {}
+                                crate::ast::ClassElement::Method(_)
+                                | crate::ast::ClassElement::StaticBlock(_) => {}
                             }
                         }
                         if cls.superclass.is_some() {
