@@ -36,7 +36,10 @@
   functions and `for await` job ordering, the supported subset reaches
   **11266 pass / 0 fail / 9173 skip / 20439 total**; the broader
   `language/statements/for-await-of/` path remains gated for its three known
-  constructor-lookup and grammar failures.
+  constructor-lookup and grammar failures. CI `29103907303` and
+  `test262-full` `29103907305` confirm the change; the full aggregate is
+  **24705 pass / 6830 fail / 11 timeout / 0 error / 16921 skip / 48467 total /
+  31546 ran**, or **78.3%** of executed files and **51.0%** of the matrix.
 - Async completion is now admitted on the fully green
   `language/statements/class/definition/` path. Its two async `super` method
   tests move the focused path to **65 pass / 0 fail / 0 skip**, and the
