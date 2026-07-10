@@ -242,6 +242,12 @@ skip** across the statement and expression paths. Runner/analyzer admission is
 limited to those exact paths; unrelated async-iteration tests remain gated.
 The supported subset rises to **10761 pass / 0 fail / 9678 skip / 20439
 total**.
+Async-function return assimilation also keeps the async-enabled class-elements
+diagnostic green at **2695 pass / 0 fail / 267 skip / 2962 total**, including
+private instance/static async methods that return async closures or generic
+thenables. Async execution is therefore admitted on the two exact
+class-elements paths, raising the supported subset to **11249 pass / 0 fail /
+9190 skip / 20439 total** while unrelated async paths remain gated.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

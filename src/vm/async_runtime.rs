@@ -10,6 +10,70 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 impl Vm {
+    fn resolve_async_function_result(&mut self, value: Value) -> error::Result<Value> {
+        let value_pin = self.pin(&value);
+        let constructor = self.promise_ctor.clone();
+        let capability = match crate::builtins::new_promise_capability(self, constructor) {
+            Ok(capability) => capability,
+            Err(error) => {
+                self.unpin(value_pin);
+                return Err(error);
+            }
+        };
+        let promise = capability.promise.clone();
+        let capability_pins = self.pin_many(&[
+            promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+        ]);
+
+        let result = (|| -> error::Result<()> {
+            let then = if matches!(value, Value::Object(_)) {
+                match self.get_property(&value, "then") {
+                    Ok(then) => then,
+                    Err(error) => {
+                        let reason = match error.thrown_value.clone() {
+                            Some(reason) => reason,
+                            None => self.make_error_value(&error)?,
+                        };
+                        let reason_pin = self.pin(&reason);
+                        let rejected = self.call_function(
+                            &capability.reject,
+                            &[reason],
+                            Some(Value::Undefined),
+                        );
+                        self.unpin(reason_pin);
+                        rejected?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                Value::Undefined
+            };
+
+            if crate::builtins::is_callable(&then, &self.heap) {
+                self.microtask_queue.push_back(Microtask::Thenable {
+                    thenable: value.clone(),
+                    then,
+                    resolve: capability.resolve.clone(),
+                    reject: capability.reject.clone(),
+                });
+            } else {
+                self.call_function(
+                    &capability.resolve,
+                    std::slice::from_ref(&value),
+                    Some(Value::Undefined),
+                )?;
+            }
+            Ok(())
+        })();
+
+        self.unpin_many(capability_pins);
+        self.unpin(value_pin);
+        result?;
+        Ok(promise)
+    }
+
     pub(crate) fn run_thenable_job(
         &mut self,
         thenable: Value,
@@ -902,18 +966,7 @@ impl Vm {
                         // Promise to Rejected (with the thrown value as the
                         // reason) rather than propagating as a hard error.
                         match result {
-                            Ok(value) => {
-                                let p_idx = self.heap.allocate(HeapObj::Promise(
-                                    crate::value::PromiseData {
-                                        state: Mutex::new(PromiseStatus::Fulfilled),
-                                        result: Mutex::new(value),
-                                        handlers: Mutex::new(Vec::new()),
-                                        props: Mutex::new(IndexMap::new()),
-                                        proto: Mutex::new(Some(self.promise_proto.clone())),
-                                    },
-                                ))?;
-                                Ok(Value::Object(GcIdx(p_idx)))
-                            }
+                            Ok(value) => self.resolve_async_function_result(value),
                             Err(err) if !err.catchable() => Err(err),
                             Err(err) => {
                                 // Preserve explicit throw values. Native VM

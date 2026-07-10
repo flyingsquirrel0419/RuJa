@@ -2,7 +2,7 @@
 
 mod common;
 use common::{run, run_err};
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
 
 // --- static initialization blocks ---
@@ -913,6 +913,39 @@ fn private_async_and_generator_method_heads_parse() {
     assert_eq!(
         run("class C{static async #m(){return 1;} static get(){return this.#m;}}C.get().name;"),
         Value::String(Arc::from("#m"))
+    );
+}
+
+#[test]
+fn async_private_method_results_are_assimilated_by_wrappers() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        class C {
+            async #instance(value) { return async () => value; }
+            async instance(value) { return this.#instance(value); }
+
+            static async #static(value) {
+                return async function() { return value; };
+            }
+            static async static(value) { return this.#static(value); }
+        }
+        async function thenable() {
+            return { then(resolve) { resolve(3); } };
+        }
+
+        var actual = [];
+        new C().instance(1).then(fn => fn()).then(value => actual.push(value));
+        C.static(2).then(fn => fn()).then(value => actual.push(value));
+        thenable().then(value => actual.push(value));
+        "#,
+    )
+    .expect("async result assimilation failed");
+
+    assert_eq!(
+        vm.run("actual.sort().join('|');")
+            .expect("failed to read async assimilation results"),
+        Value::String(Arc::from("1|2|3"))
     );
 }
 

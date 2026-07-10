@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Async-function completion now resolves through a fresh Promise capability,
+  so returned Promises and generic thenables are assimilated instead of being
+  exposed as nested fulfillment values. Then getters remain observable and
+  callable thenables run through the PromiseResolveThenable job queue. The
+  async-enabled class-elements diagnostic reports **2695 pass / 0 fail / 267
+  skip / 2962 total**.
 - Async generators now serialize `next`, `return`, and `throw` requests and
   resume suspended `await` operations through Promise jobs instead of draining
   them synchronously. Explicit `return expr` observes its required Await
@@ -17,6 +23,11 @@
 
 ### Test tooling
 
+- Async execution is now admitted on the fully green
+  `language/{expressions,statements}/class/elements/` paths. Combined with the
+  async-generator admission, the supported subset reaches **11249 pass / 0
+  fail / 9190 skip / 20439 total**; async paths outside the exact admissions
+  remain gated.
 - The runner and analyzer now admit the fully green async-generator statement
   and expression paths. Their async and feature exceptions remain scoped to
   `language/{expressions,statements}/async-generator/`. The supported subset
