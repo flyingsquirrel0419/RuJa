@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Regression tests for RuJa's shared test262 process support."""
+
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import test262_analyze
+import test262_runner
+from test262_support import ASYNC_COMPLETE, ASYNC_PRINT_SHIM, execute_source
+
+
+class AsyncResultTests(unittest.TestCase):
+    def execute(self, stdout="", stderr="", returncode=0):
+        result = subprocess.CompletedProcess(
+            ["ruja", "test.js"], returncode, stdout=stdout, stderr=stderr
+        )
+        with patch("test262_support.subprocess.run", return_value=result):
+            return execute_source("", {"flags": ["async"]}, "ruja")
+
+    def test_accepts_single_completion_marker(self):
+        self.assertEqual(self.execute(stdout=f"{ASYNC_COMPLETE}\n"), ("pass", ""))
+
+    def test_rejects_failure_marker(self):
+        status, error = self.execute(
+            stdout="Test262:AsyncTestFailure:Test262Error: failed\n"
+        )
+        self.assertEqual(status, "fail")
+        self.assertIn("AsyncTestFailure", error)
+
+    def test_rejects_missing_completion_marker(self):
+        self.assertEqual(
+            self.execute(),
+            ("fail", "Test262 async completion marker missing"),
+        )
+
+    def test_rejects_process_error(self):
+        self.assertEqual(
+            self.execute(stderr="TypeError: failed\n", returncode=1),
+            ("fail", "TypeError: failed"),
+        )
+
+    def test_reports_timeout(self):
+        with patch(
+            "test262_support.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("ruja", 8),
+        ):
+            self.assertEqual(
+                execute_source("", {"flags": ["async"]}, "ruja"),
+                ("timeout", ""),
+            )
+
+    def test_rejects_duplicate_or_unexpected_output(self):
+        self.assertEqual(
+            self.execute(stdout=f"{ASYNC_COMPLETE}\n{ASYNC_COMPLETE}\n"),
+            ("fail", "Test262 async completion marker repeated"),
+        )
+        status, error = self.execute(stdout=f"debug\n{ASYNC_COMPLETE}\n")
+        self.assertEqual(status, "fail")
+        self.assertIn("debug", error)
+
+
+class HarnessAssemblyTests(unittest.TestCase):
+    def test_strict_directive_precedes_async_harness_in_both_tools(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            harness = root / "harness"
+            harness.mkdir()
+            (harness / "sta.js").write_text("/* STA HARNESS */")
+            (harness / "assert.js").write_text("/* ASSERT HARNESS */")
+            (harness / "doneprintHandle.js").write_text("/* DONE HARNESS */")
+            test = root / "test.js"
+            test.write_text(
+                "/*---\nflags: [onlyStrict, async]\n---*/\n$DONE();\n"
+            )
+
+            for tool in (test262_runner, test262_analyze):
+                original = tool.HARNESS
+                tool.HARNESS = harness
+                try:
+                    source, meta = tool.build_source(test)
+                finally:
+                    tool.HARNESS = original
+                self.assertIn("async", meta["flags"])
+                self.assertTrue(source.startswith("'use strict';"))
+                positions = [
+                    source.index("/* STA HARNESS */"),
+                    source.index("/* ASSERT HARNESS */"),
+                    source.index(ASYNC_PRINT_SHIM),
+                    source.index("/* DONE HARNESS */"),
+                    source.index("$DONE();"),
+                ]
+                self.assertEqual(positions, sorted(positions))
+
+
+if __name__ == "__main__":
+    unittest.main()

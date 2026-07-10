@@ -9,7 +9,10 @@ parses `negative:` metadata so a test that expects a `SyntaxError`/
 `TypeError` (parse or runtime phase) passes when RuJa raises the matching
 error, honors `flags: [raw]` by running those files without any harness
 prelude, and keeps narrow path-scoped exceptions for feature-tagged coverage
-that RuJa already supports.
+that RuJa already supports. Async tests are skipped by default; diagnostic
+runs inject a host `print` shim and test262's `doneprintHandle.js`, then require
+exactly one `Test262:AsyncTestComplete` marker while preserving failure,
+missing-marker, process-error, and timeout outcomes.
 
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
@@ -84,6 +87,10 @@ TEST262=/path/to/test262 python3 tools/test262_runner.py language/statements lan
 
 # Or run a narrower subtree:
 TEST262=/path/to/test262 python3 tools/test262_runner.py language/identifiers language/keywords
+
+# Diagnose async tests without changing the default conformance boundary:
+TEST262=/path/to/test262 TEST262_RUN_ASYNC=1 \
+  python3 tools/test262_runner.py language/expressions/object/method-definition
 ```
 
 For failure-bucket analysis with error samples, use the sibling analyzer:
@@ -270,6 +277,15 @@ well-known Symbol lookup are preserved. With `generators` and
 prefers `Symbol.asyncIterator`, falls back to the sync iterator protocol,
 awaits each delegated result, and rejects the returned Promise for iterator
 protocol errors.
+
+Focused async object method-definition diagnostic:
+`TEST262_RUN_ASYNC=1` runs `flags: [async]` files with completion-marker
+classification instead of treating an empty process result as success. Across
+`language/expressions/object/method-definition/`, the opt-in diagnostic moves
+from **238 pass / 65 fail / 0 skip** before async-generator delegation fixes to
+**286 pass / 17 fail / 0 skip**. Default conformance runs retain **202 pass / 0
+fail / 101 skip** until those 17 engine failures are fixed; the diagnostic is
+not used to inflate the supported-subset rate.
 
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare

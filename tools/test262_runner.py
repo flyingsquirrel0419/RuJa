@@ -6,12 +6,15 @@ pass/fail counts. Uses the real test262 harness files (assert.js, sta.js, and
 any per-test `includes:`) rather than a hand-rolled stub, so tests relying on
 `verifyProperty`, `compareArray`, etc. are exercised correctly.
 """
-import os, re, subprocess, sys
+import os, re, sys
 from pathlib import Path
+
+from test262_support import append_async_harness, execute_source
 
 RUJA = str(Path(__file__).resolve().parent.parent / "target/release/ruja")
 TEST262 = os.environ.get("TEST262", "/root/test262")
 HARNESS = Path(TEST262) / "harness"
+RUN_ASYNC_TESTS = os.environ.get("TEST262_RUN_ASYNC") == "1"
 
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "DataView", "FinalizationRegistry",
@@ -596,7 +599,7 @@ def should_skip(meta, path=None):
     if feats & SKIP_FEATURES:
         return True
     flags = meta.get('flags', [])
-    if 'module' in flags or 'async' in flags:
+    if 'module' in flags or ('async' in flags and not RUN_ASYNC_TESTS):
         return True
     return False
 
@@ -620,6 +623,7 @@ def build_source(path):
         p = HARNESS / inc
         if p.exists():
             parts.append(p.read_text())
+    append_async_harness(parts, HARNESS, flags)
     # Per-test includes (propertyHelper.js, compareArray.js, etc.).
     for inc in meta.get('includes', []):
         p = HARNESS / inc
@@ -632,27 +636,8 @@ def run_test(path):
     full, meta = build_source(path)
     if should_skip(meta, path):
         return 'skip'
-    try:
-        import tempfile
-        with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as tf:
-            tf.write(full)
-            tmpname = tf.name
-        try:
-            r = subprocess.run([RUJA, tmpname], capture_output=True, text=True, timeout=8)
-        finally:
-            os.unlink(tmpname)
-        out = (r.stderr + r.stdout).strip()
-        neg = meta.get('negative')
-        if neg:
-            want = neg.get('type', '')
-            if want and want in out:
-                return 'pass'
-            return 'fail'
-        return 'pass' if (r.returncode == 0 and not out) else 'fail'
-    except subprocess.TimeoutExpired:
-        return 'timeout'
-    except Exception:
-        return 'error'
+    status, _ = execute_source(full, meta, RUJA)
+    return status
 
 def main():
     dirs = sys.argv[1:] if len(sys.argv) > 1 else ['language/expressions']

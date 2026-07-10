@@ -4,6 +4,12 @@
 
 ### Test tooling
 
+- The runner and analyzer now share test262 async harness assembly and process
+  classification. Async files receive a host `print` shim plus
+  `doneprintHandle.js`; exactly one completion marker is required, failure,
+  duplicate, missing, unexpected-output, process-error, and timeout outcomes
+  remain distinct. Async execution stays opt-in through
+  `TEST262_RUN_ASYNC=1`, and CI runs focused tooling regression tests.
 - `tools/test262_runner.py` and `tools/test262_analyze.py` now admit the
   implemented synchronous and parse-negative object method-definition
   coverage only on `language/expressions/object/method-definition/`. The
@@ -160,6 +166,11 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **9497 pass / 0 fail / 10941 skip / 0 timeout**.
 
+- **Async object method-definition diagnostic**: with async execution enabled,
+  the complete 303-file object method-definition path improves from **238 pass
+  / 65 fail** before async-generator delegation fixes to **286 pass / 17 fail**.
+  Default conformance runs still skip the 101 `flags: [async]` files until the
+  remaining engine failures are resolved.
 - **Complete synchronous `yield*` semantics**: delegated iteration now
   preserves raw result objects, completion values, method receiver/arguments,
   getter and call errors, protocol-violation cleanup, and primitive
