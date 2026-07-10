@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 51.9% of all matrix files; 78.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 52.2% of all matrix files; 78.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -355,7 +355,10 @@ reject writes. Exact path admission closes these operations and the Atomics
 object surface at **154 pass / 0 fail / 235 skip / 389 total**. The 235 skipped
 files remain confined to `wait`, `notify`, `waitAsync`, and `pause`, and the
 supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
-total**.
+total**. CI `29115320336` and `test262-full` `29115320329` confirm the change.
+Downloaded artifacts aggregate to **25319 pass / 6769 fail / 11 timeout / 0
+error / 16368 skip / 48467 total / 32099 executed**, or **78.9%** of executed
+files and **52.2%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

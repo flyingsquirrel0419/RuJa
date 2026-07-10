@@ -81,7 +81,10 @@
   files. The focused path reports **154 pass / 0 fail / 235 skip / 389 total**;
   all skipped files belong to `wait`, `notify`, `waitAsync`, or `pause`. The
   supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
-  total**.
+  total**. CI `29115320336` and `test262-full` `29115320329` confirm the
+  change; downloaded artifacts report **25319 pass / 6769 fail / 11 timeout /
+  0 error / 16368 skip / 48467 total / 32099 executed**, or **78.9%** of
+  executed files and **52.2%** of the matrix.
 - The runner and analyzer now admit the exact `built-ins/SharedArrayBuffer/`
   path without opening the broader SharedArrayBuffer or Atomics feature gates.
   The fixed-length coverage reports **60 pass / 0 fail / 44 skip / 104 total**;
