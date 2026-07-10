@@ -5841,9 +5841,9 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         private_fields: Mutex::new(std::collections::HashMap::new()),
         primitive: Mutex::new(None),
     }))?;
-    let async_next_fn = vm.new_native_function("next", generator_next, 1)?;
-    let async_return_fn = vm.new_native_function("return", generator_return, 1)?;
-    let async_throw_fn = vm.new_native_function("throw", generator_throw, 1)?;
+    let async_next_fn = vm.new_native_function("next", async_generator_next, 1)?;
+    let async_return_fn = vm.new_native_function("return", async_generator_return, 1)?;
+    let async_throw_fn = vm.new_native_function("throw", async_generator_throw, 1)?;
     vm.heap.with_obj(async_generator_proto_idx, |obj| {
         let mut props = obj.props().lock();
         props.insert(

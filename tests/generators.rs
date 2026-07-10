@@ -955,6 +955,49 @@ fn async_generator_return_promise() {
     assert_eq!(run(src), Value::String(Arc::from("42,true")));
 }
 
+#[test]
+fn async_generator_methods_reject_incompatible_receivers() {
+    let src = r#"
+        async function* asyncGenerator() {}
+        function* syncGenerator() {}
+        let proto = Object.getPrototypeOf(asyncGenerator).prototype;
+        let receivers = [
+            undefined,
+            1,
+            "string",
+            null,
+            true,
+            Symbol(),
+            {},
+            function() {},
+            asyncGenerator,
+            asyncGenerator.prototype,
+            syncGenerator()
+        ];
+        let methods = [proto.next, proto.return, proto.throw];
+        let rejected = 0;
+        let synchronousThrows = 0;
+        for (let method of methods) {
+            for (let receiver of receivers) {
+                let promise;
+                try {
+                    promise = method.call(receiver);
+                } catch (error) {
+                    synchronousThrows++;
+                    continue;
+                }
+                try {
+                    await promise;
+                } catch (error) {
+                    if (error instanceof TypeError) rejected++;
+                }
+            }
+        }
+        synchronousThrows + "|" + rejected;
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("0|33")));
+}
+
 // ---- generator throw/return injection into the body ----
 
 #[test]

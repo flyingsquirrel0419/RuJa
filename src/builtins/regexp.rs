@@ -1243,6 +1243,37 @@ pub(crate) fn generator_next(
     complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
 }
 
+fn validate_async_generator_receiver(
+    vm: &mut Vm,
+    this: Option<Value>,
+) -> error::Result<std::result::Result<GcIdx, Value>> {
+    if let Some(Value::Object(idx)) = this {
+        let is_async_generator = vm.heap.with_obj(
+            idx.0,
+            |obj| matches!(obj, HeapObj::LazyGenerator(generator) if generator.is_async),
+        );
+        if is_async_generator {
+            return Ok(Ok(idx));
+        }
+    }
+    Ok(Err(wrap_generator_error(
+        vm,
+        Error::type_err("AsyncGenerator method called on incompatible receiver"),
+        true,
+    )?))
+}
+
+pub(crate) fn async_generator_next(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    match validate_async_generator_receiver(vm, this)? {
+        Ok(generator) => generator_next(vm, args, Some(Value::Object(generator))),
+        Err(rejected) => Ok(rejected),
+    }
+}
+
 fn complete_generator_resume(
     vm: &mut Vm,
     generator: GcIdx,
@@ -1381,6 +1412,17 @@ pub(crate) fn generator_return(
     complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
 }
 
+pub(crate) fn async_generator_return(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    match validate_async_generator_receiver(vm, this)? {
+        Ok(generator) => generator_return(vm, args, Some(Value::Object(generator))),
+        Err(rejected) => Ok(rejected),
+    }
+}
+
 /// `generator.throw(v)`: inject an exception into the suspended generator. The
 /// generator resumes so the suspended `yield` throws `v`; if the body catches
 /// it, the catch handler runs and the next value is returned, otherwise the
@@ -1413,6 +1455,17 @@ pub(crate) fn generator_throw(
     }
     let resumed = vm.resume_generator(GcIdx(g_idx), crate::vm::ResumeKind::Throw(exc));
     complete_generator_resume(vm, GcIdx(g_idx), resumed, is_async_gen)
+}
+
+pub(crate) fn async_generator_throw(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    match validate_async_generator_receiver(vm, this)? {
+        Ok(generator) => generator_throw(vm, args, Some(Value::Object(generator))),
+        Err(rejected) => Ok(rejected),
+    }
 }
 
 pub fn setup_collections(vm: &mut Vm) -> error::Result<()> {

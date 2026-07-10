@@ -146,6 +146,12 @@
 
 ### Runtime hardening
 
+- `%AsyncGeneratorPrototype%` `next`, `return`, and `throw` now validate the
+  async-generator internal brand before resuming. Incompatible primitive,
+  ordinary object/function, async-generator function/prototype, and synchronous
+  generator receivers return a rejected Promise containing a native
+  `TypeError` instead of throwing synchronously, resolving spuriously, or
+  reaching the lazy-generator panic path.
 - Async generators now use distinct `%AsyncIteratorPrototype%`,
   `%AsyncGeneratorPrototype%`, and `%AsyncGeneratorFunction.prototype%`
   intrinsics instead of aliasing synchronous generator/Object prototypes.
@@ -219,6 +225,13 @@ Current supported subset count: **9838 pass / 0 fail / 10601 skip / 0 timeout**.
   Async-from-Sync tracking improve the 924-file run from **919 pass / 5 fail**
   to **921 pass / 3 fail**. The remaining failures are microtask-order checks;
   the default supported subset remains unchanged until they are fixed.
+- **Async generator receiver-brand diagnostic**: the 84-file
+  `AsyncGeneratorFunction`, `AsyncGeneratorPrototype`, and
+  `AsyncIteratorPrototype` built-in cluster improves from **57 pass / 27 fail**
+  to **63 pass / 21 fail** after all six incompatible-receiver tests begin
+  rejecting with `TypeError`. The 301-file statement async-generator path
+  remains at **298 pass / 3 fail**; its residual failures and the request-order
+  built-in cases require the planned async-generator request queue.
 - **Primitive String protocol dispatch guards**: the 16 current test262 cases
   covering primitive values passed to `match`, `replace`, `replaceAll`, and
   `split` now avoid inherited Symbol hook access. The full admitted

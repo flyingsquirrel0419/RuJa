@@ -372,6 +372,19 @@ iterators: adapter values are awaited, while a Promise yielded by a manually
 implemented async iterator preserves its identity. The remaining three cases
 assert observable microtask ordering, so these paths are not admitted yet.
 
+Focused async generator receiver-brand diagnostic:
+`%AsyncGeneratorPrototype%` now installs dedicated async `next`, `return`, and
+`throw` entry points. Each verifies the receiver has RuJa's async lazy-generator
+internal brand before any resume, and otherwise returns a rejected Promise with
+a native `TypeError`. The six test262 cases covering primitive, ordinary
+object/function, async-generator function/prototype, and synchronous generator
+receivers now pass. Across `built-ins/{AsyncGeneratorFunction,
+AsyncGeneratorPrototype,AsyncIteratorPrototype}`, the diagnostic improves from
+**57 pass / 27 fail / 0 skip** to **63 pass / 21 fail / 0 skip**. The focused
+`language/statements/async-generator` result remains **298 pass / 3 fail / 0
+skip**; request ordering, return-value awaiting, and the cross-realm prototype
+case remain outside the supported admission boundary.
+
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
 `YieldExpression` before the closing array pattern bracket, so default
