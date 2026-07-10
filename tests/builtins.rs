@@ -7346,6 +7346,239 @@ fn await_non_promise() {
 }
 
 #[test]
+fn async_function_pending_await_resumes_after_fulfillment() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var resolveGate;
+        var gate = new Promise(resolve => { resolveGate = resolve; });
+        var log = [];
+        async function pending() {
+            log.push("start");
+            let value = await gate;
+            log.push("after:" + value);
+            return value + 1;
+        }
+        var result = pending();
+        result.then(value => log.push("done:" + value));
+        log.push("sync");
+        "#,
+    )
+    .expect("failed to start pending async function");
+
+    assert_eq!(
+        vm.run("log.join('|');")
+            .expect("failed to read pre-resolution log"),
+        Value::String(Arc::from("start|sync"))
+    );
+
+    vm.run("resolveGate(41);")
+        .expect("failed to fulfill pending await");
+    assert_eq!(
+        vm.run("log.join('|');")
+            .expect("failed to read resumed log"),
+        Value::String(Arc::from("start|sync|after:41|done:42"))
+    );
+}
+
+#[test]
+fn async_function_pending_await_rejection_reenters_catch() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var rejectGate;
+        var marker = {};
+        var gate = new Promise((resolve, reject) => { rejectGate = reject; });
+        var log = [];
+        async function pending() {
+            try {
+                await gate;
+                log.push("unreachable");
+            } catch (error) {
+                log.push("caught:" + (error === marker));
+                return "recovered";
+            }
+        }
+        var result = pending();
+        result.then(value => log.push("done:" + value));
+        log.push("sync");
+        "#,
+    )
+    .expect("failed to start rejecting async function");
+
+    vm.run("rejectGate(marker);")
+        .expect("failed to reject pending await");
+    assert_eq!(
+        vm.run("log.join('|');")
+            .expect("failed to read rejection log"),
+        Value::String(Arc::from("sync|caught:true|done:recovered"))
+    );
+}
+
+#[test]
+fn async_function_pending_await_preserves_finally_state() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var resolveGate;
+        var gate = new Promise(resolve => { resolveGate = resolve; });
+        var log = [];
+        async function pending() {
+            try {
+                return await gate;
+            } finally {
+                log.push("finally");
+            }
+        }
+        var result = pending();
+        result.then(value => log.push("done:" + value));
+        "#,
+    )
+    .expect("failed to suspend async function with finally");
+
+    assert_eq!(
+        vm.run("log.join('|');")
+            .expect("failed to read suspended finally state"),
+        Value::String(Arc::from(""))
+    );
+    vm.run("resolveGate(42);")
+        .expect("failed to resume async function with finally");
+    assert_eq!(
+        vm.run("log.join('|');")
+            .expect("failed to read resumed finally state"),
+        Value::String(Arc::from("finally|done:42"))
+    );
+}
+
+#[test]
+fn async_function_await_observes_promise_job_order() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var log = [];
+        Promise.resolve()
+            .then(() => log.push("tick1"))
+            .then(() => log.push("tick2"));
+        async function ordered() {
+            log.push("start");
+            await 0;
+            log.push("after");
+        }
+        ordered();
+        log.push("sync");
+        "#,
+    )
+    .expect("failed to run ordered await");
+
+    assert_eq!(
+        vm.run("log.join('|');").expect("failed to read job log"),
+        Value::String(Arc::from("start|sync|tick1|after|tick2"))
+    );
+}
+
+#[test]
+fn async_function_pending_await_keeps_block_environment_alive_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var resolveGate;
+        var gate = new Promise(resolve => { resolveGate = resolve; });
+        var state = "initial";
+        async function pending(argument) {
+            let local = { value: 11 };
+            {
+                let held = { value: 12 };
+                state = "waiting";
+                let resumed = await gate;
+                return argument.value + local.value + held.value + resumed.value;
+            }
+        }
+        var settled = false;
+        var result = pending({ value: 10 });
+        result.then(() => { settled = true; });
+        "#,
+    )
+    .expect("failed to suspend async function");
+
+    assert_eq!(
+        vm.run("state + '|' + settled;")
+            .expect("failed to inspect suspended state"),
+        Value::String(Arc::from("waiting|false"))
+    );
+
+    vm.gc();
+    vm.run("resolveGate({ value: 9 });")
+        .expect("failed to resume async function after GC");
+    vm.run("var resumed; result.then(value => { resumed = value; });")
+        .expect("failed to observe resumed value");
+
+    assert_eq!(
+        vm.run("resumed;").expect("failed to read resumed value"),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
+fn nested_async_functions_resume_outward() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var release;
+        var gate = new Promise(resolve => { release = resolve; });
+        async function leaf() { return (await gate) + 1; }
+        async function middle() { return (await leaf()) + 1; }
+        async function outer() { return await middle(); }
+        var settled = false;
+        var observed;
+        var result = outer();
+        result.then(value => { settled = true; observed = value; });
+        "#,
+    )
+    .expect("failed to suspend nested async functions");
+
+    assert_eq!(
+        vm.run("settled;").expect("failed to read pending state"),
+        Value::Bool(false)
+    );
+    vm.run("release(40);")
+        .expect("failed to resume nested async functions");
+    assert_eq!(
+        vm.run("settled + '|' + observed;")
+            .expect("failed to read nested result"),
+        Value::String(Arc::from("true|42"))
+    );
+}
+
+#[test]
+fn async_function_pending_await_preserves_microtask_fifo() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var release;
+        var gate = new Promise(resolve => { release = resolve; });
+        var log = [];
+        async function pending() {
+            log.push("start");
+            await gate;
+            log.push("resume");
+        }
+        var result = pending();
+        result.then(() => log.push("done"));
+        log.push("sync");
+        Promise.resolve().then(() => log.push("before"));
+        release();
+        Promise.resolve().then(() => log.push("after"));
+        "#,
+    )
+    .expect("failed to run interleaved microtasks");
+
+    assert_eq!(
+        vm.run("log.join('|');").expect("failed to read FIFO log"),
+        Value::String(Arc::from("start|sync|before|resume|after|done"))
+    );
+}
+
+#[test]
 fn async_function_rejections_preserve_error_objects_and_thrown_values() {
     assert_eq!(
         run(r#"

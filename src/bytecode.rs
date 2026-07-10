@@ -287,9 +287,12 @@ pub enum Op {
     /// Async-generator `yield*`: await delegated next/return/throw results.
     YieldDelegateAsync,
     IteratorDone,
-    /// `for await`: call the async iterator's `next()` and await the result,
-    /// pushing `{value, done}` (already awaited). Pops the iterator.
+    /// `for await`: call the iterator's `next()`. Pops the iterator and pushes
+    /// the iterator plus its raw result so `Await` can suspend the frame.
     IteratorNextAwait,
+    /// Unpack an awaited iterator result. Pops `[iterator, result]` and pushes
+    /// `[value, done, await_value]`; async-from-sync values need one more Await.
+    IteratorUnpackAwait,
     /// Collect the remaining values from an iterator (already on the stack)
     /// into a fresh array. Used by rest elements in array destructuring
     /// patterns: `[a, ...rest] = iterable`. Pops the iterator, pushes the array.

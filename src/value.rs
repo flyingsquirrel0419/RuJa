@@ -777,7 +777,15 @@ pub struct PromiseHandler {
     pub on_fulfilled: Value,
     pub on_rejected: Value,
     pub derived: Option<PromiseReactionCapability>,
-    pub async_generator: Option<(GcIdx, AsyncGeneratorAwaitKind)>,
+    pub continuation: Option<PromiseContinuation>,
+}
+
+pub enum PromiseContinuation {
+    AsyncGenerator {
+        generator: GcIdx,
+        kind: AsyncGeneratorAwaitKind,
+    },
+    AsyncFunction(Box<AsyncFunctionContinuation>),
 }
 
 #[derive(Clone, Copy)]
@@ -801,6 +809,28 @@ pub enum AsyncGeneratorRequestKind {
 pub struct AsyncGeneratorRequest {
     pub kind: AsyncGeneratorRequestKind,
     pub capability: PromiseReactionCapability,
+}
+
+pub struct AsyncFunctionContinuation {
+    pub capability: PromiseReactionCapability,
+    pub chunk: Arc<crate::bytecode::Chunk>,
+    pub ip: usize,
+    pub stack: Vec<Value>,
+    pub locals: Vec<Value>,
+    pub callee: Value,
+    pub env: GcIdx,
+    pub catch_stack: Vec<(usize, u32, GcIdx)>,
+    pub guard_seq: u32,
+    pub this_val: Value,
+    pub new_target: Value,
+    pub finally_stack: Vec<(usize, u32)>,
+    pub finally_completion_tag: u8,
+    pub finally_completion_val: Value,
+    pub eval_global_bindings: bool,
+    pub eval_deletable_bindings: bool,
+    pub in_parameter_initializers: bool,
+    pub direct_eval_new_target_allowed: bool,
+    pub is_derived_ctor: bool,
 }
 
 pub struct GeneratorData {

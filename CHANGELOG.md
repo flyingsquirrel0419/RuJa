@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Ordinary async functions now suspend at pending `await` operations and resume
+  from Promise reaction jobs. Continuations preserve operand/local stacks,
+  lexical and catch/finally environments, `this`, `new.target`, and the result
+  capability across GC; pending fulfillment, rejection into `catch`, nested
+  async calls, and FIFO job ordering no longer continue with `undefined` or run
+  ahead of their callers. `for await...of` now lowers iterator-result and
+  async-from-sync value waits through the same resumable Await bytecode, fixing
+  Promise/Await interleaving.
 - Async-function completion now resolves through a fresh Promise capability,
   so returned Promises and generic thenables are assimilated instead of being
   exposed as nested fulfillment values. Then getters remain observable and
@@ -23,11 +31,18 @@
 
 ### Test tooling
 
+- The fully green `language/expressions/await/` path is now admitted by default
+  at **22 pass / 0 fail / 0 skip**. Together with resumable ordinary async
+  functions and `for await` job ordering, the supported subset reaches
+  **11266 pass / 0 fail / 9173 skip / 20439 total**; the broader
+  `language/statements/for-await-of/` path remains gated for its three known
+  constructor-lookup and grammar failures.
 - Async completion is now admitted on the fully green
   `language/statements/class/definition/` path. Its two async `super` method
   tests move the focused path to **65 pass / 0 fail / 0 skip**, and the
   supported subset reaches **11251 pass / 0 fail / 9188 skip / 20439 total**;
-  unrelated async paths remain gated.
+  unrelated async paths remain gated. The admission is confirmed by CI
+  `29102497188` and `test262-full` `29102497174`.
 - Async-function result assimilation and scoped class-element async admission
   are confirmed by CI `29101286102` and `test262-full` `29101286000`; the
   supported-summary follow-up is confirmed by CI `29101459432` and

@@ -213,8 +213,26 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                     push_value(&derived.resolve, worklist);
                     push_value(&derived.reject, worklist);
                 }
-                if let Some((generator, _)) = h.async_generator {
-                    worklist.push(generator.0);
+                if let Some(continuation) = &h.continuation {
+                    match continuation {
+                        crate::value::PromiseContinuation::AsyncGenerator { generator, .. } => {
+                            worklist.push(generator.0)
+                        }
+                        crate::value::PromiseContinuation::AsyncFunction(frame) => {
+                            push_value(&frame.capability.promise, worklist);
+                            push_value(&frame.capability.resolve, worklist);
+                            push_value(&frame.capability.reject, worklist);
+                            push_value(&frame.callee, worklist);
+                            push_value(&frame.this_val, worklist);
+                            push_value(&frame.new_target, worklist);
+                            push_value(&frame.finally_completion_val, worklist);
+                            worklist.push(frame.env.0);
+                            worklist.extend(frame.catch_stack.iter().map(|(_, _, env)| env.0));
+                            for value in frame.stack.iter().chain(frame.locals.iter()) {
+                                push_value(value, worklist);
+                            }
+                        }
+                    }
                 }
             }
         }

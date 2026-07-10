@@ -160,6 +160,12 @@ pub struct CallFrame {
     pub gen_delegate_resume: Mutex<Option<ResumeKind>>,
     /// `yield*` forwards the delegated iterator result object unchanged.
     pub gen_yield_is_iterator_result: AtomicBool,
+    /// Ordinary async functions set this while their frame is executing.
+    pub async_mode: bool,
+    /// Set by `Op::Await` so the async wrapper captures this frame instead of
+    /// treating the interpreter return as function completion.
+    pub async_awaiting: bool,
+    pub async_await_value: Option<Value>,
     /// When set, the generator was resumed via `throw(e)`: the next dispatch
     /// in this frame throws `e` at the suspended `yield` point instead of
     /// pushing a resume value. Consumed on first use.
@@ -235,6 +241,9 @@ impl CallFrame {
             gen_delegating: AtomicBool::new(false),
             gen_delegate_resume: Mutex::new(None),
             gen_yield_is_iterator_result: AtomicBool::new(false),
+            async_mode: false,
+            async_awaiting: false,
+            async_await_value: None,
             force_throw: Mutex::new(None),
             force_return: Mutex::new(None),
             finally_completion_tag: AtomicU8::new(0),
@@ -291,7 +300,7 @@ pub enum Microtask {
         on_fulfilled: Value,
         on_rejected: Value,
         derived: Option<crate::value::PromiseReactionCapability>,
-        async_generator: Option<(GcIdx, crate::value::AsyncGeneratorAwaitKind)>,
+        continuation: Option<crate::value::PromiseContinuation>,
     },
     Thenable {
         thenable: Value,

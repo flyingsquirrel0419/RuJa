@@ -38,10 +38,9 @@ guarantees, run RuJa in a separately killable process as well.
 - Map/Set are backed by `IndexMap`/`IndexSet` with SameValueZero keys
   (`MapKey` wrapper), so `get`/`has`/`set` are O(1). `WeakMap`/`WeakSet`
   still use `Vec` (entries are keyed by heap index for GC integration).
-- Async generators serialize requests and resume suspended Await operations
-  through the FIFO microtask queue. General async functions still lack a
-  resumable continuation when they await a Promise that will only settle after
-  the current call returns. There is no event-loop preemption; `Vm::tick()`
+- Async generators serialize requests, and ordinary async functions preserve
+  suspended frames across pending Await operations and GC. Both resume through
+  the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`
   allows hosts to execute one microtask at a time cooperatively.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see

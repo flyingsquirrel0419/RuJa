@@ -2858,12 +2858,19 @@ impl Vm {
                     self.stack.push(it);
                 }
                 Op::IteratorNextAwait => {
-                    // Pop the iterator, call its `next()`, await the result,
-                    // and push [value, done] (already awaited).
                     let it = self.stack.pop().unwrap_or(Value::Undefined);
-                    let (value, done) = self.iterator_next_await(&it)?;
+                    let result = self.iterator_next_await_start(&it)?;
+                    self.stack.push(it);
+                    self.stack.push(result);
+                }
+                Op::IteratorUnpackAwait => {
+                    let result = self.stack.pop().unwrap_or(Value::Undefined);
+                    let it = self.stack.pop().unwrap_or(Value::Undefined);
+                    let (value, done, await_value) =
+                        self.iterator_unpack_await_result(&it, result)?;
                     self.stack.push(value);
                     self.stack.push(Value::Bool(done));
+                    self.stack.push(Value::Bool(await_value));
                 }
                 Op::IteratorCollectRest => {
                     // Pop the iterator, drain its remaining values into a new
@@ -3316,6 +3323,12 @@ impl Vm {
             *frame.gen_yield.lock() = Some(v);
             frame.gen_awaiting.store(true, Ordering::Relaxed);
             frame.gen_suspended.store(true, Ordering::Relaxed);
+            return Ok(true);
+        }
+        if self.frames.last().is_some_and(|frame| frame.async_mode) {
+            let frame = self.current_frame_mut()?;
+            frame.async_await_value = Some(v);
+            frame.async_awaiting = true;
             return Ok(true);
         }
         let result = self.await_value(v)?;

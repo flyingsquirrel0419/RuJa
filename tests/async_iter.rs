@@ -2,7 +2,7 @@
 
 mod common;
 use common::run;
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
@@ -105,6 +105,43 @@ fn for_await_body_await() {
         await main();
     "#;
     assert_eq!(run(src), Value::Number(10.0));
+}
+
+#[test]
+fn for_await_interleaves_with_promise_jobs() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        const actual = [];
+        async function* naturalNumbers(start) {
+          while (start > 0) yield Promise.resolve(start--);
+        }
+        async function trigger() {
+          for await (const value of naturalNumbers(3)) {
+            actual.push("Await: " + value);
+          }
+        }
+        function countdown(counter) {
+          actual.push("Promise: " + counter);
+          if (counter > 0) {
+            return Promise.resolve(counter - 1).then(countdown);
+          }
+        }
+        trigger();
+        countdown(6);
+        "#,
+    )
+    .expect("for-await and Promise jobs should complete");
+    let result = vm
+        .run("actual.join('|');")
+        .expect("failed to read interleaved job order");
+
+    assert_eq!(
+        result,
+        Value::String(Arc::from(
+            "Promise: 6|Promise: 5|Await: 3|Promise: 4|Promise: 3|Await: 2|Promise: 2|Promise: 1|Await: 1|Promise: 0"
+        ))
+    );
 }
 
 #[test]

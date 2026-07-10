@@ -3,31 +3,48 @@
 
 use super::*;
 use crate::error::{self, Error};
+use crate::value::{
+    AsyncFunctionContinuation, GcIdx, PromiseReactionCapability, PromiseStatus, Value,
+};
 use crate::value::{FunctionKind, HeapObj, PropertyKey};
-use crate::value::{GcIdx, PromiseReactionCapability, PromiseStatus, Value};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 impl Vm {
-    fn resolve_async_function_result(&mut self, value: Value) -> error::Result<Value> {
-        let value_pin = self.pin(&value);
+    fn new_intrinsic_promise_capability(&mut self) -> error::Result<PromiseReactionCapability> {
         let constructor = self.promise_ctor.clone();
-        let capability = match crate::builtins::new_promise_capability(self, constructor) {
-            Ok(capability) => capability,
-            Err(error) => {
-                self.unpin(value_pin);
-                return Err(error);
-            }
-        };
-        let promise = capability.promise.clone();
-        let capability_pins = self.pin_many(&[
-            promise.clone(),
+        let capability = crate::builtins::new_promise_capability(self, constructor)?;
+        Ok(PromiseReactionCapability {
+            promise: capability.promise,
+            resolve: capability.resolve,
+            reject: capability.reject,
+        })
+    }
+
+    fn resolve_promise_capability_value(
+        &mut self,
+        capability: &PromiseReactionCapability,
+        value: Value,
+    ) -> error::Result<()> {
+        let pins = self.pin_many(&[
+            capability.promise.clone(),
             capability.resolve.clone(),
             capability.reject.clone(),
+            value.clone(),
         ]);
-
         let result = (|| -> error::Result<()> {
+            if value == capability.promise {
+                let error = Error::type_err("Cannot resolve promise with itself");
+                let reason = self.make_error_value(&error)?;
+                let reason_pin = self.pin(&reason);
+                let rejected =
+                    self.call_function(&capability.reject, &[reason], Some(Value::Undefined));
+                self.unpin(reason_pin);
+                rejected?;
+                return Ok(());
+            }
+
             let then = if matches!(value, Value::Object(_)) {
                 match self.get_property(&value, "then") {
                     Ok(then) => then,
@@ -67,11 +84,331 @@ impl Vm {
             }
             Ok(())
         })();
+        self.unpin_many(pins);
+        result
+    }
 
+    fn reject_promise_capability_error(
+        &mut self,
+        capability: &PromiseReactionCapability,
+        error: &Arc<Error>,
+    ) -> error::Result<()> {
+        let reason = match error.thrown_value.clone() {
+            Some(reason) => reason,
+            None => self.make_error_value(error)?,
+        };
+        let pins = self.pin_many(&[
+            capability.promise.clone(),
+            capability.reject.clone(),
+            reason.clone(),
+        ]);
+        let result = self.call_function(&capability.reject, &[reason], Some(Value::Undefined));
+        self.unpin_many(pins);
+        result.map(|_| ())
+    }
+
+    pub(crate) fn promise_resolve_for_await(&mut self, value: Value) -> error::Result<GcIdx> {
+        let native_promise = match &value {
+            Value::Object(idx)
+                if self
+                    .heap
+                    .with_obj(idx.0, |obj| matches!(obj, HeapObj::Promise(_))) =>
+            {
+                Some(*idx)
+            }
+            _ => None,
+        };
+
+        if let Some(promise) = native_promise {
+            match self.get_property(&value, "constructor") {
+                Ok(constructor) if constructor == self.promise_ctor => return Ok(promise),
+                Ok(_) => {}
+                Err(error) => {
+                    let capability = self.new_intrinsic_promise_capability()?;
+                    self.reject_promise_capability_error(&capability, &error)?;
+                    return match capability.promise {
+                        Value::Object(idx) => Ok(idx),
+                        _ => Err(Error::internal("Promise capability returned non-object")),
+                    };
+                }
+            }
+        }
+
+        let capability = self.new_intrinsic_promise_capability()?;
+        self.resolve_promise_capability_value(&capability, value)?;
+        match capability.promise {
+            Value::Object(idx) => Ok(idx),
+            _ => Err(Error::internal("Promise capability returned non-object")),
+        }
+    }
+
+    fn push_async_function_frame(
+        &mut self,
+        callee: Value,
+        fdef: Arc<crate::function::FunctionDef>,
+        env: GcIdx,
+        this_val: Value,
+        args: &[Value],
+        new_target: Value,
+    ) -> usize {
+        let mut locals = vec![Value::Undefined; fdef.num_locals.max(256)];
+        for (index, argument) in args.iter().enumerate().take(fdef.params.len()) {
+            let slot = fdef.param_slots.get(index).copied().unwrap_or(index);
+            if slot < locals.len() {
+                locals[slot] = argument.clone();
+            }
+        }
+        let mut frame = CallFrame::new(
+            fdef.chunk.clone(),
+            0,
+            self.stack.len(),
+            locals,
+            env,
+            this_val,
+        );
+        frame.callee = callee;
+        frame.in_parameter_initializers = fdef.has_parameter_expressions;
+        frame.new_target = new_target;
+        frame.direct_eval_new_target_allowed = !fdef.is_arrow;
+        frame.async_mode = true;
+        self.frames.push(frame);
+        self.frames.len() - 1
+    }
+
+    fn capture_async_function_continuation(
+        &mut self,
+        target_depth: usize,
+        capability: PromiseReactionCapability,
+    ) -> error::Result<AsyncFunctionContinuation> {
+        if self.frames.len() != target_depth + 1 {
+            return Err(Error::internal(
+                "async function suspension left nested frames active",
+            ));
+        }
+        let mut frame = self
+            .frames
+            .pop()
+            .ok_or_else(|| Error::internal("async function frame missing"))?;
+        if !frame.async_awaiting {
+            return Err(Error::internal(
+                "async function continuation captured without Await",
+            ));
+        }
+        let stack = self.stack.split_off(frame.stack_base);
+        Ok(AsyncFunctionContinuation {
+            capability,
+            chunk: frame.chunk,
+            ip: frame.ip,
+            stack,
+            locals: frame.locals,
+            callee: frame.callee,
+            env: frame.env,
+            catch_stack: frame.catch_stack,
+            guard_seq: frame.guard_seq.load(Ordering::Relaxed),
+            this_val: frame.this_val,
+            new_target: frame.new_target,
+            finally_stack: frame.finally_stack,
+            finally_completion_tag: frame.finally_completion_tag.load(Ordering::Relaxed),
+            finally_completion_val: frame.finally_completion_val.into_inner(),
+            eval_global_bindings: frame.eval_global_bindings,
+            eval_deletable_bindings: frame.eval_deletable_bindings,
+            in_parameter_initializers: frame.in_parameter_initializers,
+            direct_eval_new_target_allowed: frame.direct_eval_new_target_allowed,
+            is_derived_ctor: frame.is_derived_ctor,
+        })
+    }
+
+    fn begin_async_function_await(
+        &mut self,
+        target_depth: usize,
+        capability: PromiseReactionCapability,
+    ) -> error::Result<()> {
+        let awaited = self
+            .frames
+            .get(target_depth)
+            .and_then(|frame| frame.async_await_value.clone())
+            .ok_or_else(|| Error::internal("async Await value missing"))?;
+        // PromiseResolve runs while the execution context is still active.
+        let promise = self.promise_resolve_for_await(awaited)?;
+        let continuation = self.capture_async_function_continuation(target_depth, capability)?;
+        let state = self.heap.with_obj(promise.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                *data.state.lock()
+            } else {
+                PromiseStatus::Fulfilled
+            }
+        });
+        let handler = crate::value::PromiseHandler {
+            on_fulfilled: Value::Undefined,
+            on_rejected: Value::Undefined,
+            derived: None,
+            continuation: Some(crate::value::PromiseContinuation::AsyncFunction(Box::new(
+                continuation,
+            ))),
+        };
+        if state == PromiseStatus::Pending {
+            self.heap.with_obj(promise.0, |object| {
+                if let HeapObj::Promise(data) = object {
+                    data.handlers.lock().push(handler);
+                }
+            });
+        } else {
+            self.microtask_queue.push_back(Microtask::Then {
+                promise,
+                on_fulfilled: Value::Undefined,
+                on_rejected: Value::Undefined,
+                derived: None,
+                continuation: handler.continuation,
+            });
+        }
+        Ok(())
+    }
+
+    fn execute_async_function(
+        &mut self,
+        callee: Value,
+        fdef: Arc<crate::function::FunctionDef>,
+        env: GcIdx,
+        this_val: Value,
+        args: &[Value],
+        new_target: Value,
+    ) -> error::Result<Value> {
+        let capability = self.new_intrinsic_promise_capability()?;
+        let promise = capability.promise.clone();
+        let capability_pins = self.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+        ]);
+        let target_depth =
+            self.push_async_function_frame(callee, fdef, env, this_val, args, new_target);
+        let result = self.interpret_to_depth(target_depth);
+        let suspended = self
+            .frames
+            .get(target_depth)
+            .is_some_and(|frame| frame.async_awaiting);
+        let settled = if suspended {
+            self.begin_async_function_await(target_depth, capability)
+        } else {
+            match result {
+                Ok(value) => self.resolve_promise_capability_value(&capability, value),
+                Err(error) if !error.catchable() => {
+                    if self.frames.len() > target_depth {
+                        self.frames.truncate(target_depth);
+                    }
+                    self.unpin_many(capability_pins);
+                    return Err(error);
+                }
+                Err(error) => {
+                    let rejected = self.reject_promise_capability_error(&capability, &error);
+                    if self.frames.len() > target_depth {
+                        self.frames.truncate(target_depth);
+                    }
+                    rejected
+                }
+            }
+        };
         self.unpin_many(capability_pins);
-        self.unpin(value_pin);
-        result?;
+        settled?;
         Ok(promise)
+    }
+
+    pub(crate) fn run_async_function_reaction(
+        &mut self,
+        continuation: AsyncFunctionContinuation,
+        promise: GcIdx,
+    ) -> error::Result<()> {
+        let source_pin = self.pin(&Value::Object(promise));
+        let (state, result) = self.heap.with_obj(promise.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                (*data.state.lock(), data.result.lock().clone())
+            } else {
+                (PromiseStatus::Fulfilled, Value::Undefined)
+            }
+        });
+        let AsyncFunctionContinuation {
+            capability,
+            chunk,
+            ip,
+            stack,
+            locals,
+            callee,
+            env,
+            catch_stack,
+            guard_seq,
+            this_val,
+            new_target,
+            finally_stack,
+            finally_completion_tag,
+            finally_completion_val,
+            eval_global_bindings,
+            eval_deletable_bindings,
+            in_parameter_initializers,
+            direct_eval_new_target_allowed,
+            is_derived_ctor,
+        } = continuation;
+        let capability_pins = self.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            result.clone(),
+        ]);
+        let caller_stack = std::mem::replace(&mut self.stack, stack);
+        let mut frame = CallFrame::new(chunk, ip, 0, locals, env, this_val);
+        frame.callee = callee;
+        frame.catch_stack = catch_stack;
+        frame.guard_seq.store(guard_seq, Ordering::Relaxed);
+        frame.new_target = new_target;
+        frame.finally_stack = finally_stack;
+        frame
+            .finally_completion_tag
+            .store(finally_completion_tag, Ordering::Relaxed);
+        *frame.finally_completion_val.lock() = finally_completion_val;
+        frame.eval_global_bindings = eval_global_bindings;
+        frame.eval_deletable_bindings = eval_deletable_bindings;
+        frame.in_parameter_initializers = in_parameter_initializers;
+        frame.direct_eval_new_target_allowed = direct_eval_new_target_allowed;
+        frame.is_derived_ctor = is_derived_ctor;
+        frame.async_mode = true;
+        if state == PromiseStatus::Rejected {
+            *frame.force_throw.lock() = Some(result);
+        } else {
+            self.stack.push(result);
+        }
+        self.frames.push(frame);
+        let target_depth = self.frames.len() - 1;
+        let run_result = self.interpret_to_depth(target_depth);
+        let suspended = self
+            .frames
+            .get(target_depth)
+            .is_some_and(|frame| frame.async_awaiting);
+        let settled = if suspended {
+            self.begin_async_function_await(target_depth, capability)
+        } else {
+            match run_result {
+                Ok(value) => self.resolve_promise_capability_value(&capability, value),
+                Err(error) if !error.catchable() => {
+                    if self.frames.len() > target_depth {
+                        self.frames.truncate(target_depth);
+                    }
+                    self.stack = caller_stack;
+                    self.unpin_many(capability_pins);
+                    self.unpin(source_pin);
+                    return Err(error);
+                }
+                Err(error) => {
+                    let rejected = self.reject_promise_capability_error(&capability, &error);
+                    if self.frames.len() > target_depth {
+                        self.frames.truncate(target_depth);
+                    }
+                    rejected
+                }
+            }
+        };
+        self.stack = caller_stack;
+        self.unpin_many(capability_pins);
+        self.unpin(source_pin);
+        settled
     }
 
     pub(crate) fn run_thenable_job(
@@ -194,7 +531,7 @@ impl Vm {
                                             on_fulfilled: Value::Undefined,
                                             on_rejected: Value::Undefined,
                                             derived: Some(capability.clone()),
-                                            async_generator: None,
+                                            continuation: None,
                                         });
                                     }
                                 });
@@ -204,7 +541,7 @@ impl Vm {
                                     on_fulfilled: Value::Undefined,
                                     on_rejected: Value::Undefined,
                                     derived: Some(capability),
-                                    async_generator: None,
+                                    continuation: None,
                                 });
                             }
                             // Do NOT also resolve `derived` now: the adoption
@@ -912,6 +1249,16 @@ impl Vm {
                         self.pending_new_target_prototype.take();
                         self.pending_new_target.take().unwrap_or(Value::Undefined)
                     };
+                    if is_async {
+                        return self.execute_async_function(
+                            Value::Object(idx),
+                            func,
+                            call_env,
+                            this_val,
+                            args,
+                            frame_new_target,
+                        );
+                    }
                     let mut result = self.execute_chunk_func(
                         Value::Object(idx),
                         func.clone(),
@@ -960,37 +1307,7 @@ impl Vm {
                             }
                         }
                     }
-                    if is_async {
-                        // async functions return a Promise. An uncaught throw
-                        // inside the async body must settle the returned
-                        // Promise to Rejected (with the thrown value as the
-                        // reason) rather than propagating as a hard error.
-                        match result {
-                            Ok(value) => self.resolve_async_function_result(value),
-                            Err(err) if !err.catchable() => Err(err),
-                            Err(err) => {
-                                // Preserve explicit throw values. Native VM
-                                // errors become the matching JavaScript Error
-                                // object before they reject the async result.
-                                let reason = match &err.thrown_value {
-                                    Some(v) => v.clone(),
-                                    None => self.make_error_value(&err)?,
-                                };
-                                let p_idx = self.heap.allocate(HeapObj::Promise(
-                                    crate::value::PromiseData {
-                                        state: Mutex::new(PromiseStatus::Rejected),
-                                        result: Mutex::new(reason),
-                                        handlers: Mutex::new(Vec::new()),
-                                        props: Mutex::new(IndexMap::new()),
-                                        proto: Mutex::new(Some(self.promise_proto.clone())),
-                                    },
-                                ))?;
-                                Ok(Value::Object(GcIdx(p_idx)))
-                            }
-                        }
-                    } else {
-                        result
-                    }
+                    result
                 }
             }
             Some(FuncCallInfo::Bound {
@@ -1922,13 +2239,9 @@ impl Vm {
         }
     }
 
-    /// `for await` step: call the async iterator's `next()` (or the sync
-    /// iterator's `next()`), await the returned Promise, and return
-    /// `(value, done)`. Eager (Vec-backed) iterators are stepped directly.
-    pub fn iterator_next_await(&mut self, it: &Value) -> error::Result<(Value, bool)> {
-        // Generator-backed lazy iterators and custom async iterators both go
-        // through the JS `next()` method; awaiting its result (a Promise for
-        // async iterators, a plain object for sync ones) yields {value, done}.
+    /// Call the next method used by `for await`, leaving Await to the bytecode
+    /// interpreter so an async frame can suspend instead of draining jobs.
+    pub(crate) fn iterator_next_await_start(&mut self, it: &Value) -> error::Result<Value> {
         let lazy_or_gen = if let Value::Object(idx) = it {
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Iterator(i) = o {
@@ -1966,31 +2279,39 @@ impl Vm {
                 Some(next_fn) => next_fn,
                 None => self.get_property(&iter_obj, "next")?,
             };
-            let result = self.call_function(&next_fn, &[], Some(iter_obj))?;
-            // Await: if it's a Promise, drain microtasks and read the settled value.
-            let result = self.await_value(result)?;
-            if !matches!(result, Value::Object(_)) {
-                return Err(Error::type_err("Iterator result is not an object"));
-            }
-            let done = self.get_property(&result, "done")?.is_truthy();
-            if done {
-                if let Value::Object(idx) = it {
-                    self.heap.with_obj(idx.0, |o| {
-                        if let HeapObj::Iterator(i) = o {
-                            i.done.store(true, Ordering::Relaxed);
-                        }
-                    });
-                }
-                return Ok((Value::Undefined, true));
-            }
-            let mut value = self.get_property(&result, "value")?;
-            if self.is_async_from_sync(it) {
-                value = self.await_value(value)?;
-            }
-            return Ok((value, done));
+            return self.call_function(&next_fn, &[], Some(iter_obj));
         }
-        let (mut value, done) = self.iterator_next(it)?;
-        if !done && self.is_async_from_sync(it) {
+
+        let (value, done) = self.iterator_next(it)?;
+        crate::builtins::regexp::gen_result(self, value, done, false)
+    }
+
+    pub(crate) fn iterator_unpack_await_result(
+        &mut self,
+        it: &Value,
+        result: Value,
+    ) -> error::Result<(Value, bool, bool)> {
+        if !matches!(result, Value::Object(_)) {
+            return Err(Error::type_err("Iterator result is not an object"));
+        }
+        let done = self.get_property(&result, "done")?.is_truthy();
+        let async_from_sync = self.is_async_from_sync(it);
+        if done {
+            self.mark_iterator_done(it);
+            if !async_from_sync {
+                return Ok((Value::Undefined, true, false));
+            }
+        }
+        let value = self.get_property(&result, "value")?;
+        Ok((value, done, async_from_sync))
+    }
+
+    /// Synchronous embedding helper for a complete `for await` iterator step.
+    pub fn iterator_next_await(&mut self, it: &Value) -> error::Result<(Value, bool)> {
+        let result = self.iterator_next_await_start(it)?;
+        let result = self.await_value(result)?;
+        let (mut value, done, await_value) = self.iterator_unpack_await_result(it, result)?;
+        if await_value {
             value = self.await_value(value)?;
         }
         Ok((value, done))

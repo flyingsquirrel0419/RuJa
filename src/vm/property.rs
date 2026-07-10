@@ -2423,6 +2423,9 @@ impl Vm {
                 Self::push_value_roots(&mut roots, v);
             }
             *f.gen_yield.lock() = y;
+            if let Some(value) = &f.async_await_value {
+                Self::push_value_roots(&mut roots, value);
+            }
         }
         for proto in [
             &self.object_proto,
@@ -2460,7 +2463,7 @@ impl Vm {
                     on_fulfilled,
                     on_rejected,
                     derived,
-                    async_generator,
+                    continuation,
                     ..
                 } => {
                     roots.push(promise.0);
@@ -2471,8 +2474,26 @@ impl Vm {
                         Self::push_value_roots(&mut roots, &capability.resolve);
                         Self::push_value_roots(&mut roots, &capability.reject);
                     }
-                    if let Some((generator, _)) = async_generator {
-                        roots.push(generator.0);
+                    if let Some(continuation) = continuation {
+                        match continuation {
+                            crate::value::PromiseContinuation::AsyncGenerator {
+                                generator, ..
+                            } => roots.push(generator.0),
+                            crate::value::PromiseContinuation::AsyncFunction(frame) => {
+                                Self::push_value_roots(&mut roots, &frame.capability.promise);
+                                Self::push_value_roots(&mut roots, &frame.capability.resolve);
+                                Self::push_value_roots(&mut roots, &frame.capability.reject);
+                                Self::push_value_roots(&mut roots, &frame.callee);
+                                Self::push_value_roots(&mut roots, &frame.this_val);
+                                Self::push_value_roots(&mut roots, &frame.new_target);
+                                Self::push_value_roots(&mut roots, &frame.finally_completion_val);
+                                roots.push(frame.env.0);
+                                roots.extend(frame.catch_stack.iter().map(|(_, _, env)| env.0));
+                                for value in frame.stack.iter().chain(frame.locals.iter()) {
+                                    Self::push_value_roots(&mut roots, value);
+                                }
+                            }
+                        }
                     }
                 }
                 Microtask::Thenable {
@@ -2575,7 +2596,7 @@ impl Vm {
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
                 derived: h.derived,
-                async_generator: h.async_generator,
+                continuation: h.continuation,
             });
         }
     }
@@ -2600,7 +2621,7 @@ impl Vm {
                 on_fulfilled: h.on_fulfilled,
                 on_rejected: h.on_rejected,
                 derived: h.derived,
-                async_generator: h.async_generator,
+                continuation: h.continuation,
             });
         }
     }
@@ -2617,16 +2638,18 @@ impl Vm {
                     on_fulfilled,
                     on_rejected,
                     derived,
-                    async_generator,
-                } => {
-                    if let Some((generator, kind)) = async_generator {
+                    continuation,
+                } => match continuation {
+                    Some(crate::value::PromiseContinuation::AsyncGenerator { generator, kind }) => {
                         crate::builtins::regexp::run_async_generator_reaction(
                             self, generator, kind, promise,
-                        )?;
-                    } else {
-                        self.run_then(promise, on_fulfilled, on_rejected, derived)?;
+                        )?
                     }
-                }
+                    Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
+                        self.run_async_function_reaction(*frame, promise)?
+                    }
+                    None => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
+                },
                 Microtask::Thenable {
                     thenable,
                     then,
@@ -2656,16 +2679,18 @@ impl Vm {
                     on_fulfilled,
                     on_rejected,
                     derived,
-                    async_generator,
-                } => {
-                    if let Some((generator, kind)) = async_generator {
+                    continuation,
+                } => match continuation {
+                    Some(crate::value::PromiseContinuation::AsyncGenerator { generator, kind }) => {
                         crate::builtins::regexp::run_async_generator_reaction(
                             self, generator, kind, promise,
-                        )?;
-                    } else {
-                        self.run_then(promise, on_fulfilled, on_rejected, derived)?;
+                        )?
                     }
-                }
+                    Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
+                        self.run_async_function_reaction(*frame, promise)?
+                    }
+                    None => self.run_then(promise, on_fulfilled, on_rejected, derived)?,
+                },
                 Microtask::Thenable {
                     thenable,
                     then,
