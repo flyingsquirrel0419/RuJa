@@ -2544,6 +2544,10 @@ impl Vm {
                     if in_gen {
                         let frame = self.current_frame()?;
                         *frame.gen_yield.lock() = Some(v);
+                        frame
+                            .gen_yield_is_iterator_result
+                            .store(false, Ordering::Relaxed);
+                        frame.gen_delegating.store(false, Ordering::Relaxed);
                         frame.gen_suspended.store(true, Ordering::Relaxed);
                         return Ok(Value::Undefined);
                     } else {
@@ -2787,6 +2791,45 @@ impl Vm {
                     let (value, done) = self.iterator_next_resume(&it, resume)?;
                     self.stack.push(value);
                     self.stack.push(Value::Bool(done));
+                }
+                op @ (Op::YieldDelegate | Op::YieldDelegateAsync) => {
+                    let await_result = matches!(op, Op::YieldDelegateAsync);
+                    let completion = self.current_frame()?.gen_delegate_resume.lock().take();
+                    let completion = completion.unwrap_or(ResumeKind::Next(Value::Undefined));
+                    let iterator = self.stack.last().cloned().unwrap_or(Value::Undefined);
+                    match self.iterator_delegate_step(&iterator, completion, await_result)? {
+                        DelegateOutcome::Yield(result) => {
+                            let resume_ip = self.current_frame()?.ip.saturating_sub(1);
+                            self.current_frame_mut()?.ip = resume_ip;
+                            let frame = self.current_frame()?;
+                            *frame.gen_yield.lock() = Some(result);
+                            frame
+                                .gen_yield_is_iterator_result
+                                .store(true, Ordering::Relaxed);
+                            frame.gen_delegating.store(true, Ordering::Relaxed);
+                            frame.gen_suspended.store(true, Ordering::Relaxed);
+                            return Ok(Value::Undefined);
+                        }
+                        DelegateOutcome::Complete(value) => {
+                            self.stack.pop();
+                            self.stack.push(value);
+                            let frame = self.current_frame()?;
+                            frame.gen_delegating.store(false, Ordering::Relaxed);
+                            frame
+                                .gen_yield_is_iterator_result
+                                .store(false, Ordering::Relaxed);
+                        }
+                        DelegateOutcome::Return(value) => {
+                            self.stack.pop();
+                            let frame = self.current_frame()?;
+                            frame.gen_delegating.store(false, Ordering::Relaxed);
+                            frame
+                                .gen_yield_is_iterator_result
+                                .store(false, Ordering::Relaxed);
+                            *frame.force_return.lock() = Some(value);
+                            continue;
+                        }
+                    }
                 }
                 Op::IteratorDone => {
                     let it = self.stack.pop().unwrap_or(Value::Undefined);

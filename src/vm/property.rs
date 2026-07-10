@@ -2409,6 +2409,14 @@ impl Vm {
             // it is moved into the LazyGenerator). Root them so a GC during
             // resume_generator does not collect them.
             Self::push_value_roots(&mut roots, &f.gen_resume_value.lock());
+            if let Some(kind) = f.gen_delegate_resume.lock().clone() {
+                let value = match kind {
+                    ResumeKind::Next(value)
+                    | ResumeKind::Throw(value)
+                    | ResumeKind::Return(value) => value,
+                };
+                Self::push_value_roots(&mut roots, &value);
+            }
             // gen_yield is Mutex<Option<Value>>; peek without consuming via take+set.
             let y = f.gen_yield.lock().take();
             if let Some(v) = &y {

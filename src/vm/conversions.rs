@@ -522,7 +522,18 @@ impl Vm {
             }
         }
 
-        let mut cur = obj.clone();
+        let mut cur = match obj {
+            Value::Object(_) => obj.clone(),
+            _ if key.as_str().is_some() => {
+                return self.get_property(obj, key.as_str().unwrap_or_default())
+            }
+            Value::String(_) => self.string_proto.clone(),
+            Value::Number(_) => self.number_proto.clone(),
+            Value::BigInt(_) => self.bigint_proto.clone(),
+            Value::Bool(_) => self.boolean_proto.clone(),
+            Value::Symbol(_) => self.symbol_proto.clone(),
+            _ => Value::Undefined,
+        };
         let mut depth = 0;
         while let Value::Object(idx) = &cur {
             if depth > 1024 {

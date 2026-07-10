@@ -281,6 +281,11 @@ pub enum Op {
     /// Like IteratorNext but pops a resume value and forwards it to a lazy
     /// iterator's `next()` (used by `yield*` delegation).
     IteratorNextResume,
+    /// Execute the complete synchronous `yield*` delegation state machine.
+    /// The iterator remains on the generator stack while delegation suspends.
+    YieldDelegate,
+    /// Async-generator `yield*`: await delegated next/return/throw results.
+    YieldDelegateAsync,
     IteratorDone,
     /// `for await`: call the async iterator's `next()` and await the result,
     /// pushing `{value, done}` (already awaited). Pops the iterator.

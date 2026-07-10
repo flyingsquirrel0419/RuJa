@@ -258,6 +258,19 @@ test262 `async` flag, which remains globally gated until the runner supports
 asynchronous completion. The supported subset moves to **9497 pass / 0 fail /
 10941 skip**.
 
+Focused synchronous `yield*` delegation local check:
+`yield*` now uses a dedicated VM state machine rather than a bytecode loop, so
+the delegated iterator result object is forwarded unchanged and outer
+`next`, `throw`, and `return` completions invoke the corresponding inner
+methods with spec receiver and argument semantics. Final values, abrupt
+getters/calls, non-object results, missing-`throw` cleanup, and primitive
+well-known Symbol lookup are preserved. With `generators` and
+`Symbol.iterator` temporarily lifted, `language/expressions/yield` moves from
+**34 pass / 29 fail** to **63 pass / 0 fail**. Async-generator delegation also
+prefers `Symbol.asyncIterator`, falls back to the sync iterator protocol,
+awaits each delegated result, and rejects the returned Promise for iterator
+protocol errors.
+
 Focused generator assignment destructuring local check:
 generator assignment destructuring now treats `yield]` as a bare
 `YieldExpression` before the closing array pattern bracket, so default

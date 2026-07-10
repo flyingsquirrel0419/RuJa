@@ -824,6 +824,9 @@ pub struct LazyGeneratorData {
     pub started: AtomicBool,
     /// True once the body has run to completion (return / fall-off end).
     pub done: AtomicBool,
+    /// True when suspension occurred inside `yield*` and the next completion
+    /// must be forwarded to the delegated iterator.
+    pub delegating: AtomicBool,
     /// The value sent into the generator via `next(v)` (consumed by `yield`).
     pub resume_value: Mutex<Value>,
     /// True for `async function*`: `next()` wraps results in a Promise.

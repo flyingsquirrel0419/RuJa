@@ -378,6 +378,20 @@ fn yield_star_delegates_to_string() {
 }
 
 #[test]
+fn yield_star_observes_primitive_symbol_iterator() {
+    let src = r#"
+        Boolean.prototype[Symbol.iterator] = function* () {
+            yield this.valueOf();
+        };
+        function* g() { yield* true; yield* false; }
+        let values = [];
+        for (let value of g()) values.push(value);
+        values.join(",");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("true,false")));
+}
+
+#[test]
 fn yield_star_nested_delegation() {
     let src = r#"
         function* a() { yield 1; yield 2; }
@@ -465,6 +479,63 @@ fn async_generator_done_signal() {
     assert_eq!(run(src), Value::Bool(true));
 }
 
+#[test]
+fn async_generator_yield_star_selects_async_then_sync_iterator() {
+    let src = r#"
+        let log = [];
+        let asyncIterable = {
+            [Symbol.asyncIterator]() {
+                log.push("async");
+                let done = false;
+                return {
+                    next() {
+                        if (done) return Promise.resolve({ value: 9, done: true });
+                        done = true;
+                        return Promise.resolve({ value: 1, done: false });
+                    }
+                };
+            },
+            [Symbol.iterator]() { throw new Error("sync must not be read"); }
+        };
+        let syncIterable = {
+            [Symbol.asyncIterator]: null,
+            [Symbol.iterator]() {
+                log.push("sync");
+                let done = false;
+                return {
+                    next() {
+                        if (done) return { value: 8, done: true };
+                        done = true;
+                        return { value: 2, done: false };
+                    }
+                };
+            }
+        };
+        async function* delegate(value) { return yield* value; }
+        let a = delegate(asyncIterable);
+        let b = delegate(syncIterable);
+        let a1 = await a.next();
+        let a2 = await a.next();
+        let b1 = await b.next();
+        let b2 = await b.next();
+        [a1.value, a2.value, b1.value, b2.value, log.join(",")].join("|");
+    "#;
+    assert_eq!(run(src), Value::String(Arc::from("1|9|2|8|async,sync")));
+}
+
+#[test]
+fn async_generator_protocol_errors_reject_next_promise() {
+    let src = r#"
+        let bad = { [Symbol.asyncIterator]() { return 1; } };
+        async function* delegate() { yield* bad; }
+        let rejected = false;
+        try { await delegate().next(); }
+        catch (error) { rejected = error instanceof TypeError; }
+        rejected;
+    "#;
+    assert_eq!(run(src), Value::Bool(true));
+}
+
 // ---- yield* resume forwarding + return value (#8 fix) ----
 
 #[test]
@@ -503,6 +574,120 @@ fn yield_star_forwards_resume_value() {
         a.value + "," + b.value + "," + b.done + "," + c.done;
     "#;
     assert_eq!(run(src), Value::String(Arc::from("1,105,true,true")));
+}
+
+#[test]
+fn yield_star_forwards_iterator_result_objects_and_completion_values() {
+    let src = r#"
+        let first = { value: 1 };
+        let final = { value: 42, done: true };
+        let calls = [];
+        let iterator = {
+            next(value) {
+                calls.push(arguments.length + ":" + value);
+                return calls.length === 1 ? first : final;
+            }
+        };
+        iterator[Symbol.iterator] = function() { return this; };
+        function* outer() { return yield* iterator; }
+        let generator = outer();
+        let yielded = generator.next(99);
+        let completed = generator.next(7);
+        [
+            yielded === first,
+            "done" in yielded,
+            completed.value,
+            completed.done,
+            calls.join(",")
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("true|false|42|true|1:undefined,1:7"))
+    );
+}
+
+#[test]
+fn yield_star_forwards_return_until_the_delegate_finishes() {
+    let src = r#"
+        let returned = { value: 2, done: false };
+        let calls = [];
+        let iterator = {
+            next(value) {
+                calls.push("next:" + arguments.length + ":" + value);
+                return calls.length === 1
+                    ? { value: 1, done: false }
+                    : { value: 9, done: true };
+            },
+            return(value) {
+                calls.push("return:" + arguments.length + ":" + value);
+                return returned;
+            }
+        };
+        iterator[Symbol.iterator] = function() { return this; };
+        function* outer() { return yield* iterator; }
+        let generator = outer();
+        generator.next();
+        let yielded = generator.return(7);
+        let completed = generator.next(8);
+        [
+            yielded === returned,
+            completed.value,
+            completed.done,
+            calls.join(",")
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "true|9|true|next:1:undefined,return:1:7,next:1:8"
+        ))
+    );
+}
+
+#[test]
+fn yield_star_forwards_throw_and_closes_on_missing_throw() {
+    let src = r#"
+        let throwResult = { value: 3, done: false };
+        let calls = [];
+        let iterator = {
+            next() { calls.push("next"); return { value: 1, done: false }; },
+            throw(value) {
+                calls.push("throw:" + value);
+                return throwResult;
+            }
+        };
+        iterator[Symbol.iterator] = function() { return this; };
+        function* delegated() { yield* iterator; }
+        let generator = delegated();
+        generator.next();
+        let yielded = generator.throw(7);
+
+        let closed = 0;
+        let missing = {
+            next() { return { value: 1, done: false }; },
+            return() { closed += 1; return {}; }
+        };
+        missing[Symbol.iterator] = function() { return this; };
+        function* guarded() {
+            try { yield* missing; }
+            catch (error) { return error instanceof TypeError; }
+        }
+        let guardedGenerator = guarded();
+        guardedGenerator.next();
+        let caught = guardedGenerator.throw(8);
+        [
+            yielded === throwResult,
+            calls.join(","),
+            closed,
+            caught.value,
+            caught.done
+        ].join("|");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from("true|next,throw:7|1|true|true"))
+    );
 }
 
 // ---- generator.return / generator.throw ----

@@ -148,6 +148,13 @@ pub struct CallFrame {
     pub gen_yield: Mutex<Option<Value>>,
     pub gen_suspended: AtomicBool,
     pub gen_resume_value: Mutex<Value>,
+    /// Whether this frame is suspended in the `yield*` state machine.
+    pub gen_delegating: AtomicBool,
+    /// A delegated resume is consumed by `Op::YieldDelegate` instead of being
+    /// injected as an ordinary yield completion.
+    pub gen_delegate_resume: Mutex<Option<ResumeKind>>,
+    /// `yield*` forwards the delegated iterator result object unchanged.
+    pub gen_yield_is_iterator_result: AtomicBool,
     /// When set, the generator was resumed via `throw(e)`: the next dispatch
     /// in this frame throws `e` at the suspended `yield` point instead of
     /// pushing a resume value. Consumed on first use.
@@ -219,6 +226,9 @@ impl CallFrame {
             gen_yield: Mutex::new(None),
             gen_suspended: AtomicBool::new(false),
             gen_resume_value: Mutex::new(Value::Undefined),
+            gen_delegating: AtomicBool::new(false),
+            gen_delegate_resume: Mutex::new(None),
+            gen_yield_is_iterator_result: AtomicBool::new(false),
             force_throw: Mutex::new(None),
             force_return: Mutex::new(None),
             finally_completion_tag: AtomicU8::new(0),
@@ -239,6 +249,12 @@ impl CallFrame {
 pub enum ResumeKind {
     Next(Value),
     Throw(Value),
+    Return(Value),
+}
+
+pub(crate) enum DelegateOutcome {
+    Yield(Value),
+    Complete(Value),
     Return(Value),
 }
 
@@ -1164,14 +1180,13 @@ impl Vm {
     }
 
     /// Resume (or start) a lazy generator, running until the next `yield` or
-    /// until the body completes. Returns `(value, done)` where `value` is the
-    /// yielded value (or the return value when done) and `done` indicates
-    /// whether the generator has finished.
+    /// until the body completes. The third result flag means `value` is an
+    /// iterator result object forwarded unchanged by `yield*`.
     pub fn resume_generator(
         &mut self,
         g_idx: GcIdx,
         kind: ResumeKind,
-    ) -> error::Result<(Value, bool)> {
+    ) -> error::Result<(Value, bool, bool)> {
         // Pull the saved execution state out of the generator object.
         let (
             fdef,
@@ -1188,6 +1203,7 @@ impl Vm {
             finally_completion_val,
             started,
             done,
+            delegating,
         ) = self.heap.with_obj(g_idx.0, |o| {
             if let HeapObj::LazyGenerator(g) = o {
                 (
@@ -1205,6 +1221,7 @@ impl Vm {
                     g.finally_completion_val.lock().clone(),
                     g.started.load(Ordering::Relaxed),
                     g.done.load(Ordering::Relaxed),
+                    g.delegating.load(Ordering::Relaxed),
                 )
             } else {
                 panic!("resume_generator on non-lazy-generator");
@@ -1213,8 +1230,8 @@ impl Vm {
 
         if done {
             return match &kind {
-                ResumeKind::Return(v) => Ok((v.clone(), true)),
-                _ => Ok((Value::Undefined, true)),
+                ResumeKind::Return(v) => Ok((v.clone(), true, false)),
+                _ => Ok((Value::Undefined, true, false)),
             };
         }
 
@@ -1230,7 +1247,7 @@ impl Vm {
                         g.started.store(true, Ordering::Relaxed);
                     }
                 });
-                return Ok((v.clone(), true));
+                return Ok((v.clone(), true, false));
             }
         }
 
@@ -1257,6 +1274,8 @@ impl Vm {
                 catch_stack.clear();
                 finally_stack.clear();
             }
+        } else if delegating {
+            // `yield*` consumes the complete resume record itself.
         } else if matches!(kind, ResumeKind::Throw(_) | ResumeKind::Return(_)) {
             // Abrupt resumes do NOT push a resume value. They set a per-frame
             // flag below so dispatch injects the completion at the suspended
@@ -1304,15 +1323,24 @@ impl Vm {
             *frame.gen_resume_value.lock() = resume_val.clone();
             frame.gen_mode.store(true, Ordering::Relaxed);
             frame.gen_suspended.store(false, Ordering::Relaxed);
+            frame.gen_delegating.store(delegating, Ordering::Relaxed);
             *frame.gen_yield.lock() = None;
+            frame
+                .gen_yield_is_iterator_result
+                .store(false, Ordering::Relaxed);
+            *frame.gen_delegate_resume.lock() = delegating.then(|| kind.clone());
             // `throw(e)`: arrange for the next dispatch to raise `e`.
-            if let ResumeKind::Throw(e) = &kind {
-                *frame.force_throw.lock() = Some(e.clone());
+            if !delegating {
+                if let ResumeKind::Throw(e) = &kind {
+                    *frame.force_throw.lock() = Some(e.clone());
+                }
             }
             // `return(v)`: arrange for the next dispatch to inject a return
             // completion at the suspended yield point.
-            if let ResumeKind::Return(v) = &kind {
-                *frame.force_return.lock() = Some(v.clone());
+            if !delegating {
+                if let ResumeKind::Return(v) = &kind {
+                    *frame.force_return.lock() = Some(v.clone());
+                }
             }
         }
 
@@ -1350,6 +1378,7 @@ impl Vm {
                 if let HeapObj::LazyGenerator(g) = o {
                     g.done.store(true, Ordering::Relaxed);
                     g.started.store(true, Ordering::Relaxed);
+                    g.delegating.store(false, Ordering::Relaxed);
                 }
             });
             return Err(e.clone());
@@ -1363,6 +1392,9 @@ impl Vm {
                 .lock()
                 .take()
                 .unwrap_or(Value::Undefined);
+            let yielded_iterator_result = self.frames[target_depth]
+                .gen_yield_is_iterator_result
+                .load(Ordering::Relaxed);
             // Pop the generator frame and save its state for the next resume.
             let frame = self.frames.pop().ok_or_else(|| {
                 crate::error::Error::internal("generator frame missing during resume")
@@ -1386,10 +1418,14 @@ impl Vm {
                     );
                     *g.finally_completion_val.lock() = frame.finally_completion_val.lock().clone();
                     g.started.store(true, Ordering::Relaxed);
+                    g.delegating.store(
+                        frame.gen_delegating.load(Ordering::Relaxed),
+                        Ordering::Relaxed,
+                    );
                 }
             });
 
-            Ok((yielded, false))
+            Ok((yielded, false, yielded_iterator_result))
         } else {
             // Completed: the body returned or ran off the end. `result` holds
             // the return value; mark the generator done.
@@ -1397,10 +1433,11 @@ impl Vm {
                 if let HeapObj::LazyGenerator(g) = o {
                     g.done.store(true, Ordering::Relaxed);
                     g.started.store(true, Ordering::Relaxed);
+                    g.delegating.store(false, Ordering::Relaxed);
                 }
             });
             let ret = result.unwrap_or(Value::Undefined);
-            Ok((ret, true))
+            Ok((ret, true, false))
         }
     }
 
@@ -1422,7 +1459,7 @@ impl Vm {
 
     /// Build a catchable `Error` object for a native (non-thrown) error, so
     /// `try/catch` receives a real object with `message` and `name`.
-    fn make_error_value(&mut self, e: &Error) -> error::Result<Value> {
+    pub(crate) fn make_error_value(&mut self, e: &Error) -> error::Result<Value> {
         use crate::value::{ObjectData, PropertyDescriptor};
         let ctor_name = match e.kind {
             crate::error::ErrorKind::Type => "TypeError",

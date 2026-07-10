@@ -6437,12 +6437,12 @@ fn regexp_exec_result_shape_and_last_index_semantics() {
     );
     assert_eq!(
         run(
-            r#"String.prototype[Symbol.match] = function(arg) { return "poison"; };
-               var m = "abc".match("b");
+            r#"String.prototype[Symbol.match] = function(arg) { return "poison:" + arg; };
+               var result = "abc".match("b");
                delete String.prototype[Symbol.match];
-               [m[0], m.index, m.input].join("|");"#
+               result;"#
         ),
-        Value::String(Arc::from("b|1|abc"))
+        Value::String(Arc::from("poison:abc"))
     );
     assert_eq!(
         run("var m = ''.match(); [m[0], m.index, m.input].join('|');"),

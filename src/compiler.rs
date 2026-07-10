@@ -43,6 +43,9 @@ pub struct Compiler {
     /// Nesting depth while compiling class field initializer values. Direct
     /// eval emitted in this context uses initializer-specific semantics.
     class_field_initializer_depth: usize,
+    /// Whether the current function is an async generator. Nested function
+    /// compilation saves and restores this context.
+    current_async_generator: bool,
 }
 
 #[allow(dead_code)]
@@ -171,6 +174,7 @@ impl Compiler {
             switch_ctx_stack: Vec::new(),
             current_line: 0,
             class_field_initializer_depth: 0,
+            current_async_generator: false,
         }
     }
 
@@ -1794,7 +1798,9 @@ impl Compiler {
         let saved_chunk = std::mem::take(&mut self.chunk);
         let saved_names = std::mem::take(&mut self.name_map);
         let saved_switch_val = self.switch_val_depth;
+        let saved_async_generator = self.current_async_generator;
         self.switch_val_depth = None;
+        self.current_async_generator = f.is_async && f.is_generator;
         self.scopes.push(Scope {
             bindings: HashMap::new(),
             is_function: true,
@@ -1936,6 +1942,7 @@ impl Compiler {
         self.name_map = saved_names;
         self.chunk = saved_chunk;
         self.switch_val_depth = saved_switch_val;
+        self.current_async_generator = saved_async_generator;
         Ok((func_chunk, param_slots))
     }
 
@@ -4115,41 +4122,17 @@ impl Compiler {
                 self.chunk.emit(Op::YieldValue, self.current_line);
             }
             Expr::YieldDelegate(inner) => {
-                // `yield* expr`: obtain an iterator from `expr` and forward each
-                // of its values to the outer generator via YieldValue, until the
-                // iterator is done. The outer resume value (sent via next(v)) is
-                // forwarded to the delegated iterator's next(v). The result of
-                // the `yield*` expression is the iterator's final value.
+                // The VM owns the delegation state machine because abrupt
+                // `throw`/`return` resumes must be forwarded to the inner
+                // iterator before ordinary generator completion routing.
                 self.compile_expr(inner)?;
-                self.chunk.emit(Op::GetIterator, self.current_line);
-                let it_name_idx = self.intern("#yldel-iter");
-                self.chunk
-                    .emit(Op::DeclareEnv(it_name_idx), self.current_line);
-                // Track the value to forward to the delegated iterator's next().
-                // First pull uses no resume value (undefined).
-                let resume_name_idx = self.intern("#yldel-resume");
-                self.chunk.emit(Op::Undefined, self.current_line);
-                self.chunk
-                    .emit(Op::DeclareEnv(resume_name_idx), self.current_line);
-                let loop_start = self.chunk.code.len();
-                // [iterator, resume] -> IteratorNextResume -> [value, done]
-                self.chunk.emit(Op::LoadEnv(it_name_idx), self.current_line);
-                self.chunk
-                    .emit(Op::LoadEnv(resume_name_idx), self.current_line);
-                self.chunk.emit(Op::IteratorNextResume, self.current_line); // [value, done]
-                let done_jump = self.chunk.code.len();
-                self.chunk.emit(Op::JumpIfTrue(0), self.current_line); // if done, jump to end
-                                                                       // value is on the stack; yield it to the outer generator.
-                self.chunk.emit(Op::YieldValue, self.current_line); // yields `value`; leaves resume value
-                                                                    // Save the resume value for the next delegated next(v).
-                self.chunk
-                    .emit(Op::StoreEnv(resume_name_idx), self.current_line);
-                self.chunk.emit(Op::Pop, self.current_line); // discard StoreEnv's return
-                self.chunk.emit(Op::Jump(loop_start), self.current_line);
-                let end = self.chunk.code.len();
-                self.chunk.patch_jump(done_jump, end);
-                // Iterator done: JumpIfTrue already popped `done`, leaving the
-                // iterator's return value on the stack as the yield* result.
+                if self.current_async_generator {
+                    self.chunk.emit(Op::GetAsyncIterator, self.current_line);
+                    self.chunk.emit(Op::YieldDelegateAsync, self.current_line);
+                } else {
+                    self.chunk.emit(Op::GetIterator, self.current_line);
+                    self.chunk.emit(Op::YieldDelegate, self.current_line);
+                }
             }
             Expr::Function(f) | Expr::Arrow(f) => {
                 let (func_chunk, param_slots) = self.compile_function(f)?;

@@ -797,6 +797,7 @@ impl Vm {
                             finally_completion_val: Mutex::new(prologue.finally_completion_val),
                             started: AtomicBool::new(false),
                             done: AtomicBool::new(false),
+                            delegating: AtomicBool::new(false),
                             resume_value: Mutex::new(Value::Undefined),
                             is_async,
                             props: Mutex::new(IndexMap::new()),
@@ -1072,6 +1073,14 @@ impl Vm {
         };
         let is_builtin_iterable =
             matches!(iterable, Value::String(_)) || is_map || is_set || is_gen;
+        if !matches!(iterable, Value::Object(_)) {
+            let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
+            let iter_method = self.get_property_by_key(iterable, &sym_key)?;
+            if !iter_method.is_nullish() {
+                let iter_obj = self.call_function(&iter_method, &[], Some(iterable.clone()))?;
+                return self.new_lazy_iterator(iter_obj);
+            }
+        }
         if is_arr && !is_arguments {
             let sym_key = crate::value::PropertyKey::Symbol(self.well_known_symbols.iterator);
             let iter_method = self.get_property_by_key(iterable, &sym_key)?;
@@ -1159,8 +1168,16 @@ impl Vm {
             let akey = crate::value::PropertyKey::Symbol(self.well_known_symbols.async_iterator);
             if self.has_property_key(iterable, &akey)? {
                 let m = self.get_property_by_key(iterable, &akey)?;
-                let iter_obj = self.call_function(&m, &[], Some(iterable.clone()))?;
-                return self.new_lazy_iterator(iter_obj);
+                if !m.is_nullish() {
+                    if !crate::builtins::is_callable(&m, &self.heap) {
+                        return Err(Error::type_err("Symbol.asyncIterator is not callable"));
+                    }
+                    let iter_obj = self.call_function(&m, &[], Some(iterable.clone()))?;
+                    if !matches!(iter_obj, Value::Object(_)) {
+                        return Err(Error::type_err("Async iterator is not an object"));
+                    }
+                    return self.new_lazy_iterator(iter_obj);
+                }
             }
             // No async iterator: fall back to the sync iterator protocol. Each
             // `next()` is awaited (a non-Promise value awaits to itself).
@@ -1296,11 +1313,12 @@ impl Vm {
     /// the generator via `resume_generator`, preserving its return value (so
     /// `yield* gen()` yields the generator's return value as the result).
     pub(crate) fn new_generator_iterator(&mut self, gen: Value) -> error::Result<Value> {
+        let next = self.get_property(&gen, "next")?;
         let it = HeapObj::Iterator(crate::value::IteratorData {
             items: Mutex::new(Vec::new()),
             index: std::sync::atomic::AtomicUsize::new(0),
             lazy_iter: Mutex::new(None),
-            lazy_next: Mutex::new(None),
+            lazy_next: Mutex::new(Some(next)),
             generator: Mutex::new(Some(gen)),
             array_like: Mutex::new(None),
             for_in_source: Mutex::new(None),
@@ -1438,6 +1456,118 @@ impl Vm {
         self.iterator_next_resume(it, Value::Undefined)
     }
 
+    fn delegate_target_and_next(&self, it: &Value) -> (Option<Value>, Option<Value>) {
+        match it {
+            Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::Iterator(data) = o {
+                    (
+                        data.lazy_iter
+                            .lock()
+                            .clone()
+                            .or_else(|| data.generator.lock().clone()),
+                        data.lazy_next.lock().clone(),
+                    )
+                } else {
+                    (None, None)
+                }
+            }),
+            _ => (None, None),
+        }
+    }
+
+    fn finish_delegate_result(
+        &mut self,
+        it: &Value,
+        mut result: Value,
+        return_completion: bool,
+        await_result: bool,
+    ) -> error::Result<DelegateOutcome> {
+        if await_result {
+            result = self.await_value(result)?;
+        }
+        if !matches!(result, Value::Object(_)) {
+            return Err(Error::type_err("Iterator result is not an object"));
+        }
+        let done = self.get_property(&result, "done")?.is_truthy();
+        if !done {
+            return Ok(DelegateOutcome::Yield(result));
+        }
+        self.mark_iterator_done(it);
+        let value = self.get_property(&result, "value")?;
+        if return_completion {
+            Ok(DelegateOutcome::Return(value))
+        } else {
+            Ok(DelegateOutcome::Complete(value))
+        }
+    }
+
+    pub(crate) fn iterator_delegate_step(
+        &mut self,
+        it: &Value,
+        completion: ResumeKind,
+        await_result: bool,
+    ) -> error::Result<DelegateOutcome> {
+        let (target, cached_next) = self.delegate_target_and_next(it);
+        match completion {
+            ResumeKind::Next(value) => {
+                let result = if let Some(target) = target {
+                    let next = cached_next
+                        .ok_or_else(|| Error::type_err("Iterator next is not callable"))?;
+                    if !crate::builtins::is_callable(&next, &self.heap) {
+                        return Err(Error::type_err("Iterator next is not callable"));
+                    }
+                    self.call_function(&next, &[value], Some(target))?
+                } else {
+                    let (value, done) = self.iterator_next_resume(it, value)?;
+                    crate::builtins::regexp::gen_result(self, value, done, false)?
+                };
+                self.finish_delegate_result(it, result, false, await_result)
+            }
+            ResumeKind::Return(value) => {
+                let Some(target) = target else {
+                    return Ok(DelegateOutcome::Return(value));
+                };
+                let method = self.get_property(&target, "return")?;
+                if method.is_nullish() {
+                    return Ok(DelegateOutcome::Return(value));
+                }
+                if !crate::builtins::is_callable(&method, &self.heap) {
+                    return Err(Error::type_err("Iterator return is not callable"));
+                }
+                let result = self.call_function(&method, &[value], Some(target))?;
+                self.finish_delegate_result(it, result, true, await_result)
+            }
+            ResumeKind::Throw(value) => {
+                let Some(target) = target else {
+                    return Err(Error::type_err("Iterator does not provide a throw method"));
+                };
+                let method = self.get_property(&target, "throw")?;
+                if !method.is_nullish() {
+                    if !crate::builtins::is_callable(&method, &self.heap) {
+                        return Err(Error::type_err("Iterator throw is not callable"));
+                    }
+                    let result = self.call_function(&method, &[value], Some(target))?;
+                    return self.finish_delegate_result(it, result, false, await_result);
+                }
+
+                let return_method = self.get_property(&target, "return")?;
+                if !return_method.is_nullish() {
+                    if !crate::builtins::is_callable(&return_method, &self.heap) {
+                        return Err(Error::type_err("Iterator return is not callable"));
+                    }
+                    let mut result = self.call_function(&return_method, &[], Some(target))?;
+                    if await_result {
+                        result = self.await_value(result)?;
+                    }
+                    if !matches!(result, Value::Object(_)) {
+                        return Err(Error::type_err("Iterator return result is not an object"));
+                    }
+                }
+                Err(Error::type_err("Iterator does not provide a throw method"))
+            }
+        }
+    }
+
     /// Like [`iterator_next`] but passes `resume` to a lazy iterator's JS
     /// `next()` method (used by `yield*` to forward the outer resume value to
     /// the delegated iterator). Eager (Vec-backed) iterators ignore `resume`.
@@ -1531,7 +1661,16 @@ impl Vm {
                 Value::Object(idx) => *idx,
                 _ => return Err(Error::type_err("not a generator".to_string())),
             };
-            let (value, done) = self.resume_generator(g_idx, ResumeKind::Next(resume))?;
+            let (mut value, mut done, forwarded_result) =
+                self.resume_generator(g_idx, ResumeKind::Next(resume))?;
+            if forwarded_result {
+                done = self.get_property(&value, "done")?.is_truthy();
+                value = if done {
+                    Value::Undefined
+                } else {
+                    self.get_property(&value, "value")?
+                };
+            }
             if done {
                 if let Value::Object(idx) = it {
                     self.heap.with_obj(idx.0, |o| {

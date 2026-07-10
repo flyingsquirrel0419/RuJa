@@ -115,6 +115,14 @@
 
 ### Runtime hardening
 
+- `yield*` now runs as a VM delegation state machine that forwards the inner
+  iterator's result object unchanged and routes outer `next`, `throw`, and
+  `return` completions through the corresponding inner iterator methods. It
+  validates iterator result objects, preserves final values, performs missing
+  `throw` cleanup through `return`, and observes well-known Symbol properties
+  through boxed primitive prototype chains. Async generators prefer
+  `Symbol.asyncIterator`, fall back to `Symbol.iterator`, await delegated
+  results, and convert protocol errors into rejected iterator-result Promises.
 - Object literal method parsing no longer treats an escaped identifier such as
   `\u0061sync` as the contextual `async` method prefix. Escaped `async`
   followed by another method name is now rejected during parsing, while an
@@ -152,6 +160,12 @@
 Supported-subset pass rate: **100.0%** (up from 88.6%).
 Current supported subset count: **9497 pass / 0 fail / 10941 skip / 0 timeout**.
 
+- **Complete synchronous `yield*` semantics**: delegated iteration now
+  preserves raw result objects, completion values, method receiver/arguments,
+  getter and call errors, protocol-violation cleanup, and primitive
+  `Symbol.iterator` lookup. With `generators` and `Symbol.iterator`
+  temporarily lifted, `language/expressions/yield` improves from **34 pass /
+  29 fail** to **63 pass / 0 fail**.
 - **Synchronous object method-definition admission**: the focused object
   method-definition path now exercises implemented async/generator grammar,
   class-element contexts, default parameters, and Symbol-backed computed
