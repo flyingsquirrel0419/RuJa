@@ -266,6 +266,25 @@ class WeakRefAdmissionTests(unittest.TestCase):
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
+    def test_typed_array_to_string_features_are_frozen_to_audited_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/TypedArray/prototype/toString.js"
+            detached = root / "test/built-ins/TypedArray/prototype/toString/detached-buffer.js"
+            future = root / "test/built-ins/TypedArray/prototype/toString/future.js"
+            outside = root / "test/built-ins/TypedArray/prototype/unsupported/detached-buffer.js"
+            meta = {"flags": [], "features": ["TypedArray"]}
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertFalse(tool.should_skip(meta, detached))
+                    self.assertTrue(tool.should_skip(meta, future))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_typed_array_accessor_features_are_admitted_only_on_exact_paths(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

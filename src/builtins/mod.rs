@@ -1916,6 +1916,17 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     Ok((typed_array_ctor, typed_array_proto))
 }
 
+fn install_typed_array_to_string_alias(vm: &mut Vm, typed_array_proto: &Value, to_string: Value) {
+    if let Value::Object(index) = typed_array_proto {
+        vm.heap.with_obj(index.0, |object| {
+            object
+                .props()
+                .lock()
+                .insert(PropertyKey::from("toString"), data_prop(to_string));
+        });
+    }
+}
+
 fn install_array_buffer_constructor_in_env(
     vm: &mut Vm,
     env: GcIdx,
@@ -2823,6 +2834,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     install_shared_array_buffer_constructor_in_env(vm, realm_env, Some(&global))?;
     install_data_view_constructor_in_env(vm, realm_env, Some(&global))?;
     let (typed_array_ctor, typed_array_proto) = make_typed_array_intrinsic_in_env(vm, realm_env)?;
+    install_typed_array_to_string_alias(vm, &typed_array_proto, vm.array_to_string_fn.clone());
     for entry in typed_array_constructor_entries() {
         install_typed_array_constructor_in_env(
             vm,
@@ -5998,6 +6010,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     )?;
     // override the constructor function to use array_constructor
     vm.array_proto = Value::Object(array_proto);
+    vm.array_to_string_fn = vm.get_property(&vm.array_proto.clone(), "toString")?;
+    install_typed_array_to_string_alias(vm, &typed_array_proto, vm.array_to_string_fn.clone());
     let array_values_fn = vm.get_property(&vm.array_proto.clone(), "values")?;
     vm.heap.with_obj(array_proto.0, |obj| {
         obj.props().lock().insert(

@@ -173,14 +173,24 @@ pub(crate) fn array_pop(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> er
     }
     Ok(Value::Undefined)
 }
-/// Array.prototype.toString: delegates to join(",") (Object.prototype.toString
-/// would otherwise return "[object Array]").
 pub(crate) fn array_to_string(
     vm: &mut Vm,
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    array_join(vm, &[], this)
+    let receiver = this.unwrap_or(Value::Undefined);
+    if receiver.is_nullish() {
+        return Err(Error::type_err(
+            "Array.prototype.toString called on null or undefined",
+        ));
+    }
+    let object = vm.to_object(&receiver)?;
+    let join = vm.get_property(&object, "join")?;
+    if is_callable(&join, &vm.heap) {
+        vm.call_function(&join, &[], Some(object))
+    } else {
+        object_to_string(vm, Some(object), None)
+    }
 }
 
 pub(crate) fn array_join(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {

@@ -302,6 +302,22 @@ fn string_constructor_skips_non_callable_to_primitive_methods() {
 }
 
 #[test]
+fn array_to_string_observes_join_and_uses_object_fallback() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var joined = Array.prototype.toString.call({
+                join: function() { calls += 1; return "joined"; }
+            });
+            var fallback = Array.prototype.toString.call({ join: null });
+            [joined, calls, fallback].join("|");
+        "#),
+        Value::String(Arc::from("joined|1|[object Object]"))
+    );
+    assert!(run_err("Array.prototype.toString.call(null);").contains("TypeError"));
+}
+
+#[test]
 fn string_exotic_indices_are_enumerable_read_only_properties() {
     assert_eq!(
         run(r#"var s = new String("abc");
@@ -2685,6 +2701,62 @@ fn typed_array_size_getters_track_growable_shared_buffers() {
         "#),
         Value::String(Arc::from("4,2,2,6,2,3|4,2,2,14,2,7"))
     );
+}
+
+#[test]
+fn typed_array_to_string_and_iterator_aliases_match_intrinsics() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            [
+                Uint8Array.prototype.toString === Array.prototype.toString,
+                other.Uint8Array.prototype.toString === other.Array.prototype.toString,
+                Uint8Array.prototype[Symbol.iterator] === Uint8Array.prototype.values,
+                other.Uint8Array.prototype[other.Symbol.iterator] ===
+                    other.Uint8Array.prototype.values
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
+fn typed_array_realm_to_string_alias_ignores_mutated_array_prototype() {
+    assert_eq!(
+        run(r#"
+            var intrinsic = Array.prototype.toString;
+            Object.defineProperty(Array.prototype, "toString", {
+                configurable: true,
+                get: function() { throw new Error("must not be observed"); }
+            });
+            var other = $262.createRealm().global;
+            var typedArrayPrototype = Object.getPrototypeOf(other.Uint8Array.prototype);
+            var alias = Object.getOwnPropertyDescriptor(
+                typedArrayPrototype, "toString"
+            ).value;
+            Object.defineProperty(Array.prototype, "toString", {
+                configurable: true,
+                writable: true,
+                value: intrinsic
+            });
+            alias === intrinsic;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_to_string_uses_join_and_rejects_detached_views() {
+    assert_eq!(
+        run("new Uint8Array([1, 2, 3]).toString();"),
+        Value::String(Arc::from("1,2,3"))
+    );
+    for source in [
+        "var array = new Uint8Array(1); $262.detachArrayBuffer(array.buffer); array.toString();",
+        "var array = new BigInt64Array(1); $262.detachArrayBuffer(array.buffer); array.toString();",
+    ] {
+        assert!(run_err(source).contains("TypeError"));
+    }
 }
 
 #[test]

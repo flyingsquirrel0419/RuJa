@@ -239,6 +239,12 @@
 
 ### Test tooling
 
+- TypedArray `toString` and `Symbol.iterator` now close at **5 pass / 0 fail /
+  0 skip / 5 total**. `%TypedArray%.prototype.toString` is the same rooted
+  intrinsic function object as `Array.prototype.toString`, including during
+  later Realm creation after mutable prototype replacement. Array toString now
+  follows its generic observable `join` lookup and Object fallback algorithm,
+  so detached Number and BigInt TypedArrays throw through their validated join.
 - The exact TypedArray `byteLength`, `byteOffset`, and `length` accessor paths
   are now fully admitted at **52 pass / 0 fail / 0 skip / 52 total**. Admission
   is frozen to the audited files so future tests remain gated until reviewed.

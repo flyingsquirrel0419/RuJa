@@ -848,6 +848,19 @@ is now fully admitted at **12 pass / 0 fail / 0 skip / 12 total**. Against test2
 of the matrix. Against the preceding identical matrix, exactly 12 skipped files
 moved to pass.
 
+Focused TypedArray alias coverage check:
+`%TypedArray%.prototype.toString` now aliases the exact original
+`Array.prototype.toString` function with the standard data-property
+descriptor. The Array method performs `ToObject`, observes `join`, calls a
+callable join with the receiver, and otherwise falls back to
+`Object.prototype.toString`. This makes detached Number and BigInt TypedArrays
+throw through TypedArray join while preserving generic Array behavior. The VM
+roots the original function so later Realm bootstrap does not observe mutable
+`Array.prototype` state. The four frozen toString files and the
+`Symbol.iterator === values` non-constructor file are **5 pass / 0 fail / 0
+skip / 5 total**. The supported subset remains **11589 pass / 0 fail / 8850
+skip / 20439 total**.
+
 Focused TypedArray size-accessor coverage check:
 The `%TypedArray%.prototype.byteLength`, `byteOffset`, and `length` getters use
 the receiver's internal slots and report zero for detached or out-of-bounds

@@ -2472,6 +2472,7 @@ impl Vm {
         for proto in [
             &self.object_proto,
             &self.array_proto,
+            &self.array_to_string_fn,
             &self.function_proto,
             &self.string_proto,
             &self.number_proto,

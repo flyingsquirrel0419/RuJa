@@ -155,6 +155,20 @@ TYPED_ARRAY_ACCESSOR_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_TO_STRING_FILES = {
+    "built-ins/TypedArray/prototype/toString.js",
+    "built-ins/TypedArray/prototype/toString/BigInt/detached-buffer.js",
+    "built-ins/TypedArray/prototype/toString/detached-buffer.js",
+    "built-ins/TypedArray/prototype/toString/not-a-constructor.js",
+}
+
+TYPED_ARRAY_TO_STRING_FEATURES = {
+    "BigInt",
+    "Reflect.construct",
+    "TypedArray",
+    "arrow-function",
+}
+
 TYPED_ARRAY_RESIZABLE_FILES = {
     "built-ins/TypedArray/of/resized-with-out-of-bounds-and-in-bounds-indices.js",
     "built-ins/TypedArray/out-of-bounds-behaves-like-detached.js",
@@ -1117,6 +1131,13 @@ def typed_array_accessor_path(path):
         return False
     return rel.as_posix() in TYPED_ARRAY_ACCESSOR_FILES
 
+def typed_array_to_string_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in TYPED_ARRAY_TO_STRING_FILES
+
 def typed_array_resizable_path(path, meta):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1573,6 +1594,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
     if path is not None and typed_array_accessor_path(path):
         feats.difference_update(TYPED_ARRAY_ACCESSOR_FEATURES)
+    if path is not None and typed_array_to_string_path(path):
+        feats.difference_update(TYPED_ARRAY_TO_STRING_FEATURES)
     if path is not None and typed_array_resizable_path(path, meta):
         feats.difference_update(TYPED_ARRAY_RESIZABLE_FEATURES)
     if path is not None and typed_array_at_path(path):
