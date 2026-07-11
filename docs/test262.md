@@ -626,6 +626,16 @@ of the matrix. Against the preceding identical matrix, all 38 focused files
 moved out of skip while the aggregate gained 39 pass and lost one fail, so the
 additional passing file is kept separate from the focused gain.
 
+Focused TypedArray `some` coverage check:
+`%TypedArray%.prototype.some` validates the receiver and callback, snapshots the
+initial internal length, reads each current integer-indexed value before
+invoking the predicate with `(value, index, receiver)`, and returns immediately
+on the first truthy result. Callback-driven detach or shrink yields `undefined`
+for invalidated future indexes and growth does not extend the visit count. The
+exact path reports **44 pass / 0 fail / 0 skip / 44 total**. Consolidating the
+predicate loop leaves the four find-family paths at **152 pass / 0 fail / 0
+skip / 152 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

@@ -3413,7 +3413,14 @@ pub(crate) fn typed_array_find(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    typed_array_find_impl(vm, args, this, "find", false, false)
+    typed_array_predicate_impl(
+        vm,
+        args,
+        this,
+        "find",
+        TypedArrayPredicateMode::FindValue,
+        false,
+    )
 }
 
 pub(crate) fn typed_array_find_index(
@@ -3421,7 +3428,14 @@ pub(crate) fn typed_array_find_index(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    typed_array_find_impl(vm, args, this, "findIndex", true, false)
+    typed_array_predicate_impl(
+        vm,
+        args,
+        this,
+        "findIndex",
+        TypedArrayPredicateMode::FindIndex,
+        false,
+    )
 }
 
 pub(crate) fn typed_array_find_last(
@@ -3429,7 +3443,14 @@ pub(crate) fn typed_array_find_last(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    typed_array_find_impl(vm, args, this, "findLast", false, true)
+    typed_array_predicate_impl(
+        vm,
+        args,
+        this,
+        "findLast",
+        TypedArrayPredicateMode::FindValue,
+        true,
+    )
 }
 
 pub(crate) fn typed_array_find_last_index(
@@ -3437,15 +3458,37 @@ pub(crate) fn typed_array_find_last_index(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    typed_array_find_impl(vm, args, this, "findLastIndex", true, true)
+    typed_array_predicate_impl(
+        vm,
+        args,
+        this,
+        "findLastIndex",
+        TypedArrayPredicateMode::FindIndex,
+        true,
+    )
 }
 
-fn typed_array_find_impl(
+pub(crate) fn typed_array_some(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_predicate_impl(vm, args, this, "some", TypedArrayPredicateMode::Some, false)
+}
+
+#[derive(Clone, Copy)]
+enum TypedArrayPredicateMode {
+    FindValue,
+    FindIndex,
+    Some,
+}
+
+fn typed_array_predicate_impl(
     vm: &mut Vm,
     args: &[Value],
     this: Option<Value>,
     name: &str,
-    return_index: bool,
+    mode: TypedArrayPredicateMode,
     from_last: bool,
 ) -> error::Result<Value> {
     let this =
@@ -3502,17 +3545,17 @@ fn typed_array_find_impl(
                 Some(this_arg.clone()),
             )?;
             if predicate_result.is_truthy() {
-                return Ok(if return_index {
-                    Value::Number(index as f64)
-                } else {
-                    value
+                return Ok(match mode {
+                    TypedArrayPredicateMode::FindValue => value,
+                    TypedArrayPredicateMode::FindIndex => Value::Number(index as f64),
+                    TypedArrayPredicateMode::Some => Value::Bool(true),
                 });
             }
         }
-        Ok(if return_index {
-            Value::Number(-1.0)
-        } else {
-            Value::Undefined
+        Ok(match mode {
+            TypedArrayPredicateMode::FindValue => Value::Undefined,
+            TypedArrayPredicateMode::FindIndex => Value::Number(-1.0),
+            TypedArrayPredicateMode::Some => Value::Bool(false),
         })
     })();
     vm.unpin_many(pin_count);

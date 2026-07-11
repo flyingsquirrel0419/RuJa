@@ -1972,6 +1972,32 @@ fn typed_array_find_last_index_returns_reverse_match_position() {
 }
 
 #[test]
+fn typed_array_some_snapshots_length_and_short_circuits() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var seen = [];
+            var resized = tracking.some(function(value, index, receiver) {
+                seen.push(String(value) + ":" + index + ":" + (receiver === tracking));
+                if (index === 0) rab.resize(1);
+                return false;
+            });
+            var calls = 0;
+            var matched = new Int8Array([1, 7, 3]).some(function(value) {
+                calls += 1;
+                return value === 7;
+            });
+            [resized, seen.join(","), matched, calls].join("|");
+            "#),
+        Value::String(Arc::from(
+            "false|1:0:true,undefined:1:true,undefined:2:true|true|2"
+        ))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

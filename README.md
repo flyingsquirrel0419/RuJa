@@ -42,7 +42,7 @@ SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, length-tracking TypedArray/DataView views, TypedArray constructors,
 indexing, `at`/`copyWithin`/`entries`/`fill`/`find`/`findIndex`/`findLast`/
 `findLastIndex`/`join`/`keys`/`reverse`/`set`/`slice`/`subarray`/`toReversed`/
-`values`, BigInt, Date, regex, and more. RuJa does not claim
+`some`/`values`, BigInt, Date, regex, and more. RuJa does not claim
 full ES conformance — conformance is scoped to this subset. See
 [test262 conformance](docs/test262.md#supported-subset) for the exact
 feature list and current pass rates, and [limitations](docs/limitations.md)
