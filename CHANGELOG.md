@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.join` now validates and snapshots the initial view
+  length before separator coercion. Detach, shrink, or growth during separator
+  conversion therefore preserves the initial iteration count, while later
+  out-of-bounds element reads contribute empty fields as required.
 - `%TypedArray%.prototype.set` now implements both TypedArray-source and
   array-like-source copying, including offset coercion order, immutable and
   out-of-bounds validation, Number/BigInt content checks, overlapping-buffer
@@ -120,6 +124,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/join/` path now closes at **32 pass
+  / 0 fail / 0 skip / 32 total**, including BigInt, detached, out-of-bounds,
+  separator-coercion, and resizable-buffer behavior.
 - The exact `built-ins/TypedArray/prototype/set/` path now closes at **110 pass
   / 0 fail / 0 skip / 110 total**, covering array-like and TypedArray sources,
   BigInt, SharedArrayBuffer, immutable buffers, overlap, and resize behavior.

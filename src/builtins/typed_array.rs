@@ -3094,13 +3094,38 @@ pub(crate) fn typed_array_join(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray join called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray join called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray join called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        buffer.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray join called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
     let separator = match args.first() {
         Some(value) if !value.is_undefined() => vm.to_string(value)?.to_string(),
         _ => ",".to_string(),
     };
-    let this = this.ok_or_else(|| Error::type_err("TypedArray join called without this"))?;
-    let (kind, _, _, byte_length) = typed_array_slots(vm, Some(this.clone()), "join")?;
-    let length = typed_array_element_count(kind, byte_length);
     let mut parts = Vec::with_capacity(length);
     for index in 0..length {
         let value = vm.get_property(&this, &index.to_string())?;

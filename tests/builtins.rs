@@ -1678,6 +1678,42 @@ fn typed_array_set_handles_array_like_aliasing_and_resizes() {
 }
 
 #[test]
+fn typed_array_join_snapshots_length_before_separator_coercion() {
+    assert_eq!(
+        run(r#"
+            var growRab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var grow = new Int8Array(growRab);
+            var grown = grow.join({ toString: function() {
+                growRab.resize(6);
+                return ".";
+            }});
+
+            var shrinkRab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var shrink = new Int8Array(shrinkRab);
+            var shrunk = shrink.join({ toString: function() {
+                shrinkRab.resize(0);
+                return "-";
+            }});
+
+            var oobRab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var oob = new Int8Array(oobRab, 0, 4);
+            oobRab.resize(0);
+            var separatorCalled = false;
+            var oobTypeError = false;
+            try {
+                oob.join({ toString: function() {
+                    separatorCalled = true;
+                    return ",";
+                }});
+            } catch (error) { oobTypeError = error instanceof TypeError; }
+
+            [grown, grow.length, shrunk, separatorCalled, oobTypeError].join("|");
+            "#,),
+        Value::String(Arc::from("0.0.0.0|6|---|false|true"))
+    );
+}
+
+#[test]
 fn typed_array_own_keys_include_integer_indices_first() {
     assert_eq!(
         run(r#"

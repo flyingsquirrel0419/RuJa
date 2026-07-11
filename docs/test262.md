@@ -63,7 +63,7 @@ SharedArrayBuffer cores, Promise, Atomics operations including worker
 `wait`/`notify`, `waitAsync`, and `pause`, length-tracking TypedArray/DataView
 views, `TypedArray.prototype.at`, async/await, generators, for-of, optional
 chaining, nullish coalescing, logical assignment. TypedArray `fill`, `values`,
-`set`, `subarray`, and default iteration are also included.
+`join`, `set`, `subarray`, and default iteration are also included.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, a public
 multi-agent embedder API, full TypedArray prototype method coverage beyond the
@@ -471,6 +471,12 @@ resizable target changes. The exact path reports **110 pass / 0 fail / 0 skip
 change. Downloaded artifacts aggregate to **25978 pass / 6766 fail / 0 timeout
 / 0 error / 14963 skip / 47718 total / 32744 executed**, or **79.3%** of
 executed files and **54.4%** of the matrix.
+
+Focused TypedArray `join` coverage check:
+`%TypedArray%.prototype.join` validates and snapshots the receiver length
+before separator coercion, then observes current element bounds while keeping
+that iteration count across detach, shrink, and growth. The exact path reports
+**32 pass / 0 fail / 0 skip / 32 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
