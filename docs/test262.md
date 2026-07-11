@@ -534,6 +534,16 @@ identical matrix, the nine focused files moved from skip to pass. Two unrelated
 built-ins failures also passed in this shard run, but no `toReversed` references
 exist outside the focused path, so that variance is not attributed to this fix.
 
+Focused TypedArray `copyWithin` coverage check:
+`%TypedArray%.prototype.copyWithin` validates mutability before argument
+coercion, computes indexes from the initial internal length, then revalidates
+current bounds after coercion-driven resize or detach. The final overlap-safe
+raw byte move respects byte offsets, truncates length-tracking views to their
+current bounds, and preserves NaN payloads and other element bit patterns. The
+exact path reports **65 pass / 0 fail / 0 skip / 65 total**. Its three 10,000
+element detach stress files use a path-limited 180-second timeout after a
+102-second local measurement; ordinary files retain the shared 8-second limit.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

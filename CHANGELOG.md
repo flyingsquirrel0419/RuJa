@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.copyWithin` now validates writable receivers before
+  argument coercion, snapshots the internal length, revalidates bounds after
+  coercion-driven resize or detach, and performs overlap-safe raw byte copies
+  that preserve NaN payloads and other element bit patterns.
 - `%TypedArray%.prototype.toReversed` now validates and snapshots the source's
   internal length, creates a distinct same-kind TypedArray without consulting
   `constructor` or `@@species`, and copies Number or BigInt elements in reverse
@@ -142,6 +146,10 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/copyWithin/` path now closes at **65
+  pass / 0 fail / 0 skip / 65 total**. Three detach stress files receive a
+  path-limited 180-second timeout because their full constructor/factory matrix
+  takes about 100 seconds in the interpreter; all other files retain 8 seconds.
 - The exact `built-ins/TypedArray/prototype/toReversed/` path now closes at **9
   pass / 0 fail / 0 skip / 9 total**. CI `29142341248` and `test262-full`
   `29142341265` confirm the change at **26100 pass / 6766 fail / 15589 skip /

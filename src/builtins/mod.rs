@@ -1670,6 +1670,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_subarray_fn =
         vm.new_native_function_in_env("subarray", typed_array_subarray, 2, env)?;
     let typed_array_set_fn = vm.new_native_function_in_env("set", typed_array_set, 1, env)?;
+    let typed_array_copy_within_fn =
+        vm.new_native_function_in_env("copyWithin", typed_array_copy_within, 2, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
@@ -1712,6 +1714,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("set"),
                 data_prop(Value::Object(typed_array_set_fn)),
+            );
+            props.insert(
+                PropertyKey::from("copyWithin"),
+                data_prop(Value::Object(typed_array_copy_within_fn)),
             );
             props.insert(
                 PropertyKey::from("join"),

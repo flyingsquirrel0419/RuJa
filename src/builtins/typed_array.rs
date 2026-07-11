@@ -3089,6 +3089,131 @@ pub(crate) fn typed_array_set(
     Ok(Value::Undefined)
 }
 
+pub(crate) fn typed_array_copy_within(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray copyWithin called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err(
+            "TypedArray copyWithin called on non-object",
+        ));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray copyWithin called on non-TypedArray"))?;
+    let backing = backing
+        .ok_or_else(|| Error::type_err("TypedArray copyWithin missing viewed ArrayBuffer"))?;
+    if is_immutable_array_buffer(vm, &backing) {
+        return Err(Error::type_err("TypedArray copyWithin on immutable buffer"));
+    }
+    let initial_byte_length = effective_view_byte_length(
+        vm,
+        Some(&backing),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray copyWithin called on out-of-bounds view"))?;
+    let initial_length = typed_array_element_count(kind, initial_byte_length);
+
+    let pin_count = vm.pin(&this) + vm.pin(&backing);
+    let result: error::Result<Value> = (|| {
+        let to = slice_bound(
+            vm,
+            args.first().unwrap_or(&Value::Undefined),
+            initial_length,
+        )?;
+        let from = slice_bound(vm, args.get(1).unwrap_or(&Value::Undefined), initial_length)?;
+        let final_index = match args.get(2) {
+            Some(value) if !value.is_undefined() => slice_bound(vm, value, initial_length)?,
+            _ => initial_length,
+        };
+        let requested_count = final_index
+            .saturating_sub(from)
+            .min(initial_length.saturating_sub(to));
+        if requested_count == 0 {
+            return Ok(this.clone());
+        }
+
+        let current_byte_length = effective_view_byte_length(
+            vm,
+            Some(&backing),
+            byte_offset,
+            fixed_byte_length,
+            length_tracking,
+            kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("TypedArray copyWithin buffer became out of bounds"))?;
+        let current_length = typed_array_element_count(kind, current_byte_length);
+        let count = requested_count
+            .min(current_length.saturating_sub(from))
+            .min(current_length.saturating_sub(to));
+        if count == 0 {
+            return Ok(this.clone());
+        }
+
+        let element_size = kind.element_size();
+        let source_start = byte_offset
+            .checked_add(
+                from.checked_mul(element_size)
+                    .ok_or_else(|| Error::range("TypedArray copyWithin source overflow"))?,
+            )
+            .ok_or_else(|| Error::range("TypedArray copyWithin source overflow"))?;
+        let target_start = byte_offset
+            .checked_add(
+                to.checked_mul(element_size)
+                    .ok_or_else(|| Error::range("TypedArray copyWithin target overflow"))?,
+            )
+            .ok_or_else(|| Error::range("TypedArray copyWithin target overflow"))?;
+        let byte_count = count
+            .checked_mul(element_size)
+            .ok_or_else(|| Error::range("TypedArray copyWithin count overflow"))?;
+        let source_end = source_start
+            .checked_add(byte_count)
+            .ok_or_else(|| Error::range("TypedArray copyWithin source overflow"))?;
+        let target_end = target_start
+            .checked_add(byte_count)
+            .ok_or_else(|| Error::range("TypedArray copyWithin target overflow"))?;
+
+        let Value::Object(buffer_idx) = &backing else {
+            return Err(Error::type_err("TypedArray copyWithin buffer is invalid"));
+        };
+        vm.heap.with_obj(buffer_idx.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return Err(Error::type_err("TypedArray copyWithin buffer is invalid"));
+            };
+            if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(Error::type_err("TypedArray copyWithin buffer is detached"));
+            }
+            let mut bytes = buffer.bytes.lock();
+            if source_end > bytes.len() || target_end > bytes.len() {
+                return Err(Error::type_err(
+                    "TypedArray copyWithin range became out of bounds",
+                ));
+            }
+            bytes.copy_within(source_start..source_end, target_start);
+            Ok(())
+        })?;
+        Ok(this.clone())
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub(crate) fn typed_array_join(
     vm: &mut Vm,
     args: &[Value],

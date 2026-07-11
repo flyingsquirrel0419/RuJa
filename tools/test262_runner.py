@@ -267,6 +267,27 @@ TYPED_ARRAY_TO_REVERSED_FEATURES = {
     "change-array-by-copy",
 }
 
+TYPED_ARRAY_COPY_WITHIN_PREFIXES = (
+    "built-ins/TypedArray/prototype/copyWithin/",
+)
+
+TYPED_ARRAY_COPY_WITHIN_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "Reflect.construct",
+    "Symbol",
+    "TypedArray",
+    "arrow-function",
+    "immutable-arraybuffer",
+    "resizable-arraybuffer",
+}
+
+TYPED_ARRAY_COPY_WITHIN_EXTENDED_TIMEOUT_FILES = {
+    "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+    "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+    "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
+}
+
 ARRAY_BUFFER_PREFIXES = (
     "built-ins/ArrayBuffer/",
 )
@@ -837,6 +858,20 @@ def typed_array_to_reversed_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_TO_REVERSED_PREFIXES)
 
+def typed_array_copy_within_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_COPY_WITHIN_PREFIXES)
+
+def typed_array_copy_within_extended_timeout_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in TYPED_ARRAY_COPY_WITHIN_EXTENDED_TIMEOUT_FILES
+
 def array_buffer_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1076,6 +1111,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_REVERSE_FEATURES)
     if path is not None and typed_array_to_reversed_path(path):
         feats.difference_update(TYPED_ARRAY_TO_REVERSED_FEATURES)
+    if path is not None and typed_array_copy_within_path(path):
+        feats.difference_update(TYPED_ARRAY_COPY_WITHIN_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
         if "resizable-arraybuffer" in meta.get("features", []):
@@ -1188,7 +1225,8 @@ def run_test(path):
     full, meta = build_source(path)
     if should_skip(meta, path):
         return 'skip'
-    status, _ = execute_source(full, meta, RUJA)
+    timeout = 180 if typed_array_copy_within_extended_timeout_path(path) else 8
+    status, _ = execute_source(full, meta, RUJA, timeout=timeout)
     return status
 
 def main():

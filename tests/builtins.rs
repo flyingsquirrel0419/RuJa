@@ -1781,6 +1781,41 @@ fn typed_array_to_reversed_copies_same_type_without_species() {
 }
 
 #[test]
+fn typed_array_copy_within_preserves_bytes_and_revalidates_bounds() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var tracking = new Int8Array(rab);
+            tracking.set([0, 1, 2, 3]);
+            Object.defineProperty(tracking, "length", { value: 1 });
+            var same = tracking.copyWithin(1, 0, 3) === tracking;
+            var overlap = Array.from(tracking).join(",");
+
+            tracking.set([0, 1, 2, 3]);
+            tracking.copyWithin({ valueOf: function() {
+                rab.resize(3);
+                return 2;
+            }}, 0);
+            var shrunk = Array.from(tracking).join(",");
+
+            rab.resize(6);
+            tracking.set([0, 1, 2, 3, 4, 5]);
+            tracking.copyWithin({ valueOf: function() { return 0; }}, 2);
+            var grown = Array.from(tracking).join(",");
+
+            var fixed = new Int8Array(rab, 0, 6);
+            rab.resize(2);
+            var outOfBounds = false;
+            try { fixed.copyWithin(0, 1); }
+            catch (error) { outOfBounds = error instanceof TypeError; }
+
+            [same, overlap, shrunk, grown, outOfBounds].join("|");
+            "#),
+        Value::String(Arc::from("true|0,0,1,2|0,1,0|2,3,4,5,4,5|true"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"
