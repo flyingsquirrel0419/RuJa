@@ -205,7 +205,10 @@
 
 - The exact `built-ins/TypedArray/prototype/toSorted/` path now closes at **12
   pass / 0 fail / 0 skip / 12 total**, covering default/custom comparators,
-  same-type copying, immutable sources, and species avoidance.
+  same-type copying, immutable sources, and species avoidance. CI `29155327452`
+  and `test262-full` `29155327470` confirm the change at **26684 pass / 6764
+  fail / 15007 skip / 12 timeout / 0 error / 48467 total**. Against the
+  preceding identical matrix, exactly 12 files moved from skip to pass.
 - The exact `built-ins/TypedArray/prototype/sort/` path now closes at **36 pass
   / 0 fail / 0 skip / 36 total**, covering stable Number and BigInt ordering,
   immutable buffers, and resizable-buffer comparator side effects. CI

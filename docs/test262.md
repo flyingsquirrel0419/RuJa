@@ -729,7 +729,12 @@ the same stable Number/BigInt comparison semantics as `sort`, and writes the
 ordered values into a fresh current-realm intrinsic of the source element kind.
 The source remains unchanged and may use an immutable backing buffer. User
 `constructor` and `Symbol.species` properties are never observed. The exact
-path reports **12 pass / 0 fail / 0 skip / 12 total**.
+path reports **12 pass / 0 fail / 0 skip / 12 total**. CI `29155327452` and
+`test262-full` `29155327470` confirm the change. Downloaded artifacts aggregate
+to **26684 pass / 6764 fail / 12 timeout / 0 error / 15007 skip / 48467 total /
+33448 pass-or-fail executed**, or **79.8%** of pass-or-fail files and **55.1%**
+of the matrix. Against the preceding identical matrix, exactly 12 focused files
+moved from skip to pass.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
