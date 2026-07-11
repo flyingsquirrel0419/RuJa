@@ -256,6 +256,17 @@ TYPED_ARRAY_REVERSE_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_TO_REVERSED_PREFIXES = (
+    "built-ins/TypedArray/prototype/toReversed/",
+)
+
+TYPED_ARRAY_TO_REVERSED_FEATURES = {
+    "Reflect.construct",
+    "Symbol.species",
+    "TypedArray",
+    "change-array-by-copy",
+}
+
 ARRAY_BUFFER_PREFIXES = (
     "built-ins/ArrayBuffer/",
 )
@@ -819,6 +830,13 @@ def typed_array_reverse_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_REVERSE_PREFIXES)
 
+def typed_array_to_reversed_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_TO_REVERSED_PREFIXES)
+
 def array_buffer_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1056,6 +1074,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_KEYS_ENTRIES_FEATURES)
     if path is not None and typed_array_reverse_path(path):
         feats.difference_update(TYPED_ARRAY_REVERSE_FEATURES)
+    if path is not None and typed_array_to_reversed_path(path):
+        feats.difference_update(TYPED_ARRAY_TO_REVERSED_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
         if "resizable-arraybuffer" in meta.get("features", []):

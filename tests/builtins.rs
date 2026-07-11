@@ -1746,6 +1746,41 @@ fn typed_array_reverse_uses_internal_length_and_dynamic_bounds() {
 }
 
 #[test]
+fn typed_array_to_reversed_copies_same_type_without_species() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var source = new Int8Array(rab);
+            source.set([1, 2, 3]);
+            var constructorReads = 0;
+            Object.defineProperty(source, "constructor", {
+                get: function() {
+                    constructorReads++;
+                    throw new Error("constructor must not be read");
+                }
+            });
+            Object.defineProperty(source, "length", { value: 1 });
+
+            var copy = source.toReversed();
+            rab.resize(5);
+            source[3] = 4;
+            source[4] = 5;
+            var grownCopy = source.toReversed();
+
+            [
+                constructorReads,
+                copy instanceof Int8Array,
+                copy === source,
+                Array.from(copy).join(","),
+                Array.from(source).join(","),
+                Array.from(grownCopy).join(",")
+            ].join("|");
+            "#),
+        Value::String(Arc::from("0|true|false|3,2,1|1,2,3,4,5|5,4,3,2,1"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

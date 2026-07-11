@@ -1673,6 +1673,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
+    let typed_array_to_reversed_fn =
+        vm.new_native_function_in_env("toReversed", typed_array_to_reversed, 0, env)?;
     let typed_array_fill_fn = vm.new_native_function_in_env("fill", typed_array_fill, 1, env)?;
     let typed_array_at_fn = vm.new_native_function_in_env("at", typed_array_at, 1, env)?;
     let typed_array_values_fn =
@@ -1718,6 +1720,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("reverse"),
                 data_prop(Value::Object(typed_array_reverse_fn)),
+            );
+            props.insert(
+                PropertyKey::from("toReversed"),
+                data_prop(Value::Object(typed_array_to_reversed_fn)),
             );
             props.insert(
                 PropertyKey::from("fill"),

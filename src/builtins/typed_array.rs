@@ -3193,6 +3193,70 @@ pub(crate) fn typed_array_reverse(
     Ok(this)
 }
 
+pub(crate) fn typed_array_to_reversed(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray toReversed called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err(
+            "TypedArray toReversed called on non-object",
+        ));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray toReversed called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray toReversed called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+
+    let constructor = current_realm_typed_array_constructor(vm, kind)?;
+    let construct_args = [Value::Number(length as f64)];
+    let pin_count = vm.pin(&this) + vm.pin(&constructor) + vm.pin_many(&construct_args);
+    let result = vm.construct(&constructor, &construct_args);
+    vm.unpin_many(pin_count);
+    let result = result?;
+    let (result_kind, _, _, result_byte_length) =
+        typed_array_slots(vm, Some(result.clone()), "toReversed result")?;
+    if result_kind != kind || typed_array_element_count(result_kind, result_byte_length) < length {
+        return Err(Error::type_err(
+            "TypedArray toReversed constructor returned an incompatible result",
+        ));
+    }
+
+    let pin_count = vm.pin(&this) + vm.pin(&result);
+    let copy_result: error::Result<()> = (|| {
+        for target_index in 0..length {
+            let source_index = length - target_index - 1;
+            let value = vm.get_property(&this, &source_index.to_string())?;
+            vm.set_property_strict(&result, &target_index.to_string(), value)?;
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    copy_result?;
+    Ok(result)
+}
+
 fn typed_array_iterator(
     vm: &mut Vm,
     this: Option<Value>,

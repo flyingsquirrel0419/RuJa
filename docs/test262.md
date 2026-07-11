@@ -520,6 +520,13 @@ pass-or-fail files and **53.8%** of the matrix. Against the preceding run's
 identical matrix, 22 files moved from skip to pass with no fail, timeout, or
 error change.
 
+Focused TypedArray `toReversed` coverage check:
+`%TypedArray%.prototype.toReversed` validates the source and snapshots its
+internal length without reading a `length` property. It creates a distinct
+same-kind TypedArray while ignoring the source's `constructor` and `@@species`,
+then copies Number or BigInt elements in reverse order without changing the
+source. The exact path reports **9 pass / 0 fail / 0 skip / 9 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

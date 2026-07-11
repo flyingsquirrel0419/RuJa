@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.toReversed` now validates and snapshots the source's
+  internal length, creates a distinct same-kind TypedArray without consulting
+  `constructor` or `@@species`, and copies Number or BigInt elements in reverse
+  order without mutating the source.
 - `%TypedArray%.prototype.reverse` now validates a writable TypedArray before
   mutation, snapshots its internal element length, and swaps Number or BigInt
   elements through integer-indexed access. Fixed and length-tracking resizable
@@ -138,6 +142,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/toReversed/` path now closes at **9
+  pass / 0 fail / 0 skip / 9 total**.
 - The exact `built-ins/TypedArray/prototype/reverse/` path now closes at **22
   pass / 0 fail / 0 skip / 22 total**. CI `29141851460` and `test262-full`
   `29141851451` confirm the change at **26089 pass / 6768 fail / 15598 skip /
