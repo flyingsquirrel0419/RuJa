@@ -858,7 +858,12 @@ non-enumerable, configurable descriptors. Focused regressions preserve these
 identities through forced GC and independent main/created-Realm mutation. This
 is complete admitted file coverage for the pinned subtree, not a claim of full
 Test262 variant coverage or fully independent Realm primordials. The supported
-subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
+`29168553907` and `test262-full` `29168553904` succeeded. Downloaded artifacts
+aggregate to **27122 pass / 6755 fail / 12 timeout / 0 error / 14578 skip /
+48467 total / 33877 pass-or-fail executed**, or **80.1%** of pass-or-fail files
+and **56.0%** of the matrix. Against the preceding identical matrix, exactly
+two skipped files moved to pass.
 
 Focused TypedArray alias coverage check:
 `%TypedArray%.prototype.toString` now aliases the exact original

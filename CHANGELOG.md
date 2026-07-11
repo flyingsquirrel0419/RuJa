@@ -244,6 +244,9 @@
   final parent `constructor` and `Symbol.iterator` identity/descriptor files
   are frozen to exact paths. Main/created-Realm alias identity remains stable
   across independent mutation and forced GC.
+  CI `29168553907` and `test262-full` `29168553904` confirm the independently
+  reviewed change at **27122 pass / 6755 fail / 14578 skip / 12 timeout / 0
+  error / 48467 total**. Exactly two files moved from skip to pass.
 - TypedArray `toString` and `Symbol.iterator` now close at **5 pass / 0 fail /
   0 skip / 5 total**. `%TypedArray%.prototype.toString` is the same rooted
   intrinsic function object as `Array.prototype.toString`, including during
