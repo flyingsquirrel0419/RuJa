@@ -1692,6 +1692,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_find_last_index_fn =
         vm.new_native_function_in_env("findLastIndex", typed_array_find_last_index, 1, env)?;
     let typed_array_some_fn = vm.new_native_function_in_env("some", typed_array_some, 1, env)?;
+    let typed_array_every_fn = vm.new_native_function_in_env("every", typed_array_every, 1, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
@@ -1762,6 +1763,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("some"),
                 data_prop(Value::Object(typed_array_some_fn)),
+            );
+            props.insert(
+                PropertyKey::from("every"),
+                data_prop(Value::Object(typed_array_every_fn)),
             );
             props.insert(
                 PropertyKey::from("join"),

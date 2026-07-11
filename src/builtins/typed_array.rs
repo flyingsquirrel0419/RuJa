@@ -3476,11 +3476,27 @@ pub(crate) fn typed_array_some(
     typed_array_predicate_impl(vm, args, this, "some", TypedArrayPredicateMode::Some, false)
 }
 
+pub(crate) fn typed_array_every(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_predicate_impl(
+        vm,
+        args,
+        this,
+        "every",
+        TypedArrayPredicateMode::Every,
+        false,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum TypedArrayPredicateMode {
     FindValue,
     FindIndex,
     Some,
+    Every,
 }
 
 fn typed_array_predicate_impl(
@@ -3544,11 +3560,17 @@ fn typed_array_predicate_impl(
                 &[value.clone(), Value::Number(index as f64), this.clone()],
                 Some(this_arg.clone()),
             )?;
-            if predicate_result.is_truthy() {
+            let predicate_truthy = predicate_result.is_truthy();
+            let should_stop = match mode {
+                TypedArrayPredicateMode::Every => !predicate_truthy,
+                _ => predicate_truthy,
+            };
+            if should_stop {
                 return Ok(match mode {
                     TypedArrayPredicateMode::FindValue => value,
                     TypedArrayPredicateMode::FindIndex => Value::Number(index as f64),
                     TypedArrayPredicateMode::Some => Value::Bool(true),
+                    TypedArrayPredicateMode::Every => Value::Bool(false),
                 });
             }
         }
@@ -3556,6 +3578,7 @@ fn typed_array_predicate_impl(
             TypedArrayPredicateMode::FindValue => Value::Undefined,
             TypedArrayPredicateMode::FindIndex => Value::Number(-1.0),
             TypedArrayPredicateMode::Some => Value::Bool(false),
+            TypedArrayPredicateMode::Every => Value::Bool(true),
         })
     })();
     vm.unpin_many(pin_count);

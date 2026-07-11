@@ -1998,6 +1998,30 @@ fn typed_array_some_snapshots_length_and_short_circuits() {
 }
 
 #[test]
+fn typed_array_every_snapshots_length_and_short_circuits() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var seen = [];
+            var resized = tracking.every(function(value, index, receiver) {
+                seen.push(String(value) + ":" + index + ":" + (receiver === tracking));
+                if (index === 0) rab.resize(1);
+                return value === 1;
+            });
+            var calls = 0;
+            var matched = new Int8Array([1, 2, 3]).every(function(value) {
+                calls += 1;
+                return value > 0;
+            });
+            [resized, seen.join(","), matched, calls].join("|");
+            "#),
+        Value::String(Arc::from("false|1:0:true,undefined:1:true|true|3"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

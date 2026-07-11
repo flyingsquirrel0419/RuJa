@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.every` now validates and snapshots the receiver,
+  reads each current integer-indexed value before callback invocation,
+  short-circuits on the first falsy result, and preserves the initial visit
+  count across detach, shrink, and growth.
 - `%TypedArray%.prototype.some` now validates and snapshots the receiver, reads
   each current integer-indexed value before callback invocation, short-circuits
   on the first truthy result, and preserves the initial visit count across
@@ -169,6 +173,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/every/` path now closes at **44 pass
+  / 0 fail / 0 skip / 44 total**. The shared `some` and find-family paths remain
+  at **196 pass / 0 fail / 0 skip / 196 total**.
 - The exact `built-ins/TypedArray/prototype/some/` path now closes at **44 pass
   / 0 fail / 0 skip / 44 total**. The four shared find paths remain at **152
   pass / 0 fail / 0 skip / 152 total** after predicate-loop consolidation. CI

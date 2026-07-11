@@ -376,6 +376,21 @@ TYPED_ARRAY_SOME_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_EVERY_PREFIXES = (
+    "built-ins/TypedArray/prototype/every/",
+)
+
+TYPED_ARRAY_EVERY_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "Reflect.construct",
+    "Reflect.set",
+    "Symbol",
+    "TypedArray",
+    "arrow-function",
+    "resizable-arraybuffer",
+}
+
 ARRAY_BUFFER_PREFIXES = (
     "built-ins/ArrayBuffer/",
 )
@@ -1002,6 +1017,13 @@ def typed_array_some_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_SOME_PREFIXES)
 
+def typed_array_every_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_EVERY_PREFIXES)
+
 def array_buffer_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1255,6 +1277,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_FIND_LAST_INDEX_FEATURES)
     if path is not None and typed_array_some_path(path):
         feats.difference_update(TYPED_ARRAY_SOME_FEATURES)
+    if path is not None and typed_array_every_path(path):
+        feats.difference_update(TYPED_ARRAY_EVERY_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
         if "resizable-arraybuffer" in meta.get("features", []):
