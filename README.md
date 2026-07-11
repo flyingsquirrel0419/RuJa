@@ -37,7 +37,7 @@ ES5.1 + classes, async/await, generators, Promises with static combinators
 and `withResolvers`,
 destructuring,
 getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
-WeakRef/FinalizationRegistry, Reflect, Proxy, fixed-length SharedArrayBuffer,
+WeakRef/FinalizationRegistry, Reflect, Proxy, growable SharedArrayBuffer core,
 fixed-length Atomics including worker `wait`/`notify`, `waitAsync`, and `pause`,
 TypedArray
 constructors/indexing, BigInt, Date, regex, and more. RuJa does not claim full

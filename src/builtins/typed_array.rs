@@ -79,6 +79,7 @@ pub(crate) fn array_buffer_constructor(
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
             shared: false,
+            max_byte_length: None,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -100,12 +101,28 @@ pub(crate) fn shared_array_buffer_constructor(
         Some(value) => to_shared_array_buffer_length(vm, value)?,
         None => 0,
     };
+    let max_byte_length = match args.get(1) {
+        Some(options @ Value::Object(_)) => {
+            let value = vm.get_property(options, "maxByteLength")?;
+            if value.is_undefined() {
+                None
+            } else {
+                Some(to_shared_array_buffer_length(vm, &value)?)
+            }
+        }
+        _ => None,
+    };
+    if max_byte_length.is_some_and(|max| length > max) {
+        return Err(Error::range("Invalid SharedArrayBuffer length"));
+    }
     let proto = native_constructor_prototype_with_default(
         vm,
         "SharedArrayBuffer",
         vm.object_proto.clone(),
     )?;
-    if length > MAX_ARRAY_BUFFER_LENGTH {
+    if length > MAX_ARRAY_BUFFER_LENGTH
+        || max_byte_length.is_some_and(|max| max > MAX_ARRAY_BUFFER_LENGTH)
+    {
         return Err(Error::range("Invalid SharedArrayBuffer length"));
     }
     let idx = vm
@@ -116,6 +133,7 @@ pub(crate) fn shared_array_buffer_constructor(
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
             shared: true,
+            max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -142,6 +160,7 @@ pub(crate) fn shared_array_buffer_from_agent_broadcast(
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
             shared: true,
+            max_byte_length: broadcast.max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -534,6 +553,83 @@ pub(crate) fn shared_array_buffer_byte_length_get(
             "SharedArrayBuffer byteLength getter on non-object",
         )),
     }
+}
+
+fn shared_array_buffer_slots(
+    vm: &Vm,
+    this: Option<Value>,
+    accessor: &str,
+) -> error::Result<(GcIdx, Option<usize>)> {
+    let Value::Object(idx) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(format!(
+            "SharedArrayBuffer {accessor} called on non-object"
+        )));
+    };
+    vm.heap
+        .with_obj(idx.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return None;
+            };
+            buffer.shared.then_some((idx, buffer.max_byte_length))
+        })
+        .ok_or_else(|| {
+            Error::type_err(format!(
+                "SharedArrayBuffer {accessor} called on wrong receiver"
+            ))
+        })
+}
+
+pub(crate) fn shared_array_buffer_growable_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (_, max_byte_length) = shared_array_buffer_slots(vm, this, "growable getter")?;
+    Ok(Value::Bool(max_byte_length.is_some()))
+}
+
+pub(crate) fn shared_array_buffer_max_byte_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (idx, max_byte_length) = shared_array_buffer_slots(vm, this, "maxByteLength getter")?;
+    let length = match max_byte_length {
+        Some(length) => length,
+        None => vm.heap.with_obj(idx.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return 0;
+            };
+            buffer.bytes.lock().len()
+        }),
+    };
+    Ok(Value::Number(length as f64))
+}
+
+pub(crate) fn shared_array_buffer_grow(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (idx, max_byte_length) = shared_array_buffer_slots(vm, this, "grow")?;
+    let max_byte_length =
+        max_byte_length.ok_or_else(|| Error::type_err("SharedArrayBuffer is not growable"))?;
+    let new_byte_length =
+        to_shared_array_buffer_length(vm, args.first().unwrap_or(&Value::Undefined))?;
+    if new_byte_length > max_byte_length {
+        return Err(Error::range("Invalid SharedArrayBuffer grow length"));
+    }
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err("Invalid SharedArrayBuffer receiver"));
+        };
+        let mut bytes = buffer.bytes.lock();
+        if new_byte_length < bytes.len() {
+            return Err(Error::range("SharedArrayBuffer cannot shrink"));
+        }
+        bytes.resize(new_byte_length, 0);
+        Ok(Value::Undefined)
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -2727,6 +2823,7 @@ fn allocate_array_buffer_with_bytes_and_immutable(
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(immutable),
             shared: false,
+            max_byte_length: None,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;

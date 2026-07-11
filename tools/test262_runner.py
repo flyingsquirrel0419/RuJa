@@ -155,6 +155,7 @@ SHARED_ARRAY_BUFFER_FEATURES = {
     "Symbol.species",
     "Symbol.toStringTag",
     "TypedArray",
+    "resizable-arraybuffer",
 }
 
 ATOMICS_SYNC_PREFIXES = tuple(

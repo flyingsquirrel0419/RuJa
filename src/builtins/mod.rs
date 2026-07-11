@@ -1809,12 +1809,23 @@ fn install_shared_array_buffer_constructor_in_env(
         "SharedArrayBuffer",
         1,
         shared_array_buffer_constructor,
-        &[("slice", shared_array_buffer_slice, 2)],
+        &[
+            ("slice", shared_array_buffer_slice, 2),
+            ("grow", shared_array_buffer_grow, 1),
+        ],
         env,
     )?;
     let byte_length_getter = vm.new_native_function_in_env(
         "get byteLength",
         shared_array_buffer_byte_length_get,
+        0,
+        env,
+    )?;
+    let growable_getter =
+        vm.new_native_function_in_env("get growable", shared_array_buffer_growable_get, 0, env)?;
+    let max_byte_length_getter = vm.new_native_function_in_env(
+        "get maxByteLength",
+        shared_array_buffer_max_byte_length_get,
         0,
         env,
     )?;
@@ -1825,17 +1836,25 @@ fn install_shared_array_buffer_constructor_in_env(
         .get(&env.0)
         .cloned()
         .unwrap_or_else(|| vm.function_proto.clone());
-    for function in [constructor, byte_length_getter, species_getter] {
+    for function in [
+        constructor,
+        byte_length_getter,
+        growable_getter,
+        max_byte_length_getter,
+        species_getter,
+    ] {
         set_function_object_proto(vm, function, &function_proto);
     }
-    let slice = vm.heap.with_obj(prototype.0, |obj| {
-        obj.props()
-            .lock()
-            .get(&PropertyKey::from("slice"))
-            .map(|descriptor| descriptor.value.clone())
-    });
-    if let Some(Value::Object(slice)) = slice {
-        set_function_object_proto(vm, slice, &function_proto);
+    for name in ["slice", "grow"] {
+        let method = vm.heap.with_obj(prototype.0, |obj| {
+            obj.props()
+                .lock()
+                .get(&PropertyKey::from(name))
+                .map(|descriptor| descriptor.value.clone())
+        });
+        if let Some(Value::Object(method)) = method {
+            set_function_object_proto(vm, method, &function_proto);
+        }
     }
     vm.heap.with_obj(constructor.0, |obj| {
         obj.props().lock().insert(
@@ -1848,6 +1867,14 @@ fn install_shared_array_buffer_constructor_in_env(
         props.insert(
             PropertyKey::from("byteLength"),
             accessor_get_prop(Value::Object(byte_length_getter)),
+        );
+        props.insert(
+            PropertyKey::from("growable"),
+            accessor_get_prop(Value::Object(growable_getter)),
+        );
+        props.insert(
+            PropertyKey::from("maxByteLength"),
+            accessor_get_prop(Value::Object(max_byte_length_getter)),
         );
         let mut tag = data_prop(Value::String(Arc::from("SharedArrayBuffer")));
         tag.writable = false;
@@ -2689,6 +2716,7 @@ fn test262_agent_broadcast(vm: &mut Vm, args: &[Value], _: Option<Value>) -> err
         Some(crate::vm::AgentBroadcast {
             bytes: buffer.bytes.clone(),
             waiters: buffer.waiters.clone(),
+            max_byte_length: buffer.max_byte_length,
         })
     });
     let broadcast = broadcast

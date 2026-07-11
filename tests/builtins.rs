@@ -7904,6 +7904,79 @@ fn shared_array_buffer_slice_uses_shared_species_and_copies_bytes() {
 }
 
 #[test]
+fn growable_shared_array_buffer_exposes_slots_and_grows_monotonically() {
+    assert_eq!(
+        run(
+            r#"
+            var fixed = new SharedArrayBuffer(3);
+            var growable = new SharedArrayBuffer(2, { maxByteLength: 6 });
+            var before = new Uint8Array(growable);
+            before[0] = 11;
+            before[1] = 22;
+            var result = growable.grow(5);
+            var after = new Uint8Array(growable);
+            var grow = Object.getOwnPropertyDescriptor(
+                SharedArrayBuffer.prototype,
+                "grow"
+            );
+            var growableDesc = Object.getOwnPropertyDescriptor(
+                SharedArrayBuffer.prototype,
+                "growable"
+            );
+            var maxDesc = Object.getOwnPropertyDescriptor(
+                SharedArrayBuffer.prototype,
+                "maxByteLength"
+            );
+            [
+                fixed.growable,
+                fixed.maxByteLength,
+                growable.growable,
+                growable.maxByteLength,
+                growable.byteLength,
+                result === undefined,
+                after[0], after[1], after[2], after[4],
+                grow.value.name, grow.value.length,
+                grow.writable, grow.enumerable, grow.configurable,
+                growableDesc.get.name, growableDesc.get.length,
+                maxDesc.get.name, maxDesc.get.length
+            ].join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "false|3|true|6|5|true|11|22|0|0|grow|1|true|false|true|get growable|0|get maxByteLength|0"
+        ))
+    );
+}
+
+#[test]
+fn growable_shared_array_buffer_validates_options_before_prototype_lookup() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var options = {};
+            Object.defineProperty(options, "maxByteLength", {
+                get: function() { log.push("max"); return 2; }
+            });
+            var newTarget = function() {}.bind(null);
+            Object.defineProperty(newTarget, "prototype", {
+                get: function() { log.push("prototype"); throw new Error("prototype"); }
+            });
+            var errors = [];
+            try { Reflect.construct(SharedArrayBuffer, [3, options], newTarget); }
+            catch (error) { errors.push(error instanceof RangeError); }
+            try { new SharedArrayBuffer(2, { maxByteLength: 4 }).grow(1); }
+            catch (error) { errors.push(error instanceof RangeError); }
+            try { new SharedArrayBuffer(2).grow(3); }
+            catch (error) { errors.push(error instanceof TypeError); }
+            try { SharedArrayBuffer.prototype.grow.call({}); }
+            catch (error) { errors.push(error instanceof TypeError); }
+            [log.join(","), errors.join(",")].join("|");
+            "#,),
+        Value::String(Arc::from("max|true,true,true,true"))
+    );
+}
+
+#[test]
 fn atomics_surface_has_spec_shaped_methods_and_tag() {
     assert_eq!(
         run(r#"

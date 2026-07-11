@@ -284,6 +284,7 @@ class SharedArrayBufferAdmissionTests(unittest.TestCase):
                     "Symbol",
                     "Symbol.species",
                     "Symbol.toStringTag",
+                    "resizable-arraybuffer",
                 ],
             }
             for tool in (test262_runner, test262_analyze):

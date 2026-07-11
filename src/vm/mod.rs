@@ -33,6 +33,7 @@ pub(crate) struct AgentBroadcast {
             >,
         >,
     >,
+    pub max_byte_length: Option<usize>,
 }
 
 #[derive(Default)]

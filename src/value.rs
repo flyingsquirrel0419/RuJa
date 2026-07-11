@@ -464,6 +464,7 @@ pub struct ArrayBufferData {
     pub detached: AtomicBool,
     pub immutable: AtomicBool,
     pub shared: bool,
+    pub max_byte_length: Option<usize>,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

@@ -58,15 +58,16 @@ tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
-WeakRef, FinalizationRegistry, fixed-length SharedArrayBuffer, Promise,
+WeakRef, FinalizationRegistry, growable SharedArrayBuffer core, Promise,
 fixed-length Atomics operations including worker `wait`/`notify`, `waitAsync`,
 and `pause`, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, a public
-multi-agent embedder API, growable/resizable SharedArrayBuffer, full TypedArray
-prototype method coverage beyond the constructor/index basics and
-ArrayBuffer/DataView support, Tail-call optimization.
+multi-agent embedder API, resizable ArrayBuffer and length-tracking views over
+growable buffers, full TypedArray prototype method coverage beyond the
+constructor/index basics and ArrayBuffer/DataView support, Tail-call
+optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -385,6 +386,17 @@ language subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
 artifacts aggregate to **25549 pass / 6769 fail / 11 timeout / 0 error / 16138
 skip / 48467 total / 32329 executed**, or **79.0%** of executed files and
 **52.7%** of the matrix.
+
+Growable SharedArrayBuffer core coverage check:
+`SharedArrayBuffer` now records the optional `maxByteLength` internal slot,
+reports it through standard `growable` and `maxByteLength` accessors, and
+extends the Arc-shared backing store monotonically through `grow()` while
+preserving bytes and zero-initializing new storage. Constructor validation
+observes the required option-coercion and `new.target.prototype` ordering, and
+agent broadcasts preserve the growth limit. The exact
+`built-ins/SharedArrayBuffer/` path now reports **104 pass / 0 fail / 0 skip /
+104 total**. Resizable ArrayBuffer and dynamic length-tracking views remain a
+separate gated unit.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

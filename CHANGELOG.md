@@ -28,7 +28,10 @@
   `@@toStringTag`, and species-aware `slice()`. Fixed-length shared buffers
   back TypedArray and DataView views without detachment, while ordinary
   ArrayBuffer accessors, transfer methods, and immutable operations reject the
-  shared brand. Growable SharedArrayBuffer remains unsupported.
+  shared brand. The constructor now accepts `maxByteLength`, exposes
+  `growable` and `maxByteLength`, and grows shared backing storage
+  monotonically through `grow()` while preserving existing bytes and
+  zero-initializing the extension.
 - `FinalizationRegistry` now stores weak registration targets and unregister
   tokens alongside strongly traced held values and cleanup callbacks. GC sweep
   moves dead targets into cleanup jobs, unregister removes every matching
@@ -83,6 +86,11 @@
 
 ### Test tooling
 
+- The exact `built-ins/SharedArrayBuffer/` exception now admits the
+  `resizable-arraybuffer` feature after implementing the growable SAB core.
+  Focused coverage closes at **104 pass / 0 fail / 0 skip / 104 total**. The
+  broader resizable ArrayBuffer and length-tracking view integration remain
+  gated.
 - The runner and analyzer now admit `Atomics.waitAsync`, `Atomics.pause`, and
   their required async/destructuring metadata only on the completed Atomics
   paths. Fixed-length Atomics reports **384 pass / 0 fail / 5 skip / 389
