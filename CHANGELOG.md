@@ -186,7 +186,12 @@
 
 - The exact `built-ins/TypedArray/prototype/includes/` path now closes at **45
   pass / 0 fail / 0 skip / 45 total**, including resizable-buffer matrices that
-  repeatedly construct dynamic TypedArray subclasses under GC pressure.
+  repeatedly construct dynamic TypedArray subclasses under GC pressure. CI
+  `29151186097` and `test262-full` `29151186100` confirm the change at **26586
+  pass / 6764 fail / 15105 skip / 12 timeout / 0 error / 48467 total**. Against
+  the preceding identical matrix from `test262-full` `29150690813`, all 45
+  focused files moved from skip to pass and the call-environment GC fix moved
+  one additional file from fail to pass.
 - The exact `built-ins/TypedArray/prototype/forEach/` path now closes at **42
   pass / 0 fail / 0 skip / 42 total**. The shared `every`, `some`, and
   find-family paths remain at **240 pass / 0 fail / 0 skip / 240 total**. CI

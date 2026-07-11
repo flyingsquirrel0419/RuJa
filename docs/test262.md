@@ -681,7 +681,13 @@ while NaN matches NaN and Number/BigInt content types remain distinct. The exact
 path reports **45 pass / 0 fail / 0 skip / 45 total**. Its full resizable-buffer
 matrix also exposed and now covers an interpreted call-environment GC root bug:
 dynamic derived TypedArray constructors retain their `this` binding across
-allocation pressure until `super()` initializes it.
+allocation pressure until `super()` initializes it. CI `29151186097` and
+`test262-full` `29151186100` confirm the change. Downloaded artifacts aggregate
+to **26586 pass / 6764 fail / 12 timeout / 0 error / 15105 skip / 48467 total /
+33350 pass-or-fail executed**, or **79.7%** of pass-or-fail files and **54.9%**
+of the matrix. Against the preceding identical matrix from `test262-full`
+`29150690813`, the focused path moved 45 files from skip to pass while the GC
+root fix moved one additional file from fail to pass.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
