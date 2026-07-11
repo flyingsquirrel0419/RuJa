@@ -52,9 +52,9 @@ guarantees, run RuJa in a separately killable process as well.
   same Arc backing store.
   `waitAsync` settles through the VM's external Promise-job queue, which CLI and
   test262 hosts drain at job checkpoints, and `pause` is a no-op hint.
-  Resizable ArrayBuffer and length-tracking TypedArray/DataView views over
-  growable buffers are not yet implemented, nor is a public embedder-facing
-  agent API.
+  Resizable ArrayBuffer provides `maxByteLength`, `resizable`, and `resize()`.
+  Length-tracking TypedArray/DataView views over resizable or growable buffers
+  are not yet implemented, nor is a public embedder-facing agent API.
 - Async generators serialize requests, and ordinary async functions preserve
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`

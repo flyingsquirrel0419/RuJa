@@ -58,14 +58,15 @@ tagged templates, computed property keys, object spread/rest, getters/
 setters, `new.target`, optional catch binding, Symbol.iterator,
 Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
-WeakRef, FinalizationRegistry, growable SharedArrayBuffer core, Promise,
-fixed-length Atomics operations including worker `wait`/`notify`, `waitAsync`,
-and `pause`, async/await, generators, for-of, optional chaining, nullish
+WeakRef, FinalizationRegistry, resizable ArrayBuffer and growable
+SharedArrayBuffer cores, Promise, Atomics operations including worker
+`wait`/`notify`, `waitAsync`, and `pause`, async/await, generators, for-of,
+optional chaining, nullish
 coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, a public
-multi-agent embedder API, resizable ArrayBuffer and length-tracking views over
-growable buffers, full TypedArray prototype method coverage beyond the
+multi-agent embedder API, length-tracking views over resizable or growable
+buffers, full TypedArray prototype method coverage beyond the
 constructor/index basics and ArrayBuffer/DataView support, Tail-call
 optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
@@ -400,6 +401,18 @@ separate gated unit. CI `29135330020` and `test262-full` `29135330077` confirm
 the change. Downloaded artifacts aggregate to **25593 pass / 6769 fail / 11
 timeout / 0 error / 16094 skip / 48467 total / 32373 executed**, or **79.1%**
 of executed files and **52.8%** of the matrix.
+
+Resizable ArrayBuffer core coverage check:
+`ArrayBuffer` now records `maxByteLength`, exposes `resizable` and
+`maxByteLength`, and resizes attached mutable backing stores in either
+direction. Length coercion precedes detach revalidation, growth zero-fills new
+bytes, and transfer distinguishes resizable-preserving and fixed-length modes.
+Classifying ArrayBuffer as an internally allocating native constructor also
+restores the required validation-before-prototype lookup order. The focused
+ArrayBuffer path reports **194 pass / 0 fail / 27 skip / 221 total**, and the
+complete Atomics path reports **389 pass / 0 fail / 0 skip / 389 total** after
+admitting its five resize/grow coercion-order cases. Dynamic length-tracking
+views remain the next gated unit.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

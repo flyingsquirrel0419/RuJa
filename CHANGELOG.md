@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- `ArrayBuffer` now accepts `maxByteLength`, exposes standard `resizable` and
+  `maxByteLength` accessors, and implements `resize()` with detach revalidation,
+  shrinking, zero-initialized growth, and immutable/shared brand rejection.
+  `transfer()` preserves a resizable source's maximum length while
+  `transferToFixedLength()` and `transferToImmutable()` produce fixed-length
+  destinations. Internally allocated ArrayBuffer construction now validates
+  length options before observing `new.target.prototype`.
 - `Atomics` now exposes the synchronous `add`, `and`, `compareExchange`,
   `exchange`, `isLockFree`, `load`, `or`, `store`, `sub`, and `xor`
   operations for Number and BigInt integer TypedArrays. Each operation holds
@@ -86,6 +93,11 @@
 
 ### Test tooling
 
+- The ArrayBuffer exception now admits `resizable-arraybuffer` and only the
+  receiver brands needed by those tests, raising the focused path to **194 pass
+  / 0 fail / 27 skip / 221 total** without opening unrelated SharedArrayBuffer
+  coverage. Atomics now closes at **389 pass / 0 fail / 0 skip / 389 total**
+  after admitting the five resize/grow coercion-order cases.
 - The exact `built-ins/SharedArrayBuffer/` exception now admits the
   `resizable-arraybuffer` feature after implementing the growable SAB core.
   Focused coverage closes at **104 pass / 0 fail / 0 skip / 104 total**. The

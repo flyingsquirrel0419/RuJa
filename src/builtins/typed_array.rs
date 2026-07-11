@@ -62,15 +62,34 @@ pub(crate) fn array_buffer_constructor(
     }
 
     let length = match args.first() {
-        Some(value) => to_index_length(vm, value, "ArrayBuffer")?,
+        Some(value) => to_shared_array_buffer_length(vm, value)?,
         None => 0,
     };
+    let max_byte_length = match args.get(1) {
+        Some(options @ Value::Object(_)) => {
+            let value = vm.get_property(options, "maxByteLength")?;
+            if value.is_undefined() {
+                None
+            } else {
+                Some(to_shared_array_buffer_length(vm, &value)?)
+            }
+        }
+        _ => None,
+    };
+    if max_byte_length.is_some_and(|max| length > max) {
+        return Err(Error::range("Invalid ArrayBuffer length"));
+    }
     let fallback_proto = if matches!(vm.array_buffer_proto, Value::Object(_)) {
         vm.array_buffer_proto.clone()
     } else {
         vm.object_proto.clone()
     };
     let proto = native_constructor_prototype_with_default(vm, "ArrayBuffer", fallback_proto)?;
+    if length > MAX_ARRAY_BUFFER_LENGTH
+        || max_byte_length.is_some_and(|max| max > MAX_ARRAY_BUFFER_LENGTH)
+    {
+        return Err(Error::range("Invalid ArrayBuffer length"));
+    }
     let idx = vm
         .heap
         .allocate(HeapObj::ArrayBuffer(crate::value::ArrayBufferData {
@@ -79,7 +98,7 @@ pub(crate) fn array_buffer_constructor(
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(false),
             shared: false,
-            max_byte_length: None,
+            max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -385,6 +404,89 @@ pub(crate) fn array_buffer_immutable_get(
     }
 }
 
+fn ordinary_array_buffer_slots(
+    vm: &Vm,
+    this: Option<Value>,
+    accessor: &str,
+) -> error::Result<(GcIdx, Option<usize>, bool)> {
+    let Value::Object(idx) = this.unwrap_or(Value::Undefined) else {
+        return Err(Error::type_err(format!(
+            "ArrayBuffer {accessor} called on non-object"
+        )));
+    };
+    vm.heap
+        .with_obj(idx.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return None;
+            };
+            (!buffer.shared).then_some((
+                idx,
+                buffer.max_byte_length,
+                buffer.detached.load(std::sync::atomic::Ordering::Relaxed),
+            ))
+        })
+        .ok_or_else(|| Error::type_err(format!("ArrayBuffer {accessor} called on wrong receiver")))
+}
+
+pub(crate) fn array_buffer_resizable_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (_, max_byte_length, _) = ordinary_array_buffer_slots(vm, this, "resizable getter")?;
+    Ok(Value::Bool(max_byte_length.is_some()))
+}
+
+pub(crate) fn array_buffer_max_byte_length_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (idx, max_byte_length, detached) =
+        ordinary_array_buffer_slots(vm, this, "maxByteLength getter")?;
+    if detached {
+        return Ok(Value::Number(0.0));
+    }
+    let length = match max_byte_length {
+        Some(length) => length,
+        None => vm.heap.with_obj(idx.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return 0;
+            };
+            buffer.bytes.lock().len()
+        }),
+    };
+    Ok(Value::Number(length as f64))
+}
+
+pub(crate) fn array_buffer_resize(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let (idx, max_byte_length, _) = ordinary_array_buffer_slots(vm, this, "resize")?;
+    let max_byte_length =
+        max_byte_length.ok_or_else(|| Error::type_err("ArrayBuffer is not resizable"))?;
+    let new_byte_length =
+        to_shared_array_buffer_length(vm, args.first().unwrap_or(&Value::Undefined))?;
+    if new_byte_length > max_byte_length {
+        return Err(Error::range("Invalid ArrayBuffer resize length"));
+    }
+    vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return Err(Error::type_err("Invalid ArrayBuffer receiver"));
+        };
+        if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::type_err("ArrayBuffer resize on detached buffer"));
+        }
+        if buffer.immutable.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::type_err("ArrayBuffer resize on immutable buffer"));
+        }
+        buffer.bytes.lock().resize(new_byte_length, 0);
+        Ok(Value::Undefined)
+    })
+}
+
 pub(crate) fn array_buffer_detached_get(
     vm: &mut Vm,
     _args: &[Value],
@@ -414,7 +516,7 @@ pub(crate) fn array_buffer_transfer(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    array_buffer_copy_and_detach(vm, args, this, false)
+    array_buffer_copy_and_detach(vm, args, this, false, true)
 }
 
 pub(crate) fn array_buffer_transfer_to_fixed_length(
@@ -422,7 +524,7 @@ pub(crate) fn array_buffer_transfer_to_fixed_length(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    array_buffer_copy_and_detach(vm, args, this, false)
+    array_buffer_copy_and_detach(vm, args, this, false, false)
 }
 
 pub(crate) fn array_buffer_transfer_to_immutable(
@@ -430,7 +532,7 @@ pub(crate) fn array_buffer_transfer_to_immutable(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    array_buffer_copy_and_detach(vm, args, this, true)
+    array_buffer_copy_and_detach(vm, args, this, true, false)
 }
 
 pub(crate) fn array_buffer_slice_to_immutable(
@@ -1431,6 +1533,7 @@ fn array_buffer_copy_and_detach(
     args: &[Value],
     this: Option<Value>,
     immutable: bool,
+    preserve_resizable: bool,
 ) -> error::Result<Value> {
     let this = this.ok_or_else(|| Error::type_err("ArrayBuffer transfer called without this"))?;
     if array_buffer_is_shared(vm, &this) != Some(false) {
@@ -1460,7 +1563,24 @@ fn array_buffer_copy_and_detach(
             }
         });
     }
-    let result = allocate_array_buffer_with_bytes_and_immutable(vm, bytes, immutable)?;
+    let source_max_byte_length = if preserve_resizable {
+        let Value::Object(idx) = &this else {
+            unreachable!();
+        };
+        vm.heap.with_obj(idx.0, |obj| {
+            let HeapObj::ArrayBuffer(buffer) = obj else {
+                return None;
+            };
+            buffer.max_byte_length
+        })
+    } else {
+        None
+    };
+    if source_max_byte_length.is_some_and(|max| new_len > max) {
+        return Err(Error::range("Invalid ArrayBuffer transfer length"));
+    }
+    let result =
+        allocate_array_buffer_with_bytes_options(vm, bytes, immutable, source_max_byte_length)?;
     if let Value::Object(idx) = &this {
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::ArrayBuffer(buffer) = o {
@@ -2814,6 +2934,15 @@ fn allocate_array_buffer_with_bytes_and_immutable(
     bytes: Vec<u8>,
     immutable: bool,
 ) -> error::Result<Value> {
+    allocate_array_buffer_with_bytes_options(vm, bytes, immutable, None)
+}
+
+fn allocate_array_buffer_with_bytes_options(
+    vm: &mut Vm,
+    bytes: Vec<u8>,
+    immutable: bool,
+    max_byte_length: Option<usize>,
+) -> error::Result<Value> {
     let proto = array_buffer_prototype(vm);
     let idx = vm
         .heap
@@ -2823,7 +2952,7 @@ fn allocate_array_buffer_with_bytes_and_immutable(
             detached: AtomicBool::new(false),
             immutable: AtomicBool::new(immutable),
             shared: false,
-            max_byte_length: None,
+            max_byte_length,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;

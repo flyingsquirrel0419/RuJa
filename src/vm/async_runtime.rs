@@ -1383,7 +1383,8 @@ impl Vm {
             }
             matches!(
                 f.name.as_deref(),
-                Some("DataView")
+                Some("ArrayBuffer")
+                    | Some("DataView")
                     | Some("WeakRef")
                     | Some("FinalizationRegistry")
                     | Some("SharedArrayBuffer")

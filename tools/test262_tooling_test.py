@@ -265,6 +265,34 @@ class WeakRefAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class ArrayBufferAdmissionTests(unittest.TestCase):
+    def test_resizable_array_buffer_feature_is_admitted_only_inside_builtin_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/ArrayBuffer/prototype/resize/case.js"
+            outside = root / "test/built-ins/Other/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "ArrayBuffer",
+                    "DataView",
+                    "Int8Array",
+                    "Reflect.construct",
+                    "SharedArrayBuffer",
+                    "Symbol",
+                    "resizable-arraybuffer",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 class SharedArrayBufferAdmissionTests(unittest.TestCase):
     def test_shared_array_buffer_features_are_admitted_only_inside_builtin_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -318,6 +346,7 @@ class AtomicsSyncAdmissionTests(unittest.TestCase):
                     "BigInt",
                     "Symbol",
                     "Symbol.toStringTag",
+                    "resizable-arraybuffer",
                 ],
             }
             wait_async_meta = {

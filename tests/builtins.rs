@@ -2312,6 +2312,71 @@ fn array_buffer_transfer_methods_copy_resize_and_detach_source() {
 }
 
 #[test]
+fn resizable_array_buffer_exposes_slots_resizes_and_preserves_transfer_mode() {
+    assert_eq!(
+        run(r#"
+            var fixed = new ArrayBuffer(3);
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var bytes = new Uint8Array(rab);
+            bytes[0] = 1;
+            bytes[3] = 4;
+            rab.resize(2);
+            rab.resize(6);
+            var resized = new Uint8Array(rab);
+            var resizedSnapshot = [resized[0], resized[1], resized[2], resized[5]];
+            var transferred = rab.transfer(7);
+            var transferSnapshot = [
+                transferred.resizable,
+                transferred.maxByteLength
+            ];
+            var fixedTransfer = transferred.transferToFixedLength(5);
+            var detached = new ArrayBuffer(1, { maxByteLength: 2 });
+            $262.detachArrayBuffer(detached);
+            var resize = Object.getOwnPropertyDescriptor(
+                ArrayBuffer.prototype,
+                "resize"
+            );
+            [
+                fixed.resizable, fixed.maxByteLength,
+                resizedSnapshot[0], resizedSnapshot[1],
+                resizedSnapshot[2], resizedSnapshot[3],
+                transferSnapshot[0], transferSnapshot[1],
+                fixedTransfer.resizable, fixedTransfer.maxByteLength,
+                detached.resizable, detached.maxByteLength,
+                resize.value.name, resize.value.length,
+                resize.writable, resize.enumerable, resize.configurable
+            ].join("|");
+            "#,),
+        Value::String(Arc::from(
+            "false|3|1|0|0|0|true|8|false|5|true|0|resize|1|true|false|true"
+        ))
+    );
+}
+
+#[test]
+fn resizable_array_buffer_rechecks_detachment_after_length_coercion() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var called = false;
+            var detachedError = false;
+            try {
+                rab.resize({ valueOf: function() {
+                    called = true;
+                    $262.detachArrayBuffer(rab);
+                    return 2;
+                }});
+            } catch (error) { detachedError = error instanceof TypeError; }
+            var fixedError = false;
+            try { new ArrayBuffer(1).resize(0); }
+            catch (error) { fixedError = error instanceof TypeError; }
+            [called, detachedError, fixedError].join("|");
+            "#,),
+        Value::String(Arc::from("true|true|true"))
+    );
+}
+
+#[test]
 fn array_buffer_transfer_to_immutable_and_slice_to_immutable_mark_results() {
     assert_eq!(
         run(r#"

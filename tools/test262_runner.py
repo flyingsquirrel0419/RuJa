@@ -121,6 +121,13 @@ ARRAY_BUFFER_FEATURES = {
     "ArrayBuffer",
     "Reflect.construct",
     "Symbol",
+    "resizable-arraybuffer",
+}
+
+ARRAY_BUFFER_RESIZABLE_FEATURES = {
+    "DataView",
+    "Int8Array",
+    "SharedArrayBuffer",
 }
 
 DATA_VIEW_PREFIXES = (
@@ -206,6 +213,7 @@ ATOMICS_SYNC_FEATURES = {
     "async-functions",
     "destructuring-binding",
     "immutable-arraybuffer",
+    "resizable-arraybuffer",
 }
 
 WEAK_REF_PREFIXES = (
@@ -820,6 +828,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
+        if "resizable-arraybuffer" in meta.get("features", []):
+            feats.difference_update(ARRAY_BUFFER_RESIZABLE_FEATURES)
     if path is not None and data_view_path(path):
         feats.difference_update(DATA_VIEW_FEATURES)
     if path is not None and shared_array_buffer_path(path):
