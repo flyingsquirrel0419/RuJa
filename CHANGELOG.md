@@ -88,7 +88,10 @@
   paths. Fixed-length Atomics reports **384 pass / 0 fail / 5 skip / 389
   total**; all five skipped files require growable or resizable buffers. The
   supported language subset remains **11589 pass / 0 fail / 8850 skip / 20439
-  total**.
+  total**. CI `29119574209` and `test262-full` `29119574146` confirm the
+  change; downloaded artifacts report **25549 pass / 6769 fail / 11 timeout /
+  0 error / 16138 skip / 48467 total / 32329 executed**, or **79.0%** of
+  executed files and **52.7%** of the matrix.
 - `tools/test262_support.py` now forwards `CanBlockIsTrue` and
   `CanBlockIsFalse` metadata to the RuJa host. Exact-path admission adds
   `Atomics.notify` and `Atomics.wait`, raising the focused Atomics path to

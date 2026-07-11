@@ -380,7 +380,11 @@ Test262 worker VMs drain those jobs before exit. `Atomics.pause` is exposed as
 the implementation-defined no-op hint permitted by ECMAScript. The complete
 fixed-length Atomics path reports **384 pass / 0 fail / 5 skip / 389 total**;
 all five skipped files require growable or resizable buffers. The supported
-language subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+language subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
+`29119574209` and `test262-full` `29119574146` confirm the change. Downloaded
+artifacts aggregate to **25549 pass / 6769 fail / 11 timeout / 0 error / 16138
+skip / 48467 total / 32329 executed**, or **79.0%** of executed files and
+**52.7%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
