@@ -672,6 +672,17 @@ Against the preceding identical matrix, all 42 focused files moved out of skip
 while the aggregate gained 43 pass and lost one fail, so the additional passing
 file is kept separate from the focused gain.
 
+Focused TypedArray `includes` coverage check:
+`%TypedArray%.prototype.includes` validates the receiver and snapshots its
+internal length before observable `fromIndex` coercion, then reads current
+integer-indexed values and compares them with SameValueZero. Resize or detach
+during coercion therefore exposes `undefined` at invalidated snapshot indexes,
+while NaN matches NaN and Number/BigInt content types remain distinct. The exact
+path reports **45 pass / 0 fail / 0 skip / 45 total**. Its full resizable-buffer
+matrix also exposed and now covers an interpreted call-environment GC root bug:
+dynamic derived TypedArray constructors retain their `this` binding across
+allocation pressure until `super()` initializes it.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

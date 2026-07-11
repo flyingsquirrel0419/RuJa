@@ -2041,6 +2041,53 @@ fn typed_array_for_each_ignores_results_and_visits_snapshot_length() {
 }
 
 #[test]
+fn typed_array_includes_uses_snapshot_indices_and_same_value_zero() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var foundUndefined = tracking.includes(undefined, {
+                valueOf: function() {
+                    rab.resize(1);
+                    return 1;
+                }
+            });
+            var foundZero = tracking.includes(0, 1);
+            var foundNaN = new Float64Array([1, NaN]).includes(NaN);
+            [foundUndefined, foundZero, foundNaN].join("|");
+            "#),
+        Value::String(Arc::from("true|false|true"))
+    );
+}
+
+#[test]
+fn typed_array_dynamic_subclass_construction_survives_gc_pressure() {
+    assert_eq!(
+        run(r#"
+            function subclass(name) {
+                return new Function("return class Dynamic extends " + name + " {}")();
+            }
+            var constructors = [
+                subclass("Uint8Array"),
+                subclass("Float32Array"),
+                subclass("BigInt64Array")
+            ];
+            var count = 0;
+            for (var round = 0; round < 32; round += 1) {
+                for (var ctor of constructors) {
+                    var rab = new ArrayBuffer(32, { maxByteLength: 64 });
+                    var view = new ctor(rab, ctor.BYTES_PER_ELEMENT);
+                    if (view.length > 0) count += 1;
+                }
+            }
+            count;
+            "#),
+        Value::Number(96.0)
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

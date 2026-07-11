@@ -694,7 +694,7 @@ fn array_find_value_at(vm: &mut Vm, object: &Value, index: usize) -> error::Resu
     vm.get_property(object, &index.to_string())
 }
 
-fn array_search_start(
+pub(crate) fn array_search_start(
     vm: &mut Vm,
     args: &[Value],
     len: usize,

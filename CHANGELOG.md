@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- Interpreted function call environments are now pinned from allocation through
+  setup and execution, so GC pressure during arguments/rest construction cannot
+  discard a derived constructor's uninitialized `this` binding before `super()`
+  initializes it.
+- `%TypedArray%.prototype.includes` now validates and snapshots the receiver,
+  coerces `fromIndex` after that snapshot, reads current integer-indexed values,
+  and compares with SameValueZero across detach and resize side effects.
 - `%TypedArray%.prototype.forEach` now validates and snapshots the receiver,
   reads each current integer-indexed value before callback invocation, ignores
   callback results, and preserves the initial visit count across detach,
@@ -177,6 +184,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/includes/` path now closes at **45
+  pass / 0 fail / 0 skip / 45 total**, including resizable-buffer matrices that
+  repeatedly construct dynamic TypedArray subclasses under GC pressure.
 - The exact `built-ins/TypedArray/prototype/forEach/` path now closes at **42
   pass / 0 fail / 0 skip / 42 total**. The shared `every`, `some`, and
   find-family paths remain at **240 pass / 0 fail / 0 skip / 240 total**. CI

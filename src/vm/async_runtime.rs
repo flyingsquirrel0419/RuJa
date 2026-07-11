@@ -1069,292 +1069,307 @@ impl Vm {
                     ));
                 }
                 let call_env = env::new_env(&self.heap, Some(closure), true)?;
-                // Declare every parameter binding as *uninitialized* (TDZ). The raw
-                // argument still lives in `locals[i]`, which the compiled
-                // parameter prologue reads via `LoadLocal`; the binding is only
-                // lifted by `InitLet` once the prologue applies the raw value or
-                // the default, left-to-right. This makes
-                // `function f(a = b, b = 2)` a ReferenceError: when `a`'s
-                // default evaluates, `b` is still in the TDZ.
-                for param in func.params.iter() {
-                    env::declare_uninit(
-                        &self.heap,
-                        call_env,
-                        param,
-                        crate::value::BindingKind::Param,
-                    );
-                }
-                // rest parameter: collect remaining args into an array.
-                if let Some(rest_name) = &func.rest_param {
-                    let rest: Vec<Value> = if func.params.len() <= args.len() {
-                        args[func.params.len()..].to_vec()
-                    } else {
-                        Vec::new()
-                    };
-                    let arr = HeapObj::Array(crate::value::ArrayData::new(
-                        rest,
-                        Some(self.array_proto.clone()),
-                    ));
-                    env::declare(
-                        &self.heap,
-                        call_env,
-                        rest_name,
-                        Value::Object(GcIdx(self.heap.allocate(arr)?)),
-                        crate::value::BindingKind::Param,
-                    );
-                }
-                if !is_arrow {
-                    let mut arg_array = crate::value::ArrayData::new(
-                        args.to_vec(),
-                        Some(self.object_proto.clone()),
-                    );
-                    arg_array
-                        .is_arguments
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
-                    let mapped_arguments = !func.chunk.is_strict && !func.has_parameter_expressions;
-                    if mapped_arguments {
-                        let mut seen = std::collections::HashSet::new();
-                        let mut names = vec![None; func.params.len()];
-                        for (i, name) in func.params.iter().enumerate().rev() {
-                            if i < args.len() && seen.insert(name.clone()) {
-                                names[i] = Some(name.clone());
-                            }
-                        }
-                        arg_array.arguments_map = Mutex::new(Some(crate::value::ArgumentsMap {
-                            env: call_env,
-                            names,
-                        }));
-                    }
-                    let arr = HeapObj::Array(arg_array);
-                    let arg_idx = GcIdx(self.heap.allocate(arr)?);
-                    self.heap.with_obj(arg_idx.0, |obj| {
-                        if let HeapObj::Array(a) = obj {
-                            let mut props = a.props.lock();
-                            let mut length_desc = crate::value::PropertyDescriptor::data(
-                                Value::Number(args.len() as f64),
-                            );
-                            length_desc.writable = true;
-                            length_desc.enumerable = false;
-                            length_desc.configurable = true;
-                            props.insert(crate::value::PropertyKey::from("length"), length_desc);
-                        }
-                    });
-                    if !mapped_arguments {
-                        let thrower = crate::builtins::throw_type_error_intrinsic(self, closure)?;
-                        self.heap.with_obj(arg_idx.0, |obj| {
-                            if let HeapObj::Array(a) = obj {
-                                a.props.lock().insert(
-                                    crate::value::PropertyKey::from("callee"),
-                                    crate::builtins::restricted_throw_type_error_accessor(thrower),
-                                );
-                            }
-                        });
-                    } else {
-                        // In non-strict mode, arguments has a `callee` property
-                        // pointing to the executing function.
-                        self.heap.with_obj(arg_idx.0, |obj| {
-                            if let HeapObj::Array(a) = obj {
-                                let mut props = a.props.lock();
-                                let mut callee_desc =
-                                    crate::value::PropertyDescriptor::data(Value::Object(idx));
-                                callee_desc.writable = true;
-                                callee_desc.enumerable = false;
-                                callee_desc.configurable = true;
-                                props
-                                    .insert(crate::value::PropertyKey::from("callee"), callee_desc);
-                            }
-                        });
-                    }
-                    env::declare(
-                        &self.heap,
-                        call_env,
-                        "arguments",
-                        Value::Object(arg_idx),
-                        crate::value::BindingKind::Var,
-                    );
-                }
-                // In sloppy (non-strict) mode, an unbound `this` (plain
-                // function call with no receiver) defaults to the global
-                // object. In strict mode it stays `undefined`. Arrow functions
-                // ignore `this` entirely (lexical capture).
-                let this_val = if is_arrow {
-                    this.unwrap_or(Value::Undefined)
-                } else {
-                    let raw = this.unwrap_or(Value::Undefined);
-                    if !func.chunk.is_strict {
-                        if raw.is_nullish() {
-                            self.global_this.clone()
-                        } else {
-                            self.to_object(&raw)?
-                        }
-                    } else {
-                        raw
-                    }
-                };
-                // Arrow functions capture `this` lexically from their
-                // enclosing scope, so they must NOT redeclare `this` in
-                // their own call environment (which would shadow the
-                // captured binding). Non-arrow functions bind `this` to the
-                // caller-supplied value (or `undefined`).
-                if !is_arrow {
-                    // Derived class constructors leave `this` in the TDZ
-                    // until `super()` initializes it.
-                    if func.is_derived {
+                let call_env_pin_count = self.pin(&Value::Object(call_env));
+                let call_result = (|| {
+                    // Declare every parameter binding as *uninitialized* (TDZ). The raw
+                    // argument still lives in `locals[i]`, which the compiled
+                    // parameter prologue reads via `LoadLocal`; the binding is only
+                    // lifted by `InitLet` once the prologue applies the raw value or
+                    // the default, left-to-right. This makes
+                    // `function f(a = b, b = 2)` a ReferenceError: when `a`'s
+                    // default evaluates, `b` is still in the TDZ.
+                    for param in func.params.iter() {
                         env::declare_uninit(
                             &self.heap,
                             call_env,
-                            "this",
-                            crate::value::BindingKind::Const,
-                        );
-                    } else {
-                        env::declare(
-                            &self.heap,
-                            call_env,
-                            "this",
-                            this_val.clone(),
-                            crate::value::BindingKind::Const,
+                            param,
+                            crate::value::BindingKind::Param,
                         );
                     }
-                }
-                // For object literal methods, bind #super to the HomeObject
-                // approximation used by RuJa's method calls. Super property
-                // code reads its prototype dynamically at each access. Class
-                // methods already have #super bound by the compiler.
-                if func.is_method && !is_arrow {
-                    let has_super = crate::environment::has(&self.heap, call_env, "#super");
-                    if !has_super {
-                        env::declare(
-                            &self.heap,
-                            call_env,
-                            "#super",
-                            this_val.clone(),
-                            crate::value::BindingKind::Const,
-                        );
-                    }
-                }
-                let _ = &this_val;
-                let is_gen = func.is_generator;
-                if is_gen {
-                    let prologue = self.execute_generator_prologue(
-                        func.clone(),
-                        call_env,
-                        this_val.clone(),
-                        args,
-                    )?;
-                    let generator_instance_proto = {
-                        let callee = Value::Object(idx);
-                        let proto = self
-                            .get_property_by_key(
-                                &callee,
-                                &crate::value::PropertyKey::from("prototype"),
-                            )
-                            .unwrap_or(Value::Undefined);
-                        if matches!(proto, Value::Object(_)) {
-                            proto
-                        } else if is_async {
-                            self.async_generator_proto.clone()
+                    // rest parameter: collect remaining args into an array.
+                    if let Some(rest_name) = &func.rest_param {
+                        let rest: Vec<Value> = if func.params.len() <= args.len() {
+                            args[func.params.len()..].to_vec()
                         } else {
-                            self.generator_proto.clone()
+                            Vec::new()
+                        };
+                        let arr = HeapObj::Array(crate::value::ArrayData::new(
+                            rest,
+                            Some(self.array_proto.clone()),
+                        ));
+                        env::declare(
+                            &self.heap,
+                            call_env,
+                            rest_name,
+                            Value::Object(GcIdx(self.heap.allocate(arr)?)),
+                            crate::value::BindingKind::Param,
+                        );
+                    }
+                    if !is_arrow {
+                        let mut arg_array = crate::value::ArrayData::new(
+                            args.to_vec(),
+                            Some(self.object_proto.clone()),
+                        );
+                        arg_array
+                            .is_arguments
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                        let mapped_arguments =
+                            !func.chunk.is_strict && !func.has_parameter_expressions;
+                        if mapped_arguments {
+                            let mut seen = std::collections::HashSet::new();
+                            let mut names = vec![None; func.params.len()];
+                            for (i, name) in func.params.iter().enumerate().rev() {
+                                if i < args.len() && seen.insert(name.clone()) {
+                                    names[i] = Some(name.clone());
+                                }
+                            }
+                            arg_array.arguments_map =
+                                Mutex::new(Some(crate::value::ArgumentsMap {
+                                    env: call_env,
+                                    names,
+                                }));
+                        }
+                        let arr = HeapObj::Array(arg_array);
+                        let arg_idx = GcIdx(self.heap.allocate(arr)?);
+                        self.heap.with_obj(arg_idx.0, |obj| {
+                            if let HeapObj::Array(a) = obj {
+                                let mut props = a.props.lock();
+                                let mut length_desc = crate::value::PropertyDescriptor::data(
+                                    Value::Number(args.len() as f64),
+                                );
+                                length_desc.writable = true;
+                                length_desc.enumerable = false;
+                                length_desc.configurable = true;
+                                props
+                                    .insert(crate::value::PropertyKey::from("length"), length_desc);
+                            }
+                        });
+                        if !mapped_arguments {
+                            let thrower =
+                                crate::builtins::throw_type_error_intrinsic(self, closure)?;
+                            self.heap.with_obj(arg_idx.0, |obj| {
+                                if let HeapObj::Array(a) = obj {
+                                    a.props.lock().insert(
+                                        crate::value::PropertyKey::from("callee"),
+                                        crate::builtins::restricted_throw_type_error_accessor(
+                                            thrower,
+                                        ),
+                                    );
+                                }
+                            });
+                        } else {
+                            // In non-strict mode, arguments has a `callee` property
+                            // pointing to the executing function.
+                            self.heap.with_obj(arg_idx.0, |obj| {
+                                if let HeapObj::Array(a) = obj {
+                                    let mut props = a.props.lock();
+                                    let mut callee_desc =
+                                        crate::value::PropertyDescriptor::data(Value::Object(idx));
+                                    callee_desc.writable = true;
+                                    callee_desc.enumerable = false;
+                                    callee_desc.configurable = true;
+                                    props.insert(
+                                        crate::value::PropertyKey::from("callee"),
+                                        callee_desc,
+                                    );
+                                }
+                            });
+                        }
+                        env::declare(
+                            &self.heap,
+                            call_env,
+                            "arguments",
+                            Value::Object(arg_idx),
+                            crate::value::BindingKind::Var,
+                        );
+                    }
+                    // In sloppy (non-strict) mode, an unbound `this` (plain
+                    // function call with no receiver) defaults to the global
+                    // object. In strict mode it stays `undefined`. Arrow functions
+                    // ignore `this` entirely (lexical capture).
+                    let this_val = if is_arrow {
+                        this.unwrap_or(Value::Undefined)
+                    } else {
+                        let raw = this.unwrap_or(Value::Undefined);
+                        if !func.chunk.is_strict {
+                            if raw.is_nullish() {
+                                self.global_this.clone()
+                            } else {
+                                self.to_object(&raw)?
+                            }
+                        } else {
+                            raw
                         }
                     };
-                    // Lazy generator: don't run the body yet. Create a suspended
-                    // generator object; the body runs incrementally via next().
-                    let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
-                        crate::value::LazyGeneratorData {
-                            fdef: func.clone(),
-                            closure: call_env,
-                            env: Mutex::new(prologue.env),
-                            this_val: Mutex::new(this_val.clone()),
-                            args: Mutex::new(args.to_vec()),
-                            ip: AtomicUsize::new(prologue.ip),
-                            stack: Mutex::new(prologue.stack),
-                            locals: Mutex::new(prologue.locals),
-                            catch_stack: Mutex::new(prologue.catch_stack),
-                            finally_stack: Mutex::new(prologue.finally_stack),
-                            guard_seq: AtomicU32::new(prologue.guard_seq),
-                            finally_completion_tag: AtomicU8::new(prologue.finally_completion_tag),
-                            finally_completion_val: Mutex::new(prologue.finally_completion_val),
-                            started: AtomicBool::new(false),
-                            done: AtomicBool::new(false),
-                            delegating: AtomicBool::new(false),
-                            resume_value: Mutex::new(Value::Undefined),
-                            is_async,
-                            async_queue: Mutex::new(std::collections::VecDeque::new()),
-                            async_processing: AtomicBool::new(false),
-                            async_suspended_yield: AtomicBool::new(false),
-                            props: Mutex::new(IndexMap::new()),
-                            proto: Mutex::new(Some(generator_instance_proto)),
-                        },
-                    ))?;
-                    Ok(Value::Object(GcIdx(g_idx)))
-                } else {
-                    // execute the compiled function chunk
-                    let frame_new_target = if is_arrow {
-                        lexical_new_target
+                    // Arrow functions capture `this` lexically from their
+                    // enclosing scope, so they must NOT redeclare `this` in
+                    // their own call environment (which would shadow the
+                    // captured binding). Non-arrow functions bind `this` to the
+                    // caller-supplied value (or `undefined`).
+                    if !is_arrow {
+                        // Derived class constructors leave `this` in the TDZ
+                        // until `super()` initializes it.
+                        if func.is_derived {
+                            env::declare_uninit(
+                                &self.heap,
+                                call_env,
+                                "this",
+                                crate::value::BindingKind::Const,
+                            );
+                        } else {
+                            env::declare(
+                                &self.heap,
+                                call_env,
+                                "this",
+                                this_val.clone(),
+                                crate::value::BindingKind::Const,
+                            );
+                        }
+                    }
+                    // For object literal methods, bind #super to the HomeObject
+                    // approximation used by RuJa's method calls. Super property
+                    // code reads its prototype dynamically at each access. Class
+                    // methods already have #super bound by the compiler.
+                    if func.is_method && !is_arrow {
+                        let has_super = crate::environment::has(&self.heap, call_env, "#super");
+                        if !has_super {
+                            env::declare(
+                                &self.heap,
+                                call_env,
+                                "#super",
+                                this_val.clone(),
+                                crate::value::BindingKind::Const,
+                            );
+                        }
+                    }
+                    let _ = &this_val;
+                    let is_gen = func.is_generator;
+                    if is_gen {
+                        let prologue = self.execute_generator_prologue(
+                            func.clone(),
+                            call_env,
+                            this_val.clone(),
+                            args,
+                        )?;
+                        let generator_instance_proto = {
+                            let callee = Value::Object(idx);
+                            let proto = self
+                                .get_property_by_key(
+                                    &callee,
+                                    &crate::value::PropertyKey::from("prototype"),
+                                )
+                                .unwrap_or(Value::Undefined);
+                            if matches!(proto, Value::Object(_)) {
+                                proto
+                            } else if is_async {
+                                self.async_generator_proto.clone()
+                            } else {
+                                self.generator_proto.clone()
+                            }
+                        };
+                        // Lazy generator: don't run the body yet. Create a suspended
+                        // generator object; the body runs incrementally via next().
+                        let g_idx = self.heap.allocate(HeapObj::LazyGenerator(
+                            crate::value::LazyGeneratorData {
+                                fdef: func.clone(),
+                                closure: call_env,
+                                env: Mutex::new(prologue.env),
+                                this_val: Mutex::new(this_val.clone()),
+                                args: Mutex::new(args.to_vec()),
+                                ip: AtomicUsize::new(prologue.ip),
+                                stack: Mutex::new(prologue.stack),
+                                locals: Mutex::new(prologue.locals),
+                                catch_stack: Mutex::new(prologue.catch_stack),
+                                finally_stack: Mutex::new(prologue.finally_stack),
+                                guard_seq: AtomicU32::new(prologue.guard_seq),
+                                finally_completion_tag: AtomicU8::new(
+                                    prologue.finally_completion_tag,
+                                ),
+                                finally_completion_val: Mutex::new(prologue.finally_completion_val),
+                                started: AtomicBool::new(false),
+                                done: AtomicBool::new(false),
+                                delegating: AtomicBool::new(false),
+                                resume_value: Mutex::new(Value::Undefined),
+                                is_async,
+                                async_queue: Mutex::new(std::collections::VecDeque::new()),
+                                async_processing: AtomicBool::new(false),
+                                async_suspended_yield: AtomicBool::new(false),
+                                props: Mutex::new(IndexMap::new()),
+                                proto: Mutex::new(Some(generator_instance_proto)),
+                            },
+                        ))?;
+                        Ok(Value::Object(GcIdx(g_idx)))
                     } else {
-                        self.pending_new_target_prototype.take();
-                        self.pending_new_target.take().unwrap_or(Value::Undefined)
-                    };
-                    if is_async {
-                        return self.execute_async_function(
+                        // execute the compiled function chunk
+                        let frame_new_target = if is_arrow {
+                            lexical_new_target
+                        } else {
+                            self.pending_new_target_prototype.take();
+                            self.pending_new_target.take().unwrap_or(Value::Undefined)
+                        };
+                        if is_async {
+                            return self.execute_async_function(
+                                Value::Object(idx),
+                                func,
+                                call_env,
+                                this_val,
+                                args,
+                                frame_new_target,
+                            );
+                        }
+                        let mut result = self.execute_chunk_func(
                             Value::Object(idx),
-                            func,
+                            func.clone(),
                             call_env,
                             this_val,
                             args,
                             frame_new_target,
                         );
-                    }
-                    let mut result = self.execute_chunk_func(
-                        Value::Object(idx),
-                        func.clone(),
-                        call_env,
-                        this_val,
-                        args,
-                        frame_new_target,
-                    );
-                    // For derived class constructors, check that `super()` was
-                    // called (i.e. `this` is no longer in the TDZ). If the
-                    // constructor returned without calling super, throw a
-                    // ReferenceError per spec.
-                    if func.is_derived {
-                        if let Ok(ref rv) = result {
-                            // Per spec [[Construct]] step 13: if a derived
-                            // constructor returns a value, it must be an
-                            // object (or undefined). Returning a primitive
-                            // (number, string, boolean, null) is a TypeError.
-                            let is_object = matches!(rv, Value::Object(_) | Value::Undefined);
-                            if !is_object {
-                                return Err(Error::type_err(
+                        // For derived class constructors, check that `super()` was
+                        // called (i.e. `this` is no longer in the TDZ). If the
+                        // constructor returned without calling super, throw a
+                        // ReferenceError per spec.
+                        if func.is_derived {
+                            if let Ok(ref rv) = result {
+                                // Per spec [[Construct]] step 13: if a derived
+                                // constructor returns a value, it must be an
+                                // object (or undefined). Returning a primitive
+                                // (number, string, boolean, null) is a TypeError.
+                                let is_object = matches!(rv, Value::Object(_) | Value::Undefined);
+                                if !is_object {
+                                    return Err(Error::type_err(
                                     "Derived constructor may only return an object or undefined",
                                 ));
-                            }
-                            if !matches!(rv, Value::Object(_)) {
-                                let bound_this = self.heap.with_obj(call_env.0, |obj| {
-                                    if let HeapObj::Environment(e) = obj {
-                                        let vars = e.vars.lock();
-                                        vars.get("this").and_then(|b| {
-                                            if b.initialized.load(Ordering::Relaxed) {
-                                                Some(b.value.lock().clone())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                    } else {
-                                        None
-                                    }
-                                });
-                                result = match bound_this {
+                                }
+                                if !matches!(rv, Value::Object(_)) {
+                                    let bound_this = self.heap.with_obj(call_env.0, |obj| {
+                                        if let HeapObj::Environment(e) = obj {
+                                            let vars = e.vars.lock();
+                                            vars.get("this").and_then(|b| {
+                                                if b.initialized.load(Ordering::Relaxed) {
+                                                    Some(b.value.lock().clone())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    });
+                                    result = match bound_this {
                                     Some(this_val) => Ok(this_val),
                                     None => Err(Error::reference(
                                         "must call super constructor before accessing 'this' or returning"
                                     )),
                                 };
+                                }
                             }
                         }
+                        result
                     }
-                    result
-                }
+                })();
+                self.unpin_many(call_env_pin_count);
+                call_result
             }
             Some(FuncCallInfo::Bound {
                 target,
