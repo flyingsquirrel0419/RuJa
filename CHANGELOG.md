@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.map` now creates and validates its writable species
+  result before iteration, then maps the snapshot visit range from current
+  integer-indexed reads with callback-result conversion into the destination.
 - `%TypedArray%.prototype.reduce` now shares a direction-aware reduction core
   with `reduceRight`, validating and snapshotting the receiver while reading
   each current integer-indexed value immediately before callback invocation.
@@ -206,6 +209,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/map/` path now closes at **85 pass /
+  0 fail / 0 skip / 85 total**, covering Number/BigInt species results,
+  immutable destinations, resizable buffers, callback effects, and conversion.
 - The exact `built-ins/TypedArray/prototype/reduce/` path now closes at **50
   pass / 0 fail / 0 skip / 50 total**, while the refactored `reduceRight` path
   remains at **50 pass / 0 fail / 0 skip / 50 total**. CI `29156205544` and

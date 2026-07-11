@@ -720,6 +720,16 @@ skip / 48467 total / 33498 pass-or-fail executed**, or **79.8%** of pass-or-fail
 files and **55.2%** of the matrix. Against the preceding identical matrix,
 exactly 50 focused files moved from skip to pass.
 
+Focused TypedArray `map` coverage check:
+`%TypedArray%.prototype.map` validates and snapshots the source, checks the
+callback, and creates a writable species destination of at least the snapshot
+length before visiting values. Species may select another TypedArray kind with
+the same Number/BigInt content type. Each current value is read immediately
+before callback invocation and the callback result is converted by the target
+element kind, so constructor/callback resize and detach effects remain
+observable without extending iteration. The exact path reports **85 pass / 0
+fail / 0 skip / 85 total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

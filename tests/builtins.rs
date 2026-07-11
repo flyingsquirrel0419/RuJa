@@ -2154,6 +2154,51 @@ fn typed_array_reduce_uses_first_value_as_default_accumulator() {
 }
 
 #[test]
+fn typed_array_map_uses_species_and_preserves_source() {
+    assert_eq!(
+        run(r#"
+            var source = new Int8Array([1, 2, 3]);
+            var target = new Int16Array(4);
+            source.constructor = {
+                [Symbol.species]: function(length) {
+                    if (length !== 3) throw new Error("wrong length");
+                    return target;
+                }
+            };
+            var result = source.map(function(value, index, receiver) {
+                return value + index + (receiver === source ? 10 : 100);
+            });
+            [result === target, Array.from(result).join(","), Array.from(source).join(",")].join("|");
+            "#),
+        Value::String(Arc::from("true|11,13,15,0|1,2,3"))
+    );
+}
+
+#[test]
+fn typed_array_map_constructs_species_before_current_reads() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var source = new Int8Array(rab);
+            source.set([1, 2, 3]);
+            source.constructor = {
+                [Symbol.species]: function(length) {
+                    rab.resize(1);
+                    return new Int8Array(length);
+                }
+            };
+            var seen = [];
+            var result = source.map(function(value) {
+                seen.push(String(value));
+                return value === undefined ? 0 : value;
+            });
+            [seen.join(","), Array.from(result).join(",")].join("|");
+            "#),
+        Value::String(Arc::from("1,undefined,undefined|1,0,0"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

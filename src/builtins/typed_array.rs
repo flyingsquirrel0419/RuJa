@@ -280,6 +280,71 @@ fn typed_array_species_constructor(
     Ok(species)
 }
 
+fn typed_array_species_create(
+    vm: &mut Vm,
+    exemplar: &Value,
+    source_kind: crate::value::TypedArrayKind,
+    length: usize,
+    name: &str,
+    require_write: bool,
+) -> error::Result<Value> {
+    let default_constructor = current_realm_typed_array_constructor(vm, source_kind)?;
+    let constructor = typed_array_species_constructor(vm, exemplar, default_constructor)?;
+    let construct_args = [Value::Number(length as f64)];
+    let construct_pin_count =
+        vm.pin(exemplar) + vm.pin(&constructor) + vm.pin_many(&construct_args);
+    let result = vm.construct(&constructor, &construct_args);
+    vm.unpin_many(construct_pin_count);
+    let result = result?;
+
+    let (target_kind, target_buffer, target_byte_offset, target_fixed_length, target_tracking) =
+        match &result {
+            Value::Object(result_idx) => vm.heap.with_obj(result_idx.0, |obj| {
+                let HeapObj::TypedArray(array) = obj else {
+                    return None;
+                };
+                Some((
+                    array.kind,
+                    array.viewed_array_buffer.clone(),
+                    array.byte_offset,
+                    array.byte_length,
+                    array.length_tracking,
+                ))
+            }),
+            _ => None,
+        }
+        .ok_or_else(|| {
+            Error::type_err(format!("TypedArray {name} species returned non-TypedArray"))
+        })?;
+    let target_buffer = target_buffer
+        .ok_or_else(|| Error::type_err(format!("TypedArray {name} result has no ArrayBuffer")))?;
+    if require_write && is_immutable_array_buffer(vm, &target_buffer) {
+        return Err(Error::type_err(format!(
+            "TypedArray {name} species returned an immutable result"
+        )));
+    }
+    let target_byte_length = effective_view_byte_length(
+        vm,
+        Some(&target_buffer),
+        target_byte_offset,
+        target_fixed_length,
+        target_tracking,
+        target_kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err(format!("TypedArray {name} result is out of bounds")))?;
+    if typed_array_element_count(target_kind, target_byte_length) < length {
+        return Err(Error::type_err(format!(
+            "TypedArray {name} species returned a shorter result"
+        )));
+    }
+    if typed_array_content_type(target_kind) != typed_array_content_type(source_kind) {
+        return Err(Error::type_err(format!(
+            "TypedArray {name} species returned incompatible content type"
+        )));
+    }
+    Ok(result)
+}
+
 pub(crate) fn array_buffer_slice(
     vm: &mut Vm,
     args: &[Value],
@@ -3670,6 +3735,72 @@ pub(crate) fn typed_array_reduce(
     this: Option<Value>,
 ) -> error::Result<Value> {
     typed_array_reduce_impl(vm, args, this, false)
+}
+
+pub(crate) fn typed_array_map(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray map called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray map called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray map called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray map called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err("TypedArray map callback is not callable"));
+    }
+    let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+
+    let source_pin_count = vm.pin(&this) + vm.pin(&callback) + vm.pin(&this_arg);
+    let operation: error::Result<Value> = (|| {
+        let result = typed_array_species_create(vm, &this, kind, length, "map", true)?;
+        let result_pin_count = vm.pin(&result);
+        let map_result: error::Result<()> = (|| {
+            for index in 0..length {
+                let value = vm.get_property(&this, &index.to_string())?;
+                let mapped = vm.call_function(
+                    &callback,
+                    &[value, Value::Number(index as f64), this.clone()],
+                    Some(this_arg.clone()),
+                )?;
+                let mapped_pin_count = vm.pin(&mapped);
+                let write_result = vm.set_property_strict(&result, &index.to_string(), mapped);
+                vm.unpin_many(mapped_pin_count);
+                write_result?;
+            }
+            Ok(())
+        })();
+        vm.unpin_many(result_pin_count);
+        map_result?;
+        Ok(result)
+    })();
+    vm.unpin_many(source_pin_count);
+    operation
 }
 
 fn typed_array_reduce_impl(

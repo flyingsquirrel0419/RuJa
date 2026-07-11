@@ -447,6 +447,23 @@ TYPED_ARRAY_REDUCE_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_MAP_PREFIXES = (
+    "built-ins/TypedArray/prototype/map/",
+)
+
+TYPED_ARRAY_MAP_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "Reflect.construct",
+    "Reflect.set",
+    "Symbol",
+    "Symbol.species",
+    "TypedArray",
+    "arrow-function",
+    "immutable-arraybuffer",
+    "resizable-arraybuffer",
+}
+
 TYPED_ARRAY_SORT_PREFIXES = (
     "built-ins/TypedArray/prototype/sort/",
 )
@@ -1131,6 +1148,13 @@ def typed_array_reduce_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_REDUCE_PREFIXES)
 
+def typed_array_map_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_MAP_PREFIXES)
+
 def typed_array_sort_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1408,6 +1432,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_REDUCE_RIGHT_FEATURES)
     if path is not None and typed_array_reduce_path(path):
         feats.difference_update(TYPED_ARRAY_REDUCE_FEATURES)
+    if path is not None and typed_array_map_path(path):
+        feats.difference_update(TYPED_ARRAY_MAP_FEATURES)
     if path is not None and typed_array_sort_path(path):
         feats.difference_update(TYPED_ARRAY_SORT_FEATURES)
     if path is not None and typed_array_to_sorted_path(path):
