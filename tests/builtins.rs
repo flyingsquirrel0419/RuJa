@@ -1870,6 +1870,40 @@ fn typed_array_species_accessor_and_unaligned_tracking_views() {
 }
 
 #[test]
+fn typed_array_find_snapshots_length_and_reads_current_values() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var seen = [];
+            var found = tracking.find(function(value, index, receiver) {
+                seen.push(String(value) + ":" + index + ":" + (receiver === tracking));
+                if (index === 0) {
+                    tracking[2] = 7;
+                    rab.resize(2);
+                }
+                return value === 7;
+            });
+
+            rab.resize(3);
+            tracking[2] = 3;
+            var grownSeen = [];
+            tracking.find(function(value, index) {
+                grownSeen.push(value);
+                if (index === 0) rab.resize(5);
+                return false;
+            });
+
+            [String(found), seen.join(","), grownSeen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from(
+            "undefined|1:0:true,2:1:true,undefined:2:true|1,2,3"
+        ))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

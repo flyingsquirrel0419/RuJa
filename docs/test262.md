@@ -568,6 +568,15 @@ moved from skip to pass and three additional built-ins failures passed,
 consistent with the shared `%TypedArray%[Symbol.species]` foundation added by
 this unit; the focused gain is reported separately from those extra results.
 
+Focused TypedArray `find` coverage check:
+`%TypedArray%.prototype.find` validates the receiver and callback, snapshots the
+initial internal length, then reads each current integer-indexed value before
+calling the predicate with `(value, index, receiver)` and the supplied
+`thisArg`. Callback-driven detach or shrink yields `undefined` for invalidated
+future indexes, growth does not extend the visit count, and a truthy predicate
+returns the value observed before that callback. The exact path reports **38
+pass / 0 fail / 0 skip / 38 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

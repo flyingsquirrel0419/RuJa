@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.find` now validates the receiver and predicate,
+  snapshots the internal length, reads each current integer-indexed value before
+  callback invocation, and preserves iteration count across detach, shrink, and
+  growth while returning the value observed before a matching callback.
 - `%TypedArray%.prototype.slice` now computes bounds from the initial internal
   length, creates a writable species result, revalidates the source after
   observable construction, and copies same-kind elements byte-for-byte while
@@ -151,6 +155,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/find/` path now closes at **38 pass
+  / 0 fail / 0 skip / 38 total**.
 - The exact `built-ins/TypedArray/prototype/slice/` path now closes at **92 pass
   / 0 fail / 0 skip / 92 total**. CI `29144932312` and `test262-full`
   `29144932309` confirm the change at **26259 pass / 6764 fail / 15432 skip /
