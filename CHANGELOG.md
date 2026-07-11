@@ -245,6 +245,10 @@
   inherited receivers. Internally allocated TypedArray buffers now inherit from
   the originating Realm's intrinsic `ArrayBuffer.prototype`, and Realm-created
   native accessors inherit from that Realm's `Function.prototype`.
+  CI `29165210243` and `test262-full` `29165210230` confirm the independently
+  reviewed change at **27082 pass / 6756 fail / 14617 skip / 12 timeout / 0
+  error / 48467 total**. Against the preceding identical matrix, exactly 12
+  files moved from skip to pass.
 - The exact `built-ins/TypedArray/prototype/Symbol.toStringTag/` path now closes
   at **18 pass / 0 fail / 0 skip / 18 total**, up from **2 pass / 16 fail**,
   covering Number/BigInt kinds, detached buffers, incompatible receivers, and

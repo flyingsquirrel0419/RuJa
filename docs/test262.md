@@ -841,7 +841,12 @@ prototype even if globals are replaced. Native getter functions likewise use
 their closure Realm's `%Function.prototype%`. The previously gated exact path
 is now fully admitted at **12 pass / 0 fail / 0 skip / 12 total**. Against test262
 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset remains
-**11589 pass / 0 fail / 8850 skip / 20439 total**.
+**11589 pass / 0 fail / 8850 skip / 20439 total**. CI `29165210243` and
+`test262-full` `29165210230` succeeded. Downloaded artifacts aggregate to
+**27082 pass / 6756 fail / 12 timeout / 0 error / 14617 skip / 48467 total /
+33838 pass-or-fail executed**, or **80.0%** of pass-or-fail files and **55.9%**
+of the matrix. Against the preceding identical matrix, exactly 12 skipped files
+moved to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
