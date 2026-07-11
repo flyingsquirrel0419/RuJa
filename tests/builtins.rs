@@ -2721,6 +2721,87 @@ fn typed_array_to_string_and_iterator_aliases_match_intrinsics() {
 }
 
 #[test]
+fn typed_array_prototype_intrinsic_alias_descriptors_match_realms() {
+    assert_eq!(
+        run(r#"
+            function check(global) {
+                var TypedArray = Object.getPrototypeOf(global.Uint8Array);
+                var prototype = Object.getPrototypeOf(global.Uint8Array.prototype);
+                var constructor = Object.getOwnPropertyDescriptor(prototype, "constructor");
+                var iterator = Object.getOwnPropertyDescriptor(
+                    prototype, global.Symbol.iterator
+                );
+                return constructor.value === TypedArray &&
+                    constructor.writable && !constructor.enumerable && constructor.configurable &&
+                    iterator.value === prototype.values &&
+                    iterator.writable && !iterator.enumerable && iterator.configurable;
+            }
+            var other = $262.createRealm().global;
+            check(globalThis) && check(other);
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_prototype_intrinsic_aliases_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var other = $262.createRealm().global;
+        var TypedArray = Object.getPrototypeOf(other.Uint8Array);
+        var prototype = Object.getPrototypeOf(other.Uint8Array.prototype);
+        var values = prototype.values;
+        var iterator = prototype[other.Symbol.iterator];
+        "#,
+    )
+    .expect("failed to create foreign TypedArray intrinsics");
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            prototype.constructor === TypedArray &&
+                prototype.values === values &&
+                prototype[other.Symbol.iterator] === iterator &&
+                values === iterator;
+            "#,
+        )
+        .expect("TypedArray intrinsic aliases should survive GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_prototype_intrinsic_mutations_are_realm_local() {
+    assert_eq!(
+        run(r#"
+            var mainTypedArray = Object.getPrototypeOf(Uint8Array);
+            var mainPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+            var originalValues = mainPrototype.values;
+            var originalIterator = mainPrototype[Symbol.iterator];
+            mainPrototype.values = function replacedValues() {};
+            var iteratorStayedOriginal =
+                mainPrototype[Symbol.iterator] === originalIterator;
+            mainPrototype[Symbol.iterator] = function replacedIterator() {};
+            mainPrototype.constructor = function ReplacedTypedArray() {};
+
+            var other = $262.createRealm().global;
+            var otherTypedArray = Object.getPrototypeOf(other.Uint8Array);
+            var otherPrototype = Object.getPrototypeOf(other.Uint8Array.prototype);
+            var otherIsPristine =
+                otherPrototype.constructor === otherTypedArray &&
+                otherPrototype.values === otherPrototype[other.Symbol.iterator];
+
+            mainPrototype.values = originalValues;
+            mainPrototype[Symbol.iterator] = originalIterator;
+            mainPrototype.constructor = mainTypedArray;
+            iteratorStayedOriginal && otherIsPristine;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn typed_array_realm_to_string_alias_ignores_mutated_array_prototype() {
     assert_eq!(
         run(r#"

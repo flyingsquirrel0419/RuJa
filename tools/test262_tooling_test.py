@@ -266,6 +266,35 @@ class WeakRefAdmissionTests(unittest.TestCase):
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
+    def test_typed_array_prototype_intrinsics_are_frozen_to_parent_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            iterator = root / "test/built-ins/TypedArray/prototype/Symbol.iterator.js"
+            constructor = root / "test/built-ins/TypedArray/prototype/constructor.js"
+            future = root / "test/built-ins/TypedArray/prototype/future.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(
+                        {"flags": [], "features": ["Symbol.iterator"]}, iterator
+                    ))
+                    self.assertFalse(tool.should_skip(
+                        {"flags": [], "features": ["TypedArray"]}, constructor
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"flags": [], "features": ["TypedArray"]}, future
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"flags": [], "features": ["Symbol.iterator"]}, future
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"flags": [], "features": ["Symbol.iterator", "TypedArray"]},
+                        future,
+                    ))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_typed_array_to_string_features_are_frozen_to_audited_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

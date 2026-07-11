@@ -848,6 +848,18 @@ is now fully admitted at **12 pass / 0 fail / 0 skip / 12 total**. Against test2
 of the matrix. Against the preceding identical matrix, exactly 12 skipped files
 moved to pass.
 
+Focused TypedArray prototype completion check:
+Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
+file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs
+green at **1404 pass / 0 fail / 0 skip / 1404 total**. The final two parent
+files verify `%TypedArray%.prototype.constructor === %TypedArray%` and
+`%TypedArray%.prototype[Symbol.iterator] === values` with writable,
+non-enumerable, configurable descriptors. Focused regressions preserve these
+identities through forced GC and independent main/created-Realm mutation. This
+is complete admitted file coverage for the pinned subtree, not a claim of full
+Test262 variant coverage or fully independent Realm primordials. The supported
+subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+
 Focused TypedArray alias coverage check:
 `%TypedArray%.prototype.toString` now aliases the exact original
 `Array.prototype.toString` function with the standard data-property

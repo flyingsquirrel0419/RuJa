@@ -239,6 +239,11 @@
 
 ### Test tooling
 
+- The pinned Test262 `built-ins/TypedArray/prototype` subtree now has complete
+  admitted file coverage at **1404 pass / 0 fail / 0 skip / 1404 total**. The
+  final parent `constructor` and `Symbol.iterator` identity/descriptor files
+  are frozen to exact paths. Main/created-Realm alias identity remains stable
+  across independent mutation and forced GC.
 - TypedArray `toString` and `Symbol.iterator` now close at **5 pass / 0 fail /
   0 skip / 5 total**. `%TypedArray%.prototype.toString` is the same rooted
   intrinsic function object as `Array.prototype.toString`, including during
