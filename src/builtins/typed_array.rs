@@ -3432,6 +3432,14 @@ pub(crate) fn typed_array_find_last(
     typed_array_find_impl(vm, args, this, "findLast", false, true)
 }
 
+pub(crate) fn typed_array_find_last_index(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_find_impl(vm, args, this, "findLastIndex", true, true)
+}
+
 fn typed_array_find_impl(
     vm: &mut Vm,
     args: &[Value],

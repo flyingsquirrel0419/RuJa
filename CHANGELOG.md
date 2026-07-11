@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.findLastIndex` now shares the reverse receiver
+  validation, callback protocol, length snapshot, and current-value reads of
+  `findLast` while returning the matching index or `-1`.
 - `%TypedArray%.prototype.findLast` now validates and snapshots the receiver,
   reads current integer-indexed values from the final index toward zero, and
   preserves the reverse visit count across detach, shrink, and growth while
@@ -162,6 +165,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/findLastIndex/` path now closes at
+  **38 pass / 0 fail / 0 skip / 38 total**.
 - The exact `built-ins/TypedArray/prototype/findLast/` path now closes at **38
   pass / 0 fail / 0 skip / 38 total**. CI `29147184493` and `test262-full`
   `29147184510` confirm the change at **26371 pass / 6766 fail / 15318 skip /

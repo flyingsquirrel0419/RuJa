@@ -1949,6 +1949,29 @@ fn typed_array_find_last_iterates_the_snapshot_in_reverse() {
 }
 
 #[test]
+fn typed_array_find_last_index_returns_reverse_match_position() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var seen = [];
+            var found = tracking.findLastIndex(function(value, index, receiver) {
+                seen.push(String(value) + ":" + index + ":" + (receiver === tracking));
+                if (index === 2) {
+                    tracking[0] = 7;
+                    rab.resize(1);
+                }
+                return value === 7;
+            });
+            var missing = tracking.findLastIndex(function() { return false; });
+            [found, missing, seen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from("0|-1|3:2:true,undefined:1:true,7:0:true"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

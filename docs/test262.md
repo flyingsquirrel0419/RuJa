@@ -612,6 +612,14 @@ identical matrix, all 38 focused files moved out of skip while the aggregate
 gained 39 pass and lost one fail, so the additional passing file is kept
 separate from the focused gain.
 
+Focused TypedArray `findLastIndex` coverage check:
+`%TypedArray%.prototype.findLastIndex` uses the same receiver validation,
+callback protocol, initial internal-length snapshot, and reverse current-value
+reads as `findLast`. Callback-driven detach or shrink yields `undefined` for
+invalidated future visits, growth does not extend the visit count, and a truthy
+predicate returns its index while exhaustion returns `-1`. The exact path
+reports **38 pass / 0 fail / 0 skip / 38 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator
