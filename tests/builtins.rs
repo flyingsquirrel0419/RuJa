@@ -1286,6 +1286,61 @@ fn typed_array_from_roots_iterator_state_across_gc_callbacks() {
 }
 
 #[test]
+fn typed_array_of_rejects_invalid_empty_constructor_results() {
+    for constructor in [
+        r#"
+            function Invalid(length) {
+                var result = new Uint8Array(length);
+                $262.detachArrayBuffer(result.buffer);
+                return result;
+            }
+        "#,
+        r#"
+            function Invalid() {
+                var buffer = new ArrayBuffer(1, { maxByteLength: 2 });
+                var result = new Uint8Array(buffer, 0, 1);
+                buffer.resize(0);
+                return result;
+            }
+        "#,
+    ] {
+        assert!(
+            run_err(&format!("{constructor} Uint8Array.of.call(Invalid);")).contains("TypeError")
+        );
+    }
+}
+
+#[test]
+fn typed_array_of_roots_arguments_across_construction_and_conversion_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function Custom(length) {
+                forceGc();
+                return new Uint8Array(length);
+            }
+            var first = { valueOf: function() { forceGc(); return 7; } };
+            var second = { valueOf: function() { forceGc(); return 9; } };
+            var result = Uint8Array.of.call(Custom, first, second);
+            [result.length, result[0], result[1]].join("|");
+            "#,
+        )
+        .expect("TypedArray.of arguments should survive GC"),
+        Value::String(Arc::from("2|7|9"))
+    );
+}
+
+#[test]
 fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
     assert_eq!(
         run(r#"

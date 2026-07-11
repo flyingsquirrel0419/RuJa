@@ -219,6 +219,32 @@ TYPED_ARRAY_FROM_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_STATIC_FILES = {
+    f"built-ins/TypedArray/{name}"
+    for name in (
+        "Symbol.species/prop-desc.js",
+        "Symbol.species/result.js",
+        "invoked.js",
+        "length.js",
+        "name.js",
+        "of/invoked-as-func.js",
+        "of/invoked-as-method.js",
+        "of/length.js",
+        "of/name.js",
+        "of/not-a-constructor.js",
+        "of/prop-desc.js",
+        "of/this-is-not-constructor.js",
+        "prototype.js",
+    )
+}
+
+TYPED_ARRAY_STATIC_FEATURES = {
+    "Reflect.construct",
+    "Symbol.species",
+    "TypedArray",
+    "arrow-function",
+}
+
 TYPED_ARRAY_RESIZABLE_FILES = {
     "built-ins/TypedArray/of/resized-with-out-of-bounds-and-in-bounds-indices.js",
     "built-ins/TypedArray/out-of-bounds-behaves-like-detached.js",
@@ -1206,6 +1232,13 @@ def typed_array_from_path(path):
         return False
     return rel.as_posix() in TYPED_ARRAY_FROM_FILES
 
+def typed_array_static_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in TYPED_ARRAY_STATIC_FILES
+
 def typed_array_resizable_path(path, meta):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1668,6 +1701,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_PROTOTYPE_INTRINSIC_FEATURES)
     if path is not None and typed_array_from_path(path):
         feats.difference_update(TYPED_ARRAY_FROM_FEATURES)
+    if path is not None and typed_array_static_path(path):
+        feats.difference_update(TYPED_ARRAY_STATIC_FEATURES)
     if path is not None and typed_array_resizable_path(path, meta):
         feats.difference_update(TYPED_ARRAY_RESIZABLE_FEATURES)
     if path is not None and typed_array_at_path(path):

@@ -266,6 +266,43 @@ class WeakRefAdmissionTests(unittest.TestCase):
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
+    def test_typed_array_static_features_are_frozen_to_audited_files(self):
+        expected = {
+            f"built-ins/TypedArray/{name}"
+            for name in (
+                "Symbol.species/prop-desc.js", "Symbol.species/result.js",
+                "invoked.js", "length.js", "name.js",
+                "of/invoked-as-func.js", "of/invoked-as-method.js",
+                "of/length.js", "of/name.js", "of/not-a-constructor.js",
+                "of/prop-desc.js", "of/this-is-not-constructor.js",
+                "prototype.js",
+            )
+        }
+        meta = {
+            "flags": [],
+            "features": [
+                "Reflect.construct", "Symbol.species", "TypedArray",
+                "arrow-function",
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/TypedArray/of/future.js"
+            outside = root / "test/built-ins/TypedArray/unsupported/name.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertEqual(tool.TYPED_ARRAY_STATIC_FILES, expected)
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in expected:
+                        self.assertFalse(tool.should_skip(
+                            meta, root / "test" / relative
+                        ))
+                    self.assertTrue(tool.should_skip(meta, future))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_typed_array_from_features_are_frozen_to_all_audited_files(self):
         expected = {
             f"built-ins/TypedArray/from/{name}"

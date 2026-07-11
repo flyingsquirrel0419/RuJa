@@ -239,6 +239,15 @@
 
 ### Test tooling
 
+- The complete pinned `built-ins/TypedArray/` subtree is now admitted at
+  **1446 pass / 0 fail / 0 skip / 1446 total**. The final 13 constructor
+  surface, `Symbol.species`, and `%TypedArray%.of` descriptor/receiver files
+  are frozen to exact paths so future tests remain gated until audited.
+  Independent implementation reviews found no admission-blocking semantics
+  defect. New regressions preserve rejection of detached or out-of-bounds
+  empty constructor results and root `of` arguments across GC during
+  construction and element conversion. The authoritative supported language
+  subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
 - The frozen `built-ins/TypedArray/from/` set is fully admitted at **21 pass /
   0 fail / 0 skip / 21 total**. Independent review removed the non-standard
   65,536-item iterable cap, rejects detached or out-of-bounds constructor
