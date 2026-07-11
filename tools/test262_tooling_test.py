@@ -266,6 +266,53 @@ class WeakRefAdmissionTests(unittest.TestCase):
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
+    def test_typed_array_from_features_are_frozen_to_all_audited_files(self):
+        expected = {
+            f"built-ins/TypedArray/from/{name}"
+            for name in (
+                "arylk-get-length-error.js", "arylk-to-length-error.js",
+                "from-array-mapper-detaches-result.js",
+                "from-array-mapper-makes-result-out-of-bounds.js",
+                "from-typedarray-into-itself-mapper-detaches-result.js",
+                "from-typedarray-into-itself-mapper-makes-result-out-of-bounds.js",
+                "from-typedarray-mapper-detaches-result.js",
+                "from-typedarray-mapper-makes-result-out-of-bounds.js",
+                "invoked-as-func.js", "invoked-as-method.js",
+                "iter-access-error.js", "iter-invoke-error.js",
+                "iter-next-error.js", "iter-next-value-error.js",
+                "iterated-array-changed-by-tonumber.js", "length.js",
+                "mapfn-is-not-callable.js", "name.js", "not-a-constructor.js",
+                "prop-desc.js", "this-is-not-constructor.js",
+            )
+        }
+        meta = {
+            "flags": [],
+            "features": [
+                "Reflect.construct", "Symbol", "Symbol.iterator", "TypedArray",
+                "arrow-function", "resizable-arraybuffer",
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/built-ins/TypedArray/from/future.js"
+            outside = root / "test/built-ins/TypedArray/unsupported/length.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertEqual(tool.TYPED_ARRAY_FROM_FILES, expected)
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in expected:
+                        self.assertFalse(tool.should_skip(meta, root / "test" / relative))
+                    self.assertTrue(tool.should_skip(meta, future))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                    for feature in meta["features"]:
+                        if feature in tool.SKIP_FEATURES:
+                            self.assertTrue(tool.should_skip(
+                                {"flags": [], "features": [feature]}, future
+                            ))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_typed_array_prototype_intrinsics_are_frozen_to_parent_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -183,6 +183,42 @@ TYPED_ARRAY_PROTOTYPE_INTRINSIC_FEATURES = {
     "TypedArray",
 }
 
+TYPED_ARRAY_FROM_FILES = {
+    f"built-ins/TypedArray/from/{name}"
+    for name in (
+        "arylk-get-length-error.js",
+        "arylk-to-length-error.js",
+        "from-array-mapper-detaches-result.js",
+        "from-array-mapper-makes-result-out-of-bounds.js",
+        "from-typedarray-into-itself-mapper-detaches-result.js",
+        "from-typedarray-into-itself-mapper-makes-result-out-of-bounds.js",
+        "from-typedarray-mapper-detaches-result.js",
+        "from-typedarray-mapper-makes-result-out-of-bounds.js",
+        "invoked-as-func.js",
+        "invoked-as-method.js",
+        "iter-access-error.js",
+        "iter-invoke-error.js",
+        "iter-next-error.js",
+        "iter-next-value-error.js",
+        "iterated-array-changed-by-tonumber.js",
+        "length.js",
+        "mapfn-is-not-callable.js",
+        "name.js",
+        "not-a-constructor.js",
+        "prop-desc.js",
+        "this-is-not-constructor.js",
+    )
+}
+
+TYPED_ARRAY_FROM_FEATURES = {
+    "Reflect.construct",
+    "Symbol",
+    "Symbol.iterator",
+    "TypedArray",
+    "arrow-function",
+    "resizable-arraybuffer",
+}
+
 TYPED_ARRAY_RESIZABLE_FILES = {
     "built-ins/TypedArray/of/resized-with-out-of-bounds-and-in-bounds-indices.js",
     "built-ins/TypedArray/out-of-bounds-behaves-like-detached.js",
@@ -1163,6 +1199,13 @@ def typed_array_prototype_intrinsic_path(path):
         return False
     return rel.as_posix() in TYPED_ARRAY_PROTOTYPE_INTRINSIC_FILES
 
+def typed_array_from_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in TYPED_ARRAY_FROM_FILES
+
 def typed_array_resizable_path(path, meta):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1623,6 +1666,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_TO_STRING_FEATURES)
     if path is not None and typed_array_prototype_intrinsic_path(path):
         feats.difference_update(TYPED_ARRAY_PROTOTYPE_INTRINSIC_FEATURES)
+    if path is not None and typed_array_from_path(path):
+        feats.difference_update(TYPED_ARRAY_FROM_FEATURES)
     if path is not None and typed_array_resizable_path(path, meta):
         feats.difference_update(TYPED_ARRAY_RESIZABLE_FEATURES)
     if path is not None and typed_array_at_path(path):

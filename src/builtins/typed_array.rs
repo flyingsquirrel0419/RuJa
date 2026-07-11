@@ -5178,8 +5178,37 @@ fn typed_array_result_length(
     result: &Value,
     required_len: usize,
 ) -> error::Result<()> {
-    let (kind, viewed_array_buffer, _, byte_length) =
-        typed_array_slots(vm, Some(result.clone()), "static result")?;
+    let Value::Object(result_idx) = result else {
+        return Err(Error::type_err(
+            "TypedArray constructor returned a non-TypedArray",
+        ));
+    };
+    let (kind, viewed_array_buffer, byte_offset, raw_byte_length, length_tracking) = vm
+        .heap
+        .with_obj(result_idx.0, |object| {
+            let HeapObj::TypedArray(array) = object else {
+                return None;
+            };
+            Some((
+                array.kind,
+                array.viewed_array_buffer.clone(),
+                array.byte_offset,
+                array.byte_length,
+                array.length_tracking,
+            ))
+        })
+        .ok_or_else(|| Error::type_err("TypedArray constructor returned a non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        viewed_array_buffer.as_ref(),
+        byte_offset,
+        raw_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| {
+        Error::type_err("TypedArray constructor returned a detached or out-of-bounds result")
+    })?;
     let actual_len = typed_array_element_count(kind, byte_length);
     if actual_len < required_len {
         return Err(Error::type_err(
@@ -5265,57 +5294,68 @@ fn typed_array_collect_iterator_values(
     source: &Value,
     iterator_method: &Value,
 ) -> error::Result<Vec<Value>> {
-    const MAX_TYPED_ARRAY_FROM_LEN: usize = 1 << 16;
     let iterator = vm.call_function(iterator_method, &[], Some(source.clone()))?;
     if !matches!(iterator, Value::Object(_)) {
         return Err(Error::type_err("TypedArray.from iterator is not an object"));
     }
-    let next = vm.get_property(&iterator, "next")?;
+    let iterator_pin = vm.pin(&iterator);
+    let next = match vm.get_property(&iterator, "next") {
+        Ok(next) => next,
+        Err(error) => {
+            vm.unpin(iterator_pin);
+            return Err(error);
+        }
+    };
     if !is_callable(&next, &vm.heap) {
+        vm.unpin(iterator_pin);
         return Err(Error::type_err(
             "TypedArray.from iterator next is not callable",
         ));
     }
-    let pin_count = vm.pin(&iterator) + vm.pin(&next);
+    let next_pin = vm.pin(&next);
+    let fixed_pin_count = iterator_pin + next_pin;
+    let mut value_pin_count = 0;
     let mut values = Vec::new();
     loop {
-        if values.len() >= MAX_TYPED_ARRAY_FROM_LEN {
-            vm.unpin_many(pin_count);
-            return Err(Error::range("Invalid TypedArray.from length"));
-        }
         let next_result = match vm.call_function(&next, &[], Some(iterator.clone())) {
             Ok(result) => result,
             Err(err) => {
-                vm.unpin_many(pin_count);
+                vm.unpin_many(fixed_pin_count + value_pin_count);
                 return Err(err);
             }
         };
         if !matches!(next_result, Value::Object(_)) {
-            vm.unpin_many(pin_count);
+            vm.unpin_many(fixed_pin_count + value_pin_count);
             return Err(Error::type_err(
                 "TypedArray.from iterator result is not an object",
             ));
         }
+        let next_result_pin = vm.pin(&next_result);
         let done = match vm.get_property(&next_result, "done") {
             Ok(value) => vm.to_boolean(&value),
             Err(err) => {
-                vm.unpin_many(pin_count);
+                vm.unpin(next_result_pin);
+                vm.unpin_many(fixed_pin_count + value_pin_count);
                 return Err(err);
             }
         };
         if done {
+            vm.unpin(next_result_pin);
             break;
         }
         let value = match vm.get_property(&next_result, "value") {
             Ok(value) => value,
             Err(err) => {
-                vm.unpin_many(pin_count);
+                vm.unpin(next_result_pin);
+                vm.unpin_many(fixed_pin_count + value_pin_count);
                 return Err(err);
             }
         };
+        vm.unpin(next_result_pin);
+        value_pin_count += vm.pin(&value);
         values.push(value);
     }
-    vm.unpin_many(pin_count);
+    vm.unpin_many(fixed_pin_count + value_pin_count);
     Ok(values)
 }
 

@@ -1201,6 +1201,91 @@ fn typed_array_static_from_caches_iterator_next_method() {
 }
 
 #[test]
+fn typed_array_from_accepts_iterables_at_the_previous_materialization_cap() {
+    assert_eq!(
+        run("Uint8Array.from(Array(65536).keys()).length;"),
+        Value::Number(65536.0)
+    );
+}
+
+#[test]
+fn typed_array_from_rejects_invalid_empty_constructor_results() {
+    for source in [
+        r#"
+            function Detached(length) {
+                var result = new Uint8Array(length);
+                $262.detachArrayBuffer(result.buffer);
+                return result;
+            }
+            Uint8Array.from.call(Detached, []);
+        "#,
+        r#"
+            function OutOfBounds() {
+                var buffer = new ArrayBuffer(1, { maxByteLength: 2 });
+                var result = new Uint8Array(buffer, 0, 1);
+                buffer.resize(0);
+                return result;
+            }
+            Uint8Array.from.call(OutOfBounds, []);
+        "#,
+    ] {
+        assert!(run_err(source).contains("TypeError"));
+    }
+}
+
+#[test]
+fn typed_array_from_roots_iterator_state_across_gc_callbacks() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var first = {
+                valueOf: function() { forceGc(); return 7; }
+            };
+            var calls = 0;
+            var source = {};
+            source[Symbol.iterator] = function() {
+                var iterator = {};
+                Object.defineProperty(iterator, "next", {
+                    get: function() {
+                        forceGc();
+                        return function() {
+                            calls += 1;
+                            var current = calls;
+                            return {
+                                get done() { forceGc(); return current > 1; },
+                                get value() { forceGc(); return first; }
+                            };
+                        };
+                    }
+                });
+                return iterator;
+            };
+            var mapper = new Proxy(function(value) { return value; }, {
+                apply: function(target, thisArg, args) {
+                    forceGc();
+                    return Reflect.apply(target, thisArg, args);
+                }
+            });
+            var result = Uint8Array.from(source, mapper);
+            [result.length, result[0], calls].join("|");
+            "#,
+        )
+        .expect("TypedArray.from iterator values should survive GC"),
+        Value::String(Arc::from("1|7|2"))
+    );
+}
+
+#[test]
 fn typed_array_numeric_proto_set_distinguishes_valid_and_invalid_indices() {
     assert_eq!(
         run(r#"

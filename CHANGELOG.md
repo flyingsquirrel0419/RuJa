@@ -239,6 +239,12 @@
 
 ### Test tooling
 
+- The frozen `built-ins/TypedArray/from/` set is fully admitted at **21 pass /
+  0 fail / 0 skip / 21 total**. Independent review removed the non-standard
+  65,536-item iterable cap, rejects detached or out-of-bounds constructor
+  results even for empty sources, and roots iterator/result/value objects
+  across observable callbacks and GC. The full TypedArray built-ins subtree is
+  now **1433 pass / 0 fail / 13 skip / 1446 total**.
 - The pinned Test262 `built-ins/TypedArray/prototype` subtree now has complete
   admitted file coverage at **1404 pass / 0 fail / 0 skip / 1404 total**. The
   final parent `constructor` and `Symbol.iterator` identity/descriptor files

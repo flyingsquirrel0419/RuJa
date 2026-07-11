@@ -848,6 +848,18 @@ is now fully admitted at **12 pass / 0 fail / 0 skip / 12 total**. Against test2
 of the matrix. Against the preceding identical matrix, exactly 12 skipped files
 moved to pass.
 
+Focused TypedArray `from` coverage check:
+The exact frozen `built-ins/TypedArray/from/` file set is **21 pass / 0 fail /
+0 skip / 21 total**. `%TypedArray%.from` no longer imposes a non-standard
+65,536-element iterable cap. Constructor results are validated from raw
+TypedArray slots so detached and out-of-bounds zero-length views cannot pass an
+empty-source call. Iterator objects, cached `next`, each iterator result, and
+previously collected object values remain rooted across `next`, `done`,
+`value`, mapper, conversion, and forced-GC callbacks. Adversarial regressions
+cover all three gaps found by independent review. The broader TypedArray
+built-ins subtree is **1433 pass / 0 fail / 13 skip / 1446 total**, while the
+supported subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs
