@@ -830,6 +830,19 @@ aggregate to **27070 pass / 6756 fail / 12 timeout / 0 error / 14629 skip /
 and **55.9%** of the matrix. Against the preceding identical matrix, 12 skipped
 files and eight failing files moved to pass.
 
+Focused TypedArray `buffer` coverage check:
+The `%TypedArray%.prototype.buffer` accessor returns the receiver's original
+backing ArrayBuffer by identity even after detach. It requires actual
+TypedArray internal slots, so invoking it on primitives, DataView, ordinary
+objects, or objects merely inheriting from a TypedArray throws TypeError. The
+VM roots each Realm's original `%ArrayBuffer.prototype%`, so buffers allocated
+by foreign-Realm TypedArray constructors, `from`, and `of` retain the correct
+prototype even if globals are replaced. Native getter functions likewise use
+their closure Realm's `%Function.prototype%`. The previously gated exact path
+is now fully admitted at **12 pass / 0 fail / 0 skip / 12 total**. Against test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset remains
+**11589 pass / 0 fail / 8850 skip / 20439 total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

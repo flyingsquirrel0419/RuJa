@@ -2507,6 +2507,106 @@ fn typed_array_to_string_tag_getter_uses_internal_kind() {
 }
 
 #[test]
+fn typed_array_buffer_getter_preserves_identity_after_detach() {
+    assert_eq!(
+        run(r#"
+            var getter = Object.getOwnPropertyDescriptor(
+                Object.getPrototypeOf(Uint8Array.prototype), "buffer"
+            ).get;
+            var buffer = new ArrayBuffer(2);
+            var array = new Uint8Array(buffer);
+            $262.detachArrayBuffer(buffer);
+            [getter.call(array) === buffer, getter.name, getter.length].join("|");
+        "#),
+        Value::String(Arc::from("true|get buffer|0"))
+    );
+}
+
+#[test]
+fn typed_array_buffer_getter_requires_internal_slots() {
+    for source in [
+        r#"
+            var getter = Object.getOwnPropertyDescriptor(
+                Object.getPrototypeOf(Uint8Array.prototype), "buffer"
+            ).get;
+            getter.call(Object.create(new Uint8Array(1)));
+        "#,
+        r#"
+            var getter = Object.getOwnPropertyDescriptor(
+                Object.getPrototypeOf(Uint8Array.prototype), "buffer"
+            ).get;
+            getter.call(new DataView(new ArrayBuffer(1)));
+        "#,
+    ] {
+        assert!(run_err(source).contains("TypeError"));
+    }
+}
+
+#[test]
+fn typed_array_internal_buffers_use_the_constructor_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var OtherArrayBuffer = other.ArrayBuffer;
+            var otherArrayBufferPrototype = other.ArrayBuffer.prototype;
+            other.ArrayBuffer = function ReplacedArrayBuffer() {};
+            var constructed = new other.Uint8Array(2).buffer;
+            var from = other.Uint8Array.from([1, 2]).buffer;
+            var of = other.Uint8Array.of(1, 2).buffer;
+            [constructed, from, of].every(function(buffer) {
+                return Object.getPrototypeOf(buffer) === otherArrayBufferPrototype &&
+                    buffer instanceof OtherArrayBuffer;
+            });
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_realm_array_buffer_prototype_survives_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            other.ArrayBuffer = function ReplacedArrayBuffer() {};
+            forceGc();
+            var buffer = new other.Uint8Array(1).buffer;
+            [
+                Object.getPrototypeOf(buffer) !== other.ArrayBuffer.prototype,
+                Object.prototype.toString.call(buffer)
+            ].join("|");
+        "#
+        )
+        .expect("foreign Realm buffer allocation should survive GC"),
+        Value::String(Arc::from("true|[object ArrayBuffer]"))
+    );
+}
+
+#[test]
+fn typed_array_buffer_getter_uses_its_realm_function_prototype() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var getter = Object.getOwnPropertyDescriptor(
+                Object.getPrototypeOf(other.Uint8Array.prototype), "buffer"
+            ).get;
+            Object.getPrototypeOf(getter) === other.Function.prototype;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn object_to_string_observes_symbol_to_string_tag() {
     assert_eq!(
         run(r#"

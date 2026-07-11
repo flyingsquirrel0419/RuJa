@@ -1943,6 +1943,9 @@ fn install_array_buffer_constructor_in_env(
     )?;
     let array_buffer_ctor = Value::Object(array_buffer_ctor);
     let array_buffer_proto = Value::Object(array_buffer_proto);
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    vm.realm_array_buffer_prototypes
+        .insert(realm.0, array_buffer_proto.clone());
     if update_vm_slot {
         vm.array_buffer_proto = array_buffer_proto.clone();
     }

@@ -5091,11 +5091,16 @@ fn typed_array_iterable_to_bytes(
 }
 
 fn array_buffer_prototype(vm: &mut Vm) -> Value {
-    if matches!(vm.array_buffer_proto, Value::Object(_)) {
-        vm.array_buffer_proto.clone()
-    } else {
-        vm.object_proto.clone()
-    }
+    let closure = vm.native_callee_closure().unwrap_or(vm.global);
+    let realm = crate::environment::global_env_root(&vm.heap, closure);
+    vm.realm_array_buffer_prototypes
+        .get(&realm.0)
+        .cloned()
+        .or_else(|| vm.realm_array_buffer_prototypes.get(&vm.global.0).cloned())
+        .or_else(|| {
+            matches!(vm.array_buffer_proto, Value::Object(_)).then(|| vm.array_buffer_proto.clone())
+        })
+        .unwrap_or_else(|| vm.object_proto.clone())
 }
 
 fn allocate_array_buffer_with_bytes(vm: &mut Vm, bytes: Vec<u8>) -> error::Result<Value> {

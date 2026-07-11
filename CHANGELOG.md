@@ -239,6 +239,12 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/buffer/` path is now fully admitted
+  at **12 pass / 0 fail / 0 skip / 12 total**, covering backing-buffer identity
+  after detach, Number/BigInt views, accessor descriptors, and incompatible or
+  inherited receivers. Internally allocated TypedArray buffers now inherit from
+  the originating Realm's intrinsic `ArrayBuffer.prototype`, and Realm-created
+  native accessors inherit from that Realm's `Function.prototype`.
 - The exact `built-ins/TypedArray/prototype/Symbol.toStringTag/` path now closes
   at **18 pass / 0 fail / 0 skip / 18 total**, up from **2 pass / 16 fail**,
   covering Number/BigInt kinds, detached buffers, incompatible receivers, and

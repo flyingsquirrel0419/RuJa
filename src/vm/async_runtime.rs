@@ -717,6 +717,12 @@ impl Vm {
         length: usize,
         closure: GcIdx,
     ) -> error::Result<GcIdx> {
+        let realm = crate::environment::global_env_root(&self.heap, closure);
+        let function_proto = self
+            .realm_function_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.function_proto.clone());
         let mut props = IndexMap::new();
         let mut len_desc = crate::value::PropertyDescriptor::data(Value::Number(length as f64));
         len_desc.writable = false;
@@ -739,8 +745,8 @@ impl Vm {
             // constructors). Their [[Prototype]] (`__proto__`) is
             // `Function.prototype` once it has been allocated.
             prototype: Mutex::new(None),
-            proto: Mutex::new(match self.function_proto {
-                Value::Object(_) => Some(self.function_proto.clone()),
+            proto: Mutex::new(match function_proto {
+                Value::Object(_) => Some(function_proto),
                 _ => None,
             }),
             props: Mutex::new(props),
