@@ -294,7 +294,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/at/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -319,7 +319,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/fill/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -346,7 +346,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/subarray/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -372,7 +372,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/set/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -399,7 +399,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/join/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -426,7 +426,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             root = Path(temp_dir)
             values = root / "test/built-ins/TypedArray/prototype/values/case.js"
             iterator = root / "test/built-ins/TypedArray/prototype/Symbol.iterator/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -455,7 +455,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
             root = Path(temp_dir)
             keys = root / "test/built-ins/TypedArray/prototype/keys/case.js"
             entries = root / "test/built-ins/TypedArray/prototype/entries/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -483,7 +483,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/reverse/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -533,7 +533,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/copyWithin/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -564,7 +564,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 "coerced-values-start-detached.js"
             )
             ordinary = root / "test/built-ins/TypedArray/prototype/copyWithin/reverts.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
@@ -579,7 +579,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/slice/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -608,7 +608,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/find/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -634,7 +634,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/findIndex/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -660,7 +660,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/findLast/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -686,7 +686,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/findLastIndex/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -712,7 +712,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/some/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -739,7 +739,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/every/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -766,7 +766,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/forEach/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -820,7 +820,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/reduceRight/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -847,7 +847,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/reduce/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -874,7 +874,36 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/map/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "ArrayBuffer",
+                    "BigInt",
+                    "Reflect.construct",
+                    "Reflect.set",
+                    "Symbol",
+                    "Symbol.species",
+                    "TypedArray",
+                    "arrow-function",
+                    "immutable-arraybuffer",
+                    "resizable-arraybuffer",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_filter_features_are_admitted_only_on_its_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/TypedArray/prototype/filter/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/indexOf/case.js"
             meta = {
                 "flags": [],
                 "features": [

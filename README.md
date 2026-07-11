@@ -40,7 +40,7 @@ getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, length-tracking TypedArray/DataView views, TypedArray constructors,
-indexing, `at`/`copyWithin`/`entries`/`fill`/`find`/`findIndex`/`findLast`/
+indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/`findLast`/
 `findLastIndex`/`forEach`/`includes`/`join`/`keys`/`map`/`reverse`/`set`/`slice`/
 `sort`/`subarray`/`toReversed`/`toSorted`/`reduce`/`reduceRight`/`some`/`every`/
 `values`, BigInt, Date, regex, and more. RuJa does not claim

@@ -3803,6 +3803,81 @@ pub(crate) fn typed_array_map(
     operation
 }
 
+pub(crate) fn typed_array_filter(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray filter called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray filter called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray filter called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray filter called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err(
+            "TypedArray filter callback is not callable",
+        ));
+    }
+    let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
+
+    let source_pin_count = vm.pin(&this) + vm.pin(&callback) + vm.pin(&this_arg);
+    let operation: error::Result<Value> = (|| {
+        let mut kept = Vec::new();
+        for index in 0..length {
+            let value = vm.get_property(&this, &index.to_string())?;
+            let selected = vm.call_function(
+                &callback,
+                &[value.clone(), Value::Number(index as f64), this.clone()],
+                Some(this_arg.clone()),
+            )?;
+            if selected.is_truthy() {
+                kept.push(value);
+            }
+        }
+
+        let result = typed_array_species_create(vm, &this, kind, kept.len(), "filter", true)?;
+        let result_pin_count = vm.pin(&result);
+        let write_result: error::Result<()> = (|| {
+            for (index, value) in kept.into_iter().enumerate() {
+                let value_pin_count = vm.pin(&value);
+                let set_result = vm.set_property_strict(&result, &index.to_string(), value);
+                vm.unpin_many(value_pin_count);
+                set_result?;
+            }
+            Ok(())
+        })();
+        vm.unpin_many(result_pin_count);
+        write_result?;
+        Ok(result)
+    })();
+    vm.unpin_many(source_pin_count);
+    operation
+}
+
 fn typed_array_reduce_impl(
     vm: &mut Vm,
     args: &[Value],

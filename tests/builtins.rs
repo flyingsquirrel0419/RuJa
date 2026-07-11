@@ -2199,6 +2199,50 @@ fn typed_array_map_constructs_species_before_current_reads() {
 }
 
 #[test]
+fn typed_array_filter_calls_species_after_predicates() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var source = new Int8Array([1, 2, 3, 4]);
+            var target = new Int16Array(3);
+            source.constructor = {
+                [Symbol.species]: function(length) {
+                    log.push("species:" + length);
+                    return target;
+                }
+            };
+            var result = source.filter(function(value, index, receiver) {
+                log.push("callback:" + index);
+                return receiver === source && value !== 2;
+            });
+            [result === target, Array.from(result).join(","), log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "true;1,3,4;callback:0|callback:1|callback:2|callback:3|species:3"
+        ))
+    );
+}
+
+#[test]
+fn typed_array_filter_keeps_current_values_across_resize() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var source = new Uint8Array(rab);
+            source.set([1, 2, 3, 4]);
+            var seen = [];
+            var result = source.filter(function(value, index) {
+                seen.push(String(value));
+                if (index === 0) rab.resize(2);
+                return value !== undefined && value % 2 === 0;
+            });
+            [seen.join(","), Array.from(result).join(",")].join("|");
+            "#),
+        Value::String(Arc::from("1,2,undefined,undefined|2"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

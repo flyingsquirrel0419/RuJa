@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.filter` now visits the snapshot range before species
+  construction, preserves each selected current value, and creates a writable
+  same-content-type destination sized to the final selection count.
 - `%TypedArray%.prototype.map` now creates and validates its writable species
   result before iteration, then maps the snapshot visit range from current
   integer-indexed reads with callback-result conversion into the destination.
@@ -209,6 +212,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/filter/` path now closes at **85
+  pass / 0 fail / 0 skip / 85 total**, covering callback-before-species order,
+  Number/BigInt results, immutable destinations, and resizable buffers.
 - The exact `built-ins/TypedArray/prototype/map/` path now closes at **85 pass /
   0 fail / 0 skip / 85 total**, covering Number/BigInt species results,
   immutable destinations, resizable buffers, callback effects, and conversion.

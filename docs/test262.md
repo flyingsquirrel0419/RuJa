@@ -735,6 +735,15 @@ or **79.9%** of pass-or-fail files and **55.3%** of the matrix.
 Against the preceding identical matrix, exactly 85 focused files moved from
 skip to pass.
 
+Focused TypedArray `filter` coverage check:
+`%TypedArray%.prototype.filter` validates and snapshots the source, then visits
+all snapshot indexes before consulting `constructor` or `Symbol.species`.
+Selected current values are preserved in visit order; only after predicates
+complete does filter create a writable same-content-type species destination
+sized to the selection count. Resize and detach expose `undefined` at
+invalidated indexes without extending iteration. The exact path reports **85
+pass / 0 fail / 0 skip / 85 total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

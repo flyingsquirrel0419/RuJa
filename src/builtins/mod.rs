@@ -1702,6 +1702,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_reduce_fn =
         vm.new_native_function_in_env("reduce", typed_array_reduce, 1, env)?;
     let typed_array_map_fn = vm.new_native_function_in_env("map", typed_array_map, 1, env)?;
+    let typed_array_filter_fn =
+        vm.new_native_function_in_env("filter", typed_array_filter, 1, env)?;
     let typed_array_sort_fn = vm.new_native_function_in_env("sort", typed_array_sort, 1, env)?;
     let typed_array_to_sorted_fn =
         vm.new_native_function_in_env("toSorted", typed_array_to_sorted, 1, env)?;
@@ -1799,6 +1801,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("map"),
                 data_prop(Value::Object(typed_array_map_fn)),
+            );
+            props.insert(
+                PropertyKey::from("filter"),
+                data_prop(Value::Object(typed_array_filter_fn)),
             );
             props.insert(
                 PropertyKey::from("sort"),
