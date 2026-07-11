@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- GC now traces Proxy target and handler internal slots, and Proxy receiver
+  data-property creation roots its inputs and transient descriptor across
+  `defineProperty` trap lookup and invocation. Allocation pressure no longer
+  drops a live Proxy's target or descriptor values during TypedArray prototype
+  writes.
 - `%TypedArray%.prototype.reduceRight` now validates and snapshots the receiver,
   selects the last current element when no initial accumulator is supplied, and
   reads each remaining integer-indexed value in descending order so detach and

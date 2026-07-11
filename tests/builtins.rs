@@ -2120,6 +2120,29 @@ fn typed_array_reduce_right_uses_last_value_as_default_accumulator() {
 }
 
 #[test]
+fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
+    assert_eq!(
+        run(r#"
+            var value = { marker: 1 };
+            var successes = 0;
+            for (var i = 0; i < 96; i += 1) {
+                var target = new Uint8Array([0]);
+                var receiver = new Proxy(Object.create(target), {
+                    defineProperty: function(base, key, descriptor) {
+                        Object.defineProperty(base, key, descriptor);
+                        return true;
+                    }
+                });
+                receiver[0] = value;
+                if (receiver[0] === value && target[0] === 0) successes += 1;
+            }
+            successes;
+            "#),
+        Value::Number(96.0)
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

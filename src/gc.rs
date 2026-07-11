@@ -209,6 +209,10 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 push_value(buffer, worklist);
             }
         }
+        HeapObj::Proxy(proxy) => {
+            push_value(&proxy.target, worklist);
+            push_value(&proxy.handler, worklist);
+        }
         HeapObj::Promise(p) => {
             push_value(&p.result.lock(), worklist);
             for h in p.handlers.lock().iter() {

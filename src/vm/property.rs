@@ -1649,35 +1649,56 @@ impl Vm {
         });
         if let Some(proxy_result) = receiver_proxy {
             let (target, handler) = proxy_result?;
-            let key_value = match &pkey {
-                crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
-                crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
-            };
-            let get_own = self.get_property(&handler, "getOwnPropertyDescriptor")?;
-            if !get_own.is_undefined() {
-                self.call_function(
-                    &get_own,
-                    &[target.clone(), key_value.clone()],
-                    Some(handler.clone()),
-                )?;
-            }
+            let proxy_pin_count = self.pin_many(&[
+                receiver.clone(),
+                target.clone(),
+                handler.clone(),
+                value.clone(),
+            ]);
+            let proxy_result = (|| {
+                let key_value = match &pkey {
+                    crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
+                    crate::value::PropertyKey::Symbol(id) => Value::Symbol(*id),
+                };
+                let get_own = self.get_property(&handler, "getOwnPropertyDescriptor")?;
+                if !get_own.is_undefined() {
+                    self.call_function(
+                        &get_own,
+                        &[target.clone(), key_value.clone()],
+                        Some(handler.clone()),
+                    )?;
+                }
 
-            let desc_idx = self.new_object()?;
-            let desc_obj = Value::Object(desc_idx);
-            self.heap.with_obj(desc_idx.0, |o| {
-                o.props().lock().insert(
-                    crate::value::PropertyKey::from("value"),
-                    crate::value::PropertyDescriptor::data(value.clone()),
-                );
-            });
+                let desc_idx = self.new_object()?;
+                let desc_obj = Value::Object(desc_idx);
+                self.heap.with_obj(desc_idx.0, |o| {
+                    o.props().lock().insert(
+                        crate::value::PropertyKey::from("value"),
+                        crate::value::PropertyDescriptor::data(value.clone()),
+                    );
+                });
 
-            let define = self.get_property(&handler, "defineProperty")?;
-            if !define.is_undefined() {
-                let trap_result =
-                    self.call_function(&define, &[target, key_value, desc_obj], Some(handler))?;
-                return Ok(self.to_boolean(&trap_result));
-            }
-            return self.set_receiver_data_property(&target, pkey, value);
+                let desc_pin_count = self.pin(&desc_obj);
+                let define_result: error::Result<Option<bool>> = (|| {
+                    let define = self.get_property(&handler, "defineProperty")?;
+                    if define.is_undefined() {
+                        return Ok(None);
+                    }
+                    let trap_result = self.call_function(
+                        &define,
+                        &[target.clone(), key_value, desc_obj],
+                        Some(handler.clone()),
+                    )?;
+                    Ok(Some(self.to_boolean(&trap_result)))
+                })();
+                self.unpin_many(desc_pin_count);
+                if let Some(success) = define_result? {
+                    return Ok(success);
+                }
+                self.set_receiver_data_property(&target, pkey.clone(), value.clone())
+            })();
+            self.unpin_many(proxy_pin_count);
+            return proxy_result;
         }
         if let Some(success) = self.define_typed_array_integer_index_property(
             receiver,
