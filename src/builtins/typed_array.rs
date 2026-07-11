@@ -3661,11 +3661,30 @@ pub(crate) fn typed_array_reduce_right(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let this = this.ok_or_else(|| Error::type_err("TypedArray reduceRight called without this"))?;
+    typed_array_reduce_impl(vm, args, this, true)
+}
+
+pub(crate) fn typed_array_reduce(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_reduce_impl(vm, args, this, false)
+}
+
+fn typed_array_reduce_impl(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    from_right: bool,
+) -> error::Result<Value> {
+    let name = if from_right { "reduceRight" } else { "reduce" };
+    let this =
+        this.ok_or_else(|| Error::type_err(format!("TypedArray {name} called without this")))?;
     let Value::Object(array_idx) = &this else {
-        return Err(Error::type_err(
-            "TypedArray reduceRight called on non-object",
-        ));
+        return Err(Error::type_err(format!(
+            "TypedArray {name} called on non-object"
+        )));
     };
     let slots = vm.heap.with_obj(array_idx.0, |obj| {
         let HeapObj::TypedArray(array) = obj else {
@@ -3679,8 +3698,8 @@ pub(crate) fn typed_array_reduce_right(
             array.length_tracking,
         ))
     });
-    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
-        slots.ok_or_else(|| Error::type_err("TypedArray reduceRight called on non-TypedArray"))?;
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) = slots
+        .ok_or_else(|| Error::type_err(format!("TypedArray {name} called on non-TypedArray")))?;
     let byte_length = effective_view_byte_length(
         vm,
         backing.as_ref(),
@@ -3689,13 +3708,13 @@ pub(crate) fn typed_array_reduce_right(
         length_tracking,
         kind.element_size(),
     )
-    .ok_or_else(|| Error::type_err("TypedArray reduceRight called on out-of-bounds view"))?;
+    .ok_or_else(|| Error::type_err(format!("TypedArray {name} called on out-of-bounds view")))?;
     let length = typed_array_element_count(kind, byte_length);
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     if !is_callable(&callback, &vm.heap) {
-        return Err(Error::type_err(
-            "TypedArray reduceRight callback is not callable",
-        ));
+        return Err(Error::type_err(format!(
+            "TypedArray {name} callback is not callable"
+        )));
     }
     if length == 0 && args.len() < 2 {
         return Err(Error::type_err(
@@ -3706,16 +3725,20 @@ pub(crate) fn typed_array_reduce_right(
     let base_pin_count = vm.pin(&this) + vm.pin(&callback);
     let mut accumulator_pin_count = 0;
     let result: error::Result<Value> = (|| {
-        let (mut accumulator, mut index) = if args.len() >= 2 {
-            (args[1].clone(), length)
+        let (mut accumulator, start_offset) = if args.len() >= 2 {
+            (args[1].clone(), 0)
         } else {
-            let index = length - 1;
-            (vm.get_property(&this, &index.to_string())?, index)
+            let index = if from_right { length - 1 } else { 0 };
+            (vm.get_property(&this, &index.to_string())?, 1)
         };
         accumulator_pin_count = vm.pin(&accumulator);
 
-        while index > 0 {
-            index -= 1;
+        for offset in start_offset..length {
+            let index = if from_right {
+                length - offset - 1
+            } else {
+                offset
+            };
             let value = vm.get_property(&this, &index.to_string())?;
             let next = vm.call_function(
                 &callback,

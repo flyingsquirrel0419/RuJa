@@ -2120,6 +2120,40 @@ fn typed_array_reduce_right_uses_last_value_as_default_accumulator() {
 }
 
 #[test]
+fn typed_array_reduce_snapshots_length_and_reads_current_values() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var values = new Int8Array(rab);
+            values.set([1, 2, 3]);
+            var visits = [];
+            var result = values.reduce(function(accumulator, value, index, receiver) {
+                visits.push(index + ":" + value + ":" + (receiver === values));
+                if (index === 0) rab.resize(1);
+                return accumulator + String(value);
+            }, "");
+            [result, visits.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "1undefinedundefined;0:1:true|1:undefined:true|2:undefined:true"
+        ))
+    );
+}
+
+#[test]
+fn typed_array_reduce_uses_first_value_as_default_accumulator() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var single = new BigInt64Array([7n]);
+            var result = single.reduce(function() { calls += 1; });
+            [String(result), calls].join("|");
+            "#),
+        Value::String(Arc::from("7|0"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

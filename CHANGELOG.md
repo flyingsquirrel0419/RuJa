@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.reduce` now shares a direction-aware reduction core
+  with `reduceRight`, validating and snapshotting the receiver while reading
+  each current integer-indexed value immediately before callback invocation.
 - `%TypedArray%.prototype.toSorted` now stably sorts a value snapshot into a
   fresh same-type intrinsic TypedArray, preserves the source (including
   immutable-backed views), and ignores user `constructor` and `@@species`.
@@ -203,6 +206,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/reduce/` path now closes at **50
+  pass / 0 fail / 0 skip / 50 total**, while the refactored `reduceRight` path
+  remains at **50 pass / 0 fail / 0 skip / 50 total**.
 - The exact `built-ins/TypedArray/prototype/toSorted/` path now closes at **12
   pass / 0 fail / 0 skip / 12 total**, covering default/custom comparators,
   same-type copying, immutable sources, and species avoidance. CI `29155327452`

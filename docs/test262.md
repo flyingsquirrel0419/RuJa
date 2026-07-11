@@ -706,6 +706,15 @@ candidate full run exposed an allocation-order-sensitive Proxy failure; tracing
 Proxy target/handler slots and rooting the transient `defineProperty`
 descriptor restores that file without changing the final aggregate fail count.
 
+Focused TypedArray `reduce` coverage check:
+`%TypedArray%.prototype.reduce` shares the receiver validation, length snapshot,
+callback checks, and accumulator rooting used by `reduceRight`, but selects the
+first current element as the default accumulator and visits remaining snapshot
+indexes in ascending order. Values are read immediately before each callback,
+so detach and shrink expose `undefined` while growth does not extend iteration.
+The exact Number/BigInt and resizable-buffer path reports **50 pass / 0 fail / 0
+skip / 50 total**; the refactored reverse path remains **50 / 0 / 0 / 50**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by
