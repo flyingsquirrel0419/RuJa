@@ -3214,6 +3214,200 @@ pub(crate) fn typed_array_copy_within(
     result
 }
 
+pub(crate) fn typed_array_slice(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray slice called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray slice called on non-object"));
+    };
+    let source_slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (source_kind, source_buffer, source_byte_offset, source_fixed_length, source_tracking) =
+        source_slots.ok_or_else(|| Error::type_err("TypedArray slice called on non-TypedArray"))?;
+    let source_buffer = source_buffer
+        .ok_or_else(|| Error::type_err("TypedArray slice missing viewed ArrayBuffer"))?;
+    let initial_byte_length = effective_view_byte_length(
+        vm,
+        Some(&source_buffer),
+        source_byte_offset,
+        source_fixed_length,
+        source_tracking,
+        source_kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray slice called on out-of-bounds view"))?;
+    let initial_length = typed_array_element_count(source_kind, initial_byte_length);
+
+    let source_pin_count = vm.pin(&this) + vm.pin(&source_buffer);
+    let operation: error::Result<Value> = (|| {
+        let (start, end) = resolve_slice_bounds(vm, initial_length, args.first(), args.get(1))?;
+        let requested_count = end.saturating_sub(start);
+        let default_constructor = current_realm_typed_array_constructor(vm, source_kind)?;
+        let constructor = typed_array_species_constructor(vm, &this, default_constructor)?;
+        let construct_args = [Value::Number(requested_count as f64)];
+        let construct_pin_count = vm.pin(&constructor) + vm.pin_many(&construct_args);
+        let result = vm.construct(&constructor, &construct_args);
+        vm.unpin_many(construct_pin_count);
+        let result = result?;
+
+        let target_slots = match &result {
+            Value::Object(result_idx) => vm.heap.with_obj(result_idx.0, |obj| {
+                let HeapObj::TypedArray(array) = obj else {
+                    return None;
+                };
+                Some((
+                    array.kind,
+                    array.viewed_array_buffer.clone(),
+                    array.byte_offset,
+                    array.byte_length,
+                    array.length_tracking,
+                ))
+            }),
+            _ => None,
+        }
+        .ok_or_else(|| Error::type_err("TypedArray slice species returned a non-TypedArray"))?;
+        let (target_kind, target_buffer, target_byte_offset, target_fixed_length, target_tracking) =
+            target_slots;
+        let target_buffer = target_buffer
+            .ok_or_else(|| Error::type_err("TypedArray slice result has no ArrayBuffer"))?;
+        if is_immutable_array_buffer(vm, &target_buffer) {
+            return Err(Error::type_err(
+                "TypedArray slice species returned an immutable result",
+            ));
+        }
+        let target_byte_length = effective_view_byte_length(
+            vm,
+            Some(&target_buffer),
+            target_byte_offset,
+            target_fixed_length,
+            target_tracking,
+            target_kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("TypedArray slice result is out of bounds"))?;
+        if typed_array_element_count(target_kind, target_byte_length) < requested_count {
+            return Err(Error::type_err(
+                "TypedArray slice species returned a shorter result",
+            ));
+        }
+        if typed_array_content_type(target_kind) != typed_array_content_type(source_kind) {
+            return Err(Error::type_err(
+                "TypedArray slice species returned incompatible content type",
+            ));
+        }
+        if requested_count == 0 {
+            return Ok(result);
+        }
+
+        let current_source_byte_length = effective_view_byte_length(
+            vm,
+            Some(&source_buffer),
+            source_byte_offset,
+            source_fixed_length,
+            source_tracking,
+            source_kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("TypedArray slice source became out of bounds"))?;
+        let current_source_length =
+            typed_array_element_count(source_kind, current_source_byte_length);
+        let copy_count = end.min(current_source_length).saturating_sub(start);
+        if copy_count == 0 {
+            return Ok(result);
+        }
+
+        let result_pin_count = vm.pin(&result) + vm.pin(&target_buffer);
+        let copy_result: error::Result<()> = (|| {
+            if source_kind == target_kind {
+                let element_size = source_kind.element_size();
+                let source_start =
+                    source_byte_offset
+                        .checked_add(start.checked_mul(element_size).ok_or_else(|| {
+                            Error::range("TypedArray slice source offset overflow")
+                        })?)
+                        .ok_or_else(|| Error::range("TypedArray slice source offset overflow"))?;
+                let byte_count = copy_count
+                    .checked_mul(element_size)
+                    .ok_or_else(|| Error::range("TypedArray slice byte count overflow"))?;
+                let source_end = source_start
+                    .checked_add(byte_count)
+                    .ok_or_else(|| Error::range("TypedArray slice source range overflow"))?;
+                let target_end = target_byte_offset
+                    .checked_add(byte_count)
+                    .ok_or_else(|| Error::range("TypedArray slice target range overflow"))?;
+                let (Value::Object(source_buffer_idx), Value::Object(target_buffer_idx)) =
+                    (&source_buffer, &target_buffer)
+                else {
+                    return Err(Error::type_err("TypedArray slice buffer is invalid"));
+                };
+                if source_buffer_idx == target_buffer_idx {
+                    vm.heap.with_obj(source_buffer_idx.0, |obj| {
+                        let HeapObj::ArrayBuffer(buffer) = obj else {
+                            return Err(Error::type_err("TypedArray slice buffer is invalid"));
+                        };
+                        let mut bytes = buffer.bytes.lock();
+                        if source_end > bytes.len() || target_end > bytes.len() {
+                            return Err(Error::type_err("TypedArray slice range is out of bounds"));
+                        }
+                        for offset in 0..byte_count {
+                            let byte = bytes[source_start + offset];
+                            bytes[target_byte_offset + offset] = byte;
+                        }
+                        Ok(())
+                    })?;
+                } else {
+                    let source_bytes = vm.heap.with_obj(source_buffer_idx.0, |obj| {
+                        let HeapObj::ArrayBuffer(buffer) = obj else {
+                            return Err(Error::type_err("TypedArray slice source is invalid"));
+                        };
+                        let bytes = buffer.bytes.lock();
+                        if source_end > bytes.len() {
+                            return Err(Error::type_err(
+                                "TypedArray slice source is out of bounds",
+                            ));
+                        }
+                        Ok(bytes[source_start..source_end].to_vec())
+                    })?;
+                    vm.heap.with_obj(target_buffer_idx.0, |obj| {
+                        let HeapObj::ArrayBuffer(buffer) = obj else {
+                            return Err(Error::type_err("TypedArray slice target is invalid"));
+                        };
+                        let mut bytes = buffer.bytes.lock();
+                        if target_end > bytes.len() {
+                            return Err(Error::type_err(
+                                "TypedArray slice target is out of bounds",
+                            ));
+                        }
+                        bytes[target_byte_offset..target_end].copy_from_slice(&source_bytes);
+                        Ok(())
+                    })?;
+                }
+            } else {
+                for index in 0..copy_count {
+                    let value = vm.get_property(&this, &(start + index).to_string())?;
+                    vm.set_property_strict(&result, &index.to_string(), value)?;
+                }
+            }
+            Ok(())
+        })();
+        vm.unpin_many(result_pin_count);
+        copy_result?;
+        Ok(result)
+    })();
+    vm.unpin_many(source_pin_count);
+    operation
+}
+
 pub(crate) fn typed_array_join(
     vm: &mut Vm,
     args: &[Value],
@@ -4098,10 +4292,10 @@ fn typed_array_constructor_with_kind(
                             return Err(Error::range("Invalid TypedArray length"));
                         }
                         let remaining = buffer_len - byte_offset;
-                        if remaining % kind.element_size() != 0 {
+                        if !length_tracking && remaining % kind.element_size() != 0 {
                             return Err(Error::range("Invalid TypedArray length"));
                         }
-                        remaining
+                        remaining - (remaining % kind.element_size())
                     }
                     Some(element_length) => element_length
                         .checked_mul(kind.element_size())

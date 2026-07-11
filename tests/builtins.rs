@@ -1816,6 +1816,60 @@ fn typed_array_copy_within_preserves_bytes_and_revalidates_bounds() {
 }
 
 #[test]
+fn typed_array_slice_uses_species_and_revalidates_source() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var source = new Int8Array(rab);
+            source.set([10, 20, 30, 40]);
+            var calls = [];
+            source.constructor = { [Symbol.species]: function(count) {
+                calls.push(count);
+                rab.resize(2);
+                return new Uint8Array(count);
+            }};
+            var sliced = source.slice(0, 4);
+
+            rab.resize(6);
+            source = new Int8Array(rab);
+            source.set([10, 20, 30, 40, 50, 60]);
+            source.constructor = { [Symbol.species]: function() {
+                return new Int8Array(rab, 2);
+            }};
+            var shared = source.slice(1, 4);
+
+            [
+                calls.join(","),
+                sliced instanceof Uint8Array,
+                Array.from(sliced).join(","),
+                Array.from(shared).join(",")
+            ].join("|");
+            "#),
+        Value::String(Arc::from("4|true|10,20,0,0|20,20,20,60"))
+    );
+}
+
+#[test]
+fn typed_array_species_accessor_and_unaligned_tracking_views() {
+    assert_eq!(
+        run(r#"
+            class Derived extends Uint16Array {}
+            var derived = new Derived([1, 2]);
+            var sliced = derived.slice();
+            var rab = new ArrayBuffer(5, { maxByteLength: 8 });
+            var tracking = new Uint16Array(rab);
+            [
+                Uint16Array[Symbol.species] === Uint16Array,
+                sliced instanceof Derived,
+                tracking.length,
+                tracking.byteLength
+            ].join("|");
+            "#),
+        Value::String(Arc::from("true|true|2|4"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

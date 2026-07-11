@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.slice` now computes bounds from the initial internal
+  length, creates a writable species result, revalidates the source after
+  observable construction, and copies same-kind elements byte-for-byte while
+  converting different kinds by value. `%TypedArray%[Symbol.species]` and
+  unaligned length-tracking resizable-buffer views now follow intrinsic rules.
 - `%TypedArray%.prototype.copyWithin` now validates writable receivers before
   argument coercion, snapshots the internal length, revalidates bounds after
   coercion-driven resize or detach, and performs overlap-safe raw byte copies
@@ -146,6 +151,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/slice/` path now closes at **92 pass
+  / 0 fail / 0 skip / 92 total**.
 - The exact `built-ins/TypedArray/prototype/copyWithin/` path now closes at **65
   pass / 0 fail / 0 skip / 65 total**. Three detach stress files receive a
   path-limited 600-second timeout because their full constructor/factory matrix

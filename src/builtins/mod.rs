@@ -1641,6 +1641,13 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         let typed_array_from_fn =
             vm.new_native_function_in_env("from", typed_array_from, 1, env)?;
         let typed_array_of_fn = vm.new_native_function_in_env("of", typed_array_of, 0, env)?;
+        let typed_array_species_getter = vm.new_native_function_in_env(
+            "get [Symbol.species]",
+            array_buffer_species_get,
+            0,
+            env,
+        )?;
+        let species_symbol = vm.well_known_symbols.species;
         vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Function(f) = o {
                 *f.prototype.lock() = Some(typed_array_proto.clone());
@@ -1655,6 +1662,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
                 f.props.lock().insert(
                     PropertyKey::from("of"),
                     data_prop(Value::Object(typed_array_of_fn)),
+                );
+                f.props.lock().insert(
+                    PropertyKey::Symbol(species_symbol),
+                    accessor_get_prop(Value::Object(typed_array_species_getter)),
                 );
             }
         });
@@ -1672,6 +1683,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_set_fn = vm.new_native_function_in_env("set", typed_array_set, 1, env)?;
     let typed_array_copy_within_fn =
         vm.new_native_function_in_env("copyWithin", typed_array_copy_within, 2, env)?;
+    let typed_array_slice_fn = vm.new_native_function_in_env("slice", typed_array_slice, 2, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
@@ -1718,6 +1730,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("copyWithin"),
                 data_prop(Value::Object(typed_array_copy_within_fn)),
+            );
+            props.insert(
+                PropertyKey::from("slice"),
+                data_prop(Value::Object(typed_array_slice_fn)),
             );
             props.insert(
                 PropertyKey::from("join"),

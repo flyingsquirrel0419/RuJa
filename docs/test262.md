@@ -552,6 +552,15 @@ the focused path. One unrelated built-ins file varied from pass to fail against
 the preceding run, so the aggregate net gain is 64 while the attributable
 focused gain remains 65.
 
+Focused TypedArray `slice` coverage check:
+`%TypedArray%.prototype.slice` computes start and end from the initial internal
+length, constructs a writable `@@species` result, then revalidates source bounds
+after observable species execution. Same-kind copies preserve raw element bits,
+including same-buffer forward-copy semantics, while different kinds convert by
+value. The shared `%TypedArray%[Symbol.species]` accessor and unaligned
+length-tracking resizable-buffer construction are also covered. The exact path
+reports **92 pass / 0 fail / 0 skip / 92 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator
