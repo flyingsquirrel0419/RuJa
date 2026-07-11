@@ -696,7 +696,15 @@ the last current element as the accumulator and skips that index; otherwise it
 visits every snapshot index in descending order. Values are read immediately
 before each callback, so detach or shrink exposes `undefined` at invalidated
 indexes while growth does not extend iteration. The exact Number/BigInt and
-resizable-buffer path reports **50 pass / 0 fail / 0 skip / 50 total**.
+resizable-buffer path reports **50 pass / 0 fail / 0 skip / 50 total**. CI
+`29152822658` and `test262-full` `29152822656` confirm the final change.
+Downloaded artifacts aggregate to **26636 pass / 6764 fail / 12 timeout / 0
+error / 15055 skip / 48467 total / 33400 pass-or-fail executed**, or **79.7%**
+of pass-or-fail files and **55.0%** of the matrix. Against the preceding
+identical matrix, exactly 50 focused files moved from skip to pass. The first
+candidate full run exposed an allocation-order-sensitive Proxy failure; tracing
+Proxy target/handler slots and rooting the transient `defineProperty`
+descriptor restores that file without changing the final aggregate fail count.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

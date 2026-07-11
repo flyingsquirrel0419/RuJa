@@ -195,7 +195,12 @@
 
 - The exact `built-ins/TypedArray/prototype/reduceRight/` path now closes at
   **50 pass / 0 fail / 0 skip / 50 total**, covering Number and BigInt content,
-  resizable buffers, abrupt callbacks, and default/custom accumulators.
+  resizable buffers, abrupt callbacks, and default/custom accumulators. CI
+  `29152822658` and `test262-full` `29152822656` confirm the final change at
+  **26636 pass / 6764 fail / 15055 skip / 12 timeout / 0 error / 48467 total**.
+  Against the preceding identical matrix, exactly 50 files moved from skip to
+  pass. The final full run also confirms the Proxy GC regression exposed by the
+  first candidate run is fixed.
 - The exact `built-ins/TypedArray/prototype/includes/` path now closes at **45
   pass / 0 fail / 0 skip / 45 total**, including resizable-buffer matrices that
   repeatedly construct dynamic TypedArray subclasses under GC pressure. CI
