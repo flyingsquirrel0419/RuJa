@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.toSorted` now stably sorts a value snapshot into a
+  fresh same-type intrinsic TypedArray, preserves the source (including
+  immutable-backed views), and ignores user `constructor` and `@@species`.
 - GC collection now invalidates property inline-cache entries before swept heap
   cells can be reused, preventing a new object from observing stale properties
   cached for the cell's previous occupant.
@@ -200,6 +203,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/toSorted/` path now closes at **12
+  pass / 0 fail / 0 skip / 12 total**, covering default/custom comparators,
+  same-type copying, immutable sources, and species avoidance.
 - The exact `built-ins/TypedArray/prototype/sort/` path now closes at **36 pass
   / 0 fail / 0 skip / 36 total**, covering stable Number and BigInt ordering,
   immutable buffers, and resizable-buffer comparator side effects. CI

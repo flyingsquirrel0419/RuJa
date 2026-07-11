@@ -2200,6 +2200,44 @@ fn gc_invalidates_property_cache_before_heap_cell_reuse() {
 }
 
 #[test]
+fn typed_array_to_sorted_copies_same_type_without_species_lookup() {
+    assert_eq!(
+        run(r#"
+            var source = new Float64Array([NaN, 2, -0, 0, -1]);
+            Object.defineProperty(source, "constructor", {
+                get: function() { throw new Error("constructor must not be read"); }
+            });
+            var sorted = source.toSorted();
+            [
+                sorted instanceof Float64Array,
+                sorted !== source,
+                source[0] !== source[0],
+                sorted[0],
+                Object.is(sorted[1], -0),
+                Object.is(sorted[2], 0),
+                sorted[3],
+                Number.isNaN(sorted[4])
+            ].join("|");
+            "#),
+        Value::String(Arc::from("true|true|true|-1|true|true|2|true"))
+    );
+}
+
+#[test]
+fn typed_array_to_sorted_uses_custom_comparator_for_bigint_copy() {
+    assert_eq!(
+        run(r#"
+            var source = new BigInt64Array([1n, 3n, 2n]);
+            var sorted = source.toSorted(function(left, right) {
+                return Number(right - left);
+            });
+            [Array.from(source).join(","), Array.from(sorted).join(",")].join("|");
+            "#),
+        Value::String(Arc::from("1,3,2|3,2,1"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

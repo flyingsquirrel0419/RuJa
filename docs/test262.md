@@ -723,6 +723,14 @@ allocation-order-sensitive stale inline-cache entry after heap-cell reuse;
 invalidating property caches whenever GC collects restores that existing file
 without changing the final aggregate fail count.
 
+Focused TypedArray `toSorted` coverage check:
+`%TypedArray%.prototype.toSorted` validates and snapshots its source, applies
+the same stable Number/BigInt comparison semantics as `sort`, and writes the
+ordered values into a fresh current-realm intrinsic of the source element kind.
+The source remains unchanged and may use an immutable backing buffer. User
+`constructor` and `Symbol.species` properties are never observed. The exact
+path reports **12 pass / 0 fail / 0 skip / 12 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

@@ -3893,6 +3893,91 @@ pub(crate) fn typed_array_sort(
     Ok(this)
 }
 
+pub(crate) fn typed_array_to_sorted(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let comparator = args.first().cloned().unwrap_or(Value::Undefined);
+    let comparator = if comparator.is_undefined() {
+        None
+    } else {
+        if !is_callable(&comparator, &vm.heap) {
+            return Err(Error::type_err(
+                "TypedArray toSorted comparator is not callable",
+            ));
+        }
+        Some(comparator)
+    };
+
+    let this = this.ok_or_else(|| Error::type_err("TypedArray toSorted called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray toSorted called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray toSorted called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray toSorted called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+
+    let comparator_pin_count = comparator.as_ref().map_or(0, |value| vm.pin(value));
+    let source_pin_count = vm.pin(&this) + comparator_pin_count;
+    let sorted: error::Result<Vec<Value>> = (|| {
+        let mut items = Vec::with_capacity(length);
+        for index in 0..length {
+            items.push(vm.get_property(&this, &index.to_string())?);
+        }
+        typed_array_stable_sort(vm, &mut items, comparator.as_ref())?;
+        Ok(items)
+    })();
+    vm.unpin_many(source_pin_count);
+    let sorted = sorted?;
+
+    let constructor = current_realm_typed_array_constructor(vm, kind)?;
+    let construct_args = [Value::Number(length as f64)];
+    let construct_pin_count = vm.pin(&constructor) + vm.pin_many(&construct_args);
+    let result = vm.construct(&constructor, &construct_args);
+    vm.unpin_many(construct_pin_count);
+    let result = result?;
+    let (result_kind, _, _, result_byte_length) =
+        typed_array_slots(vm, Some(result.clone()), "toSorted result")?;
+    if result_kind != kind || typed_array_element_count(result_kind, result_byte_length) < length {
+        return Err(Error::type_err(
+            "TypedArray toSorted constructor returned an incompatible result",
+        ));
+    }
+
+    let result_pin_count = vm.pin(&result);
+    let write_result: error::Result<()> = (|| {
+        for (index, value) in sorted.into_iter().enumerate() {
+            vm.set_property_strict(&result, &index.to_string(), value)?;
+        }
+        Ok(())
+    })();
+    vm.unpin_many(result_pin_count);
+    write_result?;
+    Ok(result)
+}
+
 pub(crate) fn typed_array_join(
     vm: &mut Vm,
     args: &[Value],

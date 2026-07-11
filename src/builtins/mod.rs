@@ -1700,6 +1700,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_reduce_right_fn =
         vm.new_native_function_in_env("reduceRight", typed_array_reduce_right, 1, env)?;
     let typed_array_sort_fn = vm.new_native_function_in_env("sort", typed_array_sort, 1, env)?;
+    let typed_array_to_sorted_fn =
+        vm.new_native_function_in_env("toSorted", typed_array_to_sorted, 1, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
@@ -1790,6 +1792,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("sort"),
                 data_prop(Value::Object(typed_array_sort_fn)),
+            );
+            props.insert(
+                PropertyKey::from("toSorted"),
+                data_prop(Value::Object(typed_array_to_sorted_fn)),
             );
             props.insert(
                 PropertyKey::from("join"),

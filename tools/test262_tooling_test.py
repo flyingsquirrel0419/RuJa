@@ -510,7 +510,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             inside = root / "test/built-ins/TypedArray/prototype/toReversed/case.js"
-            outside = root / "test/built-ins/TypedArray/prototype/toSorted/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/with/case.js"
             meta = {
                 "flags": [],
                 "features": [
@@ -860,6 +860,29 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     "stable-typedarray-sort",
                     "arrow-function",
                     "resizable-arraybuffer",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_to_sorted_features_are_admitted_only_on_its_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/TypedArray/prototype/toSorted/case.js"
+            outside = root / "test/built-ins/Array/prototype/toSorted/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "Reflect.construct",
+                    "Symbol.species",
+                    "TypedArray",
+                    "change-array-by-copy",
                 ],
             }
             for tool in (test262_runner, test262_analyze):
