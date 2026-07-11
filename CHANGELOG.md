@@ -97,7 +97,11 @@
   receiver brands needed by those tests, raising the focused path to **194 pass
   / 0 fail / 27 skip / 221 total** without opening unrelated SharedArrayBuffer
   coverage. Atomics now closes at **389 pass / 0 fail / 0 skip / 389 total**
-  after admitting the five resize/grow coercion-order cases.
+  after admitting the five resize/grow coercion-order cases. CI `29136048993`
+  and `test262-full` `29136049024` confirm the change; downloaded artifacts
+  report **25670 pass / 6769 fail / 11 timeout / 0 error / 16017 skip / 48467
+  total / 32450 executed**, or **79.1%** of executed files and **53.0%** of the
+  matrix.
 - The exact `built-ins/SharedArrayBuffer/` exception now admits the
   `resizable-arraybuffer` feature after implementing the growable SAB core.
   Focused coverage closes at **104 pass / 0 fail / 0 skip / 104 total**. The

@@ -412,7 +412,10 @@ restores the required validation-before-prototype lookup order. The focused
 ArrayBuffer path reports **194 pass / 0 fail / 27 skip / 221 total**, and the
 complete Atomics path reports **389 pass / 0 fail / 0 skip / 389 total** after
 admitting its five resize/grow coercion-order cases. Dynamic length-tracking
-views remain the next gated unit.
+views remain the next gated unit. CI `29136048993` and `test262-full`
+`29136049024` confirm the change. Downloaded artifacts aggregate to **25670
+pass / 6769 fail / 11 timeout / 0 error / 16017 skip / 48467 total / 32450
+executed**, or **79.1%** of executed files and **53.0%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
