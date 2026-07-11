@@ -236,6 +236,10 @@
   / 0 fail / 0 skip / 22 total**, up from **1 pass / 21 fail**, covering
   Number/BigInt coercion order, current resizable-buffer bounds, immutable
   sources, intrinsic same-kind construction, and species avoidance.
+  CI `29162715549` and `test262-full` `29162715530` confirm the independently
+  reviewed change at **27050 pass / 6764 fail / 14641 skip / 12 timeout / 0
+  error / 48467 total**. Against the preceding identical matrix, exactly 22
+  files moved from skip to pass.
 - The exact `built-ins/TypedArray/prototype/toLocaleString/` path now closes at
   **39 pass / 0 fail / 0 skip / 39 total**, up from **6 pass / 33 fail**,
   covering Number/BigInt conversion hooks, abrupt completions, internal length,

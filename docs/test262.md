@@ -804,7 +804,12 @@ copies the snapshot visit range without consulting `constructor` or
 `Symbol.species`. Realm intrinsic constructors are held in a GC-rooted table,
 so mutable global bindings do not affect `with`, `toReversed`, or `toSorted`.
 The exact path improves from **1 pass / 21 fail / 0 skip** to **22 pass / 0 fail
-/ 0 skip / 22 total**.
+/ 0 skip / 22 total**. CI `29162715549` and `test262-full` `29162715530`
+confirm the independently reviewed change. Downloaded artifacts aggregate to
+**27050 pass / 6764 fail / 12 timeout / 0 error / 14641 skip / 48467 total /
+33814 pass-or-fail executed**, or **80.0%** of pass-or-fail files and **55.8%**
+of the matrix. Against the preceding identical matrix, exactly 22 focused
+files moved from skip to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
