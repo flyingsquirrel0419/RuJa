@@ -467,7 +467,10 @@ validates immutable and dynamic bounds in specification order, snapshots
 overlapping source bytes, preserves same-type bit encodings, converts across
 Number or BigInt element kinds, and continues ordered source access while a
 resizable target changes. The exact path reports **110 pass / 0 fail / 0 skip
-/ 110 total**.
+/ 110 total**. CI `29139260377` and `test262-full` `29139260415` confirm the
+change. Downloaded artifacts aggregate to **25978 pass / 6766 fail / 0 timeout
+/ 0 error / 14963 skip / 47718 total / 32744 executed**, or **79.3%** of
+executed files and **54.4%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

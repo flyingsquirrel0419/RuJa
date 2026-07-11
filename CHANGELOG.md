@@ -123,6 +123,8 @@
 - The exact `built-ins/TypedArray/prototype/set/` path now closes at **110 pass
   / 0 fail / 0 skip / 110 total**, covering array-like and TypedArray sources,
   BigInt, SharedArrayBuffer, immutable buffers, overlap, and resize behavior.
+  CI `29139260377` and `test262-full` `29139260415` confirm the change at
+  **25978 pass / 6766 fail / 14963 skip / 47718 total**.
 - The exact `built-ins/TypedArray/prototype/subarray/` path now closes at **67
   pass / 0 fail / 0 skip / 67 total**, including detached-buffer coercion,
   species-constructor arguments, and resizable-buffer view semantics. CI
