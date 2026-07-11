@@ -215,6 +215,10 @@
 - The exact `built-ins/TypedArray/prototype/filter/` path now closes at **85
   pass / 0 fail / 0 skip / 85 total**, covering callback-before-species order,
   Number/BigInt results, immutable destinations, and resizable buffers.
+  CI `29157976820` and `test262-full` `29157976810` confirm the change at
+  **26904 pass / 6764 fail / 14787 skip / 12 timeout / 0 error / 48467 total**.
+  Against the preceding identical matrix, exactly 85 files moved from skip to
+  pass.
 - The exact `built-ins/TypedArray/prototype/map/` path now closes at **85 pass /
   0 fail / 0 skip / 85 total**, covering Number/BigInt species results,
   immutable destinations, resizable buffers, callback effects, and conversion.
