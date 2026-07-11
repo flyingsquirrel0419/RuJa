@@ -243,6 +243,11 @@
   at **18 pass / 0 fail / 0 skip / 18 total**, up from **2 pass / 16 fail**,
   covering Number/BigInt kinds, detached buffers, incompatible receivers, and
   accessor descriptors.
+  CI `29163993136` and `test262-full` `29163993119` confirm the independently
+  reviewed change at **27070 pass / 6756 fail / 14629 skip / 12 timeout / 0
+  error / 48467 total**. Against the preceding identical matrix, 12 skipped
+  files and eight failing files moved to pass, including the broader Object tag
+  corrections.
 - The exact `built-ins/TypedArray/prototype/with/` path now closes at **22 pass
   / 0 fail / 0 skip / 22 total**, up from **1 pass / 21 fail**, covering
   Number/BigInt coercion order, current resizable-buffer bounds, immutable

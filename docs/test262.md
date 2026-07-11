@@ -823,7 +823,12 @@ used heap class labels as fallback tags. It now performs observable
 `Symbol.toStringTag` lookup, propagates getter failures, ignores non-string
 values, and uses specification internal-slot fallback categories. The currently
 admitted `built-ins/Object/prototype/toString/` coverage remains **26 pass / 0
-fail / 15 skip / 41 total** after the structural fix.
+fail / 15 skip / 41 total** after the structural fix. CI `29163993136` and
+`test262-full` `29163993119` confirm the combined change. Downloaded artifacts
+aggregate to **27070 pass / 6756 fail / 12 timeout / 0 error / 14629 skip /
+48467 total / 33826 pass-or-fail executed**, or **80.0%** of pass-or-fail files
+and **55.9%** of the matrix. Against the preceding identical matrix, 12 skipped
+files and eight failing files moved to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
