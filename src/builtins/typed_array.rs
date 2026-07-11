@@ -3413,9 +3413,30 @@ pub(crate) fn typed_array_find(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let this = this.ok_or_else(|| Error::type_err("TypedArray find called without this"))?;
+    typed_array_find_impl(vm, args, this, "find", false)
+}
+
+pub(crate) fn typed_array_find_index(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_find_impl(vm, args, this, "findIndex", true)
+}
+
+fn typed_array_find_impl(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    name: &str,
+    return_index: bool,
+) -> error::Result<Value> {
+    let this =
+        this.ok_or_else(|| Error::type_err(format!("TypedArray {name} called without this")))?;
     let Value::Object(array_idx) = &this else {
-        return Err(Error::type_err("TypedArray find called on non-object"));
+        return Err(Error::type_err(format!(
+            "TypedArray {name} called on non-object"
+        )));
     };
     let slots = vm.heap.with_obj(array_idx.0, |obj| {
         let HeapObj::TypedArray(array) = obj else {
@@ -3429,8 +3450,8 @@ pub(crate) fn typed_array_find(
             array.length_tracking,
         ))
     });
-    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
-        slots.ok_or_else(|| Error::type_err("TypedArray find called on non-TypedArray"))?;
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) = slots
+        .ok_or_else(|| Error::type_err(format!("TypedArray {name} called on non-TypedArray")))?;
     let byte_length = effective_view_byte_length(
         vm,
         backing.as_ref(),
@@ -3439,11 +3460,13 @@ pub(crate) fn typed_array_find(
         length_tracking,
         kind.element_size(),
     )
-    .ok_or_else(|| Error::type_err("TypedArray find called on out-of-bounds view"))?;
+    .ok_or_else(|| Error::type_err(format!("TypedArray {name} called on out-of-bounds view")))?;
     let length = typed_array_element_count(kind, byte_length);
     let callback = args.first().cloned().unwrap_or(Value::Undefined);
     if !is_callable(&callback, &vm.heap) {
-        return Err(Error::type_err("TypedArray find predicate is not callable"));
+        return Err(Error::type_err(format!(
+            "TypedArray {name} predicate is not callable"
+        )));
     }
     let this_arg = args.get(1).cloned().unwrap_or(Value::Undefined);
 
@@ -3457,10 +3480,18 @@ pub(crate) fn typed_array_find(
                 Some(this_arg.clone()),
             )?;
             if predicate_result.is_truthy() {
-                return Ok(value);
+                return Ok(if return_index {
+                    Value::Number(index as f64)
+                } else {
+                    value
+                });
             }
         }
-        Ok(Value::Undefined)
+        Ok(if return_index {
+            Value::Number(-1.0)
+        } else {
+            Value::Undefined
+        })
     })();
     vm.unpin_many(pin_count);
     result

@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.findIndex` now shares `find`'s receiver validation,
+  callback protocol, initial-length snapshot, and current-value reads across
+  detach, shrink, and growth while returning the matching index or `-1`.
 - `%TypedArray%.prototype.find` now validates the receiver and predicate,
   snapshots the internal length, reads each current integer-indexed value before
   callback invocation, and preserves iteration count across detach, shrink, and
@@ -155,6 +158,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/findIndex/` path now closes at **38
+  pass / 0 fail / 0 skip / 38 total**.
 - The exact `built-ins/TypedArray/prototype/find/` path now closes at **38 pass
   / 0 fail / 0 skip / 38 total**. CI `29145657670` and `test262-full`
   `29145657675` confirm the change at **26297 pass / 6764 fail / 15394 skip /

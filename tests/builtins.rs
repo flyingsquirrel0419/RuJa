@@ -1904,6 +1904,29 @@ fn typed_array_find_snapshots_length_and_reads_current_values() {
 }
 
 #[test]
+fn typed_array_find_index_shares_find_iteration_semantics() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var seen = [];
+            var found = tracking.findIndex(function(value, index, receiver) {
+                seen.push(String(value) + ":" + index + ":" + (receiver === tracking));
+                if (index === 0) {
+                    tracking[2] = 7;
+                    rab.resize(2);
+                }
+                return value === 7;
+            });
+            var missing = tracking.findIndex(function() { return false; });
+            [found, missing, seen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from("-1|-1|1:0:true,2:1:true,undefined:2:true"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

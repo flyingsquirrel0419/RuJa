@@ -315,6 +315,20 @@ TYPED_ARRAY_FIND_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_FIND_INDEX_PREFIXES = (
+    "built-ins/TypedArray/prototype/findIndex/",
+)
+
+TYPED_ARRAY_FIND_INDEX_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "Reflect.construct",
+    "Symbol",
+    "TypedArray",
+    "arrow-function",
+    "resizable-arraybuffer",
+}
+
 ARRAY_BUFFER_PREFIXES = (
     "built-ins/ArrayBuffer/",
 )
@@ -909,6 +923,13 @@ def typed_array_find_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_FIND_PREFIXES)
 
+def typed_array_find_index_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_FIND_INDEX_PREFIXES)
+
 def array_buffer_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1154,6 +1175,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_SLICE_FEATURES)
     if path is not None and typed_array_find_path(path):
         feats.difference_update(TYPED_ARRAY_FIND_FEATURES)
+    if path is not None and typed_array_find_index_path(path):
+        feats.difference_update(TYPED_ARRAY_FIND_INDEX_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
         if "resizable-arraybuffer" in meta.get("features", []):
