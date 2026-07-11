@@ -728,7 +728,12 @@ the same Number/BigInt content type. Each current value is read immediately
 before callback invocation and the callback result is converted by the target
 element kind, so constructor/callback resize and detach effects remain
 observable without extending iteration. The exact path reports **85 pass / 0
-fail / 0 skip / 85 total**.
+fail / 0 skip / 85 total**. CI `29157121160` and `test262-full` `29157121173`
+confirm the change. Downloaded artifacts aggregate to **26819 pass / 6764 fail /
+12 timeout / 0 error / 14872 skip / 48467 total / 33583 pass-or-fail executed**,
+or **79.9%** of pass-or-fail files and **55.3%** of the matrix.
+Against the preceding identical matrix, exactly 85 focused files moved from
+skip to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values

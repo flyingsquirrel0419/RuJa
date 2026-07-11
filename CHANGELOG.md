@@ -212,6 +212,9 @@
 - The exact `built-ins/TypedArray/prototype/map/` path now closes at **85 pass /
   0 fail / 0 skip / 85 total**, covering Number/BigInt species results,
   immutable destinations, resizable buffers, callback effects, and conversion.
+  CI `29157121160` and `test262-full` `29157121173` confirm the change at **26819
+  pass / 6764 fail / 14872 skip / 12 timeout / 0 error / 48467 total**. Against
+  the preceding identical matrix, exactly 85 files moved from skip to pass.
 - The exact `built-ins/TypedArray/prototype/reduce/` path now closes at **50
   pass / 0 fail / 0 skip / 50 total**, while the refactored `reduceRight` path
   remains at **50 pass / 0 fail / 0 skip / 50 total**. CI `29156205544` and
