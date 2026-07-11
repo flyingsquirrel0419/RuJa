@@ -150,6 +150,8 @@
   pass / 0 fail / 0 skip / 65 total**. Three detach stress files receive a
   path-limited 600-second timeout because their full constructor/factory matrix
   takes about 100 seconds in the interpreter; all other files retain 8 seconds.
+  CI `29143846038` and `test262-full` `29143846110` confirm the change at
+  **26164 pass / 6767 fail / 15524 skip / 12 timeout / 0 error / 48467 total**.
 - The exact `built-ins/TypedArray/prototype/toReversed/` path now closes at **9
   pass / 0 fail / 0 skip / 9 total**. CI `29142341248` and `test262-full`
   `29142341265` confirm the change at **26100 pass / 6766 fail / 15589 skip /

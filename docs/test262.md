@@ -543,7 +543,14 @@ current bounds, and preserves NaN payloads and other element bit patterns. The
 exact path reports **65 pass / 0 fail / 0 skip / 65 total**. Its three 10,000
 element detach stress files use a path-limited 600-second timeout after a
 102-second local measurement and slower CI execution; ordinary files retain the
-shared 8-second limit.
+shared 8-second limit. CI `29143846038` and `test262-full` `29143846110`
+confirm the change. Downloaded artifacts aggregate to **26164 pass / 6767
+fail / 12 timeout / 0 error / 15524 skip / 48467 total / 32931 pass-or-fail
+executed**, or **79.5%** of pass-or-fail files and **54.0%** of the matrix. The
+CI artifact binary separately reproduces **65 pass / 0 fail / 0 timeout** on
+the focused path. One unrelated built-ins file varied from pass to fail against
+the preceding run, so the aggregate net gain is 64 while the attributable
+focused gain remains 65.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
