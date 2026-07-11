@@ -171,7 +171,11 @@
 
 - The exact `built-ins/TypedArray/prototype/some/` path now closes at **44 pass
   / 0 fail / 0 skip / 44 total**. The four shared find paths remain at **152
-  pass / 0 fail / 0 skip / 152 total** after predicate-loop consolidation.
+  pass / 0 fail / 0 skip / 152 total** after predicate-loop consolidation. CI
+  `29148631959` and `test262-full` `29148631970` confirm the change at **26453
+  pass / 6766 fail / 15236 skip / 12 timeout / 0 error / 47718 total**. Against
+  the preceding identical matrix, 44 files moved from skip while the aggregate
+  gained 43 pass and one fail.
 - The exact `built-ins/TypedArray/prototype/findLastIndex/` path now closes at
   **38 pass / 0 fail / 0 skip / 38 total**. CI `29147889854` and
   `test262-full` `29147889860` confirm the change at **26410 pass / 6765 fail /
