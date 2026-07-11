@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.at` now validates the receiver and snapshots its
+  length before index coercion, applies relative indexing, and performs the
+  final integer-indexed read against the current backing-store bounds. Initial
+  out-of-bounds views throw while views resized out of bounds during coercion
+  return `undefined`, including Number and BigInt TypedArrays.
 - TypedArray and DataView instances over resizable or growable buffers now
   record whether their length is fixed or tracking. Dynamic view records drive
   length/byteLength/byteOffset getters, integer-index get/set/has/own-keys,
@@ -99,6 +104,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/at/` path now admits the implemented
+  TypedArray, BigInt, arrow-function, and resizable-buffer dependencies at
+  **15 pass / 0 fail / 0 skip / 15 total**.
 - Resizable view admission adds eight TypedArray-constructor files and thirty
   DataView files, raising those focused paths to **682 pass / 0 fail / 56 skip
   / 738 total** and **522 pass / 0 fail / 39 skip / 561 total**. A narrow

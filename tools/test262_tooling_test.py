@@ -290,6 +290,31 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_at_features_are_admitted_only_on_at_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/TypedArray/prototype/at/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/map/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "ArrayBuffer",
+                    "BigInt",
+                    "TypedArray",
+                    "TypedArray.prototype.at",
+                    "arrow-function",
+                    "resizable-arraybuffer",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
 
 class ArrayBufferAdmissionTests(unittest.TestCase):
     def test_resizable_array_buffer_feature_is_admitted_only_inside_builtin_path(self):

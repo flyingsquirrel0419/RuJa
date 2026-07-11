@@ -61,8 +61,8 @@ Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 WeakRef, FinalizationRegistry, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Promise, Atomics operations including worker
 `wait`/`notify`, `waitAsync`, and `pause`, length-tracking TypedArray/DataView
-views, async/await, generators, for-of, optional chaining, nullish
-coalescing, logical assignment.
+views, `TypedArray.prototype.at`, async/await, generators, for-of, optional
+chaining, nullish coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, a public
 multi-agent embedder API, full TypedArray prototype method coverage beyond the
@@ -429,6 +429,12 @@ Broader unimplemented TypedArray prototype methods remain gated separately. CI
 artifacts aggregate to **25734 pass / 6769 fail / 11 timeout / 0 error / 15953
 skip / 48467 total / 32514 executed**, or **79.1%** of executed files and
 **53.1%** of the matrix.
+
+Focused TypedArray `at` coverage check:
+`%TypedArray%.prototype.at` snapshots the validated view length before index
+coercion, supports negative relative indices, and performs its final indexed
+read against current resizable-buffer bounds. The exact path reports **15 pass
+/ 0 fail / 0 skip / 15 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

@@ -138,6 +138,19 @@ TYPED_ARRAY_RESIZABLE_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_AT_PREFIXES = (
+    "built-ins/TypedArray/prototype/at/",
+)
+
+TYPED_ARRAY_AT_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "TypedArray",
+    "TypedArray.prototype.at",
+    "arrow-function",
+    "resizable-arraybuffer",
+}
+
 ARRAY_BUFFER_PREFIXES = (
     "built-ins/ArrayBuffer/",
 )
@@ -645,6 +658,13 @@ def typed_array_resizable_path(path, meta):
         and "resizable-arraybuffer" in meta.get("features", [])
     )
 
+def typed_array_at_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_AT_PREFIXES)
+
 def array_buffer_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -866,6 +886,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
     if path is not None and typed_array_resizable_path(path, meta):
         feats.difference_update(TYPED_ARRAY_RESIZABLE_FEATURES)
+    if path is not None and typed_array_at_path(path):
+        feats.difference_update(TYPED_ARRAY_AT_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
         if "resizable-arraybuffer" in meta.get("features", []):

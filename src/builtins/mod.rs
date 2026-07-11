@@ -1670,6 +1670,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_subarray_fn =
         vm.new_native_function_in_env("subarray", typed_array_subarray, 2, env)?;
     let typed_array_fill_fn = vm.new_native_function_in_env("fill", typed_array_fill, 1, env)?;
+    let typed_array_at_fn = vm.new_native_function_in_env("at", typed_array_at, 1, env)?;
     if let Value::Object(idx) = &typed_array_proto {
         vm.heap.with_obj(idx.0, |obj| {
             let mut props = obj.props().lock();
@@ -1700,6 +1701,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("fill"),
                 data_prop(Value::Object(typed_array_fill_fn)),
+            );
+            props.insert(
+                PropertyKey::from("at"),
+                data_prop(Value::Object(typed_array_at_fn)),
             );
         });
     }

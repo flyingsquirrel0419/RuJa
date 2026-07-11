@@ -2445,6 +2445,36 @@ fn length_tracking_typed_array_follows_growable_shared_buffer() {
 }
 
 #[test]
+fn typed_array_at_snapshots_length_before_index_coercion() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var fixed = new Uint8Array(rab, 0, 4);
+            fixed[0] = 1;
+            fixed[3] = 4;
+            var before = [fixed.at(0), fixed.at(-1), fixed.at(4)];
+            var coerced = fixed.at({ valueOf: function() {
+                rab.resize(2);
+                return 0;
+            }});
+            var initialOob = false;
+            try { fixed.at(0); }
+            catch (error) { initialOob = error instanceof TypeError; }
+            rab.resize(4);
+            [
+                before.join(","),
+                coerced === undefined,
+                initialOob,
+                fixed.at(-1),
+                Uint8Array.prototype.at.length,
+                Uint8Array.prototype.at.name
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("1,4,|true|true|0|1|at"))
+    );
+}
+
+#[test]
 fn array_buffer_transfer_to_immutable_and_slice_to_immutable_mark_results() {
     assert_eq!(
         run(r#"

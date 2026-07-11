@@ -2768,6 +2768,56 @@ pub(crate) fn typed_array_length_get(
     ))
 }
 
+pub(crate) fn typed_array_at(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray at called without this"))?;
+    let Value::Object(idx) = &this else {
+        return Err(Error::type_err("TypedArray at called on non-object"));
+    };
+    let slots = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, buffer, byte_offset, byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray at called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        buffer.as_ref(),
+        byte_offset,
+        byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray at called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+
+    let index = vm.to_number(args.first().unwrap_or(&Value::Undefined))?;
+    if index.is_infinite() {
+        return Ok(Value::Undefined);
+    }
+    let relative = if index.is_nan() { 0.0 } else { index.trunc() };
+    let actual = if relative >= 0.0 {
+        relative
+    } else {
+        length as f64 + relative
+    };
+    if actual < 0.0 || actual >= length as f64 {
+        return Ok(Value::Undefined);
+    }
+    vm.get_property_by_key(&this, &PropertyKey::from((actual as usize).to_string()))
+}
+
 fn typed_array_content_type(kind: crate::value::TypedArrayKind) -> &'static str {
     match kind {
         crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
