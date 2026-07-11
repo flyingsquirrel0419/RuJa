@@ -3138,6 +3138,41 @@ pub(crate) fn typed_array_join(
     Ok(Value::String(Arc::from(parts.join(&separator))))
 }
 
+pub(crate) fn typed_array_values(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray values called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray values called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray values called on non-TypedArray"))?;
+    effective_view_byte_length(
+        vm,
+        buffer.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray values called on out-of-bounds view"))?;
+    new_collection_iterator(vm, this, CollectionIteratorKind::ArrayValues)
+}
+
 pub(crate) fn typed_array_fill(
     vm: &mut Vm,
     args: &[Value],

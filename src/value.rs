@@ -730,7 +730,6 @@ pub struct CollectionIteratorData {
     pub source: Value,
     pub kind: CollectionIteratorKind,
     pub index: AtomicUsize,
-    pub done: AtomicBool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

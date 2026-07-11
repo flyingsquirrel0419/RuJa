@@ -1673,7 +1673,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_fill_fn = vm.new_native_function_in_env("fill", typed_array_fill, 1, env)?;
     let typed_array_at_fn = vm.new_native_function_in_env("at", typed_array_at, 1, env)?;
-    let typed_array_values_fn = vm.new_native_function_in_env("values", array_values, 0, env)?;
+    let typed_array_values_fn =
+        vm.new_native_function_in_env("values", typed_array_values, 0, env)?;
     if let Value::Object(idx) = &typed_array_proto {
         vm.heap.with_obj(idx.0, |obj| {
             let mut props = obj.props().lock();

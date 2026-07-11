@@ -1738,6 +1738,7 @@ pub(crate) fn gen_result(
         }
     });
     let result_obj = Value::Object(GcIdx(obj_idx));
+    vm.keep_during_job(&result_obj);
     wrap_generator_result(vm, result_obj, is_async_gen)
 }
 

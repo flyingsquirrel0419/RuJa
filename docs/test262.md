@@ -480,6 +480,14 @@ that iteration count across detach, shrink, and growth. The exact path reports
 `29139734042` confirm the change. Downloaded artifacts aggregate to **26010
 pass / 6766 fail / 0 timeout / 0 error / 14931 skip / 47718 total / 32776
 executed**, or **79.4%** of executed files and **54.5%** of the matrix.
+
+Focused TypedArray `values` and default-iterator coverage check:
+`%TypedArray%.prototype.values` validates the receiver before iterator
+creation, rechecks dynamic bounds on every pull, observes length-tracking
+growth and shrink, throws when a fixed view becomes out of bounds, and stays
+done after exhaustion. The exact values path reports **21 pass / 0 fail / 0
+skip / 21 total** and the matching `Symbol.iterator` path reports **1 pass / 0
+fail / 0 skip / 1 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

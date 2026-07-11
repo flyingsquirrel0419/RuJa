@@ -1714,6 +1714,38 @@ fn typed_array_join_snapshots_length_before_separator_coercion() {
 }
 
 #[test]
+fn typed_array_values_validates_and_tracks_dynamic_bounds() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3, 4]);
+            var iterator = tracking.values();
+            var first = iterator.next().value;
+            rab.resize(6);
+            tracking[4] = 5;
+            tracking[5] = 6;
+            var rest = Array.from(iterator).join(",");
+
+            var fixed = new Int8Array(rab, 0, 6);
+            var fixedIterator = fixed.values();
+            fixedIterator.next();
+            rab.resize(2);
+            var nextTypeError = false;
+            try { fixedIterator.next(); }
+            catch (error) { nextTypeError = error instanceof TypeError; }
+
+            var createTypeError = false;
+            try { fixed.values(); }
+            catch (error) { createTypeError = error instanceof TypeError; }
+
+            [first, rest, nextTypeError, createTypeError].join("|");
+            "#,),
+        Value::String(Arc::from("1|2,3,4,5,6|true|true"))
+    );
+}
+
+#[test]
 fn typed_array_own_keys_include_integer_indices_first() {
     assert_eq!(
         run(r#"

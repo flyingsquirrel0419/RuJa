@@ -39,17 +39,19 @@ pub(crate) fn new_collection_iterator(
         }
         _ => vm.object_proto.clone(),
     };
+    vm.keep_during_job(&source);
     let obj_idx = vm
         .heap
         .allocate(HeapObj::CollectionIterator(CollectionIteratorData {
             source,
             kind,
             index: std::sync::atomic::AtomicUsize::new(0),
-            done: std::sync::atomic::AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
-    Ok(Value::Object(GcIdx(obj_idx)))
+    let iterator = Value::Object(GcIdx(obj_idx));
+    vm.keep_during_job(&iterator);
+    Ok(iterator)
 }
 
 pub(crate) fn setup_array_iterator_proto(vm: &mut Vm) -> error::Result<()> {
@@ -150,13 +152,12 @@ fn collection_iterator_next(
     let Some(Value::Object(iter_idx)) = this else {
         return Err(Error::type_err("Iterator next called on non-iterator"));
     };
-    let Some((source, kind, index, already_done)) = vm.heap.with_obj(iter_idx.0, |obj| {
+    let Some((source, kind, raw_index)) = vm.heap.with_obj(iter_idx.0, |obj| {
         if let HeapObj::CollectionIterator(iter) = obj {
             Some((
                 iter.source.clone(),
                 iter.kind,
                 iter.index.load(std::sync::atomic::Ordering::Relaxed),
-                iter.done.load(std::sync::atomic::Ordering::Relaxed),
             ))
         } else {
             None
@@ -164,15 +165,46 @@ fn collection_iterator_next(
     }) else {
         return Err(Error::type_err("Iterator next called on non-iterator"));
     };
-    if already_done {
+    if raw_index == usize::MAX {
         return gen_result(vm, Value::Undefined, true, false);
     }
+    let index = raw_index;
 
     let next_value = match (&source, kind) {
         (_, CollectionIteratorKind::ArrayValues) => {
-            let len = match vm.get_property(&source, "length")? {
-                Value::Number(n) if n.is_finite() && n > 0.0 => n.floor() as usize,
-                _ => 0,
+            let typed_array_slots = match &source {
+                Value::Object(source_idx) => vm.heap.with_obj(source_idx.0, |obj| {
+                    let HeapObj::TypedArray(array) = obj else {
+                        return None;
+                    };
+                    Some((
+                        array.kind,
+                        array.viewed_array_buffer.clone(),
+                        array.byte_offset,
+                        array.byte_length,
+                        array.length_tracking,
+                    ))
+                }),
+                _ => None,
+            };
+            let len = if let Some((kind, buffer, byte_offset, byte_length, tracking)) =
+                typed_array_slots
+            {
+                let byte_length = effective_view_byte_length(
+                    vm,
+                    buffer.as_ref(),
+                    byte_offset,
+                    byte_length,
+                    tracking,
+                    kind.element_size(),
+                )
+                .ok_or_else(|| Error::type_err("Array iterator source is out of bounds"))?;
+                typed_array_element_count(kind, byte_length)
+            } else {
+                match vm.get_property(&source, "length")? {
+                    Value::Number(n) if n.is_finite() && n > 0.0 => n.floor() as usize,
+                    _ => 0,
+                }
             };
             if index < len {
                 Some(vm.get_property(&source, &index.to_string())?)
@@ -213,7 +245,8 @@ fn collection_iterator_next(
     } else {
         vm.heap.with_obj(iter_idx.0, |obj| {
             if let HeapObj::CollectionIterator(iter) = obj {
-                iter.done.store(true, std::sync::atomic::Ordering::Relaxed);
+                iter.index
+                    .store(usize::MAX, std::sync::atomic::Ordering::Relaxed);
             }
         });
         gen_result(vm, Value::Undefined, true, false)

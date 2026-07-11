@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.values` and the default iterator now validate the
+  receiver at creation and revalidate dynamic bounds on every `next()` pull.
+  Collection iterators, their sources, and iterator-result objects are rooted
+  through the current job, preventing rare GC-boundary state loss, while a
+  genuinely exhausted iterator remains exhausted after buffer regrowth.
 - `%TypedArray%.prototype.join` now validates and snapshots the initial view
   length before separator coercion. Detach, shrink, or growth during separator
   conversion therefore preserves the initial iteration count, while later
@@ -124,6 +129,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/values/` path now closes at **21
+  pass / 0 fail / 0 skip / 21 total**; the matching `Symbol.iterator` path is
+  **1 pass / 0 fail / 0 skip / 1 total**.
 - The exact `built-ins/TypedArray/prototype/join/` path now closes at **32 pass
   / 0 fail / 0 skip / 32 total**, including BigInt, detached, out-of-bounds,
   separator-coercion, and resizable-buffer behavior. CI `29139734054` and
