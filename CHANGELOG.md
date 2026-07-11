@@ -202,7 +202,12 @@
 
 - The exact `built-ins/TypedArray/prototype/sort/` path now closes at **36 pass
   / 0 fail / 0 skip / 36 total**, covering stable Number and BigInt ordering,
-  immutable buffers, and resizable-buffer comparator side effects.
+  immutable buffers, and resizable-buffer comparator side effects. CI
+  `29154453789` and `test262-full` `29154453779` confirm the final change at
+  **26672 pass / 6764 fail / 15019 skip / 12 timeout / 0 error / 48467 total**.
+  Against the preceding identical matrix, exactly 36 files moved from skip to
+  pass. The final run also confirms the stale property-cache failure exposed by
+  the first candidate run is fixed.
 - The exact `built-ins/TypedArray/prototype/reduceRight/` path now closes at
   **50 pass / 0 fail / 0 skip / 50 total**, covering Number and BigInt content,
   resizable buffers, abrupt callbacks, and default/custom accumulators. CI

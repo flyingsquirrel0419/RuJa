@@ -713,7 +713,15 @@ default, places NaN after numeric values and `-0` before `+0`, and converts
 custom comparator results with `ToNumber`. Comparator-driven resize or detach
 does not alter the sorted snapshot; writes target only indexes still accepted
 by the current view. Immutable buffers reject before comparator invocation. The
-exact path reports **36 pass / 0 fail / 0 skip / 36 total**.
+exact path reports **36 pass / 0 fail / 0 skip / 36 total**. CI `29154453789`
+and `test262-full` `29154453779` confirm the final change. Downloaded artifacts
+aggregate to **26672 pass / 6764 fail / 12 timeout / 0 error / 15019 skip /
+48467 total / 33436 pass-or-fail executed**, or **79.8%** of pass-or-fail files
+and **55.0%** of the matrix. Against the preceding identical matrix, exactly 36
+focused files moved from skip to pass. The first candidate full run exposed an
+allocation-order-sensitive stale inline-cache entry after heap-cell reuse;
+invalidating property caches whenever GC collects restores that existing file
+without changing the final aggregate fail count.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
