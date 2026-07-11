@@ -859,7 +859,12 @@ roots the original function so later Realm bootstrap does not observe mutable
 `Array.prototype` state. The four frozen toString files and the
 `Symbol.iterator === values` non-constructor file are **5 pass / 0 fail / 0
 skip / 5 total**. The supported subset remains **11589 pass / 0 fail / 8850
-skip / 20439 total**.
+skip / 20439 total**. CI `29167399296` and `test262-full` `29167399293`
+succeeded. Downloaded artifacts aggregate to **27120 pass / 6755 fail / 12
+timeout / 0 error / 14580 skip / 48467 total / 33875 pass-or-fail executed**,
+or **80.1%** of pass-or-fail files and **56.0%** of the matrix. Against the
+preceding identical matrix, four skipped files and one existing failing file
+moved to pass.
 
 Focused TypedArray size-accessor coverage check:
 The `%TypedArray%.prototype.byteLength`, `byteOffset`, and `length` getters use
