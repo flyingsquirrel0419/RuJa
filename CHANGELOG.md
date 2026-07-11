@@ -179,7 +179,11 @@
 
 - The exact `built-ins/TypedArray/prototype/forEach/` path now closes at **42
   pass / 0 fail / 0 skip / 42 total**. The shared `every`, `some`, and
-  find-family paths remain at **240 pass / 0 fail / 0 skip / 240 total**.
+  find-family paths remain at **240 pass / 0 fail / 0 skip / 240 total**. CI
+  `29150129716` and `test262-full` `29150129689` confirm the change at **26540
+  pass / 6765 fail / 15150 skip / 12 timeout / 0 error / 47718 total**. Against
+  the preceding identical matrix, 42 files moved from skip while the aggregate
+  gained 43 pass and lost one fail.
 - The exact `built-ins/TypedArray/prototype/every/` path now closes at **44 pass
   / 0 fail / 0 skip / 44 total**. The shared `some` and find-family paths remain
   at **196 pass / 0 fail / 0 skip / 196 total**. CI `29149369782` and

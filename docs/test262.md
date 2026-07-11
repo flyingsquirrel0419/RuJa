@@ -664,7 +664,13 @@ values, and returns `undefined`. Callback-driven detach or shrink yields
 `undefined` for invalidated future indexes and growth does not extend the visit
 count. The exact path reports **42 pass / 0 fail / 0 skip / 42 total**. The
 shared `every`, `some`, and four find-family paths remain at **240 pass / 0 fail
-/ 0 skip / 240 total**.
+/ 0 skip / 240 total**. CI `29150129716` and `test262-full` `29150129689`
+confirm the change. Downloaded artifacts aggregate to **26540 pass / 6765 fail
+/ 12 timeout / 0 error / 15150 skip / 47718 total / 33305 pass-or-fail
+executed**, or **79.7%** of pass-or-fail files and **55.6%** of the matrix.
+Against the preceding identical matrix, all 42 focused files moved out of skip
+while the aggregate gained 43 pass and lost one fail, so the additional passing
+file is kept separate from the focused gain.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
