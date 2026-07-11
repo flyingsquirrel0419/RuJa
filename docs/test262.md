@@ -575,7 +575,12 @@ calling the predicate with `(value, index, receiver)` and the supplied
 `thisArg`. Callback-driven detach or shrink yields `undefined` for invalidated
 future indexes, growth does not extend the visit count, and a truthy predicate
 returns the value observed before that callback. The exact path reports **38
-pass / 0 fail / 0 skip / 38 total**.
+pass / 0 fail / 0 skip / 38 total**. CI `29145657670` and `test262-full`
+`29145657675` confirm the change. Downloaded artifacts aggregate to **26297
+pass / 6764 fail / 12 timeout / 0 error / 15394 skip / 48467 total / 33061
+pass-or-fail executed**, or **79.5%** of pass-or-fail files and **54.3%** of the
+matrix. Against the preceding identical matrix, exactly 38 files moved from
+skip to pass with no fail, timeout, or error change.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
