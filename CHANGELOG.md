@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.set` now implements both TypedArray-source and
+  array-like-source copying, including offset coercion order, immutable and
+  out-of-bounds validation, Number/BigInt content checks, overlapping-buffer
+  snapshots, same-type bit-preserving copies, and element-by-element behavior
+  while resizable targets change during source access or value conversion.
 - `%TypedArray%.prototype.subarray` now preserves the source's raw byte offset
   while it is detached or out of bounds, performs begin/end coercion before
   construction, and keeps an omitted-end result length-tracking when the
@@ -115,6 +120,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/set/` path now closes at **110 pass
+  / 0 fail / 0 skip / 110 total**, covering array-like and TypedArray sources,
+  BigInt, SharedArrayBuffer, immutable buffers, overlap, and resize behavior.
 - The exact `built-ins/TypedArray/prototype/subarray/` path now closes at **67
   pass / 0 fail / 0 skip / 67 total**, including detached-buffer coercion,
   species-constructor arguments, and resizable-buffer view semantics. CI

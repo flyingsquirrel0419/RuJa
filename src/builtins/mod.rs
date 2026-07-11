@@ -1669,6 +1669,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         vm.new_native_function_in_env("get length", typed_array_length_get, 0, env)?;
     let typed_array_subarray_fn =
         vm.new_native_function_in_env("subarray", typed_array_subarray, 2, env)?;
+    let typed_array_set_fn = vm.new_native_function_in_env("set", typed_array_set, 1, env)?;
+    let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_fill_fn = vm.new_native_function_in_env("fill", typed_array_fill, 1, env)?;
     let typed_array_at_fn = vm.new_native_function_in_env("at", typed_array_at, 1, env)?;
     let typed_array_values_fn = vm.new_native_function_in_env("values", array_values, 0, env)?;
@@ -1698,6 +1700,14 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("subarray"),
                 data_prop(Value::Object(typed_array_subarray_fn)),
+            );
+            props.insert(
+                PropertyKey::from("set"),
+                data_prop(Value::Object(typed_array_set_fn)),
+            );
+            props.insert(
+                PropertyKey::from("join"),
+                data_prop(Value::Object(typed_array_join_fn)),
             );
             props.insert(
                 PropertyKey::from("fill"),

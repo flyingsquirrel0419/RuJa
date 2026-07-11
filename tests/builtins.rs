@@ -1645,6 +1645,39 @@ fn typed_array_subarray_preserves_tracking_and_raw_offset_across_resize() {
 }
 
 #[test]
+fn typed_array_set_handles_array_like_aliasing_and_resizes() {
+    assert_eq!(
+        run(r#"
+            var overlap = new Uint8Array([1, 2, 3, 4]);
+            overlap.set(overlap.subarray(0, 3), 1);
+
+            var converted = new Int16Array(3);
+            converted.set({ length: 3, 0: 1.9, 1: -2.9, 2: 65537 });
+
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var tracking = new Int8Array(rab);
+            var calls = [];
+            tracking.set({
+                length: 4,
+                0: { valueOf: function() { calls.push(0); rab.resize(3); return 7; } },
+                1: { valueOf: function() { calls.push(1); rab.resize(4); return 8; } },
+                2: { valueOf: function() { calls.push(2); return 9; } },
+                3: { valueOf: function() { calls.push(3); return 10; } }
+            });
+
+            [
+                Array.from(overlap).join(","),
+                Array.from(converted).join(","),
+                Array.from(tracking).join(","),
+                calls.join(","),
+                typeof Int8Array.prototype.set
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("1,1,2,3|1,-2,1|7,8,9,10|0,1,2,3|function"))
+    );
+}
+
+#[test]
 fn typed_array_own_keys_include_integer_indices_first() {
     assert_eq!(
         run(r#"

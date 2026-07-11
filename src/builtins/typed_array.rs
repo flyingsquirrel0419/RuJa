@@ -2898,6 +2898,221 @@ pub(crate) fn typed_array_subarray(
     Ok(result)
 }
 
+pub(crate) fn typed_array_set(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let target = this.ok_or_else(|| Error::type_err("TypedArray set called without this"))?;
+    let Value::Object(target_idx) = &target else {
+        return Err(Error::type_err("TypedArray set called on non-object"));
+    };
+    let target_slots = vm.heap.with_obj(target_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (target_kind, target_buffer, target_byte_offset, target_fixed_byte_length, target_tracking) =
+        target_slots.ok_or_else(|| Error::type_err("TypedArray set called on non-TypedArray"))?;
+    let target_buffer = target_buffer
+        .ok_or_else(|| Error::type_err("TypedArray set missing viewed ArrayBuffer"))?;
+    if is_immutable_array_buffer(vm, &target_buffer) {
+        return Err(Error::type_err("TypedArray set on immutable buffer"));
+    }
+
+    let offset_number = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    let target_offset = if offset_number.is_nan() || offset_number == 0.0 {
+        0.0
+    } else {
+        offset_number.trunc()
+    };
+    if target_offset < 0.0 {
+        return Err(Error::range("TypedArray set offset is negative"));
+    }
+
+    let source = args.first().cloned().unwrap_or(Value::Undefined);
+    let source_slots = match &source {
+        Value::Object(source_idx) => vm.heap.with_obj(source_idx.0, |obj| {
+            let HeapObj::TypedArray(array) = obj else {
+                return None;
+            };
+            Some((
+                array.kind,
+                array.viewed_array_buffer.clone(),
+                array.byte_offset,
+                array.byte_length,
+                array.length_tracking,
+            ))
+        }),
+        _ => None,
+    };
+
+    let target_byte_length = effective_view_byte_length(
+        vm,
+        Some(&target_buffer),
+        target_byte_offset,
+        target_fixed_byte_length,
+        target_tracking,
+        target_kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray set target is out of bounds"))?;
+    let target_length = typed_array_element_count(target_kind, target_byte_length);
+
+    if let Some((source_kind, source_buffer, source_byte_offset, source_fixed_length, tracking)) =
+        source_slots
+    {
+        let source_buffer = source_buffer
+            .ok_or_else(|| Error::type_err("TypedArray set source missing viewed ArrayBuffer"))?;
+        let source_byte_length = effective_view_byte_length(
+            vm,
+            Some(&source_buffer),
+            source_byte_offset,
+            source_fixed_length,
+            tracking,
+            source_kind.element_size(),
+        )
+        .ok_or_else(|| Error::type_err("TypedArray set source is out of bounds"))?;
+        let source_length = typed_array_element_count(source_kind, source_byte_length);
+        if !target_offset.is_finite()
+            || target_offset > usize::MAX as f64
+            || (target_offset as usize)
+                .checked_add(source_length)
+                .is_none_or(|end| end > target_length)
+        {
+            return Err(Error::range("TypedArray set source does not fit target"));
+        }
+        if typed_array_content_type(target_kind) != typed_array_content_type(source_kind) {
+            return Err(Error::type_err(
+                "TypedArray set source has incompatible content type",
+            ));
+        }
+
+        let source_bytes = match &source_buffer {
+            Value::Object(buffer_idx) => vm.heap.with_obj(buffer_idx.0, |obj| {
+                let HeapObj::ArrayBuffer(buffer) = obj else {
+                    return Err(Error::type_err("TypedArray set source buffer is invalid"));
+                };
+                if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(Error::type_err("TypedArray set source buffer is detached"));
+                }
+                let end = source_byte_offset
+                    .checked_add(source_byte_length)
+                    .ok_or_else(|| Error::range("TypedArray set source range overflow"))?;
+                let bytes = buffer.bytes.lock();
+                if end > bytes.len() {
+                    return Err(Error::type_err(
+                        "TypedArray set source resized out of bounds",
+                    ));
+                }
+                Ok(bytes[source_byte_offset..end].to_vec())
+            })?,
+            _ => return Err(Error::type_err("TypedArray set source buffer is invalid")),
+        };
+        let target_start = target_byte_offset
+            .checked_add(
+                (target_offset as usize)
+                    .checked_mul(target_kind.element_size())
+                    .ok_or_else(|| Error::range("TypedArray set target range overflow"))?,
+            )
+            .ok_or_else(|| Error::range("TypedArray set target range overflow"))?;
+
+        if target_kind == source_kind {
+            let Value::Object(buffer_idx) = &target_buffer else {
+                return Err(Error::type_err("TypedArray set target buffer is invalid"));
+            };
+            vm.heap.with_obj(buffer_idx.0, |obj| {
+                let HeapObj::ArrayBuffer(buffer) = obj else {
+                    return Err(Error::type_err("TypedArray set target buffer is invalid"));
+                };
+                let end = target_start
+                    .checked_add(source_bytes.len())
+                    .ok_or_else(|| Error::range("TypedArray set target range overflow"))?;
+                let mut bytes = buffer.bytes.lock();
+                if end > bytes.len() {
+                    return Err(Error::type_err(
+                        "TypedArray set target resized out of bounds",
+                    ));
+                }
+                bytes[target_start..end].copy_from_slice(&source_bytes);
+                Ok(())
+            })?;
+        } else {
+            for index in 0..source_length {
+                let value = typed_array_read_element(source_kind, &source_bytes, index)
+                    .ok_or_else(|| Error::type_err("TypedArray set source read failed"))?;
+                vm.set_property_strict(
+                    &target,
+                    &(target_offset as usize + index).to_string(),
+                    value,
+                )?;
+            }
+        }
+    } else {
+        if source.is_nullish() {
+            return Err(Error::type_err(
+                "Cannot convert undefined or null to object",
+            ));
+        }
+        let source = vm.to_object(&source)?;
+        let source_length_value = vm.get_property(&source, "length")?;
+        let source_length = to_array_like_length(vm, &source_length_value)?;
+        if !target_offset.is_finite()
+            || target_offset > usize::MAX as f64
+            || (target_offset as usize)
+                .checked_add(source_length)
+                .is_none_or(|end| end > target_length)
+        {
+            return Err(Error::range("TypedArray set source does not fit target"));
+        }
+        let pin_count = vm.pin(&target) + vm.pin(&source);
+        let result: error::Result<()> = (|| {
+            for index in 0..source_length {
+                let value = vm.get_property(&source, &index.to_string())?;
+                vm.set_property_strict(
+                    &target,
+                    &(target_offset as usize + index).to_string(),
+                    value,
+                )?;
+            }
+            Ok(())
+        })();
+        vm.unpin_many(pin_count);
+        result?;
+    }
+    Ok(Value::Undefined)
+}
+
+pub(crate) fn typed_array_join(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let separator = match args.first() {
+        Some(value) if !value.is_undefined() => vm.to_string(value)?.to_string(),
+        _ => ",".to_string(),
+    };
+    let this = this.ok_or_else(|| Error::type_err("TypedArray join called without this"))?;
+    let (kind, _, _, byte_length) = typed_array_slots(vm, Some(this.clone()), "join")?;
+    let length = typed_array_element_count(kind, byte_length);
+    let mut parts = Vec::with_capacity(length);
+    for index in 0..length {
+        let value = vm.get_property(&this, &index.to_string())?;
+        parts.push(if value.is_nullish() {
+            String::new()
+        } else {
+            vm.to_string(&value)?.to_string()
+        });
+    }
+    Ok(Value::String(Arc::from(parts.join(&separator))))
+}
+
 pub(crate) fn typed_array_fill(
     vm: &mut Vm,
     args: &[Value],
