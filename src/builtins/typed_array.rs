@@ -769,9 +769,10 @@ fn validate_atomic_view(
             array.viewed_array_buffer.clone(),
             array.byte_offset,
             array.byte_length,
+            array.length_tracking,
         ))
     });
-    let (kind, buffer, byte_offset, byte_length) =
+    let (kind, buffer, byte_offset, byte_length, length_tracking) =
         slots.ok_or_else(|| Error::type_err("Atomics operation requires a TypedArray"))?;
     if matches!(
         kind,
@@ -804,6 +805,15 @@ fn validate_atomic_view(
             "Atomics operation requires a mutable ArrayBuffer backing store",
         ));
     }
+    let byte_length = effective_view_byte_length(
+        vm,
+        Some(&Value::Object(buffer)),
+        byte_offset,
+        byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("Atomics operation requires an in-bounds TypedArray"))?;
     Ok(AtomicView {
         kind,
         buffer,
@@ -1410,6 +1420,14 @@ pub(crate) fn data_view_constructor(
             byte_length
         }
     };
+    let length_tracking = args.get(2).is_none_or(Value::is_undefined)
+        && match &buffer {
+            Value::Object(idx) => vm.heap.with_obj(
+                idx.0,
+                |obj| matches!(obj, HeapObj::ArrayBuffer(data) if data.max_byte_length.is_some()),
+            ),
+            _ => false,
+        };
     if byte_offset
         .checked_add(byte_length)
         .is_none_or(|end| end > buffer_len)
@@ -1418,10 +1436,20 @@ pub(crate) fn data_view_constructor(
     }
 
     let proto = native_constructor_prototype_with_default(vm, "DataView", vm.object_proto.clone())?;
-    let (_, detached) = array_buffer_len_and_detached(vm, &buffer)
+    let (current_len, detached) = array_buffer_len_and_detached(vm, &buffer)
         .ok_or_else(|| Error::type_err("DataView buffer must be an ArrayBuffer"))?;
     if detached {
         return Err(Error::type_err("DataView buffer is detached"));
+    }
+    let in_bounds = if length_tracking {
+        byte_offset <= current_len
+    } else {
+        byte_offset
+            .checked_add(byte_length)
+            .is_some_and(|end| end <= current_len)
+    };
+    if !in_bounds {
+        return Err(Error::range("DataView buffer resized out of bounds"));
     }
     let idx = vm
         .heap
@@ -1429,6 +1457,7 @@ pub(crate) fn data_view_constructor(
             buffer,
             byte_offset,
             byte_length,
+            length_tracking,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
         }))?;
@@ -1627,6 +1656,37 @@ fn require_mutable_data_view_buffer(vm: &Vm, buffer: &Value) -> error::Result<()
     Ok(())
 }
 
+pub(crate) fn effective_view_byte_length(
+    vm: &Vm,
+    buffer: Option<&Value>,
+    byte_offset: usize,
+    fixed_byte_length: usize,
+    length_tracking: bool,
+    alignment: usize,
+) -> Option<usize> {
+    let Some(Value::Object(buffer_idx)) = buffer else {
+        return Some(fixed_byte_length);
+    };
+    let current_length = vm.heap.with_obj(buffer_idx.0, |obj| {
+        let HeapObj::ArrayBuffer(buffer) = obj else {
+            return None;
+        };
+        if buffer.detached.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        Some(buffer.bytes.lock().len())
+    })?;
+    if length_tracking {
+        let remaining = current_length.checked_sub(byte_offset)?;
+        Some(remaining - (remaining % alignment))
+    } else {
+        byte_offset
+            .checked_add(fixed_byte_length)
+            .filter(|end| *end <= current_length)
+            .map(|_| fixed_byte_length)
+    }
+}
+
 fn data_view_slots(
     vm: &Vm,
     this: Option<Value>,
@@ -1648,6 +1708,34 @@ fn data_view_slots(
             "DataView {name} getter on non-object"
         ))),
     }
+}
+
+fn data_view_effective_byte_length(vm: &Vm, view: Option<&Value>) -> error::Result<usize> {
+    let Some(Value::Object(idx)) = view else {
+        return Err(Error::type_err("DataView operation called on non-object"));
+    };
+    let slots = vm.heap.with_obj(idx.0, |obj| {
+        let HeapObj::DataView(view) = obj else {
+            return None;
+        };
+        Some((
+            view.buffer.clone(),
+            view.byte_offset,
+            view.byte_length,
+            view.length_tracking,
+        ))
+    });
+    let (buffer, byte_offset, byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("DataView operation called on non-DataView"))?;
+    effective_view_byte_length(
+        vm,
+        Some(&buffer),
+        byte_offset,
+        byte_length,
+        length_tracking,
+        1,
+    )
+    .ok_or_else(|| Error::type_err("DataView is detached or out of bounds"))
 }
 
 fn data_view_to_index(vm: &mut Vm, value: &Value, name: &str) -> error::Result<usize> {
@@ -1794,8 +1882,10 @@ fn data_view_read_u8(
     signed: bool,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -1821,10 +1911,12 @@ fn data_view_write_u8(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -1846,9 +1938,11 @@ fn data_view_read_u16(
     signed: bool,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -1881,11 +1975,13 @@ fn data_view_write_u16(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -1913,9 +2009,11 @@ fn data_view_read_u32(
     signed: bool,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -1948,11 +2046,13 @@ fn data_view_write_u32(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -1979,9 +2079,11 @@ fn data_view_read_f32(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -2008,11 +2110,13 @@ fn data_view_write_f32(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -2123,9 +2227,11 @@ fn data_view_read_f16(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -2152,11 +2258,13 @@ fn data_view_write_f16(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -2183,9 +2291,11 @@ fn data_view_read_f64(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -2214,11 +2324,13 @@ fn data_view_write_f64(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let number_value = vm.to_number(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -2245,9 +2357,11 @@ fn data_view_read_bigint64(
     signed: bool,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let little_endian = args.get(1).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView getter on detached buffer"));
     }
@@ -2288,11 +2402,13 @@ fn data_view_write_bigint64(
     this: Option<Value>,
     name: &str,
 ) -> error::Result<Value> {
+    let view = this.clone();
     let (buffer, view_offset, view_length) = data_view_slots(vm, this, name)?;
     require_mutable_data_view_buffer(vm, &buffer)?;
     let request_index = data_view_to_index(vm, args.first().unwrap_or(&Value::Undefined), name)?;
     let bigint_value = vm.to_bigint(args.get(1).unwrap_or(&Value::Undefined))?;
     let little_endian = args.get(2).is_some_and(|value| vm.to_boolean(value));
+    let view_length = data_view_effective_byte_length(vm, view.as_ref())?;
     if is_detached_array_buffer(vm, &buffer) {
         return Err(Error::type_err("DataView setter on detached buffer"));
     }
@@ -2318,8 +2434,19 @@ pub(crate) fn data_view_buffer_get(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let (buffer, _, _) = data_view_slots(vm, this, "buffer")?;
-    Ok(buffer)
+    let this = this.ok_or_else(|| Error::type_err("DataView buffer getter needs this"))?;
+    match this {
+        Value::Object(idx) => vm
+            .heap
+            .with_obj(idx.0, |obj| {
+                let HeapObj::DataView(view) = obj else {
+                    return None;
+                };
+                Some(view.buffer.clone())
+            })
+            .ok_or_else(|| Error::type_err("DataView buffer getter on non-DataView")),
+        _ => Err(Error::type_err("DataView buffer getter on non-object")),
+    }
 }
 
 pub(crate) fn data_view_byte_length_get(
@@ -2327,12 +2454,24 @@ pub(crate) fn data_view_byte_length_get(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let (buffer, _, byte_length) = data_view_slots(vm, this, "byteLength")?;
-    if is_detached_array_buffer(vm, &buffer) {
-        return Err(Error::type_err(
-            "DataView byteLength getter on detached buffer",
-        ));
+    let this = this.ok_or_else(|| Error::type_err("DataView byteLength getter needs this"))?;
+    let slots = match this {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| {
+            let HeapObj::DataView(view) = obj else {
+                return None;
+            };
+            Some((
+                view.buffer.clone(),
+                view.byte_offset,
+                view.byte_length,
+                view.length_tracking,
+            ))
+        }),
+        _ => None,
     }
+    .ok_or_else(|| Error::type_err("DataView byteLength getter on non-DataView"))?;
+    let byte_length = effective_view_byte_length(vm, Some(&slots.0), slots.1, slots.2, slots.3, 1)
+        .ok_or_else(|| Error::type_err("DataView byteLength getter on out-of-bounds view"))?;
     Ok(Value::Number(byte_length as f64))
 }
 
@@ -2341,13 +2480,25 @@ pub(crate) fn data_view_byte_offset_get(
     _args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let (buffer, byte_offset, _) = data_view_slots(vm, this, "byteOffset")?;
-    if is_detached_array_buffer(vm, &buffer) {
-        return Err(Error::type_err(
-            "DataView byteOffset getter on detached buffer",
-        ));
+    let this = this.ok_or_else(|| Error::type_err("DataView byteOffset getter needs this"))?;
+    let slots = match this {
+        Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| {
+            let HeapObj::DataView(view) = obj else {
+                return None;
+            };
+            Some((
+                view.buffer.clone(),
+                view.byte_offset,
+                view.byte_length,
+                view.length_tracking,
+            ))
+        }),
+        _ => None,
     }
-    Ok(Value::Number(byte_offset as f64))
+    .ok_or_else(|| Error::type_err("DataView byteOffset getter on non-DataView"))?;
+    effective_view_byte_length(vm, Some(&slots.0), slots.1, slots.2, slots.3, 1)
+        .ok_or_else(|| Error::type_err("DataView byteOffset getter on out-of-bounds view"))?;
+    Ok(Value::Number(slots.1 as f64))
 }
 
 pub(crate) fn data_view_get_uint8(
@@ -2538,11 +2689,35 @@ fn typed_array_slots(
             .heap
             .with_obj(idx.0, |o| {
                 if let HeapObj::TypedArray(array) = o {
+                    let byte_length = effective_view_byte_length(
+                        vm,
+                        array.viewed_array_buffer.as_ref(),
+                        array.byte_offset,
+                        array.byte_length,
+                        array.length_tracking,
+                        array.kind.element_size(),
+                    )
+                    .unwrap_or(0);
+                    let byte_offset = if byte_length == 0
+                        && effective_view_byte_length(
+                            vm,
+                            array.viewed_array_buffer.as_ref(),
+                            array.byte_offset,
+                            array.byte_length,
+                            array.length_tracking,
+                            array.kind.element_size(),
+                        )
+                        .is_none()
+                    {
+                        0
+                    } else {
+                        array.byte_offset
+                    };
                     Some((
                         array.kind,
                         array.viewed_array_buffer.clone(),
-                        array.byte_offset,
-                        array.byte_length,
+                        byte_offset,
+                        byte_length,
                     ))
                 } else {
                     None
@@ -2966,6 +3141,7 @@ fn allocate_typed_array_view(
     viewed_array_buffer: Value,
     byte_offset: usize,
     byte_length: usize,
+    length_tracking: bool,
 ) -> error::Result<Value> {
     let idx = vm
         .heap
@@ -2974,6 +3150,7 @@ fn allocate_typed_array_view(
             viewed_array_buffer: Some(viewed_array_buffer),
             byte_offset,
             byte_length,
+            length_tracking,
             kind,
             props: Mutex::new(IndexMap::new()),
             proto: Mutex::new(Some(proto)),
@@ -2990,7 +3167,7 @@ fn allocate_typed_array_from_bytes(
 ) -> error::Result<Value> {
     let byte_length = bytes.len();
     let viewed_array_buffer = allocate_array_buffer_with_bytes(vm, bytes)?;
-    allocate_typed_array_view(vm, kind, proto, viewed_array_buffer, 0, byte_length)
+    allocate_typed_array_view(vm, kind, proto, viewed_array_buffer, 0, byte_length, false)
 }
 
 fn typed_array_result_length(
@@ -3262,6 +3439,10 @@ fn typed_array_constructor_with_kind(
                     }
                     Err(Error::type_err("TypedArray buffer is not an ArrayBuffer"))
                 })?;
+                let length_tracking = element_length.is_none()
+                    && vm.heap.with_obj(idx.0, |o| {
+                        matches!(o, HeapObj::ArrayBuffer(buffer) if buffer.max_byte_length.is_some())
+                    });
                 let byte_length = match element_length {
                     None => {
                         if byte_offset > buffer_len {
@@ -3291,7 +3472,38 @@ fn typed_array_constructor_with_kind(
                     array_like,
                     byte_offset,
                     byte_length,
+                    length_tracking,
                 );
+            }
+            let source_view = vm.heap.with_obj(idx.0, |obj| {
+                let HeapObj::TypedArray(array) = obj else {
+                    return None;
+                };
+                Some((
+                    array.kind,
+                    array.viewed_array_buffer.clone(),
+                    array.byte_offset,
+                    array.byte_length,
+                    array.length_tracking,
+                ))
+            });
+            if let Some((source_kind, source_buffer, source_offset, source_length, tracking)) =
+                source_view
+            {
+                if effective_view_byte_length(
+                    vm,
+                    source_buffer.as_ref(),
+                    source_offset,
+                    source_length,
+                    tracking,
+                    source_kind.element_size(),
+                )
+                .is_none()
+                {
+                    return Err(Error::type_err(
+                        "TypedArray source is detached or out of bounds",
+                    ));
+                }
             }
             let iterator_key = PropertyKey::Symbol(vm.well_known_symbols.iterator);
             let is_builtin_iterable = vm.heap.with_obj(idx.0, |o| {

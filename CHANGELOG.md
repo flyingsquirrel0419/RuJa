@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- TypedArray and DataView instances over resizable or growable buffers now
+  record whether their length is fixed or tracking. Dynamic view records drive
+  length/byteLength/byteOffset getters, integer-index get/set/has/own-keys,
+  DataView access after argument coercion, Atomics length snapshots, and
+  out-of-bounds recovery after the backing store grows again. Constructing from
+  an out-of-bounds TypedArray now throws instead of copying an empty view.
 - `ArrayBuffer` now accepts `maxByteLength`, exposes standard `resizable` and
   `maxByteLength` accessors, and implements `resize()` with detach revalidation,
   shrinking, zero-initialized growth, and immutable/shared brand rejection.
@@ -93,6 +99,12 @@
 
 ### Test tooling
 
+- Resizable view admission adds eight TypedArray-constructor files and thirty
+  DataView files, raising those focused paths to **682 pass / 0 fail / 56 skip
+  / 738 total** and **522 pass / 0 fail / 39 skip / 561 total**. A narrow
+  `built-ins/TypedArray/` exception admits **26 pass / 0 fail** for dynamic
+  indexed-exotic and length/byteLength/byteOffset coverage while leaving the
+  unimplemented prototype method families gated.
 - The ArrayBuffer exception now admits `resizable-arraybuffer` and only the
   receiver brands needed by those tests, raising the focused path to **194 pass
   / 0 fail / 27 skip / 221 total** without opening unrelated SharedArrayBuffer

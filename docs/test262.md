@@ -60,13 +60,12 @@ Symbol.hasInstance, Symbol.unscopables, Symbol.dispose,
 Symbol.asyncDispose, Map/Set/WeakMap/WeakSet, BigInt, Proxy, Reflect,
 WeakRef, FinalizationRegistry, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Promise, Atomics operations including worker
-`wait`/`notify`, `waitAsync`, and `pause`, async/await, generators, for-of,
-optional chaining, nullish
+`wait`/`notify`, `waitAsync`, and `pause`, length-tracking TypedArray/DataView
+views, async/await, generators, for-of, optional chaining, nullish
 coalescing, logical assignment.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, a public
-multi-agent embedder API, length-tracking views over resizable or growable
-buffers, full TypedArray prototype method coverage beyond the
+multi-agent embedder API, full TypedArray prototype method coverage beyond the
 constructor/index basics and ArrayBuffer/DataView support, Tail-call
 optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
@@ -416,6 +415,16 @@ views remain the next gated unit. CI `29136048993` and `test262-full`
 `29136049024` confirm the change. Downloaded artifacts aggregate to **25670
 pass / 6769 fail / 11 timeout / 0 error / 16017 skip / 48467 total / 32450
 executed**, or **79.1%** of executed files and **53.0%** of the matrix.
+
+Length-tracking view coverage check:
+TypedArray and DataView instances now retain a fixed-vs-tracking slot and
+derive their effective byte length from the current resizable/growable backing
+store. Integer-index exotics, getters, DataView operations, and Atomics consume
+the same dynamic record, including out-of-bounds transitions and recovery.
+TypedArray constructor coverage rises to **682 pass / 0 fail / 56 skip / 738
+total**, DataView rises to **522 pass / 0 fail / 39 skip / 561 total**, and the
+narrow resizable TypedArray exotic/getter slice adds **26 pass / 0 fail**.
+Broader unimplemented TypedArray prototype methods remain gated separately.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

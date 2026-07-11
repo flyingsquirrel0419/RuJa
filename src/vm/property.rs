@@ -12,6 +12,7 @@ struct TypedArrayNumericSlots {
     viewed_array_buffer: Option<Value>,
     byte_offset: usize,
     byte_length: usize,
+    length_tracking: bool,
     numeric_index: f64,
 }
 
@@ -1338,7 +1339,7 @@ impl Vm {
 
     fn typed_array_numeric_slots(&self, idx: GcIdx, key: &str) -> Option<TypedArrayNumericSlots> {
         let numeric_index = crate::value::canonical_numeric_index_string(key)?;
-        let (kind, viewed_array_buffer, byte_offset, byte_length) =
+        let (kind, viewed_array_buffer, byte_offset, byte_length, length_tracking) =
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::TypedArray(t) = o {
                     return Some((
@@ -1346,6 +1347,7 @@ impl Vm {
                         t.viewed_array_buffer.clone(),
                         t.byte_offset,
                         t.byte_length,
+                        t.length_tracking,
                     ));
                 }
                 None
@@ -1355,6 +1357,7 @@ impl Vm {
             viewed_array_buffer,
             byte_offset,
             byte_length,
+            length_tracking,
             numeric_index,
         })
     }
@@ -1372,19 +1375,16 @@ impl Vm {
         {
             return None;
         }
-        if let Some(Value::Object(buffer_idx)) = &slots.viewed_array_buffer {
-            let detached = self.heap.with_obj(buffer_idx.0, |o| {
-                if let HeapObj::ArrayBuffer(buffer) = o {
-                    return buffer.detached.load(std::sync::atomic::Ordering::Relaxed);
-                }
-                false
-            });
-            if detached {
-                return None;
-            }
-        }
+        let byte_length = crate::builtins::effective_view_byte_length(
+            self,
+            slots.viewed_array_buffer.as_ref(),
+            slots.byte_offset,
+            slots.byte_length,
+            slots.length_tracking,
+            slots.kind.element_size(),
+        )?;
         let index = index as usize;
-        let len = crate::builtins::typed_array_element_count(slots.kind, slots.byte_length);
+        let len = crate::builtins::typed_array_element_count(slots.kind, byte_length);
         (index < len).then_some(index)
     }
 
@@ -1415,7 +1415,15 @@ impl Vm {
             let Some(relative_end) = relative_offset.checked_add(size) else {
                 return Some(None);
             };
-            if relative_end > slots.byte_length {
+            let byte_length = crate::builtins::effective_view_byte_length(
+                self,
+                slots.viewed_array_buffer.as_ref(),
+                slots.byte_offset,
+                slots.byte_length,
+                slots.length_tracking,
+                slots.kind.element_size(),
+            )?;
+            if relative_end > byte_length {
                 return Some(None);
             }
             let value = self.heap.with_obj(buffer_idx.0, |o| {
@@ -1480,22 +1488,19 @@ impl Vm {
             let HeapObj::TypedArray(array) = o else {
                 return None;
             };
-            if let Some(Value::Object(buffer_idx)) = &array.viewed_array_buffer {
-                let detached = self.heap.with_obj(buffer_idx.0, |buffer_obj| {
-                    if let HeapObj::ArrayBuffer(buffer) = buffer_obj {
-                        return buffer.detached.load(std::sync::atomic::Ordering::Relaxed);
-                    }
-                    false
-                });
-                if detached {
-                    return Some(0);
-                }
-            }
-            let byte_length = if array.viewed_array_buffer.is_some() {
-                array.byte_length
-            } else {
-                array.buffer.lock().len()
-            };
+            let byte_length = crate::builtins::effective_view_byte_length(
+                self,
+                array.viewed_array_buffer.as_ref(),
+                array.byte_offset,
+                if array.viewed_array_buffer.is_some() {
+                    array.byte_length
+                } else {
+                    array.buffer.lock().len()
+                },
+                array.length_tracking,
+                array.kind.element_size(),
+            )
+            .unwrap_or(0);
             Some(crate::builtins::typed_array_element_count(
                 array.kind,
                 byte_length,
@@ -1562,7 +1567,17 @@ impl Vm {
         let Some(relative_end) = relative_offset.checked_add(size) else {
             return Ok(true);
         };
-        if relative_end > slots.byte_length {
+        let Some(byte_length) = crate::builtins::effective_view_byte_length(
+            self,
+            slots.viewed_array_buffer.as_ref(),
+            slots.byte_offset,
+            slots.byte_length,
+            slots.length_tracking,
+            slots.kind.element_size(),
+        ) else {
+            return Ok(true);
+        };
+        if relative_end > byte_length {
             return Ok(true);
         }
         if let Some(Value::Object(buffer_idx)) = &slots.viewed_array_buffer {

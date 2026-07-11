@@ -450,6 +450,7 @@ pub struct TypedArrayData {
     pub viewed_array_buffer: Option<Value>,
     pub byte_offset: usize,
     pub byte_length: usize,
+    pub length_tracking: bool,
     pub kind: TypedArrayKind,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
@@ -478,6 +479,7 @@ pub struct DataViewData {
     pub buffer: Value,
     pub byte_offset: usize,
     pub byte_length: usize,
+    pub length_tracking: bool,
     pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
     pub proto: Mutex<Option<Value>>,
 }

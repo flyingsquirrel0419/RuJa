@@ -265,6 +265,32 @@ class WeakRefAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class TypedArrayResizableAdmissionTests(unittest.TestCase):
+    def test_resizable_feature_is_admitted_only_on_typed_array_builtin_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            inside = root / "test/built-ins/TypedArray/prototype/byteLength/case.js"
+            outside = root / "test/built-ins/Other/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "ArrayBuffer",
+                    "BigInt",
+                    "TypedArray",
+                    "arrow-function",
+                    "resizable-arraybuffer",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, inside))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 class ArrayBufferAdmissionTests(unittest.TestCase):
     def test_resizable_array_buffer_feature_is_admitted_only_inside_builtin_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

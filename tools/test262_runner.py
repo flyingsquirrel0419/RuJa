@@ -111,6 +111,31 @@ TYPED_ARRAY_CONSTRUCTORS_FEATURES = {
     "Uint16Array",
     "Uint32Array",
     "Proxy",
+    "resizable-arraybuffer",
+}
+
+TYPED_ARRAY_RESIZABLE_PREFIXES = (
+    "built-ins/TypedArray/prototype/byteLength/",
+    "built-ins/TypedArray/prototype/byteOffset/",
+    "built-ins/TypedArray/prototype/length/",
+)
+
+TYPED_ARRAY_RESIZABLE_FILES = {
+    "built-ins/TypedArray/of/resized-with-out-of-bounds-and-in-bounds-indices.js",
+    "built-ins/TypedArray/out-of-bounds-behaves-like-detached.js",
+    "built-ins/TypedArray/out-of-bounds-get-and-set.js",
+    "built-ins/TypedArray/out-of-bounds-has.js",
+    "built-ins/TypedArray/prototype/resizable-and-fixed-have-same-prototype.js",
+    "built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
+    "built-ins/TypedArray/resizable-buffer-length-tracking-2.js",
+}
+
+TYPED_ARRAY_RESIZABLE_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "TypedArray",
+    "arrow-function",
+    "resizable-arraybuffer",
 }
 
 ARRAY_BUFFER_PREFIXES = (
@@ -145,6 +170,7 @@ DATA_VIEW_FEATURES = {
     "Symbol.toPrimitive",
     "Symbol.toStringTag",
     "Uint8Array",
+    "resizable-arraybuffer",
 }
 
 SHARED_ARRAY_BUFFER_PREFIXES = (
@@ -607,6 +633,18 @@ def typed_array_constructors_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(TYPED_ARRAY_CONSTRUCTORS_PREFIXES)
 
+def typed_array_resizable_path(path, meta):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    rel_text = rel.as_posix()
+    return (
+        (rel_text.startswith(TYPED_ARRAY_RESIZABLE_PREFIXES)
+         or rel_text in TYPED_ARRAY_RESIZABLE_FILES)
+        and "resizable-arraybuffer" in meta.get("features", [])
+    )
+
 def array_buffer_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -826,6 +864,8 @@ def should_skip(meta, path=None):
         feats.discard("generators")
     if path is not None and typed_array_constructors_path(path):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
+    if path is not None and typed_array_resizable_path(path, meta):
+        feats.difference_update(TYPED_ARRAY_RESIZABLE_FEATURES)
     if path is not None and array_buffer_path(path):
         feats.difference_update(ARRAY_BUFFER_FEATURES)
         if "resizable-arraybuffer" in meta.get("features", []):

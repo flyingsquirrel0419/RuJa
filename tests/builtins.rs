@@ -2377,6 +2377,74 @@ fn resizable_array_buffer_rechecks_detachment_after_length_coercion() {
 }
 
 #[test]
+fn length_tracking_typed_arrays_and_data_views_follow_resizable_buffers() {
+    assert_eq!(
+        run(
+            r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var tracking = new Uint8Array(rab, 1);
+            var fixed = new Uint8Array(rab, 1, 2);
+            var trackingView = new DataView(rab, 1);
+            var fixedView = new DataView(rab, 1, 2);
+            var snapshots = [];
+            function snap() {
+                var fixedViewLength;
+                try { fixedViewLength = fixedView.byteLength; }
+                catch (error) { fixedViewLength = error instanceof TypeError ? "oob" : "bad"; }
+                snapshots.push([
+                    tracking.length,
+                    tracking.byteLength,
+                    tracking.byteOffset,
+                    Reflect.ownKeys(tracking).join(","),
+                    fixed.length,
+                    fixed.byteOffset,
+                    trackingView.byteLength,
+                    fixedViewLength
+                ].join("/"));
+            }
+            snap();
+            rab.resize(6);
+            snap();
+            rab.resize(2);
+            snap();
+            rab.resize(0);
+            var trackingViewOob = false;
+            try { trackingView.byteLength; }
+            catch (error) { trackingViewOob = error instanceof TypeError; }
+            snapshots.push([
+                tracking.length,
+                tracking.byteOffset,
+                fixed.length,
+                fixed.byteOffset,
+                trackingViewOob
+            ].join("/"));
+            rab.resize(4);
+            snap();
+            snapshots.join("|");
+            "#,
+        ),
+        Value::String(Arc::from(
+            "3/3/1/0,1,2/2/1/3/2|5/5/1/0,1,2,3,4/2/1/5/2|1/1/1/0/0/0/1/oob|0/0/0/0/true|3/3/1/0,1,2/2/1/3/2"
+        ))
+    );
+}
+
+#[test]
+fn length_tracking_typed_array_follows_growable_shared_buffer() {
+    assert_eq!(
+        run(r#"
+            var gsab = new SharedArrayBuffer(0, { maxByteLength: 8 });
+            var tracking = new Int32Array(gsab);
+            var before = [tracking.length, Reflect.ownKeys(tracking).join(",")];
+            gsab.grow(8);
+            tracking[1] = 42;
+            [before.join("/"), tracking.length, tracking[1]].join("|");
+            "#,),
+        Value::String(Arc::from("0/|2|42"))
+    );
+}
+
+#[test]
 fn array_buffer_transfer_to_immutable_and_slice_to_immutable_mark_results() {
     assert_eq!(
         run(r#"

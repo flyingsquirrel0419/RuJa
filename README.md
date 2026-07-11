@@ -39,7 +39,7 @@ destructuring,
 getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
-and `pause`, TypedArray
+and `pause`, length-tracking TypedArray/DataView views, TypedArray
 constructors/indexing, BigInt, Date, regex, and more. RuJa does not claim full
 ES conformance — conformance is scoped to this subset. See
 [test262 conformance](docs/test262.md#supported-subset) for the exact

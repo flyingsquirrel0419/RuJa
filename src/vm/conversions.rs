@@ -1038,20 +1038,35 @@ impl Vm {
                             t.viewed_array_buffer.clone(),
                             t.byte_offset,
                             t.byte_length,
+                            t.length_tracking,
                             t.buffer.lock().len(),
                         ))
                     } else {
                         None
                     }
                 });
-                if let Some((kind, viewed_array_buffer, byte_offset, byte_length, owned_len)) =
-                    ta_info
+                if let Some((
+                    kind,
+                    viewed_array_buffer,
+                    byte_offset,
+                    byte_length,
+                    length_tracking,
+                    owned_len,
+                )) = ta_info
                 {
-                    let buf_len = if viewed_array_buffer.is_some() {
-                        byte_length
-                    } else {
-                        owned_len
-                    };
+                    let effective = crate::builtins::effective_view_byte_length(
+                        self,
+                        viewed_array_buffer.as_ref(),
+                        byte_offset,
+                        if viewed_array_buffer.is_some() {
+                            byte_length
+                        } else {
+                            owned_len
+                        },
+                        length_tracking,
+                        kind.element_size(),
+                    );
+                    let buf_len = effective.unwrap_or(0);
                     if key == "length" {
                         return Ok(Value::Number(crate::builtins::typed_array_element_count(
                             kind, buf_len,
@@ -1061,7 +1076,9 @@ impl Vm {
                         return Ok(Value::Number(buf_len as f64));
                     }
                     if key == "byteOffset" {
-                        return Ok(Value::Number(byte_offset as f64));
+                        return Ok(Value::Number(
+                            if effective.is_some() { byte_offset } else { 0 } as f64,
+                        ));
                     }
                     if key == "buffer" {
                         return Ok(viewed_array_buffer.unwrap_or(Value::Undefined));
@@ -1092,39 +1109,37 @@ impl Vm {
                 }
                 let data_view_info = self.heap.with_obj(idx.0, |o| {
                     if let crate::value::HeapObj::DataView(view) = o {
-                        Some((view.buffer.clone(), view.byte_offset, view.byte_length))
+                        Some((
+                            view.buffer.clone(),
+                            view.byte_offset,
+                            view.byte_length,
+                            view.length_tracking,
+                        ))
                     } else {
                         None
                     }
                 });
-                if let Some((buffer, byte_offset, byte_length)) = data_view_info {
+                if let Some((buffer, byte_offset, byte_length, length_tracking)) = data_view_info {
                     match key {
                         "buffer" => return Ok(buffer),
                         "byteOffset" | "byteLength" => {
-                            let detached = match &buffer {
-                                Value::Object(buffer_idx) => {
-                                    self.heap.with_obj(buffer_idx.0, |o| {
-                                        if let crate::value::HeapObj::ArrayBuffer(array_buffer) = o
-                                        {
-                                            array_buffer
-                                                .detached
-                                                .load(std::sync::atomic::Ordering::Relaxed)
-                                        } else {
-                                            false
-                                        }
-                                    })
-                                }
-                                _ => false,
-                            };
-                            if detached {
+                            let Some(effective) = crate::builtins::effective_view_byte_length(
+                                self,
+                                Some(&buffer),
+                                byte_offset,
+                                byte_length,
+                                length_tracking,
+                                1,
+                            ) else {
                                 return Err(Error::type_err(
-                                    "DataView getter on detached buffer".to_string(),
+                                    "DataView getter on detached or out-of-bounds buffer"
+                                        .to_string(),
                                 ));
-                            }
+                            };
                             if key == "byteOffset" {
                                 return Ok(Value::Number(byte_offset as f64));
                             }
-                            return Ok(Value::Number(byte_length as f64));
+                            return Ok(Value::Number(effective as f64));
                         }
                         _ => {}
                     }
