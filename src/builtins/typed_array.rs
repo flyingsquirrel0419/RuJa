@@ -3738,6 +3738,161 @@ pub(crate) fn typed_array_reduce_right(
     result
 }
 
+fn typed_array_sort_compare(
+    vm: &mut Vm,
+    left: &Value,
+    right: &Value,
+    comparator: Option<&Value>,
+) -> error::Result<std::cmp::Ordering> {
+    if let Some(comparator) = comparator {
+        let result = vm.call_function(
+            comparator,
+            &[left.clone(), right.clone()],
+            Some(Value::Undefined),
+        )?;
+        let number = vm.to_number(&result)?;
+        return Ok(if number.is_nan() || number == 0.0 {
+            std::cmp::Ordering::Equal
+        } else if number < 0.0 {
+            std::cmp::Ordering::Less
+        } else {
+            std::cmp::Ordering::Greater
+        });
+    }
+
+    match (left, right) {
+        (Value::BigInt(left), Value::BigInt(right)) => Ok(left.cmp(right)),
+        (Value::Number(left), Value::Number(right)) => {
+            if left.is_nan() {
+                return Ok(if right.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else {
+                    std::cmp::Ordering::Greater
+                });
+            }
+            if right.is_nan() {
+                return Ok(std::cmp::Ordering::Less);
+            }
+            if *left == 0.0 && *right == 0.0 {
+                return Ok(right.is_sign_negative().cmp(&left.is_sign_negative()));
+            }
+            Ok(left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+        }
+        _ => Err(Error::type_err(
+            "TypedArray sort encountered incompatible element values",
+        )),
+    }
+}
+
+fn typed_array_stable_sort(
+    vm: &mut Vm,
+    items: &mut [Value],
+    comparator: Option<&Value>,
+) -> error::Result<()> {
+    let length = items.len();
+    if length < 2 {
+        return Ok(());
+    }
+    let mut buffer = Vec::with_capacity(length);
+    let mut width = 1;
+    while width < length {
+        let mut start = 0;
+        while start < length {
+            let middle = (start + width).min(length);
+            let end = (start + 2 * width).min(length);
+            let mut left = start;
+            let mut right = middle;
+            buffer.clear();
+            while left < middle && right < end {
+                if typed_array_sort_compare(vm, &items[left], &items[right], comparator)?
+                    == std::cmp::Ordering::Greater
+                {
+                    buffer.push(items[right].clone());
+                    right += 1;
+                } else {
+                    buffer.push(items[left].clone());
+                    left += 1;
+                }
+            }
+            buffer.extend_from_slice(&items[left..middle]);
+            buffer.extend_from_slice(&items[right..end]);
+            items[start..end].clone_from_slice(&buffer);
+            start += 2 * width;
+        }
+        width *= 2;
+    }
+    Ok(())
+}
+
+pub(crate) fn typed_array_sort(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let comparator = args.first().cloned().unwrap_or(Value::Undefined);
+    let comparator = if comparator.is_undefined() {
+        None
+    } else {
+        if !is_callable(&comparator, &vm.heap) {
+            return Err(Error::type_err(
+                "TypedArray sort comparator is not callable",
+            ));
+        }
+        Some(comparator)
+    };
+
+    let this = this.ok_or_else(|| Error::type_err("TypedArray sort called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray sort called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray sort called on non-TypedArray"))?;
+    let backing =
+        backing.ok_or_else(|| Error::type_err("TypedArray sort missing viewed ArrayBuffer"))?;
+    if is_immutable_array_buffer(vm, &backing) {
+        return Err(Error::type_err("TypedArray sort on immutable buffer"));
+    }
+    let byte_length = effective_view_byte_length(
+        vm,
+        Some(&backing),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray sort called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+
+    let comparator_pin_count = comparator.as_ref().map_or(0, |value| vm.pin(value));
+    let pin_count = vm.pin(&this) + vm.pin(&backing) + comparator_pin_count;
+    let result: error::Result<()> = (|| {
+        let mut items = Vec::with_capacity(length);
+        for index in 0..length {
+            items.push(vm.get_property(&this, &index.to_string())?);
+        }
+        typed_array_stable_sort(vm, &mut items, comparator.as_ref())?;
+        for (index, value) in items.into_iter().enumerate() {
+            vm.set_property_strict(&this, &index.to_string(), value)?;
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result?;
+    Ok(this)
+}
+
 pub(crate) fn typed_array_join(
     vm: &mut Vm,
     args: &[Value],

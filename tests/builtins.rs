@@ -2143,6 +2143,45 @@ fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
 }
 
 #[test]
+fn typed_array_sort_uses_numeric_bigint_nan_and_signed_zero_order() {
+    assert_eq!(
+        run(r#"
+            var numbers = new Float64Array([NaN, 2, 0, -0, -1, NaN]).sort();
+            var bigints = new BigInt64Array([3n, -2n, 1n]).sort();
+            [
+                numbers[0],
+                Object.is(numbers[1], -0),
+                Object.is(numbers[2], 0),
+                numbers[3],
+                Number.isNaN(numbers[4]),
+                Number.isNaN(numbers[5]),
+                Array.from(bigints).join(",")
+            ].join("|");
+            "#),
+        Value::String(Arc::from("-1|true|true|2|true|true|-2,1,3"))
+    );
+}
+
+#[test]
+fn typed_array_sort_is_stable_and_writes_to_current_bounds() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var values = new Uint8Array(rab);
+            values.set([4, 3, 2, 1]);
+            var calls = 0;
+            var result = values.sort(function(left, right) {
+                calls += 1;
+                if (calls === 1) rab.resize(2);
+                return (left % 2) - (right % 2);
+            });
+            [result === values, Array.from(values).join(","), calls > 0].join("|");
+            "#),
+        Value::String(Arc::from("true|4,2|true"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

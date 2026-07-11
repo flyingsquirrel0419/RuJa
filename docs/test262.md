@@ -706,6 +706,15 @@ candidate full run exposed an allocation-order-sensitive Proxy failure; tracing
 Proxy target/handler slots and rooting the transient `defineProperty`
 descriptor restores that file without changing the final aggregate fail count.
 
+Focused TypedArray `sort` coverage check:
+`%TypedArray%.prototype.sort` validates write access and snapshots all values
+before comparison. Its stable merge sort uses numeric Number/BigInt ordering by
+default, places NaN after numeric values and `-0` before `+0`, and converts
+custom comparator results with `ToNumber`. Comparator-driven resize or detach
+does not alter the sorted snapshot; writes target only indexes still accepted
+by the current view. Immutable buffers reject before comparator invocation. The
+exact path reports **36 pass / 0 fail / 0 skip / 36 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.sort` now performs a stable numeric sort over a
+  snapshot of the validated view, with BigInt ordering, NaN and signed-zero
+  handling, observable comparator coercion, and current-bounds writes after
+  resize or detach side effects.
 - GC now traces Proxy target and handler internal slots, and Proxy receiver
   data-property creation roots its inputs and transient descriptor across
   `defineProperty` trap lookup and invocation. Allocation pressure no longer
@@ -193,6 +197,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/sort/` path now closes at **36 pass
+  / 0 fail / 0 skip / 36 total**, covering stable Number and BigInt ordering,
+  immutable buffers, and resizable-buffer comparator side effects.
 - The exact `built-ins/TypedArray/prototype/reduceRight/` path now closes at
   **50 pass / 0 fail / 0 skip / 50 total**, covering Number and BigInt content,
   resizable buffers, abrupt callbacks, and default/custom accumulators. CI
