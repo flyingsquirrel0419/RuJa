@@ -858,7 +858,12 @@ previously collected object values remain rooted across `next`, `done`,
 `value`, mapper, conversion, and forced-GC callbacks. Adversarial regressions
 cover all three gaps found by independent review. The broader TypedArray
 built-ins subtree is **1433 pass / 0 fail / 13 skip / 1446 total**, while the
-supported subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+supported subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. CI
+`29169720681` and `test262-full` `29169720682` succeeded. Downloaded artifacts
+aggregate to **27143 pass / 6755 fail / 12 timeout / 0 error / 14557 skip /
+48467 total / 33898 pass-or-fail executed**, or **80.1%** of pass-or-fail files
+and **56.0%** of the matrix. Against the preceding identical matrix, exactly
+21 skipped files moved to pass.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

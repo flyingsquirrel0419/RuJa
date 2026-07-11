@@ -245,6 +245,9 @@
   results even for empty sources, and roots iterator/result/value objects
   across observable callbacks and GC. The full TypedArray built-ins subtree is
   now **1433 pass / 0 fail / 13 skip / 1446 total**.
+  CI `29169720681` and `test262-full` `29169720682` confirm the independently
+  reviewed change at **27143 pass / 6755 fail / 14557 skip / 12 timeout / 0
+  error / 48467 total**. Exactly 21 files moved from skip to pass.
 - The pinned Test262 `built-ins/TypedArray/prototype` subtree now has complete
   admitted file coverage at **1404 pass / 0 fail / 0 skip / 1404 total**. The
   final parent `constructor` and `Symbol.iterator` identity/descriptor files
