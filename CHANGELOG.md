@@ -112,7 +112,9 @@
 
 - The exact `built-ins/TypedArray/prototype/fill/` path now closes at **52 pass
   / 0 fail / 0 skip / 52 total**, including Number/BigInt, immutable-buffer,
-  coercion-order, and resizable-buffer coverage.
+  coercion-order, and resizable-buffer coverage. CI `29138124604` and
+  `test262-full` `29138124559` confirm the change at **25801 pass / 6766 fail /
+  15140 skip / 47718 total**.
 - The exact `built-ins/TypedArray/prototype/at/` path now admits the implemented
   TypedArray, BigInt, arrow-function, and resizable-buffer dependencies at
   **15 pass / 0 fail / 0 skip / 15 total**. CI `29137525369` and

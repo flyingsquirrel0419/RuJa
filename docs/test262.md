@@ -445,7 +445,10 @@ Focused TypedArray `fill` coverage check:
 value/start/end coercion, revalidates resized bounds before writing, and works
 for Number, BigInt, immutable rejection, and resizable views. TypedArrays now
 also expose lazy `values()`/default iteration. The exact fill path reports **52
-pass / 0 fail / 0 skip / 52 total**.
+pass / 0 fail / 0 skip / 52 total**. CI `29138124604` and `test262-full`
+`29138124559` confirm the change. Downloaded artifacts aggregate to **25801
+pass / 6766 fail / 0 timeout / 0 error / 15140 skip / 47718 total / 32567
+executed**, or **79.2%** of executed files and **54.1%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
