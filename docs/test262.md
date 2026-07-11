@@ -597,6 +597,15 @@ matrix, all 38 focused files moved out of skip while the aggregate changed by
 35 pass and 3 fail; the focused exact result is therefore reported separately
 from the parallel full-run variance.
 
+Focused TypedArray `findLast` coverage check:
+`%TypedArray%.prototype.findLast` validates the receiver and callback, snapshots
+the initial internal length, then reads each current integer-indexed value from
+the final index toward zero before invoking the predicate. Callback-driven
+detach or shrink yields `undefined` for invalidated future visits, growth does
+not extend the visit count, and a truthy predicate returns the value observed
+before that callback. The exact path reports **38 pass / 0 fail / 0 skip / 38
+total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

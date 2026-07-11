@@ -3413,7 +3413,7 @@ pub(crate) fn typed_array_find(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    typed_array_find_impl(vm, args, this, "find", false)
+    typed_array_find_impl(vm, args, this, "find", false, false)
 }
 
 pub(crate) fn typed_array_find_index(
@@ -3421,7 +3421,15 @@ pub(crate) fn typed_array_find_index(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    typed_array_find_impl(vm, args, this, "findIndex", true)
+    typed_array_find_impl(vm, args, this, "findIndex", true, false)
+}
+
+pub(crate) fn typed_array_find_last(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_find_impl(vm, args, this, "findLast", false, true)
 }
 
 fn typed_array_find_impl(
@@ -3430,6 +3438,7 @@ fn typed_array_find_impl(
     this: Option<Value>,
     name: &str,
     return_index: bool,
+    from_last: bool,
 ) -> error::Result<Value> {
     let this =
         this.ok_or_else(|| Error::type_err(format!("TypedArray {name} called without this")))?;
@@ -3472,7 +3481,12 @@ fn typed_array_find_impl(
 
     let pin_count = vm.pin(&this) + vm.pin(&callback) + vm.pin(&this_arg);
     let result: error::Result<Value> = (|| {
-        for index in 0..length {
+        for offset in 0..length {
+            let index = if from_last {
+                length - offset - 1
+            } else {
+                offset
+            };
             let value = vm.get_property(&this, &index.to_string())?;
             let predicate_result = vm.call_function(
                 &callback,
