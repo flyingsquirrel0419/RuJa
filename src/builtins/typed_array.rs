@@ -2840,6 +2840,25 @@ pub(crate) fn typed_array_length_get(
     ))
 }
 
+pub(crate) fn typed_array_to_string_tag_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(Value::Object(index)) = this else {
+        return Ok(Value::Undefined);
+    };
+    let name = vm.heap.with_obj(index.0, |object| {
+        let HeapObj::TypedArray(array) = object else {
+            return None;
+        };
+        Some(array.kind.name())
+    });
+    Ok(name
+        .map(|name| Value::String(Arc::from(name)))
+        .unwrap_or(Value::Undefined))
+}
+
 pub(crate) fn typed_array_at(
     vm: &mut Vm,
     args: &[Value],

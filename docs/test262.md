@@ -811,6 +811,20 @@ confirm the independently reviewed change. Downloaded artifacts aggregate to
 of the matrix. Against the preceding identical matrix, exactly 22 focused
 files moved from skip to pass.
 
+Focused TypedArray `Symbol.toStringTag` coverage check:
+The configurable `%TypedArray%.prototype[Symbol.toStringTag]` getter reads the
+receiver's internal TypedArray kind without consulting user properties or
+buffer state. It returns the exact Number/BigInt TypedArray name even when the
+view is detached, and returns `undefined` for primitives, DataView, and
+ordinary objects instead of throwing. The exact path improves from **2 pass /
+16 fail / 0 skip** to **18 pass / 0 fail / 0 skip / 18 total**. Independent
+review also exposed that `Object.prototype.toString` ignored custom tags and
+used heap class labels as fallback tags. It now performs observable
+`Symbol.toStringTag` lookup, propagates getter failures, ignores non-string
+values, and uses specification internal-slot fallback categories. The currently
+admitted `built-ins/Object/prototype/toString/` coverage remains **26 pass / 0
+fail / 15 skip / 41 total** after the structural fix.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

@@ -1394,31 +1394,55 @@ pub(crate) fn object_to_string(
     if this.is_undefined() {
         return Ok(Value::String(Arc::from("[object Undefined]")));
     }
-    if let Value::String(_) = &this {
-        return Ok(Value::String(Arc::from("[object String]")));
-    }
-    if let Value::Number(_) = &this {
-        return Ok(Value::String(Arc::from("[object Number]")));
-    }
-    if let Value::Bool(_) = &this {
-        return Ok(Value::String(Arc::from("[object Boolean]")));
-    }
-    if let Value::Symbol(_) = &this {
-        return Ok(Value::String(Arc::from("[object Symbol]")));
-    }
-    if let Value::BigInt(_) = &this {
-        return Ok(Value::String(Arc::from("[object BigInt]")));
-    }
-    if let Value::Object(idx) = &this {
-        let class = if let Some(hint) = class_hint {
-            hint.to_string()
-        } else {
-            vm.heap.with_obj(idx.0, |obj| obj.class_name().to_string())
-        };
-        let result = format!("[object {}]", class);
-        return Ok(Value::String(Arc::from(result.as_str())));
-    }
-    Ok(Value::String(Arc::from("[object Object]")))
+    let builtin_tag = match &this {
+        Value::String(_) => "String".to_string(),
+        Value::Number(_) => "Number".to_string(),
+        Value::Bool(_) => "Boolean".to_string(),
+        Value::Symbol(_) | Value::BigInt(_) => "Object".to_string(),
+        Value::Object(index) => class_hint.map(str::to_string).unwrap_or_else(|| {
+            vm.heap.with_obj(index.0, |object| match object {
+                HeapObj::Array(array) if array.is_arguments.load(Ordering::Relaxed) => {
+                    "Arguments".to_string()
+                }
+                HeapObj::Array(_) => "Array".to_string(),
+                HeapObj::Function(_) => "Function".to_string(),
+                HeapObj::Object(data) => {
+                    if let Some(primitive) = data.primitive.lock().as_ref() {
+                        return match primitive {
+                            Value::String(_) => "String".to_string(),
+                            Value::Number(_) => "Number".to_string(),
+                            Value::Bool(_) => "Boolean".to_string(),
+                            _ => "Object".to_string(),
+                        };
+                    }
+                    match data.class_name.as_deref() {
+                        Some("Date") => "Date".to_string(),
+                        Some("RegExp") => "RegExp".to_string(),
+                        Some(
+                            "Error" | "EvalError" | "RangeError" | "ReferenceError" | "SyntaxError"
+                            | "TypeError" | "URIError" | "AggregateError",
+                        ) => "Error".to_string(),
+                        _ => "Object".to_string(),
+                    }
+                }
+                _ => "Object".to_string(),
+            })
+        }),
+        _ => "Object".to_string(),
+    };
+
+    let pin_count = vm.pin(&this);
+    let tag = vm.get_property_by_key(
+        &this,
+        &PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+    );
+    vm.unpin_many(pin_count);
+    let tag = tag?;
+    let tag = match tag {
+        Value::String(tag) => tag.to_string(),
+        _ => builtin_tag,
+    };
+    Ok(Value::String(Arc::from(format!("[object {tag}]").as_str())))
 }
 
 // ---------------------------------------------------------------------------
@@ -1681,6 +1705,12 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         vm.new_native_function_in_env("get byteOffset", typed_array_byte_offset_get, 0, env)?;
     let typed_array_length_getter =
         vm.new_native_function_in_env("get length", typed_array_length_get, 0, env)?;
+    let typed_array_to_string_tag_getter = vm.new_native_function_in_env(
+        "get [Symbol.toStringTag]",
+        typed_array_to_string_tag_get,
+        0,
+        env,
+    )?;
     let typed_array_subarray_fn =
         vm.new_native_function_in_env("subarray", typed_array_subarray, 2, env)?;
     let typed_array_set_fn = vm.new_native_function_in_env("set", typed_array_set, 1, env)?;
@@ -1751,6 +1781,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("length"),
                 accessor_get_prop(Value::Object(typed_array_length_getter)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                accessor_get_prop(Value::Object(typed_array_to_string_tag_getter)),
             );
             props.insert(
                 PropertyKey::from("subarray"),
@@ -6233,6 +6267,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                     obj.props().lock().insert(
                         crate::value::PropertyKey::from("toLocaleString"),
                         data_prop(Value::Object(to_locale_str)),
+                    );
+                    let mut tag = data_prop(Value::String(Arc::from("BigInt")));
+                    tag.writable = false;
+                    obj.props().lock().insert(
+                        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                        tag,
                     );
                     obj.props().lock().insert(
                         crate::value::PropertyKey::from("valueOf"),

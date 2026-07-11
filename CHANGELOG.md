@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype[Symbol.toStringTag]` is now the standard configurable
+  getter, returning the internal TypedArray kind name even after detach while
+  returning `undefined` for primitives and objects without TypedArray slots.
+- `Object.prototype.toString` now observes `Symbol.toStringTag`, propagates
+  getter failures, ignores non-string tags, and derives fallback tags only from
+  the internal slots named by the specification. BigInt now exposes its
+  standard prototype tag instead of relying on an incorrect built-in fallback.
 - `%TypedArray%.prototype.with` now coerces index before replacement value,
   validates the resulting index against the current view, and copies the
   original snapshot length into a fresh same-kind intrinsic result without
@@ -232,6 +239,10 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/Symbol.toStringTag/` path now closes
+  at **18 pass / 0 fail / 0 skip / 18 total**, up from **2 pass / 16 fail**,
+  covering Number/BigInt kinds, detached buffers, incompatible receivers, and
+  accessor descriptors.
 - The exact `built-ins/TypedArray/prototype/with/` path now closes at **22 pass
   / 0 fail / 0 skip / 22 total**, up from **1 pass / 21 fail**, covering
   Number/BigInt coercion order, current resizable-buffer bounds, immutable

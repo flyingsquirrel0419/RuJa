@@ -2490,6 +2490,50 @@ fn typed_array_with_converts_bigint_value_before_bounds_error() {
 }
 
 #[test]
+fn typed_array_to_string_tag_getter_uses_internal_kind() {
+    assert_eq!(
+        run(r#"
+            var getter = Object.getOwnPropertyDescriptor(
+                Object.getPrototypeOf(Int8Array.prototype), Symbol.toStringTag
+            ).get;
+            var buffer = new ArrayBuffer(1);
+            var array = new Int8Array(buffer);
+            $262.detachArrayBuffer(buffer);
+            [getter.call(array), getter.call(new DataView(new ArrayBuffer(1))),
+             getter.call(1), getter.name, getter.length].join("|");
+        "#),
+        Value::String(Arc::from("Int8Array|||get [Symbol.toStringTag]|0"))
+    );
+}
+
+#[test]
+fn object_to_string_observes_symbol_to_string_tag() {
+    assert_eq!(
+        run(r#"
+            var array = new Uint8Array(1);
+            Object.defineProperty(array, Symbol.toStringTag, {
+                value: "Custom", configurable: true
+            });
+            var custom = Object.prototype.toString.call(array);
+            Object.defineProperty(array, Symbol.toStringTag, { value: 1 });
+            var fallback = Object.prototype.toString.call(array);
+            [custom, fallback].join("|");
+        "#),
+        Value::String(Arc::from("[object Custom]|[object Object]"))
+    );
+    let error = run_err(
+        r#"
+            var object = {};
+            Object.defineProperty(object, Symbol.toStringTag, {
+                get: function() { throw new Error("tag"); }
+            });
+            Object.prototype.toString.call(object);
+        "#,
+    );
+    assert!(error.contains("Error: tag"), "unexpected error: {error}");
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"
