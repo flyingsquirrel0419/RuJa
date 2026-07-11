@@ -106,7 +106,10 @@
 
 - The exact `built-ins/TypedArray/prototype/at/` path now admits the implemented
   TypedArray, BigInt, arrow-function, and resizable-buffer dependencies at
-  **15 pass / 0 fail / 0 skip / 15 total**.
+  **15 pass / 0 fail / 0 skip / 15 total**. CI `29137525369` and
+  `test262-full` `29137525322` confirm the change; downloaded artifacts report
+  **25749 pass / 6766 fail / 11 timeout / 0 error / 15941 skip / 48467 total /
+  32526 executed**, or **79.2%** of executed files and **53.1%** of the matrix.
 - Resizable view admission adds eight TypedArray-constructor files and thirty
   DataView files, raising those focused paths to **682 pass / 0 fail / 56 skip
   / 738 total** and **522 pass / 0 fail / 39 skip / 561 total**. A narrow
