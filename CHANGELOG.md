@@ -131,7 +131,9 @@
 
 - The exact `built-ins/TypedArray/prototype/values/` path now closes at **21
   pass / 0 fail / 0 skip / 21 total**; the matching `Symbol.iterator` path is
-  **1 pass / 0 fail / 0 skip / 1 total**.
+  **1 pass / 0 fail / 0 skip / 1 total** locally. CI `29140858679` and
+  `test262-full` `29140858676` confirm the change at **26031 pass / 6766 fail /
+  14909 skip / 12 timeout / 47718 total**.
 - The exact `built-ins/TypedArray/prototype/join/` path now closes at **32 pass
   / 0 fail / 0 skip / 32 total**, including BigInt, detached, out-of-bounds,
   separator-coercion, and resizable-buffer behavior. CI `29139734054` and

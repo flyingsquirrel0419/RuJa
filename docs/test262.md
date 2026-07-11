@@ -487,7 +487,12 @@ creation, rechecks dynamic bounds on every pull, observes length-tracking
 growth and shrink, throws when a fixed view becomes out of bounds, and stays
 done after exhaustion. The exact values path reports **21 pass / 0 fail / 0
 skip / 21 total** and the matching `Symbol.iterator` path reports **1 pass / 0
-fail / 0 skip / 1 total**.
+fail / 0 skip / 1 total** locally. CI `29140858679` and `test262-full`
+`29140858676` confirm the change. Downloaded artifacts aggregate to **26031
+pass / 6766 fail / 12 timeout / 0 error / 14909 skip / 47718 total / 32797
+pass-or-fail executed**, or **79.4%** of pass-or-fail files and **54.6%** of
+the matrix. The full built-ins shard had one additional timeout versus the
+previous run, so that variance is not counted as a conformance gain.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
