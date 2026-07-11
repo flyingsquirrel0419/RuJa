@@ -559,7 +559,14 @@ after observable species execution. Same-kind copies preserve raw element bits,
 including same-buffer forward-copy semantics, while different kinds convert by
 value. The shared `%TypedArray%[Symbol.species]` accessor and unaligned
 length-tracking resizable-buffer construction are also covered. The exact path
-reports **92 pass / 0 fail / 0 skip / 92 total**.
+reports **92 pass / 0 fail / 0 skip / 92 total**. CI `29144932312` and
+`test262-full` `29144932309` confirm the change. Downloaded artifacts aggregate
+to **26259 pass / 6764 fail / 12 timeout / 0 error / 15432 skip / 48467 total /
+33023 pass-or-fail executed**, or **79.5%** of pass-or-fail files and **54.2%**
+of the matrix. Against the preceding identical matrix, all 92 focused files
+moved from skip to pass and three additional built-ins failures passed,
+consistent with the shared `%TypedArray%[Symbol.species]` foundation added by
+this unit; the focused gain is reported separately from those extra results.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

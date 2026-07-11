@@ -152,7 +152,9 @@
 ### Test tooling
 
 - The exact `built-ins/TypedArray/prototype/slice/` path now closes at **92 pass
-  / 0 fail / 0 skip / 92 total**.
+  / 0 fail / 0 skip / 92 total**. CI `29144932312` and `test262-full`
+  `29144932309` confirm the change at **26259 pass / 6764 fail / 15432 skip /
+  12 timeout / 0 error / 48467 total**.
 - The exact `built-ins/TypedArray/prototype/copyWithin/` path now closes at **65
   pass / 0 fail / 0 skip / 65 total**. Three detach stress files receive a
   path-limited 600-second timeout because their full constructor/factory matrix
