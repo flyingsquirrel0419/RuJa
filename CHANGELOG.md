@@ -223,6 +223,10 @@
   **42 pass / 0 fail / 0 skip / 42 total**, up from **6 pass / 36 fail**,
   covering Number/BigInt comparison, relative and infinite `fromIndex`,
   detached buffers, and fixed-length and length-tracking resizable views.
+  CI `29159883869` and `test262-full` `29159883857` confirm the change at
+  **26989 pass / 6764 fail / 14702 skip / 12 timeout / 0 error / 48467 total**.
+  Against the preceding identical matrix, exactly 42 files moved from skip to
+  pass.
 - The exact `built-ins/TypedArray/prototype/indexOf/` path now closes at **43
   pass / 0 fail / 0 skip / 43 total**, up from **6 pass / 37 fail**, covering
   Number/BigInt strict comparison, `fromIndex` coercion, detached buffers, and

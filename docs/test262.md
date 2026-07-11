@@ -770,7 +770,12 @@ snapshot index, while explicit `undefined` starts at index zero. The reverse
 search checks current integer-index validity and uses Strict Equality, so
 detach and shrink during coercion skip invalidated indexes and growth does not
 extend the search. The exact path improves from **6 pass / 36 fail / 0 skip**
-to **42 pass / 0 fail / 0 skip / 42 total**.
+to **42 pass / 0 fail / 0 skip / 42 total**. CI `29159883869` and
+`test262-full` `29159883857` confirm the change. Downloaded artifacts aggregate
+to **26989 pass / 6764 fail / 12 timeout / 0 error / 14702 skip / 48467 total /
+33753 pass-or-fail executed**, or **80.0%** of pass-or-fail files and **55.7%**
+of the matrix. Against the preceding identical matrix, exactly 42 focused
+files moved from skip to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
