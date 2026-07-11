@@ -104,7 +104,10 @@
   / 738 total** and **522 pass / 0 fail / 39 skip / 561 total**. A narrow
   `built-ins/TypedArray/` exception admits **26 pass / 0 fail** for dynamic
   indexed-exotic and length/byteLength/byteOffset coverage while leaving the
-  unimplemented prototype method families gated.
+  unimplemented prototype method families gated. CI `29136994077` and
+  `test262-full` `29136994074` confirm the change; downloaded artifacts report
+  **25734 pass / 6769 fail / 11 timeout / 0 error / 15953 skip / 48467 total /
+  32514 executed**, or **79.1%** of executed files and **53.1%** of the matrix.
 - The ArrayBuffer exception now admits `resizable-arraybuffer` and only the
   receiver brands needed by those tests, raising the focused path to **194 pass
   / 0 fail / 27 skip / 221 total** without opening unrelated SharedArrayBuffer

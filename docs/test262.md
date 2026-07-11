@@ -424,7 +424,11 @@ the same dynamic record, including out-of-bounds transitions and recovery.
 TypedArray constructor coverage rises to **682 pass / 0 fail / 56 skip / 738
 total**, DataView rises to **522 pass / 0 fail / 39 skip / 561 total**, and the
 narrow resizable TypedArray exotic/getter slice adds **26 pass / 0 fail**.
-Broader unimplemented TypedArray prototype methods remain gated separately.
+Broader unimplemented TypedArray prototype methods remain gated separately. CI
+`29136994077` and `test262-full` `29136994074` confirm the change. Downloaded
+artifacts aggregate to **25734 pass / 6769 fail / 11 timeout / 0 error / 15953
+skip / 48467 total / 32514 executed**, or **79.1%** of executed files and
+**53.1%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
