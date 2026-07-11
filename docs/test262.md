@@ -756,7 +756,12 @@ current integer-index validity and compares present Number or BigInt values
 with Strict Equality, so detach and shrink during coercion do not turn missing
 elements into matches for `undefined`, while growth does not extend the search.
 The exact path improves from **6 pass / 37 fail / 0 skip** to **43 pass / 0 fail
-/ 0 skip / 43 total**.
+/ 0 skip / 43 total**. CI `29158983437` and `test262-full` `29158983402`
+confirm the change. Downloaded artifacts aggregate to **26947 pass / 6764 fail
+/ 12 timeout / 0 error / 14744 skip / 48467 total / 33711 pass-or-fail
+executed**, or **79.9%** of pass-or-fail files and **55.6%** of the matrix.
+Against the preceding identical matrix, exactly 43 focused files moved from
+skip to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values

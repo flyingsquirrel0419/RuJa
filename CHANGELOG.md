@@ -219,6 +219,10 @@
   pass / 0 fail / 0 skip / 43 total**, up from **6 pass / 37 fail**, covering
   Number/BigInt strict comparison, `fromIndex` coercion, detached buffers, and
   fixed-length and length-tracking resizable views.
+  CI `29158983437` and `test262-full` `29158983402` confirm the change at
+  **26947 pass / 6764 fail / 14744 skip / 12 timeout / 0 error / 48467 total**.
+  Against the preceding identical matrix, exactly 43 files moved from skip to
+  pass.
 - The exact `built-ins/TypedArray/prototype/filter/` path now closes at **85
   pass / 0 fail / 0 skip / 85 total**, covering callback-before-species order,
   Number/BigInt results, immutable destinations, and resizable buffers.
