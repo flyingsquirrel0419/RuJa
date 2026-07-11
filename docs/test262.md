@@ -512,7 +512,13 @@ Focused TypedArray `reverse` coverage check:
 its internal length without consulting a `length` property. It swaps Number and
 BigInt elements through integer-indexed access, returns the original receiver,
 preserves unrelated properties, and handles fixed and length-tracking resizable
-views. The exact path reports **22 pass / 0 fail / 0 skip / 22 total**.
+views. The exact path reports **22 pass / 0 fail / 0 skip / 22 total**. CI
+`29141851460` and `test262-full` `29141851451` confirm the change. Downloaded
+artifacts aggregate to **26089 pass / 6768 fail / 12 timeout / 0 error / 15598
+skip / 48467 total / 32857 pass-or-fail executed**, or **79.4%** of
+pass-or-fail files and **53.8%** of the matrix. Against the preceding run's
+identical matrix, 22 files moved from skip to pass with no fail, timeout, or
+error change.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
