@@ -2022,6 +2022,25 @@ fn typed_array_every_snapshots_length_and_short_circuits() {
 }
 
 #[test]
+fn typed_array_for_each_ignores_results_and_visits_snapshot_length() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3]);
+            var seen = [];
+            var result = tracking.forEach(function(value, index, receiver) {
+                seen.push(String(value) + ":" + index + ":" + (receiver === tracking));
+                if (index === 0) rab.resize(1);
+                return true;
+            });
+            [result === undefined, seen.join(",")].join("|");
+            "#),
+        Value::String(Arc::from("true|1:0:true,undefined:1:true,undefined:2:true"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

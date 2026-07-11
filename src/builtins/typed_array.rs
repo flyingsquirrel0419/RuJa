@@ -3491,12 +3491,28 @@ pub(crate) fn typed_array_every(
     )
 }
 
+pub(crate) fn typed_array_for_each(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    typed_array_predicate_impl(
+        vm,
+        args,
+        this,
+        "forEach",
+        TypedArrayPredicateMode::ForEach,
+        false,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum TypedArrayPredicateMode {
     FindValue,
     FindIndex,
     Some,
     Every,
+    ForEach,
 }
 
 fn typed_array_predicate_impl(
@@ -3563,6 +3579,7 @@ fn typed_array_predicate_impl(
             let predicate_truthy = predicate_result.is_truthy();
             let should_stop = match mode {
                 TypedArrayPredicateMode::Every => !predicate_truthy,
+                TypedArrayPredicateMode::ForEach => false,
                 _ => predicate_truthy,
             };
             if should_stop {
@@ -3571,6 +3588,7 @@ fn typed_array_predicate_impl(
                     TypedArrayPredicateMode::FindIndex => Value::Number(index as f64),
                     TypedArrayPredicateMode::Some => Value::Bool(true),
                     TypedArrayPredicateMode::Every => Value::Bool(false),
+                    TypedArrayPredicateMode::ForEach => Value::Undefined,
                 });
             }
         }
@@ -3579,6 +3597,7 @@ fn typed_array_predicate_impl(
             TypedArrayPredicateMode::FindIndex => Value::Number(-1.0),
             TypedArrayPredicateMode::Some => Value::Bool(false),
             TypedArrayPredicateMode::Every => Value::Bool(true),
+            TypedArrayPredicateMode::ForEach => Value::Undefined,
         })
     })();
     vm.unpin_many(pin_count);

@@ -656,6 +656,16 @@ skip / 47718 total / 33263 pass-or-fail executed**, or **79.7%** of pass-or-fail
 files and **55.5%** of the matrix. Against the preceding identical matrix,
 exactly 44 files moved from skip to pass with no fail, timeout, or error change.
 
+Focused TypedArray `forEach` coverage check:
+`%TypedArray%.prototype.forEach` validates the receiver and callback, snapshots
+the initial internal length, reads each current integer-indexed value before
+invoking the callback with `(value, index, receiver)`, ignores callback return
+values, and returns `undefined`. Callback-driven detach or shrink yields
+`undefined` for invalidated future indexes and growth does not extend the visit
+count. The exact path reports **42 pass / 0 fail / 0 skip / 42 total**. The
+shared `every`, `some`, and four find-family paths remain at **240 pass / 0 fail
+/ 0 skip / 240 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.forEach` now validates and snapshots the receiver,
+  reads each current integer-indexed value before callback invocation, ignores
+  callback results, and preserves the initial visit count across detach,
+  shrink, and growth before returning `undefined`.
 - `%TypedArray%.prototype.every` now validates and snapshots the receiver,
   reads each current integer-indexed value before callback invocation,
   short-circuits on the first falsy result, and preserves the initial visit
@@ -173,6 +177,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/forEach/` path now closes at **42
+  pass / 0 fail / 0 skip / 42 total**. The shared `every`, `some`, and
+  find-family paths remain at **240 pass / 0 fail / 0 skip / 240 total**.
 - The exact `built-ins/TypedArray/prototype/every/` path now closes at **44 pass
   / 0 fail / 0 skip / 44 total**. The shared `some` and find-family paths remain
   at **196 pass / 0 fail / 0 skip / 196 total**. CI `29149369782` and
