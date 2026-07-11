@@ -713,7 +713,12 @@ first current element as the default accumulator and visits remaining snapshot
 indexes in ascending order. Values are read immediately before each callback,
 so detach and shrink expose `undefined` while growth does not extend iteration.
 The exact Number/BigInt and resizable-buffer path reports **50 pass / 0 fail / 0
-skip / 50 total**; the refactored reverse path remains **50 / 0 / 0 / 50**.
+skip / 50 total**; the refactored reverse path remains **50 / 0 / 0 / 50**. CI
+`29156205544` and `test262-full` `29156205566` confirm the change. Downloaded
+artifacts aggregate to **26734 pass / 6764 fail / 12 timeout / 0 error / 14957
+skip / 48467 total / 33498 pass-or-fail executed**, or **79.8%** of pass-or-fail
+files and **55.2%** of the matrix. Against the preceding identical matrix,
+exactly 50 focused files moved from skip to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values

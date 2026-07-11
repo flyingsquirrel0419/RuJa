@@ -208,7 +208,10 @@
 
 - The exact `built-ins/TypedArray/prototype/reduce/` path now closes at **50
   pass / 0 fail / 0 skip / 50 total**, while the refactored `reduceRight` path
-  remains at **50 pass / 0 fail / 0 skip / 50 total**.
+  remains at **50 pass / 0 fail / 0 skip / 50 total**. CI `29156205544` and
+  `test262-full` `29156205566` confirm the change at **26734 pass / 6764 fail /
+  14957 skip / 12 timeout / 0 error / 48467 total**. Against the preceding
+  identical matrix, exactly 50 files moved from skip to pass.
 - The exact `built-ins/TypedArray/prototype/toSorted/` path now closes at **12
   pass / 0 fail / 0 skip / 12 total**, covering default/custom comparators,
   same-type copying, immutable sources, and species avoidance. CI `29155327452`
