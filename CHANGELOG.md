@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.with` now coerces index before replacement value,
+  validates the resulting index against the current view, and copies the
+  original snapshot length into a fresh same-kind intrinsic result without
+  consulting `constructor` or `@@species`.
+- Same-kind TypedArray copy methods now use a GC-rooted Realm intrinsic
+  constructor table, so replacing global TypedArray constructor bindings does
+  not affect `with`, `toReversed`, or `toSorted`, including cross-Realm calls.
 - `%TypedArray%.prototype.toLocaleString` now validates and snapshots its
   receiver, invokes each current Number/BigInt value's locale conversion with
   two forwarded locale arguments from the method's Realm, stringifies each
@@ -225,6 +232,10 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/with/` path now closes at **22 pass
+  / 0 fail / 0 skip / 22 total**, up from **1 pass / 21 fail**, covering
+  Number/BigInt coercion order, current resizable-buffer bounds, immutable
+  sources, intrinsic same-kind construction, and species avoidance.
 - The exact `built-ins/TypedArray/prototype/toLocaleString/` path now closes at
   **39 pass / 0 fail / 0 skip / 39 total**, up from **6 pass / 33 fail**,
   covering Number/BigInt conversion hooks, abrupt completions, internal length,

@@ -2384,6 +2384,112 @@ fn typed_array_to_locale_string_uses_method_realm_primitive_prototype() {
 }
 
 #[test]
+fn typed_array_with_coerces_before_copying_and_ignores_species() {
+    assert_eq!(
+        run(r#"
+            var source = new Int8Array([1, 2, 3]);
+            var log = [];
+            source.constructor = {
+                get [Symbol.species]() { throw new Error("species"); }
+            };
+            var result = source.with(
+                { valueOf: function() { log.push("index"); return 1; } },
+                { valueOf: function() { log.push("value"); source[0] = 9; return 7; } }
+            );
+            [Array.from(result).join(","), Array.from(source).join(","),
+             log.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("9,7,3|9,2,3|index,value"))
+    );
+}
+
+#[test]
+fn typed_array_with_validates_current_index_after_growth() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(2, { maxByteLength: 5 });
+            var source = new Int8Array(buffer);
+            source.set([11, 22]);
+            var result = source.with(4, {
+                valueOf: function() { buffer.resize(5); return 123; }
+            });
+            [Array.from(result).join(","), source.length].join("|");
+        "#),
+        Value::String(Arc::from("11,22|5"))
+    );
+}
+
+#[test]
+fn typed_array_same_type_copies_ignore_replaced_global_constructors() {
+    assert_eq!(
+        run(r#"
+            var source = new Int8Array([1, 2]);
+            var original = Int8Array;
+            Int8Array = function() { throw new Error("replaced"); };
+            var a = source.with(0, 3);
+            var b = source.toReversed();
+            var c = source.toSorted();
+            Int8Array = original;
+            [Object.getPrototypeOf(a) === original.prototype,
+             Object.getPrototypeOf(b) === original.prototype,
+             Object.getPrototypeOf(c) === original.prototype].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true"))
+    );
+}
+
+#[test]
+fn typed_array_with_uses_original_method_realm_constructor() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var original = other.Int8Array;
+            var method = original.prototype.with;
+            var source = new Int8Array([1, 2]);
+            other.eval("Int8Array = function() { throw new Error('replaced'); }");
+            var result = method.call(source, 1, 3);
+            Object.getPrototypeOf(result) === original.prototype;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn typed_array_with_observes_index_resize_before_value_coercion() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(1, { maxByteLength: 2 });
+            var source = new Int8Array(buffer);
+            source[0] = 5;
+            var log = [];
+            var result = source.with({
+                valueOf: function() { log.push("index"); buffer.resize(2); return 1; }
+            }, {
+                valueOf: function() { log.push("value"); return 9; }
+            });
+            [Array.from(result).join(","), source.length, log.join(",")].join("|");
+        "#),
+        Value::String(Arc::from("5|2|index,value"))
+    );
+}
+
+#[test]
+fn typed_array_with_converts_bigint_value_before_bounds_error() {
+    assert_eq!(
+        run(r#"
+            var source = new BigInt64Array([1n]);
+            try {
+                source.with(9, 1);
+                "none";
+            } catch (error) {
+                error.name;
+            }
+        "#),
+        Value::String(Arc::from("TypeError"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

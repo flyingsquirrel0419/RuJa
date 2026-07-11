@@ -1552,6 +1552,9 @@ fn install_typed_array_constructor_in_env(
         }
     });
     let ctor = Value::Object(ctor_idx);
+    let realm = crate::environment::global_env_root(&vm.heap, env);
+    vm.realm_typed_array_constructors
+        .insert((realm.0, kind), ctor.clone());
     if let Some(global) = global {
         define_realm_global(vm, env, global, name, ctor);
     } else {
@@ -1711,6 +1714,7 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_sort_fn = vm.new_native_function_in_env("sort", typed_array_sort, 1, env)?;
     let typed_array_to_sorted_fn =
         vm.new_native_function_in_env("toSorted", typed_array_to_sorted, 1, env)?;
+    let typed_array_with_fn = vm.new_native_function_in_env("with", typed_array_with, 2, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_to_locale_string_fn =
         vm.new_native_function_in_env("toLocaleString", typed_array_to_locale_string, 0, env)?;
@@ -1827,6 +1831,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("toSorted"),
                 data_prop(Value::Object(typed_array_to_sorted_fn)),
+            );
+            props.insert(
+                PropertyKey::from("with"),
+                data_prop(Value::Object(typed_array_with_fn)),
             );
             props.insert(
                 PropertyKey::from("join"),

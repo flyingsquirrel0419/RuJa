@@ -484,7 +484,7 @@ pub struct DataViewData {
     pub proto: Mutex<Option<Value>>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TypedArrayKind {
     Uint8,
     Uint8Clamped,

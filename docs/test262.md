@@ -795,6 +795,17 @@ executed**, or **80.0%** of pass-or-fail files and **55.8%** of the matrix.
 Against the preceding identical matrix, exactly 39 focused files moved from
 skip to pass.
 
+Focused TypedArray `with` coverage check:
+`%TypedArray%.prototype.with` validates and snapshots its source, coerces the
+index before the replacement Number/BigInt value, then checks the computed
+index against the source's current integer-index bounds. It creates a fresh
+same-kind result from the method Realm's original intrinsic constructor and
+copies the snapshot visit range without consulting `constructor` or
+`Symbol.species`. Realm intrinsic constructors are held in a GC-rooted table,
+so mutable global bindings do not affect `with`, `toReversed`, or `toSorted`.
+The exact path improves from **1 pass / 21 fail / 0 skip** to **22 pass / 0 fail
+/ 0 skip / 22 total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

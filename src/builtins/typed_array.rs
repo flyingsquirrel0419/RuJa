@@ -226,9 +226,16 @@ fn current_realm_typed_array_constructor(
     vm: &mut Vm,
     kind: crate::value::TypedArrayKind,
 ) -> error::Result<Value> {
-    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
-    crate::environment::get(&vm.heap, realm_env, kind.name())
-        .or_else(|| crate::environment::get(&vm.heap, vm.global, kind.name()))
+    let closure = vm.native_callee_closure().unwrap_or(vm.global);
+    let realm = crate::environment::global_env_root(&vm.heap, closure);
+    vm.realm_typed_array_constructors
+        .get(&(realm.0, kind))
+        .cloned()
+        .or_else(|| {
+            vm.realm_typed_array_constructors
+                .get(&(vm.global.0, kind))
+                .cloned()
+        })
         .ok_or_else(|| Error::type_err("TypedArray constructor is not available"))
 }
 
@@ -4340,6 +4347,112 @@ pub(crate) fn typed_array_to_sorted(
     vm.unpin_many(result_pin_count);
     write_result?;
     Ok(result)
+}
+
+pub(crate) fn typed_array_with(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray with called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray with called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray with called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray with called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let index = args.first().cloned().unwrap_or(Value::Undefined);
+    let replacement = args.get(1).cloned().unwrap_or(Value::Undefined);
+
+    let source_pin_count = vm.pin(&this) + vm.pin(&index) + vm.pin(&replacement);
+    let operation: error::Result<Value> = (|| {
+        let index_number = vm.to_number(&index)?;
+        let relative_index = if index_number.is_nan() || index_number == 0.0 {
+            0.0
+        } else if index_number.is_infinite() {
+            index_number
+        } else {
+            index_number.trunc()
+        };
+        let actual_index = if relative_index >= 0.0 {
+            relative_index
+        } else {
+            length as f64 + relative_index
+        };
+        let numeric_value = match kind {
+            crate::value::TypedArrayKind::BigInt64 | crate::value::TypedArrayKind::BigUint64 => {
+                Value::BigInt(vm.to_bigint(&replacement)?)
+            }
+            _ => Value::Number(vm.to_number(&replacement)?),
+        };
+        let numeric_pin_count = vm.pin(&numeric_value);
+        let create_result: error::Result<Value> = (|| {
+            if !actual_index.is_finite()
+                || actual_index < 0.0
+                || actual_index > usize::MAX as f64
+                || !vm.has_property(&this, &(actual_index as usize).to_string())?
+            {
+                return Err(Error::range("TypedArray with index is out of bounds"));
+            }
+
+            let constructor = current_realm_typed_array_constructor(vm, kind)?;
+            let construct_args = [Value::Number(length as f64)];
+            let constructor_pin_count = vm.pin(&constructor) + vm.pin_many(&construct_args);
+            let result = vm.construct(&constructor, &construct_args);
+            vm.unpin_many(constructor_pin_count);
+            let result = result?;
+            let (result_kind, _, _, result_byte_length) =
+                typed_array_slots(vm, Some(result.clone()), "with result")?;
+            if result_kind != kind
+                || typed_array_element_count(result_kind, result_byte_length) < length
+            {
+                return Err(Error::type_err(
+                    "TypedArray with constructor returned an incompatible result",
+                ));
+            }
+
+            let result_pin_count = vm.pin(&result);
+            let copy_result: error::Result<()> = (|| {
+                for target_index in 0..length {
+                    let value = if target_index as f64 == actual_index {
+                        numeric_value.clone()
+                    } else {
+                        vm.get_property(&this, &target_index.to_string())?
+                    };
+                    vm.set_property_strict(&result, &target_index.to_string(), value)?;
+                }
+                Ok(())
+            })();
+            vm.unpin_many(result_pin_count);
+            copy_result?;
+            Ok(result)
+        })();
+        vm.unpin_many(numeric_pin_count);
+        create_result
+    })();
+    vm.unpin_many(source_pin_count);
+    operation
 }
 
 pub(crate) fn typed_array_join(

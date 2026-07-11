@@ -132,6 +132,10 @@ pub struct Vm {
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
     pub(crate) realm_error_prototypes: HashMap<(usize, Arc<str>), Value>,
+    /// Realm global environment + element kind -> original TypedArray
+    /// constructor. Same-type copy methods must not consult mutable globals.
+    pub(crate) realm_typed_array_constructors:
+        HashMap<(usize, crate::value::TypedArrayKind), Value>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
     /// Optional execution fuel: when set, each dispatched opcode decrements
     /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
@@ -480,6 +484,7 @@ impl Vm {
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
+            realm_typed_array_constructors: HashMap::new(),
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,
