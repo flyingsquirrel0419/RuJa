@@ -2475,6 +2475,37 @@ fn typed_array_at_snapshots_length_before_index_coercion() {
 }
 
 #[test]
+fn typed_array_fill_snapshots_length_and_revalidates_after_coercion() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(1, { maxByteLength: 4 });
+            var tracking = new Int8Array(rab);
+            tracking.fill({ valueOf: function() {
+                rab.resize(4);
+                return 7;
+            }});
+            var snapshot = Array.from(tracking).join(",");
+
+            var fixed = new Int8Array(rab, 0, 4);
+            var resizedOob = false;
+            try {
+                fixed.fill({ valueOf: function() {
+                    rab.resize(2);
+                    return 9;
+                }});
+            } catch (error) { resizedOob = error instanceof TypeError; }
+            [
+                snapshot,
+                resizedOob,
+                typeof Int8Array.prototype.values,
+                Int8Array.prototype[Symbol.iterator] === Int8Array.prototype.values
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("7,0,0,0|true|function|true"))
+    );
+}
+
+#[test]
 fn array_buffer_transfer_to_immutable_and_slice_to_immutable_mark_results() {
     assert_eq!(
         run(r#"

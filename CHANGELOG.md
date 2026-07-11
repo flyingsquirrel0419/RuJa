@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.fill` now snapshots the validated initial length,
+  converts value/start/end in specification order, then revalidates dynamic
+  bounds before writing. Growth during value conversion does not widen an
+  omitted range, while a fixed view resized out of bounds throws TypeError.
+  TypedArrays also expose `values()` as their default `@@iterator`, with lazy
+  reads that observe current length-tracking bounds.
 - `%TypedArray%.prototype.at` now validates the receiver and snapshots its
   length before index coercion, applies relative indexing, and performs the
   final integer-indexed read against the current backing-store bounds. Initial
@@ -104,6 +110,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/fill/` path now closes at **52 pass
+  / 0 fail / 0 skip / 52 total**, including Number/BigInt, immutable-buffer,
+  coercion-order, and resizable-buffer coverage.
 - The exact `built-ins/TypedArray/prototype/at/` path now admits the implemented
   TypedArray, BigInt, arrow-function, and resizable-buffer dependencies at
   **15 pass / 0 fail / 0 skip / 15 total**. CI `29137525369` and

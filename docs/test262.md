@@ -62,7 +62,8 @@ WeakRef, FinalizationRegistry, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Promise, Atomics operations including worker
 `wait`/`notify`, `waitAsync`, and `pause`, length-tracking TypedArray/DataView
 views, `TypedArray.prototype.at`, async/await, generators, for-of, optional
-chaining, nullish coalescing, logical assignment.
+chaining, nullish coalescing, logical assignment. TypedArray `fill`, `values`,
+and default iteration are also included.
 
 **Intentionally unsupported**: ES Modules (import/export), Intl, a public
 multi-agent embedder API, full TypedArray prototype method coverage beyond the
@@ -438,6 +439,13 @@ read against current resizable-buffer bounds. The exact path reports **15 pass
 `29137525322` confirm the change. Downloaded artifacts aggregate to **25749
 pass / 6766 fail / 11 timeout / 0 error / 15941 skip / 48467 total / 32526
 executed**, or **79.2%** of executed files and **53.1%** of the matrix.
+
+Focused TypedArray `fill` coverage check:
+`%TypedArray%.prototype.fill` preserves its initial length snapshot across
+value/start/end coercion, revalidates resized bounds before writing, and works
+for Number, BigInt, immutable rejection, and resizable views. TypedArrays now
+also expose lazy `values()`/default iteration. The exact fill path reports **52
+pass / 0 fail / 0 skip / 52 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

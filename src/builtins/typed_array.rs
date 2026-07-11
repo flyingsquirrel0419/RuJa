@@ -2885,10 +2885,34 @@ pub(crate) fn typed_array_fill(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let this = this.ok_or_else(|| Error::type_err("TypedArray fill called without this"))?;
-    let (kind, viewed_array_buffer, byte_offset, byte_length) =
-        typed_array_slots(vm, Some(this.clone()), "fill")?;
-    let backing = viewed_array_buffer
-        .ok_or_else(|| Error::type_err("TypedArray fill missing viewed ArrayBuffer"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray fill called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray fill called on non-TypedArray"))?;
+    let backing =
+        backing.ok_or_else(|| Error::type_err("TypedArray fill missing viewed ArrayBuffer"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        Some(&backing),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray fill called on out-of-bounds view"))?;
     let (detached, immutable) = match &backing {
         Value::Object(idx) => vm.heap.with_obj(idx.0, |obj| {
             if let HeapObj::ArrayBuffer(buffer) = obj {
@@ -2912,6 +2936,15 @@ pub(crate) fn typed_array_fill(
     let element = typed_array_value_to_bytes(vm, kind, args.first().unwrap_or(&Value::Undefined))?;
     let length = typed_array_element_count(kind, byte_length);
     let (start, end) = resolve_slice_bounds(vm, length, args.get(1), args.get(2))?;
+    effective_view_byte_length(
+        vm,
+        Some(&backing),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray fill resized out of bounds"))?;
     let size = kind.element_size();
     let start = byte_offset
         .checked_add(
@@ -2939,7 +2972,7 @@ pub(crate) fn typed_array_fill(
         };
         let mut bytes = buffer.bytes.lock();
         if end > bytes.len() {
-            return Err(Error::range("TypedArray fill range is out of bounds"));
+            return Err(Error::type_err("TypedArray fill range is out of bounds"));
         }
         for chunk in bytes[start..end].chunks_exact_mut(size) {
             chunk.copy_from_slice(&element);
