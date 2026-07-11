@@ -126,7 +126,9 @@
 
 - The exact `built-ins/TypedArray/prototype/join/` path now closes at **32 pass
   / 0 fail / 0 skip / 32 total**, including BigInt, detached, out-of-bounds,
-  separator-coercion, and resizable-buffer behavior.
+  separator-coercion, and resizable-buffer behavior. CI `29139734054` and
+  `test262-full` `29139734042` confirm the change at **26010 pass / 6766 fail /
+  14931 skip / 47718 total**.
 - The exact `built-ins/TypedArray/prototype/set/` path now closes at **110 pass
   / 0 fail / 0 skip / 110 total**, covering array-like and TypedArray sources,
   BigInt, SharedArrayBuffer, immutable buffers, overlap, and resize behavior.
