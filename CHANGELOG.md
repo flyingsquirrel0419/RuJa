@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.lastIndexOf` now validates and snapshots its receiver,
+  distinguishes omitted from explicit `undefined` `fromIndex`, skips indexes
+  invalidated by detach or resize, and searches current values in reverse with
+  strict equality.
 - `%TypedArray%.prototype.indexOf` now validates and snapshots its receiver,
   coerces `fromIndex` in specification order, skips integer indexes invalidated
   by detach or resize, and compares Number/BigInt elements with strict equality.
@@ -215,6 +219,10 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/lastIndexOf/` path now closes at
+  **42 pass / 0 fail / 0 skip / 42 total**, up from **6 pass / 36 fail**,
+  covering Number/BigInt comparison, relative and infinite `fromIndex`,
+  detached buffers, and fixed-length and length-tracking resizable views.
 - The exact `built-ins/TypedArray/prototype/indexOf/` path now closes at **43
   pass / 0 fail / 0 skip / 43 total**, up from **6 pass / 37 fail**, covering
   Number/BigInt strict comparison, `fromIndex` coercion, detached buffers, and

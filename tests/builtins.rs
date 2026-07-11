@@ -2272,6 +2272,33 @@ fn typed_array_index_of_observes_resize_during_from_index() {
 }
 
 #[test]
+fn typed_array_last_index_of_distinguishes_omitted_from_undefined() {
+    assert_eq!(
+        run(r#"
+            var values = new Int8Array([1, 2, 1]);
+            [values.lastIndexOf(1), values.lastIndexOf(1, undefined),
+             values.lastIndexOf(1, -2), values.lastIndexOf(1, -Infinity)].join("|");
+        "#),
+        Value::String(Arc::from("2|0|0|-1"))
+    );
+}
+
+#[test]
+fn typed_array_last_index_of_observes_resize_during_from_index() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var values = new Uint8Array(buffer);
+            values.set([1, 2, 1, 2]);
+            var from = { valueOf: function () { buffer.resize(2); return 3; } };
+            [values.lastIndexOf(2, from), values.lastIndexOf(undefined),
+             values.lastIndexOf(1)].join("|");
+        "#),
+        Value::String(Arc::from("1|-1|0"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

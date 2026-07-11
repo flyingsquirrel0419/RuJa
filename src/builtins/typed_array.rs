@@ -3776,6 +3776,86 @@ pub(crate) fn typed_array_index_of(
     result
 }
 
+pub(crate) fn typed_array_last_index_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray lastIndexOf called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err(
+            "TypedArray lastIndexOf called on non-object",
+        ));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray lastIndexOf called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray lastIndexOf called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    if length == 0 {
+        return Ok(Value::Number(-1.0));
+    }
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+
+    let pin_count = vm.pin(&this) + vm.pin(&target);
+    let result: error::Result<Value> = (|| {
+        let raw = match args.get(1) {
+            Some(value) => vm.to_number(value)?,
+            None => f64::INFINITY,
+        };
+        if raw.is_infinite() && raw.is_sign_negative() {
+            return Ok(Value::Number(-1.0));
+        }
+        let start = if raw.is_nan() {
+            0
+        } else if raw.is_infinite() {
+            length - 1
+        } else {
+            let integer = raw.trunc();
+            if integer >= 0.0 {
+                (integer as usize).min(length - 1)
+            } else {
+                let relative = length as f64 + integer;
+                if relative < 0.0 {
+                    return Ok(Value::Number(-1.0));
+                }
+                relative as usize
+            }
+        };
+        for index in (0..=start).rev() {
+            let key = index.to_string();
+            if vm.has_property(&this, &key)? {
+                let value = vm.get_property(&this, &key)?;
+                if vm.strict_eq(&value, &target) {
+                    return Ok(Value::Number(index as f64));
+                }
+            }
+        }
+        Ok(Value::Number(-1.0))
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub(crate) fn typed_array_reduce_right(
     vm: &mut Vm,
     args: &[Value],

@@ -763,6 +763,15 @@ executed**, or **79.9%** of pass-or-fail files and **55.6%** of the matrix.
 Against the preceding identical matrix, exactly 43 focused files moved from
 skip to pass.
 
+Focused TypedArray `lastIndexOf` coverage check:
+`%TypedArray%.prototype.lastIndexOf` validates its receiver and snapshots the
+view length before coercing `fromIndex`. An omitted position starts at the last
+snapshot index, while explicit `undefined` starts at index zero. The reverse
+search checks current integer-index validity and uses Strict Equality, so
+detach and shrink during coercion skip invalidated indexes and growth does not
+extend the search. The exact path improves from **6 pass / 36 fail / 0 skip**
+to **42 pass / 0 fail / 0 skip / 42 total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by
