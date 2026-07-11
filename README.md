@@ -43,8 +43,9 @@ and `pause`, length-tracking TypedArray/DataView views, TypedArray constructors,
 indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/
 `findLast`/`findLastIndex`/`forEach`/`includes`/`indexOf`/`join`/`keys`/
 `lastIndexOf`/`map`/`reverse`/`set`/`slice`/
-`sort`/`subarray`/`toReversed`/`toSorted`/`reduce`/`reduceRight`/`some`/`every`/
-`values`, BigInt, Date, regex, and more. RuJa does not claim
+`sort`/`subarray`/`toLocaleString`/`toReversed`/`toSorted`/`reduce`/
+`reduceRight`/`some`/`every`/`values`, BigInt, Date, regex, and more. RuJa does
+not claim
 full ES conformance — conformance is scoped to this subset. See
 [test262 conformance](docs/test262.md#supported-subset) for the exact
 feature list and current pass rates, and [limitations](docs/limitations.md)

@@ -777,6 +777,16 @@ to **26989 pass / 6764 fail / 12 timeout / 0 error / 14702 skip / 48467 total /
 of the matrix. Against the preceding identical matrix, exactly 42 focused
 files moved from skip to pass.
 
+Focused TypedArray `toLocaleString` coverage check:
+`%TypedArray%.prototype.toLocaleString` validates its receiver and snapshots
+the view length, then reads each current element and invokes its
+`toLocaleString` method with the supplied locale arguments. Each returned value
+is converted with `ToString`, preserving observable `toString`/`valueOf` hooks
+and abrupt completions. Detach and shrink produce empty fields at invalidated
+snapshot indexes, while growth does not extend the visit range. The exact path
+improves from **6 pass / 33 fail / 0 skip** to **39 pass / 0 fail / 0 skip / 39
+total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

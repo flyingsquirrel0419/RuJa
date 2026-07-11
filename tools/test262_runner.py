@@ -443,6 +443,20 @@ TYPED_ARRAY_LAST_INDEX_OF_PREFIXES = (
 
 TYPED_ARRAY_LAST_INDEX_OF_FEATURES = TYPED_ARRAY_INDEX_OF_FEATURES
 
+TYPED_ARRAY_TO_LOCALE_STRING_PREFIXES = (
+    "built-ins/TypedArray/prototype/toLocaleString/",
+)
+
+TYPED_ARRAY_TO_LOCALE_STRING_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "Reflect.construct",
+    "Symbol",
+    "TypedArray",
+    "arrow-function",
+    "resizable-arraybuffer",
+}
+
 TYPED_ARRAY_REDUCE_RIGHT_PREFIXES = (
     "built-ins/TypedArray/prototype/reduceRight/",
 )
@@ -1195,6 +1209,13 @@ def typed_array_last_index_of_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_LAST_INDEX_OF_PREFIXES)
 
+def typed_array_to_locale_string_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_TO_LOCALE_STRING_PREFIXES)
+
 def typed_array_reduce_right_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1500,6 +1521,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_INDEX_OF_FEATURES)
     if path is not None and typed_array_last_index_of_path(path):
         feats.difference_update(TYPED_ARRAY_LAST_INDEX_OF_FEATURES)
+    if path is not None and typed_array_to_locale_string_path(path):
+        feats.difference_update(TYPED_ARRAY_TO_LOCALE_STRING_FEATURES)
     if path is not None and typed_array_reduce_right_path(path):
         feats.difference_update(TYPED_ARRAY_REDUCE_RIGHT_FEATURES)
     if path is not None and typed_array_reduce_path(path):

@@ -4391,6 +4391,81 @@ pub(crate) fn typed_array_join(
     Ok(Value::String(Arc::from(parts.join(&separator))))
 }
 
+pub(crate) fn typed_array_to_locale_string(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this =
+        this.ok_or_else(|| Error::type_err("TypedArray toLocaleString called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err(
+            "TypedArray toLocaleString called on non-object",
+        ));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, buffer, byte_offset, fixed_byte_length, length_tracking) = slots
+        .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        buffer.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let locale_args: Vec<Value> = args.iter().take(2).cloned().collect();
+
+    let source_pin_count = vm.pin(&this) + vm.pin_many(&locale_args);
+    let result: error::Result<Value> = (|| {
+        let mut output = String::new();
+        for index in 0..length {
+            if index > 0 {
+                output.push(',');
+            }
+            let value = vm.get_property(&this, &index.to_string())?;
+            if value.is_nullish() {
+                continue;
+            }
+
+            let value_pin_count = vm.pin(&value);
+            let element_result: error::Result<String> = (|| {
+                let method = vm.get_property(&value, "toLocaleString")?;
+                if !is_callable(&method, &vm.heap) {
+                    return Err(Error::type_err("toLocaleString is not callable"));
+                }
+                let method_pin_count = vm.pin(&method);
+                let localized = vm.call_function(&method, &locale_args, Some(value.clone()));
+                vm.unpin_many(method_pin_count);
+                let localized = localized?;
+
+                let localized_pin_count = vm.pin(&localized);
+                let string = vm.to_string(&localized).map(|value| value.to_string());
+                vm.unpin_many(localized_pin_count);
+                string
+            })();
+            vm.unpin_many(value_pin_count);
+            output.push_str(&element_result?);
+        }
+        Ok(Value::String(Arc::from(output)))
+    })();
+    vm.unpin_many(source_pin_count);
+    result
+}
+
 pub(crate) fn typed_array_reverse(
     vm: &mut Vm,
     _args: &[Value],

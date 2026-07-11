@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.toLocaleString` now validates and snapshots its
+  receiver, invokes each current Number/BigInt value's locale conversion with
+  forwarded locale arguments, stringifies each result, and preserves the
+  snapshot visit range across detach or resize effects.
 - `%TypedArray%.prototype.lastIndexOf` now validates and snapshots its receiver,
   distinguishes omitted from explicit `undefined` `fromIndex`, skips indexes
   invalidated by detach or resize, and searches current values in reverse with
@@ -219,6 +223,10 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/toLocaleString/` path now closes at
+  **39 pass / 0 fail / 0 skip / 39 total**, up from **6 pass / 33 fail**,
+  covering Number/BigInt conversion hooks, abrupt completions, internal length,
+  and fixed-length and length-tracking resizable views.
 - The exact `built-ins/TypedArray/prototype/lastIndexOf/` path now closes at
   **42 pass / 0 fail / 0 skip / 42 total**, up from **6 pass / 36 fail**,
   covering Number/BigInt comparison, relative and infinite `fromIndex`,

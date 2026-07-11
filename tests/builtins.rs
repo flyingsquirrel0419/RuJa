@@ -2299,6 +2299,46 @@ fn typed_array_last_index_of_observes_resize_during_from_index() {
 }
 
 #[test]
+fn typed_array_to_locale_string_invokes_each_current_value() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var original = Number.prototype.toLocaleString;
+            Number.prototype.toLocaleString = function(locales, options) {
+                calls.push(this.valueOf() + ":" + locales + ":" + options.marker);
+                return { toString: function() { return "v" + calls.length; } };
+            };
+            var result = new Uint8Array([4, 5]).toLocaleString("xx", { marker: 7 });
+            Number.prototype.toLocaleString = original;
+            [result, calls.join("|")].join(";");
+        "#),
+        Value::String(Arc::from("v1,v2;4:xx:7|5:xx:7"))
+    );
+}
+
+#[test]
+fn typed_array_to_locale_string_keeps_snapshot_length_across_resize() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var values = new Uint8Array(buffer);
+            values.set([1, 2, 3, 4]);
+            var calls = 0;
+            var original = Number.prototype.toLocaleString;
+            Number.prototype.toLocaleString = function() {
+                calls += 1;
+                if (calls === 2) buffer.resize(2);
+                return String(this.valueOf());
+            };
+            var result = values.toLocaleString();
+            Number.prototype.toLocaleString = original;
+            [result, calls].join("|");
+        "#),
+        Value::String(Arc::from("1,2,,|2"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

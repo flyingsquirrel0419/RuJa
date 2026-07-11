@@ -1712,6 +1712,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_to_sorted_fn =
         vm.new_native_function_in_env("toSorted", typed_array_to_sorted, 1, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
+    let typed_array_to_locale_string_fn =
+        vm.new_native_function_in_env("toLocaleString", typed_array_to_locale_string, 0, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
     let typed_array_to_reversed_fn =
@@ -1829,6 +1831,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("join"),
                 data_prop(Value::Object(typed_array_join_fn)),
+            );
+            props.insert(
+                PropertyKey::from("toLocaleString"),
+                data_prop(Value::Object(typed_array_to_locale_string_fn)),
             );
             props.insert(
                 PropertyKey::from("reverse"),
