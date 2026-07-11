@@ -662,6 +662,7 @@ impl Vm {
         let max = self.max_heap_objects;
         if max > 0 && self.heap.live_count() >= max {
             self.heap.collect(&self.collect_roots());
+            self.ic.clear();
             self.schedule_finalization_cleanup_jobs();
         }
         Ok(GcIdx(self.heap.allocate(obj)?))

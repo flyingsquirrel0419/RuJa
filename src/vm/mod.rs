@@ -627,7 +627,9 @@ impl Vm {
         // except `result` holds a heap value across this boundary.
         if microtask_result.is_ok() && self.heap.live_count() > 0 {
             let roots = self.collect_roots();
-            self.heap.maybe_collect(&roots);
+            if self.heap.maybe_collect(&roots) {
+                self.ic.clear();
+            }
             self.schedule_finalization_cleanup_jobs();
         }
         if microtask_result.is_ok() && !self.microtask_queue.is_empty() {
@@ -1127,7 +1129,9 @@ impl Vm {
             };
             let pinned_result = self.pin_many(&result_roots);
             let roots = self.collect_roots();
-            self.heap.maybe_collect(&roots);
+            if self.heap.maybe_collect(&roots) {
+                self.ic.clear();
+            }
             self.schedule_finalization_cleanup_jobs();
             self.unpin_many(pinned_result);
         }

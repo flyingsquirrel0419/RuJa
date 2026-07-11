@@ -485,10 +485,13 @@ impl Heap {
             .store((live * 2).max(1024), Ordering::Relaxed);
     }
 
-    pub fn maybe_collect(&self, roots: &[usize]) {
+    pub fn maybe_collect(&self, roots: &[usize]) -> bool {
         if self.alloc_since_gc.load(Ordering::Relaxed) >= self.gc_threshold.load(Ordering::Relaxed)
         {
             self.collect(roots);
+            true
+        } else {
+            false
         }
     }
 

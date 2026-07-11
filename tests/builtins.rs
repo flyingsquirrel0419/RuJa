@@ -2182,6 +2182,24 @@ fn typed_array_sort_is_stable_and_writes_to_current_bounds() {
 }
 
 #[test]
+fn gc_invalidates_property_cache_before_heap_cell_reuse() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    assert_eq!(
+        vm.run("var cached = { length: 3 }; cached.length;")
+            .expect("initial property read should succeed"),
+        Value::Number(3.0)
+    );
+    vm.run("cached = null;")
+        .expect("dropping the cached object should succeed");
+    vm.gc();
+    assert_eq!(
+        vm.run("var replacement = { length: 4 }; replacement.length;")
+            .expect("replacement property read should succeed"),
+        Value::Number(4.0)
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

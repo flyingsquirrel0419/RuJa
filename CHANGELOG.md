@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- GC collection now invalidates property inline-cache entries before swept heap
+  cells can be reused, preventing a new object from observing stale properties
+  cached for the cell's previous occupant.
 - `%TypedArray%.prototype.sort` now performs a stable numeric sort over a
   snapshot of the validated view, with BigInt ordering, NaN and signed-zero
   handling, observable comparator coercion, and current-bounds writes after

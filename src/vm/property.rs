@@ -2621,6 +2621,7 @@ impl Vm {
     pub fn gc(&mut self) {
         let roots = self.collect_roots();
         self.heap.collect(&roots);
+        self.ic.clear();
         self.schedule_finalization_cleanup_jobs();
     }
 
