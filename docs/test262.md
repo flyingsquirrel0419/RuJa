@@ -788,6 +788,12 @@ uses its own intrinsic locale method. Each returned value is converted with
 completions. Detach and shrink produce empty fields at invalidated snapshot
 indexes, while growth does not extend the visit range. The exact path improves
 from **6 pass / 33 fail / 0 skip** to **39 pass / 0 fail / 0 skip / 39 total**.
+CI `29161632961` and `test262-full` `29161632974` confirm the independently
+reviewed change. Downloaded artifacts aggregate to **27028 pass / 6764 fail /
+12 timeout / 0 error / 14663 skip / 48467 total / 33792 pass-or-fail
+executed**, or **80.0%** of pass-or-fail files and **55.8%** of the matrix.
+Against the preceding identical matrix, exactly 39 focused files moved from
+skip to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
