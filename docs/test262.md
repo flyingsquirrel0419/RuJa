@@ -865,6 +865,23 @@ aggregate to **27143 pass / 6755 fail / 12 timeout / 0 error / 14557 skip /
 and **56.0%** of the matrix. Against the preceding identical matrix, exactly
 21 skipped files moved to pass.
 
+Focused TypedArray built-ins completion check:
+Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the
+complete `built-ins/TypedArray/` subtree now runs at **1446 pass / 0 fail / 0
+skip / 1446 total**. The final 13 exact-path admissions cover the intrinsic
+constructor surface, `Symbol.species`, and `%TypedArray%.of`; future files
+remain gated until audited. Independent reviews found no admission-blocking
+implementation defect. Rust regressions preserve rejection of detached and
+out-of-bounds empty constructor results and root `of` arguments across forced
+GC during construction and element conversion. The supported subset remains
+**11589 pass / 0 fail / 8850 skip / 20439 total**. CI `29170927445` and
+`test262-full` `29170927448` succeeded. Downloaded artifacts aggregate to
+**27157 pass / 6755 fail / 11 timeout / 0 error / 14544 skip / 48467 total /
+33912 pass-or-fail executed**, or **80.1%** of pass-or-fail files and **56.0%**
+of the matrix. The code change moved exactly 13 skipped files to pass. One
+additional built-ins timeout also passed in this run; that is timing variance,
+not a conformance claim for this change.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs

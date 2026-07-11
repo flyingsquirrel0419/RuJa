@@ -248,6 +248,10 @@
   empty constructor results and root `of` arguments across GC during
   construction and element conversion. The authoritative supported language
   subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+  CI `29170927445` and `test262-full` `29170927448` confirm the change at
+  **27157 pass / 6755 fail / 14544 skip / 11 timeout / 0 error / 48467
+  total**. The admission moved exactly 13 files from skip to pass; one
+  additional built-ins timeout became a pass as unrelated timing variance.
 - The frozen `built-ins/TypedArray/from/` set is fully admitted at **21 pass /
   0 fail / 0 skip / 21 total**. Independent review removed the non-standard
   65,536-item iterable cap, rejects detached or out-of-bounds constructor
