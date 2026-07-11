@@ -499,15 +499,13 @@ Both methods validate their receiver before creating a shared Array Iterator,
 then recheck current dynamic bounds on every pull. `keys` yields numeric
 indexes and `entries` yields fresh `[index, value]` arrays across fixed and
 length-tracking resize transitions. The two exact paths report **38 pass / 0
-fail / 0 skip / 38 total**.
-The implementation is confirmed by CI `29101286102` and `test262-full`
-`29101286000`; the supported-summary follow-up is confirmed by CI
-`29101459432` and `test262-full` `29101459422`. The latest 30-artifact
-aggregate reports **24690 pass / 6830 fail / 9 timeout / 0 error / 16938 skip /
-48467 total / 31520 ran**, or **78.3%** of executed files and **50.9%** of the
-matrix. The implementation run reported the same fail/error counts with two
-additional timeouts, so no engine-failure regression is hidden by the
-confirmation run.
+fail / 0 skip / 38 total**. CI `29141404792` and `test262-full` `29141404775`
+confirm the change. Downloaded artifacts aggregate to **26067 pass / 6768
+fail / 12 timeout / 0 error / 15620 skip / 48467 total / 32835 pass-or-fail
+executed**, or **79.4%** of pass-or-fail files and **53.8%** of the matrix. The
+matrix contains 749 more files than the preceding run, including two additional
+failures, so the aggregate delta is recorded as an upstream-suite snapshot and
+is not attributed solely to these 38 focused tests.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

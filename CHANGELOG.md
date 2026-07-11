@@ -134,7 +134,9 @@
 ### Test tooling
 
 - The exact `built-ins/TypedArray/prototype/{keys,entries}/` paths now close at
-  **38 pass / 0 fail / 0 skip / 38 total**.
+  **38 pass / 0 fail / 0 skip / 38 total**. CI `29141404792` and
+  `test262-full` `29141404775` confirm the change at **26067 pass / 6768 fail /
+  15620 skip / 12 timeout / 0 error / 48467 total**.
 - The exact `built-ins/TypedArray/prototype/values/` path now closes at **21
   pass / 0 fail / 0 skip / 21 total**; the matching `Symbol.iterator` path is
   **1 pass / 0 fail / 0 skip / 1 total** locally. CI `29140858679` and
