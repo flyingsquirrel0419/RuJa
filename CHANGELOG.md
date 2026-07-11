@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.keys` and `entries` now use the shared Array Iterator
+  prototype with dedicated key and key-value iterator modes. Both validate at
+  creation, track resizable views on each pull, throw when a live fixed view
+  becomes out of bounds, and remain exhausted after completion.
 - `%TypedArray%.prototype.values` and the default iterator now validate the
   receiver at creation and revalidate dynamic bounds on every `next()` pull.
   Collection iterators, their sources, and iterator-result objects are rooted
@@ -129,6 +133,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/{keys,entries}/` paths now close at
+  **38 pass / 0 fail / 0 skip / 38 total**.
 - The exact `built-ins/TypedArray/prototype/values/` path now closes at **21
   pass / 0 fail / 0 skip / 21 total**; the matching `Symbol.iterator` path is
   **1 pass / 0 fail / 0 skip / 1 total** locally. CI `29140858679` and

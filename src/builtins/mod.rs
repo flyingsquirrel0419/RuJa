@@ -1675,6 +1675,9 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
     let typed_array_at_fn = vm.new_native_function_in_env("at", typed_array_at, 1, env)?;
     let typed_array_values_fn =
         vm.new_native_function_in_env("values", typed_array_values, 0, env)?;
+    let typed_array_keys_fn = vm.new_native_function_in_env("keys", typed_array_keys, 0, env)?;
+    let typed_array_entries_fn =
+        vm.new_native_function_in_env("entries", typed_array_entries, 0, env)?;
     if let Value::Object(idx) = &typed_array_proto {
         vm.heap.with_obj(idx.0, |obj| {
             let mut props = obj.props().lock();
@@ -1721,6 +1724,14 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("values"),
                 data_prop(Value::Object(typed_array_values_fn)),
+            );
+            props.insert(
+                PropertyKey::from("keys"),
+                data_prop(Value::Object(typed_array_keys_fn)),
+            );
+            props.insert(
+                PropertyKey::from("entries"),
+                data_prop(Value::Object(typed_array_entries_fn)),
             );
             props.insert(
                 PropertyKey::Symbol(vm.well_known_symbols.iterator),

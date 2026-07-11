@@ -493,6 +493,13 @@ pass / 6766 fail / 12 timeout / 0 error / 14909 skip / 47718 total / 32797
 pass-or-fail executed**, or **79.4%** of pass-or-fail files and **54.6%** of
 the matrix. The full built-ins shard had one additional timeout versus the
 previous run, so that variance is not counted as a conformance gain.
+
+Focused TypedArray `keys` and `entries` coverage check:
+Both methods validate their receiver before creating a shared Array Iterator,
+then recheck current dynamic bounds on every pull. `keys` yields numeric
+indexes and `entries` yields fresh `[index, value]` arrays across fixed and
+length-tracking resize transitions. The two exact paths report **38 pass / 0
+fail / 0 skip / 38 total**.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

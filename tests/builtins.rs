@@ -1746,6 +1746,45 @@ fn typed_array_values_validates_and_tracks_dynamic_bounds() {
 }
 
 #[test]
+fn typed_array_keys_and_entries_track_dynamic_bounds() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var tracking = new Int8Array(rab);
+            tracking.set([10, 20, 30]);
+            var keys = tracking.keys();
+            var entries = tracking.entries();
+            var firstKey = keys.next().value;
+            var firstEntry = entries.next().value.join(":");
+            rab.resize(5);
+            tracking[3] = 40;
+            tracking[4] = 50;
+            var restKeys = Array.from(keys).join(",");
+            var restEntries = Array.from(entries).map(function(pair) {
+                return pair.join(":");
+            }).join(",");
+
+            var fixed = new Int8Array(rab, 0, 5);
+            var fixedEntries = fixed.entries();
+            fixedEntries.next();
+            rab.resize(2);
+            var nextTypeError = false;
+            try { fixedEntries.next(); }
+            catch (error) { nextTypeError = error instanceof TypeError; }
+
+            [
+                firstKey,
+                restKeys,
+                firstEntry,
+                restEntries,
+                nextTypeError
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("0|1,2,3,4|0:10|1:20,2:30,3:40,4:50|true"))
+    );
+}
+
+#[test]
 fn typed_array_own_keys_include_integer_indices_first() {
     assert_eq!(
         run(r#"

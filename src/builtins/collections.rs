@@ -22,7 +22,11 @@ pub(crate) fn new_collection_iterator(
     kind: CollectionIteratorKind,
 ) -> error::Result<Value> {
     let proto = match kind {
-        CollectionIteratorKind::ArrayValues if matches!(vm.iterator_proto, Value::Object(_)) => {
+        CollectionIteratorKind::ArrayEntries
+        | CollectionIteratorKind::ArrayKeys
+        | CollectionIteratorKind::ArrayValues
+            if matches!(vm.iterator_proto, Value::Object(_)) =>
+        {
             vm.iterator_proto.clone()
         }
         CollectionIteratorKind::MapEntries
@@ -171,7 +175,12 @@ fn collection_iterator_next(
     let index = raw_index;
 
     let next_value = match (&source, kind) {
-        (_, CollectionIteratorKind::ArrayValues) => {
+        (
+            _,
+            kind @ (CollectionIteratorKind::ArrayEntries
+            | CollectionIteratorKind::ArrayKeys
+            | CollectionIteratorKind::ArrayValues),
+        ) => {
             let typed_array_slots = match &source {
                 Value::Object(source_idx) => vm.heap.with_obj(source_idx.0, |obj| {
                     let HeapObj::TypedArray(array) = obj else {
@@ -207,7 +216,20 @@ fn collection_iterator_next(
                 }
             };
             if index < len {
-                Some(vm.get_property(&source, &index.to_string())?)
+                match kind {
+                    CollectionIteratorKind::ArrayKeys => Some(Value::Number(index as f64)),
+                    CollectionIteratorKind::ArrayValues => {
+                        Some(vm.get_property(&source, &index.to_string())?)
+                    }
+                    CollectionIteratorKind::ArrayEntries => {
+                        let value = vm.get_property(&source, &index.to_string())?;
+                        Some(make_value_array(
+                            vm,
+                            vec![Value::Number(index as f64), value],
+                        )?)
+                    }
+                    _ => unreachable!(),
+                }
             } else {
                 None
             }

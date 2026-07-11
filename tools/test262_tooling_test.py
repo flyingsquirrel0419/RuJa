@@ -450,6 +450,35 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_keys_entries_features_are_admitted_only_on_their_paths(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            keys = root / "test/built-ins/TypedArray/prototype/keys/case.js"
+            entries = root / "test/built-ins/TypedArray/prototype/entries/case.js"
+            outside = root / "test/built-ins/TypedArray/prototype/map/case.js"
+            meta = {
+                "flags": [],
+                "features": [
+                    "ArrayBuffer",
+                    "BigInt",
+                    "Reflect.construct",
+                    "Symbol",
+                    "Symbol.iterator",
+                    "TypedArray",
+                    "arrow-function",
+                    "resizable-arraybuffer",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, keys))
+                    self.assertFalse(tool.should_skip(meta, entries))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
 
 class ArrayBufferAdmissionTests(unittest.TestCase):
     def test_resizable_array_buffer_feature_is_admitted_only_inside_builtin_path(self):

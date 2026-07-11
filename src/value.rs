@@ -718,6 +718,8 @@ pub struct SetData {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CollectionIteratorKind {
+    ArrayEntries,
+    ArrayKeys,
     ArrayValues,
     MapEntries,
     MapKeys,
@@ -1106,7 +1108,9 @@ impl HeapObj {
             HeapObj::Map(_) => "Map",
             HeapObj::Set(_) => "Set",
             HeapObj::CollectionIterator(i) => match i.kind {
-                CollectionIteratorKind::ArrayValues => "Array Iterator",
+                CollectionIteratorKind::ArrayEntries
+                | CollectionIteratorKind::ArrayKeys
+                | CollectionIteratorKind::ArrayValues => "Array Iterator",
                 CollectionIteratorKind::MapEntries
                 | CollectionIteratorKind::MapKeys
                 | CollectionIteratorKind::MapValues => "Map Iterator",
