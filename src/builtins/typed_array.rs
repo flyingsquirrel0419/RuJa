@@ -2833,14 +2833,34 @@ pub(crate) fn typed_array_subarray(
     this: Option<Value>,
 ) -> error::Result<Value> {
     let this = this.ok_or_else(|| Error::type_err("TypedArray subarray called without this"))?;
-    let (kind, viewed_array_buffer, byte_offset, byte_length) =
-        typed_array_slots(vm, Some(this.clone()), "subarray")?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray subarray called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, viewed_array_buffer, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray subarray called on non-TypedArray"))?;
     let source_buffer = viewed_array_buffer
         .ok_or_else(|| Error::type_err("TypedArray subarray missing viewed ArrayBuffer"))?;
-    if is_detached_array_buffer(vm, &source_buffer) {
-        return Err(Error::type_err("TypedArray subarray on detached buffer"));
-    }
-
+    let byte_length = effective_view_byte_length(
+        vm,
+        Some(&source_buffer),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .unwrap_or(0);
     let length = typed_array_element_count(kind, byte_length);
     let (start, end) = resolve_slice_bounds(vm, length, args.first(), args.get(1))?;
     let new_length = end - start;
@@ -2854,11 +2874,10 @@ pub(crate) fn typed_array_subarray(
 
     let default_ctor = current_realm_typed_array_constructor(vm, kind)?;
     let ctor = typed_array_species_constructor(vm, &this, default_ctor)?;
-    let construct_args = [
-        source_buffer.clone(),
-        Value::Number(new_byte_offset as f64),
-        Value::Number(new_length as f64),
-    ];
+    let mut construct_args = vec![source_buffer.clone(), Value::Number(new_byte_offset as f64)];
+    if !length_tracking || args.get(1).is_some_and(|end| !end.is_undefined()) {
+        construct_args.push(Value::Number(new_length as f64));
+    }
     let pin_count = vm.pin(&source_buffer) + vm.pin(&ctor) + vm.pin_many(&construct_args);
     let result = vm.construct(&ctor, &construct_args);
     vm.unpin_many(pin_count);

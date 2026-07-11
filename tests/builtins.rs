@@ -1605,6 +1605,46 @@ fn typed_array_subarray_uses_species_and_rejects_detached_buffers() {
 }
 
 #[test]
+fn typed_array_subarray_preserves_tracking_and_raw_offset_across_resize() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(8, { maxByteLength: 12 });
+            var tracking = new Int8Array(rab, 2);
+            var tracked = tracking.subarray(1);
+            rab.resize(10);
+
+            var fixed = new Int8Array(rab, 4, 2);
+            rab.resize(0);
+            var result = fixed.subarray({ valueOf: function() {
+                rab.resize(10);
+                return 1;
+            }});
+
+            var detachedBegin = false;
+            var detachedEnd = false;
+            var detached = new Int8Array(2);
+            $262.detachArrayBuffer(detached.buffer);
+            try {
+                detached.subarray(
+                    { valueOf: function() { detachedBegin = true; return 0; } },
+                    { valueOf: function() { detachedEnd = true; return 0; } }
+                );
+            } catch (error) {}
+
+            [
+                tracked.byteOffset,
+                tracked.length,
+                result.byteOffset,
+                result.length,
+                detachedBegin,
+                detachedEnd
+            ].join("|");
+            "#,),
+        Value::String(Arc::from("3|7|4|0|true|true"))
+    );
+}
+
+#[test]
 fn typed_array_own_keys_include_integer_indices_first() {
     assert_eq!(
         run(r#"

@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.subarray` now preserves the source's raw byte offset
+  while it is detached or out of bounds, performs begin/end coercion before
+  construction, and keeps an omitted-end result length-tracking when the
+  source is length-tracking. Resizes during coercion therefore use the initial
+  length snapshot without losing the source view's internal offset.
 - `%TypedArray%.prototype.fill` now snapshots the validated initial length,
   converts value/start/end in specification order, then revalidates dynamic
   bounds before writing. Growth during value conversion does not widen an
@@ -110,6 +115,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/subarray/` path now closes at **67
+  pass / 0 fail / 0 skip / 67 total**, including detached-buffer coercion,
+  species-constructor arguments, and resizable-buffer view semantics.
 - The exact `built-ins/TypedArray/prototype/fill/` path now closes at **52 pass
   / 0 fail / 0 skip / 52 total**, including Number/BigInt, immutable-buffer,
   coercion-order, and resizable-buffer coverage. CI `29138124604` and
