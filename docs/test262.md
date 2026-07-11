@@ -780,12 +780,14 @@ files moved from skip to pass.
 Focused TypedArray `toLocaleString` coverage check:
 `%TypedArray%.prototype.toLocaleString` validates its receiver and snapshots
 the view length, then reads each current element and invokes its
-`toLocaleString` method with the supplied locale arguments. Each returned value
-is converted with `ToString`, preserving observable `toString`/`valueOf` hooks
-and abrupt completions. Detach and shrink produce empty fields at invalidated
-snapshot indexes, while growth does not extend the visit range. The exact path
-improves from **6 pass / 33 fail / 0 skip** to **39 pass / 0 fail / 0 skip / 39
-total**.
+`toLocaleString` method with exactly two locale arguments, including explicit
+`undefined` values when omitted. Primitive method lookup uses the TypedArray
+method's Realm; Number locale conversion ignores radix semantics and BigInt
+uses its own intrinsic locale method. Each returned value is converted with
+`ToString`, preserving observable `toString`/`valueOf` hooks and abrupt
+completions. Detach and shrink produce empty fields at invalidated snapshot
+indexes, while growth does not extend the visit range. The exact path improves
+from **6 pass / 33 fail / 0 skip** to **39 pass / 0 fail / 0 skip / 39 total**.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values

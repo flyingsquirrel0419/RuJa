@@ -6,8 +6,10 @@
 
 - `%TypedArray%.prototype.toLocaleString` now validates and snapshots its
   receiver, invokes each current Number/BigInt value's locale conversion with
-  forwarded locale arguments, stringifies each result, and preserves the
-  snapshot visit range across detach or resize effects.
+  two forwarded locale arguments from the method's Realm, stringifies each
+  result, and preserves the snapshot visit range across detach or resize
+  effects. Number locale arguments are not treated as a radix, and BigInt has
+  its own locale conversion rather than inheriting Object behavior.
 - `%TypedArray%.prototype.lastIndexOf` now validates and snapshots its receiver,
   distinguishes omitted from explicit `undefined` `fromIndex`, skips indexes
   invalidated by detach or resize, and searches current values in reverse with

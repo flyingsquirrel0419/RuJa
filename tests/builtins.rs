@@ -2339,6 +2339,51 @@ fn typed_array_to_locale_string_keeps_snapshot_length_across_resize() {
 }
 
 #[test]
+fn typed_array_to_locale_string_uses_locale_methods_without_radix_coercion() {
+    assert_eq!(
+        run(r#"
+            var objectLocale = Object.prototype.toLocaleString;
+            Object.prototype.toLocaleString = function() { return "hook"; };
+            var number = new Uint8Array([10]).toLocaleString("2");
+            var bigint = new BigInt64Array([1n, 2n]).toLocaleString();
+            Object.prototype.toLocaleString = objectLocale;
+            [number, bigint].join("|");
+        "#),
+        Value::String(Arc::from("10|1,2"))
+    );
+}
+
+#[test]
+fn typed_array_to_locale_string_passes_two_arguments() {
+    assert_eq!(
+        run(r#"
+            var original = Number.prototype.toLocaleString;
+            Number.prototype.toLocaleString = function() {
+                return arguments.length + ":" + String(arguments[0]) + ":" +
+                    String(arguments[1]);
+            };
+            var result = new Uint8Array([1]).toLocaleString();
+            Number.prototype.toLocaleString = original;
+            result;
+        "#),
+        Value::String(Arc::from("2:undefined:undefined"))
+    );
+}
+
+#[test]
+fn typed_array_to_locale_string_uses_method_realm_primitive_prototype() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            Number.prototype.toLocaleString = function() { return "main"; };
+            other.eval("Number.prototype.toLocaleString = function() { return 'other'; }");
+            other.Uint8Array.prototype.toLocaleString.call(new Uint8Array([1]));
+        "#),
+        Value::String(Arc::from("other"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

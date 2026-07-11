@@ -2724,7 +2724,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         number_constructor,
         &[
             ("toString", num_proto_to_string, 1),
-            ("toLocaleString", num_proto_to_string, 0),
+            ("toLocaleString", num_proto_to_locale_string, 0),
             ("valueOf", number_value_of, 0),
         ],
         realm_env,
@@ -3669,6 +3669,23 @@ fn num_proto_to_string(vm: &mut Vm, args: &[Value], this: Option<Value>) -> erro
         format_radix(n, radix)
     };
     Ok(Value::String(Arc::from(s.as_str())))
+}
+
+fn num_proto_to_locale_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let number = this_number_value(vm, this)?;
+    Ok(Value::String(vm.to_string(&Value::Number(number))?))
+}
+
+fn bigint_proto_to_locale_string(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    bigint_to_string(vm, &[], this)
 }
 
 /// `Number.prototype.valueOf`: return the number primitive for `this`.
@@ -6050,7 +6067,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
             ("toPrecision", num_to_precision, 1),
             ("toExponential", num_to_exponential, 1),
             ("toString", num_proto_to_string, 1),
-            ("toLocaleString", num_proto_to_string, 0),
+            ("toLocaleString", num_proto_to_locale_string, 0),
             ("valueOf", number_value_of, 0),
         ],
     )?;
@@ -6192,6 +6209,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                 }
             });
             let to_str = vm.new_native_function("toString", bigint_to_string, 0)?;
+            let to_locale_str =
+                vm.new_native_function("toLocaleString", bigint_proto_to_locale_string, 0)?;
             let value_of = vm.new_native_function("valueOf", bigint_value_of, 0)?;
             if let Value::Object(pi) = bproto {
                 vm.heap.with_obj(pi.0, |obj| {
@@ -6202,6 +6221,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                     obj.props().lock().insert(
                         crate::value::PropertyKey::from("toString"),
                         data_prop(Value::Object(to_str)),
+                    );
+                    obj.props().lock().insert(
+                        crate::value::PropertyKey::from("toLocaleString"),
+                        data_prop(Value::Object(to_locale_str)),
                     );
                     obj.props().lock().insert(
                         crate::value::PropertyKey::from("valueOf"),

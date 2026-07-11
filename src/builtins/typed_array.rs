@@ -4427,7 +4427,11 @@ pub(crate) fn typed_array_to_locale_string(
     )
     .ok_or_else(|| Error::type_err("TypedArray toLocaleString called on out-of-bounds view"))?;
     let length = typed_array_element_count(kind, byte_length);
-    let locale_args: Vec<Value> = args.iter().take(2).cloned().collect();
+    let locale_args = [
+        args.first().cloned().unwrap_or(Value::Undefined),
+        args.get(1).cloned().unwrap_or(Value::Undefined),
+    ];
+    let realm_env = vm.native_callee_closure().unwrap_or(vm.global);
 
     let source_pin_count = vm.pin(&this) + vm.pin_many(&locale_args);
     let result: error::Result<Value> = (|| {
@@ -4443,7 +4447,17 @@ pub(crate) fn typed_array_to_locale_string(
 
             let value_pin_count = vm.pin(&value);
             let element_result: error::Result<String> = (|| {
-                let method = vm.get_property(&value, "toLocaleString")?;
+                let intrinsic_name = if matches!(value, Value::BigInt(_)) {
+                    "BigInt"
+                } else {
+                    "Number"
+                };
+                let constructor = crate::environment::get(&vm.heap, realm_env, intrinsic_name)
+                    .ok_or_else(|| {
+                        Error::type_err(format!("Missing {intrinsic_name} intrinsic"))
+                    })?;
+                let prototype = vm.get_property(&constructor, "prototype")?;
+                let method = vm.get_property_rx(&prototype, "toLocaleString", value.clone(), 0)?;
                 if !is_callable(&method, &vm.heap) {
                     return Err(Error::type_err("toLocaleString is not callable"));
                 }
