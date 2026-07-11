@@ -60,11 +60,16 @@ guarantees, run RuJa in a separately killable process as well.
   suspended frames across pending Await operations and GC. Both resume through
   the FIFO microtask queue. There is no event-loop preemption; `Vm::tick()`
   allows hosts to execute one microtask at a time cooperatively.
+- `Vm::run_module`, CLI `--module`, and `.mjs` files use the Module source goal:
+  code is implicitly strict, top-level `this` is `undefined`, and top-level
+  declarations live in a module-local declarative environment. Static
+  `import`/`export`, module resolution/linking, live imported bindings, module
+  namespaces, cycles, and dynamic import are not implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 52.5% of all matrix files and 79.0% of executed files; within the
+  rate of 56.0% of all matrix files and 80.1% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

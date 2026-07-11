@@ -46,6 +46,9 @@ pub struct Compiler {
     /// Whether the current function is an async generator. Nested function
     /// compilation saves and restores this context.
     current_async_generator: bool,
+    /// Module top-level bindings live in a declarative environment rather
+    /// than on the Realm's global object.
+    top_level_declarative: bool,
 }
 
 #[allow(dead_code)]
@@ -175,6 +178,7 @@ impl Compiler {
             current_line: 0,
             class_field_initializer_depth: 0,
             current_async_generator: false,
+            top_level_declarative: false,
         }
     }
 
@@ -279,17 +283,21 @@ impl Compiler {
         if let Some(top) = self.scopes.last_mut() {
             top.is_strict = program.is_strict;
         }
+        self.top_level_declarative = program.source_type == SourceType::Module;
         let _n = program.body.len();
         // Hoist function declarations: compile them first so they're available
         // before any statement in the body runs.
         let mut fn_decl_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if self.top_level_declarative {
+            let lex = Self::collect_lexical_names(&program.body);
+            self.emit_lexical_hoist(&lex)?;
+        }
         for stmt in &program.body {
             if let StmtNode::FunctionDecl(f) = &stmt.node {
                 if let Some(name) = &f.name {
                     fn_decl_names.insert(name.to_string());
                 }
                 self.compile_stmt(stmt)?;
-                let _ = f;
             }
         }
         // Hoist `var` declarations as undefined at the top level.
@@ -315,7 +323,7 @@ impl Compiler {
         }
         // Hoist lexical (`let`/`const`) declarations into the TDZ at the top
         // level, so accessing them before the declaration throws ReferenceError.
-        {
+        if !self.top_level_declarative {
             let lex = Self::collect_lexical_names(&program.body);
             self.emit_lexical_hoist(&lex)?;
         }
@@ -785,13 +793,14 @@ impl Compiler {
     }
 
     fn resolve(&self, name: &str) -> Option<(usize, VarKind)> {
-        // At top level, all names resolve via LoadGlobal (declared with StoreGlobal).
-        if self.scopes.len() <= 1 {
+        // Script top-level names use global lookup; module names resolve in the
+        // module's declarative environment.
+        if self.scopes.len() <= 1 && !self.top_level_declarative {
             return None;
         }
         for (i, scope) in self.scopes.iter().enumerate().rev() {
             // Skip the global scope (index 0); its bindings are accessed via LoadGlobal.
-            if self.scopes.len() > 1 && i == 0 {
+            if self.scopes.len() > 1 && i == 0 && !self.top_level_declarative {
                 continue;
             }
             if let Some(&(slot, ref kind)) = scope.bindings.get(name) {

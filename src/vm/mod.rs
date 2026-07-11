@@ -652,6 +652,49 @@ impl Vm {
         result
     }
 
+    /// Evaluate source text with the ECMAScript Module source goal.
+    /// A later module-graph layer will add import/export linking; this entry
+    /// point establishes the strict, declarative module execution context.
+    pub fn run_module(&mut self, src: &str) -> error::Result<Value> {
+        let program = crate::parser::Parser::parse_module(src)?;
+        let module_env = crate::environment::new_env(&self.heap, Some(self.global), true)?;
+        crate::environment::declare(
+            &self.heap,
+            module_env,
+            "this",
+            Value::Undefined,
+            crate::value::BindingKind::Const,
+        );
+        let mut compiler = crate::compiler::Compiler::new();
+        let (chunk, funcs) = compiler.compile_program(&program)?;
+        let chunk = self.append_compiled_functions(chunk, funcs);
+        let result = self.execute_chunk(chunk, module_env, Value::Undefined);
+        let result_roots: Vec<Value> = match &result {
+            Ok(value) => vec![value.clone()],
+            Err(err) => err.thrown_value.iter().cloned().collect(),
+        };
+        let pinned_result = self.pin_many(&result_roots);
+        self.clear_kept_objects();
+        let mut microtask_result = if !self.microtask_queue.is_empty() {
+            self.run_microtasks()
+        } else {
+            Ok(())
+        };
+        if microtask_result.is_ok() && self.heap.live_count() > 0 {
+            let roots = self.collect_roots();
+            if self.heap.maybe_collect(&roots) {
+                self.ic.clear();
+            }
+            self.schedule_finalization_cleanup_jobs();
+        }
+        if microtask_result.is_ok() && !self.microtask_queue.is_empty() {
+            microtask_result = self.run_microtasks();
+        }
+        self.unpin_many(pinned_result);
+        microtask_result?;
+        result
+    }
+
     fn execute_chunk(&mut self, chunk: Chunk, env: GcIdx, this_val: Value) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         let stack_base = self.stack.len();

@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Programs now carry an explicit Script or Module source type. `Vm::run_module`
+  and CLI `--module`/`.mjs` execution use implicit strict mode, an isolated
+  declarative top-level environment, undefined top-level `this`, module-aware
+  `await` grammar parameters, and duplicate-label early errors. Static
+  import/export parsing and module-graph linking remain separate follow-up
+  work.
 - `%TypedArray%.prototype[Symbol.toStringTag]` is now the standard configurable
   getter, returning the internal TypedArray kind name even after detach while
   returning `undefined` for primitives and objects without TypedArray slots.
@@ -239,6 +245,12 @@
 
 ### Test tooling
 
+- The first frozen ES Module source-goal slice admits 35 exact
+  `language/module-code/` files at **35 pass / 0 fail / 0 skip**. Test262
+  module files now execute through the CLI's real `--module` path; files that
+  require import/export syntax or linking remain gated. The authoritative
+  supported language subset remains **11589 pass / 0 fail / 8850 skip /
+  20439 total**.
 - The complete pinned `built-ins/TypedArray/` subtree is now admitted at
   **1446 pass / 0 fail / 0 skip / 1446 total**. The final 13 constructor
   surface, `Symbol.species`, and `%TypedArray%.of` descriptor/receiver files

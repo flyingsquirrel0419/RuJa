@@ -18,7 +18,7 @@ missing-marker, process-error, and timeout outcomes.
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
-features (modules, TypedArrays, Atomics, Intl, etc.) are skipped via the
+features (module linking/import/export, Intl, etc.) are skipped via the
 runner's `SKIP_FEATURES` set. The `explicit-resource-management` feature is
 still skipped for syntax/runtime coverage, with a narrow exception for the
 already-supported `Symbol.dispose` and `Symbol.asyncDispose` intrinsics.
@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 52.5% of all matrix files; 79.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.0% of all matrix files; 80.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -65,10 +65,9 @@ views, `TypedArray.prototype.at`, async/await, generators, for-of, optional
 chaining, nullish coalescing, logical assignment. TypedArray `fill`, `values`,
 `join`, `set`, `subarray`, and default iteration are also included.
 
-**Intentionally unsupported**: ES Modules (import/export), Intl, a public
-multi-agent embedder API, full TypedArray prototype method coverage beyond the
-constructor/index basics and ArrayBuffer/DataView support, Tail-call
-optimization.
+**Intentionally unsupported**: ES Module import/export syntax, module graphs
+and linking (the isolated Module source goal is supported), Intl, a public
+multi-agent embedder API, and tail-call optimization.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -881,6 +880,21 @@ GC during construction and element conversion. The supported subset remains
 of the matrix. The code change moved exactly 13 skipped files to pass. One
 additional built-ins timeout also passed in this run; that is timing variance,
 not a conformance claim for this change.
+
+Focused ES Module source-goal core check:
+The first module milestone introduces an explicit Module source type through
+the parser, compiler, VM, and CLI rather than treating module tests as strict
+scripts. Module code is implicitly strict, has undefined top-level `this`, and
+stores top-level var/function/lexical declarations in an isolated declarative
+environment. Nested ordinary functions reset the Await grammar parameter,
+while top-level module `await` remains contextual module syntax. Duplicate
+labels are rejected as early errors. The runner invokes the real `--module`
+CLI path and freezes admission to 35 import/export-free
+`language/module-code/` files, which report **35 pass / 0 fail / 0 skip**.
+The remaining 564 files in that subtree stay gated pending real import/export
+parsing, resolution, linking, namespaces, live bindings, cycles, and module
+evaluation. The supported subset remains **11589 pass / 0 fail / 8850 skip /
+20439 total**.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

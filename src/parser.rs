@@ -88,6 +88,8 @@ pub struct Parser {
     super_depth: usize,
     super_call_depth: usize,
     last_primary_parenthesized: bool,
+    source_type: SourceType,
+    nested_function_context_depth: usize,
 }
 
 type ParsedParams = (
@@ -137,6 +139,8 @@ impl Parser {
             super_depth: 0,
             super_call_depth: 0,
             last_primary_parenthesized: false,
+            source_type: SourceType::Script,
+            nested_function_context_depth: 0,
         }
     }
 
@@ -144,6 +148,15 @@ impl Parser {
         let mut lx = crate::lexer::Lexer::new(src);
         let tokens = lx.tokens();
         let mut p = Parser::new(tokens);
+        p.parse_program()
+    }
+
+    pub fn parse_module(src: &str) -> error::Result<Program> {
+        let mut lx = crate::lexer::Lexer::new(src);
+        let tokens = lx.tokens();
+        let mut p = Parser::new(tokens);
+        p.source_type = SourceType::Module;
+        p.is_strict_context = true;
         p.parse_program()
     }
 
@@ -357,6 +370,7 @@ impl Parser {
 
     fn await_as_identifier_allowed(&self) -> bool {
         self.async_depth == 0
+            && (self.source_type != SourceType::Module || self.nested_function_context_depth > 0)
     }
 
     fn with_generator_context<T>(
@@ -413,9 +427,12 @@ impl Parser {
         async_enabled: bool,
         f: impl FnOnce(&mut Self) -> error::Result<T>,
     ) -> error::Result<T> {
-        self.with_generator_context(generator_enabled, |p| {
+        self.nested_function_context_depth += 1;
+        let result = self.with_generator_context(generator_enabled, |p| {
             p.with_async_context(async_enabled, f)
-        })
+        });
+        self.nested_function_context_depth -= 1;
+        result
     }
 
     fn with_formal_parameter_expression_context<T>(
@@ -650,6 +667,7 @@ impl Parser {
         Ok(Program {
             body,
             is_strict: self.is_strict_context,
+            source_type: self.source_type,
         })
     }
 
@@ -796,6 +814,12 @@ impl Parser {
                         "Function declaration cannot be the body of a labelled statement in strict mode"
                             .to_string(),
                     ));
+                }
+                if self.label_stack.iter().any(|(name, _)| name == &label) {
+                    return Err(error::Error::syntax(format!(
+                        "Label '{}' has already been declared",
+                        label
+                    )));
                 }
                 self.label_stack.push((label.clone(), is_loop));
                 let body =
@@ -2965,6 +2989,12 @@ impl Parser {
                 if self.await_as_identifier_allowed() && self.await_token_is_identifier_ref() {
                     self.advance();
                     return Ok(Expr::Ident(Arc::from("await")));
+                }
+                let top_level_await = self.nested_function_context_depth == 0;
+                if self.async_depth == 0 && !top_level_await {
+                    return Err(error::Error::syntax(
+                        "Await expression is not valid in this context".to_string(),
+                    ));
                 }
                 self.advance();
                 let inner = self.parse_unary()?;

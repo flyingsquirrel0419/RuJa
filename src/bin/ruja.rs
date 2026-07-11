@@ -15,6 +15,7 @@ Arguments:
 
 Options:
   -e, --eval <CODE>   Evaluate CODE and print the result
+      --module <FILE> Evaluate FILE using the ECMAScript Module source goal
   -h, --help          Print this help message
   -V, --version       Print version information
 
@@ -50,11 +51,16 @@ fn new_vm() -> Vm {
     vm
 }
 
-fn run_file(path: &str) -> i32 {
+fn run_file(path: &str, module: bool) -> i32 {
     match fs::read_to_string(path) {
         Ok(src) => {
             let mut vm = new_vm();
-            match vm.run(&src) {
+            let result = if module {
+                vm.run_module(&src)
+            } else {
+                vm.run(&src)
+            };
+            match result {
                 Ok(_) => match vm.run_external_jobs_until_idle() {
                     Ok(()) => 0,
                     Err(e) => {
@@ -185,9 +191,16 @@ fn main_impl() -> i32 {
                 }
                 return run_eval(&args[i + 1]);
             }
+            "--module" => {
+                if i + 1 >= args.len() {
+                    eprintln!("ruja: --module requires a file");
+                    return 2;
+                }
+                return run_file(&args[i + 1], true);
+            }
             "--" => {
                 if i + 1 < args.len() {
-                    return run_file(&args[i + 1]);
+                    return run_file(&args[i + 1], false);
                 }
                 return 0;
             }
@@ -196,7 +209,7 @@ fn main_impl() -> i32 {
                 eprintln!("Try 'ruja --help' for more information.");
                 return 2;
             }
-            file => return run_file(file),
+            file => return run_file(file, file.ends_with(".mjs")),
         }
     }
     repl()

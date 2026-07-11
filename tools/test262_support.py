@@ -69,8 +69,12 @@ def execute_source(source, meta, ruja, timeout=8):
                 process_env["RUJA_AGENT_CAN_BLOCK"] = "1"
             elif "CanBlockIsFalse" in flags:
                 process_env["RUJA_AGENT_CAN_BLOCK"] = "0"
+            command = [ruja]
+            if "module" in flags:
+                command.append("--module")
+            command.append(path)
             result = subprocess.run(
-                [ruja, path],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

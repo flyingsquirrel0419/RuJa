@@ -400,4 +400,11 @@ pub struct Program {
     /// True when the program is parsed in strict mode, either from a
     /// `"use strict"` directive prologue or an inherited strict context.
     pub is_strict: bool,
+    pub source_type: SourceType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceType {
+    Script,
+    Module,
 }

@@ -265,6 +265,44 @@ class WeakRefAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
 
+class ModuleCoreAdmissionTests(unittest.TestCase):
+    def test_module_core_is_frozen_to_the_audited_files(self):
+        expected_names = {
+            "comment-multi-line-html-close.js", "comment-single-line-html-close.js",
+            "comment-single-line-html-open.js", "early-dup-lables.js", "early-dup-lex.js",
+            "early-dup-top-function-async-generator.js", "early-dup-top-function-async.js",
+            "early-dup-top-function-generator.js", "early-dup-top-function.js",
+            "early-lex-and-var.js", "early-new-target.js", "early-strict-mode.js",
+            "early-super.js", "early-undef-break.js", "early-undef-continue.js",
+            "eval-gtbndng-local-bndng-cls.js", "eval-gtbndng-local-bndng-const.js",
+            "eval-gtbndng-local-bndng-let.js", "eval-gtbndng-local-bndng-var.js",
+            "eval-self-abrupt.js", "eval-this.js", "instn-local-bndng-cls.js",
+            "instn-local-bndng-const.js", "instn-local-bndng-for-dup.js",
+            "instn-local-bndng-for.js", "instn-local-bndng-fun.js",
+            "instn-local-bndng-gen.js", "instn-local-bndng-let.js",
+            "instn-local-bndng-var-dup.js", "instn-local-bndng-var.js",
+            "parse-err-hoist-lex-fun.js", "parse-err-return.js",
+            "parse-err-syntax-1.js", "parse-err-syntax-2.js", "parse-err-yield.js",
+        }
+        expected = {f"language/module-code/{name}" for name in expected_names}
+        meta = {"flags": ["module"], "features": []}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            future = root / "test/language/module-code/future.js"
+            outside = root / "test/language/statements/future.js"
+            for tool in (test262_runner, test262_analyze):
+                self.assertEqual(tool.MODULE_CORE_FILES, expected)
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative in expected:
+                        self.assertFalse(tool.should_skip(meta, root / "test" / relative))
+                    self.assertTrue(tool.should_skip(meta, future))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
+
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
     def test_typed_array_static_features_are_frozen_to_audited_files(self):
         expected = {

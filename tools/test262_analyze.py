@@ -15,6 +15,27 @@ TEST262 = os.environ.get("TEST262", "/root/test262")
 HARNESS = Path(TEST262) / "harness"
 RUN_ASYNC_TESTS = os.environ.get("TEST262_RUN_ASYNC") == "1"
 
+MODULE_CORE_FILES = {
+    f"language/module-code/{name}"
+    for name in (
+        "comment-multi-line-html-close.js", "comment-single-line-html-close.js",
+        "comment-single-line-html-open.js", "early-dup-lables.js", "early-dup-lex.js",
+        "early-dup-top-function-async-generator.js", "early-dup-top-function-async.js",
+        "early-dup-top-function-generator.js", "early-dup-top-function.js",
+        "early-lex-and-var.js", "early-new-target.js", "early-strict-mode.js",
+        "early-super.js", "early-undef-break.js", "early-undef-continue.js",
+        "eval-gtbndng-local-bndng-cls.js", "eval-gtbndng-local-bndng-const.js",
+        "eval-gtbndng-local-bndng-let.js", "eval-gtbndng-local-bndng-var.js",
+        "eval-self-abrupt.js", "eval-this.js", "instn-local-bndng-cls.js",
+        "instn-local-bndng-const.js", "instn-local-bndng-for-dup.js",
+        "instn-local-bndng-for.js", "instn-local-bndng-fun.js",
+        "instn-local-bndng-gen.js", "instn-local-bndng-let.js",
+        "instn-local-bndng-var-dup.js", "instn-local-bndng-var.js",
+        "parse-err-hoist-lex-fun.js", "parse-err-return.js",
+        "parse-err-syntax-1.js", "parse-err-syntax-2.js", "parse-err-yield.js",
+    )
+}
+
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
@@ -1671,6 +1692,13 @@ def class_subclass_builtins_path(path):
         return False
     return rel.as_posix().startswith(CLASS_SUBCLASS_BUILTINS_PREFIXES)
 
+def module_core_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in MODULE_CORE_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and explicit_resource_management_symbols_path(path):
@@ -1832,7 +1860,8 @@ def should_skip(meta, path=None):
         or async_generator_path(path)
         or atomics_sync_path(path)
     )
-    if 'module' in flags or (
+    module_admitted = path is not None and module_core_path(path)
+    if ('module' in flags and not module_admitted) or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)
     ):
         return True
