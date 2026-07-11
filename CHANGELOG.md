@@ -117,7 +117,9 @@
 
 - The exact `built-ins/TypedArray/prototype/subarray/` path now closes at **67
   pass / 0 fail / 0 skip / 67 total**, including detached-buffer coercion,
-  species-constructor arguments, and resizable-buffer view semantics.
+  species-constructor arguments, and resizable-buffer view semantics. CI
+  `29138611001` and `test262-full` `29138610981` confirm the change at **25868
+  pass / 6766 fail / 15073 skip / 47718 total**.
 - The exact `built-ins/TypedArray/prototype/fill/` path now closes at **52 pass
   / 0 fail / 0 skip / 52 total**, including Number/BigInt, immutable-buffer,
   coercion-order, and resizable-buffer coverage. CI `29138124604` and

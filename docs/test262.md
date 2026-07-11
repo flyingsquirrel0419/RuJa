@@ -455,7 +455,11 @@ Focused TypedArray `subarray` coverage check:
 retaining the raw internal byte offset, performs begin/end coercion before
 species construction even for detached or out-of-bounds sources, and creates
 a length-tracking result when the source is length-tracking and `end` is
-omitted. The exact path reports **67 pass / 0 fail / 0 skip / 67 total**.
+omitted. The exact path reports **67 pass / 0 fail / 0 skip / 67 total**. CI
+`29138611001` and `test262-full` `29138610981` confirm the change. Downloaded
+artifacts aggregate to **25868 pass / 6766 fail / 0 timeout / 0 error / 15073
+skip / 47718 total / 32634 executed**, or **79.3%** of executed files and
+**54.2%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact
