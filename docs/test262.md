@@ -588,7 +588,14 @@ protocol, initial internal-length snapshot, and current integer-indexed reads as
 `find`. Callback-driven detach or shrink yields `undefined` for invalidated
 future indexes, growth does not extend the visit count, and a truthy predicate
 returns its index while exhaustion returns `-1`. The exact path reports **38
-pass / 0 fail / 0 skip / 38 total**.
+pass / 0 fail / 0 skip / 38 total** locally. CI `29146424305` and
+`test262-full` `29146424303` confirm the change. Downloaded artifacts aggregate
+to **26332 pass / 6767 fail / 12 timeout / 0 error / 15356 skip / 47718 total /
+33099 pass-or-fail executed**, or **79.6%** of pass-or-fail files and **55.2%**
+of the matrix. Against the immediately preceding full run over the identical
+matrix, all 38 focused files moved out of skip while the aggregate changed by
+35 pass and 3 fail; the focused exact result is therefore reported separately
+from the parallel full-run variance.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
