@@ -143,7 +143,9 @@
 ### Test tooling
 
 - The exact `built-ins/TypedArray/prototype/toReversed/` path now closes at **9
-  pass / 0 fail / 0 skip / 9 total**.
+  pass / 0 fail / 0 skip / 9 total**. CI `29142341248` and `test262-full`
+  `29142341265` confirm the change at **26100 pass / 6766 fail / 15589 skip /
+  12 timeout / 0 error / 48467 total**.
 - The exact `built-ins/TypedArray/prototype/reverse/` path now closes at **22
   pass / 0 fail / 0 skip / 22 total**. CI `29141851460` and `test262-full`
   `29141851451` confirm the change at **26089 pass / 6768 fail / 15598 skip /

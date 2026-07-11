@@ -525,7 +525,14 @@ Focused TypedArray `toReversed` coverage check:
 internal length without reading a `length` property. It creates a distinct
 same-kind TypedArray while ignoring the source's `constructor` and `@@species`,
 then copies Number or BigInt elements in reverse order without changing the
-source. The exact path reports **9 pass / 0 fail / 0 skip / 9 total**.
+source. The exact path reports **9 pass / 0 fail / 0 skip / 9 total**. CI
+`29142341248` and `test262-full` `29142341265` confirm the change. Downloaded
+artifacts aggregate to **26100 pass / 6766 fail / 12 timeout / 0 error / 15589
+skip / 48467 total / 32866 pass-or-fail executed**, or **79.4%** of
+pass-or-fail files and **53.9%** of the matrix. Against the preceding run's
+identical matrix, the nine focused files moved from skip to pass. Two unrelated
+built-ins failures also passed in this shard run, but no `toReversed` references
+exist outside the focused path, so that variance is not attributed to this fix.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
