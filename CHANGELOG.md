@@ -244,6 +244,10 @@
   is frozen to the audited files so future tests remain gated until reviewed.
   Focused regressions cover foreign-Realm getter/error provenance, forced-GC
   survival, and fixed or length-tracking views over growable shared buffers.
+  CI `29166327417` and `test262-full` `29166327397` confirm the change at
+  **27115 pass / 6756 fail / 14584 skip / 12 timeout / 0 error / 48467 total**.
+  Against the preceding identical matrix, exactly 33 files moved from skip to
+  pass.
 - The exact `built-ins/TypedArray/prototype/buffer/` path is now fully admitted
   at **12 pass / 0 fail / 0 skip / 12 total**, covering backing-buffer identity
   after detach, Number/BigInt views, accessor descriptors, and incompatible or

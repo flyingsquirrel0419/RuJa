@@ -859,7 +859,12 @@ frozen rather than prefix-admitted: `byteLength` is **18 pass / 0 fail**,
 `byteOffset` is **16 pass / 0 fail**, and `length` is **18 pass / 0 fail**, for
 **52 pass / 0 fail / 0 skip / 52 total**. The supported subset remains **11589
 pass / 0 fail / 8850 skip / 20439 total** against test262
-`d1d583db95a521218f3eb8341a887fd63eda8ff1`.
+`d1d583db95a521218f3eb8341a887fd63eda8ff1`. CI `29166327417` and
+`test262-full` `29166327397` succeeded. Downloaded artifacts aggregate to
+**27115 pass / 6756 fail / 12 timeout / 0 error / 14584 skip / 48467 total /
+33871 pass-or-fail executed**, or **80.1%** of pass-or-fail files and **55.9%**
+of the matrix. Against the preceding identical matrix, exactly 33 skipped files
+moved to pass.
 
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
