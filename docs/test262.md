@@ -604,7 +604,13 @@ the final index toward zero before invoking the predicate. Callback-driven
 detach or shrink yields `undefined` for invalidated future visits, growth does
 not extend the visit count, and a truthy predicate returns the value observed
 before that callback. The exact path reports **38 pass / 0 fail / 0 skip / 38
-total**.
+total**. CI `29147184493` and `test262-full` `29147184510` confirm the change.
+Downloaded artifacts aggregate to **26371 pass / 6766 fail / 12 timeout / 0
+error / 15318 skip / 47718 total / 33137 pass-or-fail executed**, or **79.6%**
+of pass-or-fail files and **55.3%** of the matrix. Against the preceding
+identical matrix, all 38 focused files moved out of skip while the aggregate
+gained 39 pass and lost one fail, so the additional passing file is kept
+separate from the focused gain.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

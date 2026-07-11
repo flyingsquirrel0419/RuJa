@@ -163,7 +163,11 @@
 ### Test tooling
 
 - The exact `built-ins/TypedArray/prototype/findLast/` path now closes at **38
-  pass / 0 fail / 0 skip / 38 total**.
+  pass / 0 fail / 0 skip / 38 total**. CI `29147184493` and `test262-full`
+  `29147184510` confirm the change at **26371 pass / 6766 fail / 15318 skip /
+  12 timeout / 0 error / 47718 total**. Against the preceding identical
+  matrix, 38 files moved from skip while the aggregate gained 39 pass and lost
+  one fail.
 - The exact `built-ins/TypedArray/prototype/findIndex/` path now closes locally
   at **38 pass / 0 fail / 0 skip / 38 total**. CI `29146424305` and
   `test262-full` `29146424303` confirm the change; the full aggregate is
