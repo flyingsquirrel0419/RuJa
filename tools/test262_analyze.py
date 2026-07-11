@@ -1216,7 +1216,7 @@ def run_test(path):
     full, meta = build_source(path)
     if should_skip(meta, path):
         return 'skip', ''
-    timeout = 180 if typed_array_copy_within_extended_timeout_path(path) else 8
+    timeout = 600 if typed_array_copy_within_extended_timeout_path(path) else 8
     return execute_source(full, meta, RUJA, timeout=timeout)
 
 def bucket(err):

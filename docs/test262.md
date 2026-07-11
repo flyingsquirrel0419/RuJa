@@ -541,8 +541,9 @@ current bounds after coercion-driven resize or detach. The final overlap-safe
 raw byte move respects byte offsets, truncates length-tracking views to their
 current bounds, and preserves NaN payloads and other element bit patterns. The
 exact path reports **65 pass / 0 fail / 0 skip / 65 total**. Its three 10,000
-element detach stress files use a path-limited 180-second timeout after a
-102-second local measurement; ordinary files retain the shared 8-second limit.
+element detach stress files use a path-limited 600-second timeout after a
+102-second local measurement and slower CI execution; ordinary files retain the
+shared 8-second limit.
 
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a

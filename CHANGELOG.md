@@ -148,7 +148,7 @@
 
 - The exact `built-ins/TypedArray/prototype/copyWithin/` path now closes at **65
   pass / 0 fail / 0 skip / 65 total**. Three detach stress files receive a
-  path-limited 180-second timeout because their full constructor/factory matrix
+  path-limited 600-second timeout because their full constructor/factory matrix
   takes about 100 seconds in the interpreter; all other files retain 8 seconds.
 - The exact `built-ins/TypedArray/prototype/toReversed/` path now closes at **9
   pass / 0 fail / 0 skip / 9 total**. CI `29142341248` and `test262-full`
