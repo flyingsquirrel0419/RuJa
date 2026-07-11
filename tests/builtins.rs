@@ -1714,6 +1714,38 @@ fn typed_array_join_snapshots_length_before_separator_coercion() {
 }
 
 #[test]
+fn typed_array_reverse_uses_internal_length_and_dynamic_bounds() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(4, { maxByteLength: 8 });
+            var tracking = new Int8Array(rab);
+            tracking.set([1, 2, 3, 4]);
+            var lengthReads = 0;
+            Object.defineProperty(tracking, "length", {
+                get: function() { lengthReads++; return 0; }
+            });
+            var resultIsReceiver = tracking.reverse() === tracking;
+            var first = Array.from(tracking).join(",");
+
+            rab.resize(6);
+            tracking[4] = 5;
+            tracking[5] = 6;
+            tracking.reverse();
+            var grown = Array.from(tracking).join(",");
+
+            var fixed = new Int8Array(rab, 0, 6);
+            rab.resize(2);
+            var outOfBounds = false;
+            try { fixed.reverse(); }
+            catch (error) { outOfBounds = error instanceof TypeError; }
+
+            [resultIsReceiver, lengthReads, first, grown, outOfBounds].join("|");
+            "#),
+        Value::String(Arc::from("true|0|4,3,2,1|6,5,1,2,3,4|true"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

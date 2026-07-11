@@ -3138,6 +3138,61 @@ pub(crate) fn typed_array_join(
     Ok(Value::String(Arc::from(parts.join(&separator))))
 }
 
+pub(crate) fn typed_array_reverse(
+    vm: &mut Vm,
+    _args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray reverse called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray reverse called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray reverse called on non-TypedArray"))?;
+    let backing =
+        backing.ok_or_else(|| Error::type_err("TypedArray reverse missing viewed ArrayBuffer"))?;
+    if is_immutable_array_buffer(vm, &backing) {
+        return Err(Error::type_err("TypedArray reverse on immutable buffer"));
+    }
+    let byte_length = effective_view_byte_length(
+        vm,
+        Some(&backing),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray reverse called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+
+    let pin_count = vm.pin(&this) + vm.pin(&backing);
+    let result: error::Result<()> = (|| {
+        for lower in 0..length / 2 {
+            let upper = length - lower - 1;
+            let lower_value = vm.get_property(&this, &lower.to_string())?;
+            let upper_value = vm.get_property(&this, &upper.to_string())?;
+            vm.set_property_strict(&this, &lower.to_string(), upper_value)?;
+            vm.set_property_strict(&this, &upper.to_string(), lower_value)?;
+        }
+        Ok(())
+    })();
+    vm.unpin_many(pin_count);
+    result?;
+    Ok(this)
+}
+
 fn typed_array_iterator(
     vm: &mut Vm,
     this: Option<Value>,

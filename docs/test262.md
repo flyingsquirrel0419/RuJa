@@ -507,6 +507,13 @@ matrix contains 749 more files than the preceding run, including two additional
 failures, so the aggregate delta is recorded as an upstream-suite snapshot and
 is not attributed solely to these 38 focused tests.
 
+Focused TypedArray `reverse` coverage check:
+`%TypedArray%.prototype.reverse` validates a writable receiver and snapshots
+its internal length without consulting a `length` property. It swaps Number and
+BigInt elements through integer-indexed access, returns the original receiver,
+preserves unrelated properties, and handles fixed and length-tracking resizable
+views. The exact path reports **22 pass / 0 fail / 0 skip / 22 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

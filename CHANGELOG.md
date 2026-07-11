@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.reverse` now validates a writable TypedArray before
+  mutation, snapshots its internal element length, and swaps Number or BigInt
+  elements through integer-indexed access. Fixed and length-tracking resizable
+  views reverse their current in-bounds range, while detached, immutable, and
+  out-of-bounds views throw before mutation.
 - `%TypedArray%.prototype.keys` and `entries` now use the shared Array Iterator
   prototype with dedicated key and key-value iterator modes. Both validate at
   creation, track resizable views on each pull, throw when a live fixed view
@@ -133,6 +138,8 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/reverse/` path now closes at **22
+  pass / 0 fail / 0 skip / 22 total**.
 - The exact `built-ins/TypedArray/prototype/{keys,entries}/` paths now close at
   **38 pass / 0 fail / 0 skip / 38 total**. CI `29141404792` and
   `test262-full` `29141404775` confirm the change at **26067 pass / 6768 fail /
