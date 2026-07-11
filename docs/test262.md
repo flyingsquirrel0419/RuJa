@@ -396,7 +396,10 @@ observes the required option-coercion and `new.target.prototype` ordering, and
 agent broadcasts preserve the growth limit. The exact
 `built-ins/SharedArrayBuffer/` path now reports **104 pass / 0 fail / 0 skip /
 104 total**. Resizable ArrayBuffer and dynamic length-tracking views remain a
-separate gated unit.
+separate gated unit. CI `29135330020` and `test262-full` `29135330077` confirm
+the change. Downloaded artifacts aggregate to **25593 pass / 6769 fail / 11
+timeout / 0 error / 16094 skip / 48467 total / 32373 executed**, or **79.1%**
+of executed files and **52.8%** of the matrix.
 The implementation is confirmed by CI `29101286102` and `test262-full`
 `29101286000`; the supported-summary follow-up is confirmed by CI
 `29101459432` and `test262-full` `29101459422`. The latest 30-artifact

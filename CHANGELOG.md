@@ -90,7 +90,10 @@
   `resizable-arraybuffer` feature after implementing the growable SAB core.
   Focused coverage closes at **104 pass / 0 fail / 0 skip / 104 total**. The
   broader resizable ArrayBuffer and length-tracking view integration remain
-  gated.
+  gated. CI `29135330020` and `test262-full` `29135330077` confirm the change;
+  downloaded artifacts report **25593 pass / 6769 fail / 11 timeout / 0 error
+  / 16094 skip / 48467 total / 32373 executed**, or **79.1%** of executed
+  files and **52.8%** of the matrix.
 - The runner and analyzer now admit `Atomics.waitAsync`, `Atomics.pause`, and
   their required async/destructuring metadata only on the completed Atomics
   paths. Fixed-length Atomics reports **384 pass / 0 fail / 5 skip / 389
