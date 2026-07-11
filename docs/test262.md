@@ -689,6 +689,15 @@ of the matrix. Against the preceding identical matrix from `test262-full`
 `29150690813`, the focused path moved 45 files from skip to pass while the GC
 root fix moved one additional file from fail to pass.
 
+Focused TypedArray `reduceRight` coverage check:
+`%TypedArray%.prototype.reduceRight` validates its receiver and callback after
+snapshotting the internal length. Without an explicit initial value it reads
+the last current element as the accumulator and skips that index; otherwise it
+visits every snapshot index in descending order. Values are read immediately
+before each callback, so detach or shrink exposes `undefined` at invalidated
+indexes while growth does not extend iteration. The exact Number/BigInt and
+resizable-buffer path reports **50 pass / 0 fail / 0 skip / 50 total**.
+
 Focused class-definition generator grammar check:
 `yield` is now parsed as an AssignmentExpression alternative instead of a
 PrimaryExpression. This preserves its weak binding, treats a line terminator

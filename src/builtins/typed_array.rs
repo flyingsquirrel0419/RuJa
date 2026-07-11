@@ -3656,6 +3656,88 @@ pub(crate) fn typed_array_includes(
     result
 }
 
+pub(crate) fn typed_array_reduce_right(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray reduceRight called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err(
+            "TypedArray reduceRight called on non-object",
+        ));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray reduceRight called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray reduceRight called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let callback = args.first().cloned().unwrap_or(Value::Undefined);
+    if !is_callable(&callback, &vm.heap) {
+        return Err(Error::type_err(
+            "TypedArray reduceRight callback is not callable",
+        ));
+    }
+    if length == 0 && args.len() < 2 {
+        return Err(Error::type_err(
+            "Reduce of empty TypedArray with no initial value",
+        ));
+    }
+
+    let base_pin_count = vm.pin(&this) + vm.pin(&callback);
+    let mut accumulator_pin_count = 0;
+    let result: error::Result<Value> = (|| {
+        let (mut accumulator, mut index) = if args.len() >= 2 {
+            (args[1].clone(), length)
+        } else {
+            let index = length - 1;
+            (vm.get_property(&this, &index.to_string())?, index)
+        };
+        accumulator_pin_count = vm.pin(&accumulator);
+
+        while index > 0 {
+            index -= 1;
+            let value = vm.get_property(&this, &index.to_string())?;
+            let next = vm.call_function(
+                &callback,
+                &[
+                    accumulator,
+                    value,
+                    Value::Number(index as f64),
+                    this.clone(),
+                ],
+                Some(Value::Undefined),
+            )?;
+            vm.unpin_many(accumulator_pin_count);
+            accumulator_pin_count = vm.pin(&next);
+            accumulator = next;
+        }
+        Ok(accumulator)
+    })();
+    vm.unpin_many(accumulator_pin_count);
+    vm.unpin_many(base_pin_count);
+    result
+}
+
 pub(crate) fn typed_array_join(
     vm: &mut Vm,
     args: &[Value],

@@ -2088,6 +2088,38 @@ fn typed_array_dynamic_subclass_construction_survives_gc_pressure() {
 }
 
 #[test]
+fn typed_array_reduce_right_snapshots_length_and_reads_current_values() {
+    assert_eq!(
+        run(r#"
+            var rab = new ArrayBuffer(3, { maxByteLength: 6 });
+            var values = new Int8Array(rab);
+            values.set([1, 2, 3]);
+            var visits = [];
+            var result = values.reduceRight(function(accumulator, value, index, receiver) {
+                visits.push(index + ":" + value + ":" + (receiver === values));
+                if (index === 2) rab.resize(1);
+                return accumulator + String(value);
+            }, "");
+            [result, visits.join("|")].join(";");
+            "#),
+        Value::String(Arc::from("3undefined1;2:3:true|1:undefined:true|0:1:true"))
+    );
+}
+
+#[test]
+fn typed_array_reduce_right_uses_last_value_as_default_accumulator() {
+    assert_eq!(
+        run(r#"
+            var calls = 0;
+            var single = new BigInt64Array([7n]);
+            var result = single.reduceRight(function() { calls += 1; });
+            [String(result), calls].join("|");
+            "#),
+        Value::String(Arc::from("7|0"))
+    );
+}
+
+#[test]
 fn typed_array_values_validates_and_tracks_dynamic_bounds() {
     assert_eq!(
         run(r#"

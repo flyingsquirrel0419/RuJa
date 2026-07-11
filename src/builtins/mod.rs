@@ -1697,6 +1697,8 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
         vm.new_native_function_in_env("forEach", typed_array_for_each, 1, env)?;
     let typed_array_includes_fn =
         vm.new_native_function_in_env("includes", typed_array_includes, 1, env)?;
+    let typed_array_reduce_right_fn =
+        vm.new_native_function_in_env("reduceRight", typed_array_reduce_right, 1, env)?;
     let typed_array_join_fn = vm.new_native_function_in_env("join", typed_array_join, 1, env)?;
     let typed_array_reverse_fn =
         vm.new_native_function_in_env("reverse", typed_array_reverse, 0, env)?;
@@ -1779,6 +1781,10 @@ fn make_typed_array_intrinsic_in_env(vm: &mut Vm, env: GcIdx) -> error::Result<(
             props.insert(
                 PropertyKey::from("includes"),
                 data_prop(Value::Object(typed_array_includes_fn)),
+            );
+            props.insert(
+                PropertyKey::from("reduceRight"),
+                data_prop(Value::Object(typed_array_reduce_right_fn)),
             );
             props.insert(
                 PropertyKey::from("join"),

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.reduceRight` now validates and snapshots the receiver,
+  selects the last current element when no initial accumulator is supplied, and
+  reads each remaining integer-indexed value in descending order so detach and
+  resize side effects are observed without extending the initial visit range.
 - Interpreted function call environments are now pinned from allocation through
   setup and execution, so GC pressure during arguments/rest construction cannot
   discard a derived constructor's uninitialized `this` binding before `super()`
@@ -184,6 +188,9 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/reduceRight/` path now closes at
+  **50 pass / 0 fail / 0 skip / 50 total**, covering Number and BigInt content,
+  resizable buffers, abrupt callbacks, and default/custom accumulators.
 - The exact `built-ins/TypedArray/prototype/includes/` path now closes at **45
   pass / 0 fail / 0 skip / 45 total**, including resizable-buffer matrices that
   repeatedly construct dynamic TypedArray subclasses under GC pressure. CI
