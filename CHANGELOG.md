@@ -239,6 +239,11 @@
 
 ### Test tooling
 
+- The exact TypedArray `byteLength`, `byteOffset`, and `length` accessor paths
+  are now fully admitted at **52 pass / 0 fail / 0 skip / 52 total**. Admission
+  is frozen to the audited files so future tests remain gated until reviewed.
+  Focused regressions cover foreign-Realm getter/error provenance, forced-GC
+  survival, and fixed or length-tracking views over growable shared buffers.
 - The exact `built-ins/TypedArray/prototype/buffer/` path is now fully admitted
   at **12 pass / 0 fail / 0 skip / 12 total**, covering backing-buffer identity
   after detach, Number/BigInt views, accessor descriptors, and incompatible or

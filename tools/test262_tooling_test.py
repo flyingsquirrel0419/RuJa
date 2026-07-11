@@ -266,10 +266,35 @@ class WeakRefAdmissionTests(unittest.TestCase):
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
+    def test_typed_array_accessor_features_are_admitted_only_on_exact_paths(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            outside = root / "test/built-ins/TypedArray/prototype/unsupported/case.js"
+            meta = {
+                "flags": [],
+                "features": ["BigInt", "DataView", "Symbol", "TypedArray"],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for name, filename in (
+                        ("byteLength", "return-bytelength.js"),
+                        ("byteOffset", "return-byteoffset.js"),
+                        ("length", "return-length.js"),
+                    ):
+                        inside = root / f"test/built-ins/TypedArray/prototype/{name}/{filename}"
+                        unknown = root / f"test/built-ins/TypedArray/prototype/{name}/future.js"
+                        self.assertFalse(tool.should_skip(meta, inside))
+                        self.assertTrue(tool.should_skip(meta, unknown))
+                    self.assertTrue(tool.should_skip(meta, outside))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_resizable_feature_is_admitted_only_on_typed_array_builtin_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            inside = root / "test/built-ins/TypedArray/prototype/byteLength/case.js"
+            inside = root / "test/built-ins/TypedArray/out-of-bounds-has.js"
             outside = root / "test/built-ins/Other/case.js"
             meta = {
                 "flags": [],

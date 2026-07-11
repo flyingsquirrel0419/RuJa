@@ -2607,6 +2607,87 @@ fn typed_array_buffer_getter_uses_its_realm_function_prototype() {
 }
 
 #[test]
+fn typed_array_size_getters_use_their_realm_and_validate_receivers() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var proto = Object.getPrototypeOf(other.Uint8Array.prototype);
+            var names = ["byteLength", "byteOffset", "length"];
+            var getters = names.map(function(name) {
+                return Object.getOwnPropertyDescriptor(proto, name).get;
+            });
+            var array = new Uint16Array(new ArrayBuffer(8), 2, 2);
+            var realmError = false;
+            try { getters[0].call({}); }
+            catch (error) {
+                realmError = error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            [
+                getters.every(function(getter) {
+                    return Object.getPrototypeOf(getter) === other.Function.prototype;
+                }),
+                getters.map(function(getter) { return getter.call(array); }).join(","),
+                realmError
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|4,2,2|true"))
+    );
+}
+
+#[test]
+fn typed_array_size_getters_and_backing_buffer_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var other = $262.createRealm().global;
+        var array = new other.Uint16Array(new other.ArrayBuffer(8), 2, 2);
+        var proto = Object.getPrototypeOf(other.Uint16Array.prototype);
+        var byteLengthGetter = Object.getOwnPropertyDescriptor(proto, "byteLength").get;
+        var byteOffsetGetter = Object.getOwnPropertyDescriptor(proto, "byteOffset").get;
+        var lengthGetter = Object.getOwnPropertyDescriptor(proto, "length").get;
+        "#,
+    )
+    .expect("failed to create foreign TypedArray accessors");
+    vm.gc();
+    assert_eq!(
+        vm.run(
+            r#"
+            [
+                byteLengthGetter.call(array),
+                byteOffsetGetter.call(array),
+                lengthGetter.call(array),
+                Object.getPrototypeOf(byteLengthGetter) === other.Function.prototype
+            ].join("|");
+            "#,
+        )
+        .expect("TypedArray accessors should survive GC"),
+        Value::String(Arc::from("4|2|2|true"))
+    );
+}
+
+#[test]
+fn typed_array_size_getters_track_growable_shared_buffers() {
+    assert_eq!(
+        run(r#"
+            var buffer = new SharedArrayBuffer(8, { maxByteLength: 16 });
+            var fixed = new Uint16Array(buffer, 2, 2);
+            var tracking = new Uint16Array(buffer, 2);
+            var before = [
+                fixed.byteLength, fixed.byteOffset, fixed.length,
+                tracking.byteLength, tracking.byteOffset, tracking.length
+            ].join(",");
+            buffer.grow(16);
+            var after = [
+                fixed.byteLength, fixed.byteOffset, fixed.length,
+                tracking.byteLength, tracking.byteOffset, tracking.length
+            ].join(",");
+            before + "|" + after;
+        "#),
+        Value::String(Arc::from("4,2,2,6,2,3|4,2,2,14,2,7"))
+    );
+}
+
+#[test]
 fn object_to_string_observes_symbol_to_string_tag() {
     assert_eq!(
         run(r#"

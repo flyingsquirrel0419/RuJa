@@ -114,11 +114,50 @@ TYPED_ARRAY_CONSTRUCTORS_FEATURES = {
     "resizable-arraybuffer",
 }
 
-TYPED_ARRAY_RESIZABLE_PREFIXES = (
-    "built-ins/TypedArray/prototype/byteLength/",
-    "built-ins/TypedArray/prototype/byteOffset/",
-    "built-ins/TypedArray/prototype/length/",
-)
+TYPED_ARRAY_ACCESSOR_FILES = {
+    f"built-ins/TypedArray/prototype/{name}/{suffix}"
+    for name, suffixes in {
+        "byteLength": (
+            "BigInt/detached-buffer.js", "BigInt/resizable-array-buffer-auto.js",
+            "BigInt/resizable-array-buffer-fixed.js", "BigInt/return-bytelength.js",
+            "detached-buffer.js", "invoked-as-accessor.js", "invoked-as-func.js",
+            "length.js", "name.js", "prop-desc.js", "resizable-array-buffer-auto.js",
+            "resizable-array-buffer-fixed.js", "resizable-buffer-assorted.js",
+            "resized-out-of-bounds-1.js", "resized-out-of-bounds-2.js",
+            "return-bytelength.js", "this-has-no-typedarrayname-internal.js",
+            "this-is-not-object.js",
+        ),
+        "byteOffset": (
+            "BigInt/detached-buffer.js", "BigInt/resizable-array-buffer-auto.js",
+            "BigInt/resizable-array-buffer-fixed.js", "BigInt/return-byteoffset.js",
+            "detached-buffer.js", "invoked-as-accessor.js", "invoked-as-func.js",
+            "length.js", "name.js", "prop-desc.js", "resizable-array-buffer-auto.js",
+            "resizable-array-buffer-fixed.js", "resized-out-of-bounds.js",
+            "return-byteoffset.js", "this-has-no-typedarrayname-internal.js",
+            "this-is-not-object.js",
+        ),
+        "length": (
+            "BigInt/detached-buffer.js", "BigInt/resizable-array-buffer-auto.js",
+            "BigInt/resizable-array-buffer-fixed.js", "BigInt/return-length.js",
+            "detached-buffer.js", "invoked-as-accessor.js", "invoked-as-func.js",
+            "length.js", "name.js", "prop-desc.js", "resizable-array-buffer-auto.js",
+            "resizable-array-buffer-fixed.js", "resizable-buffer-assorted.js",
+            "resized-out-of-bounds-1.js", "resized-out-of-bounds-2.js",
+            "return-length.js", "this-has-no-typedarrayname-internal.js",
+            "this-is-not-object.js",
+        ),
+    }.items()
+    for suffix in suffixes
+}
+
+TYPED_ARRAY_ACCESSOR_FEATURES = {
+    "ArrayBuffer",
+    "BigInt",
+    "DataView",
+    "Symbol",
+    "TypedArray",
+    "resizable-arraybuffer",
+}
 
 TYPED_ARRAY_RESIZABLE_FILES = {
     "built-ins/TypedArray/of/resized-with-out-of-bounds-and-in-bounds-indices.js",
@@ -1079,6 +1118,13 @@ def typed_array_constructors_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(TYPED_ARRAY_CONSTRUCTORS_PREFIXES)
 
+def typed_array_accessor_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in TYPED_ARRAY_ACCESSOR_FILES
+
 def typed_array_resizable_path(path, meta):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1086,8 +1132,7 @@ def typed_array_resizable_path(path, meta):
         return False
     rel_text = rel.as_posix()
     return (
-        (rel_text.startswith(TYPED_ARRAY_RESIZABLE_PREFIXES)
-         or rel_text in TYPED_ARRAY_RESIZABLE_FILES)
+        rel_text in TYPED_ARRAY_RESIZABLE_FILES
         and "resizable-arraybuffer" in meta.get("features", [])
     )
 
@@ -1534,6 +1579,8 @@ def should_skip(meta, path=None):
         feats.discard("generators")
     if path is not None and typed_array_constructors_path(path):
         feats.difference_update(TYPED_ARRAY_CONSTRUCTORS_FEATURES)
+    if path is not None and typed_array_accessor_path(path):
+        feats.difference_update(TYPED_ARRAY_ACCESSOR_FEATURES)
     if path is not None and typed_array_resizable_path(path, meta):
         feats.difference_update(TYPED_ARRAY_RESIZABLE_FEATURES)
     if path is not None and typed_array_at_path(path):

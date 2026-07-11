@@ -848,6 +848,19 @@ is now fully admitted at **12 pass / 0 fail / 0 skip / 12 total**. Against test2
 of the matrix. Against the preceding identical matrix, exactly 12 skipped files
 moved to pass.
 
+Focused TypedArray size-accessor coverage check:
+The `%TypedArray%.prototype.byteLength`, `byteOffset`, and `length` getters use
+the receiver's internal slots and report zero for detached or out-of-bounds
+views. Fixed and length-tracking resizable or growable shared-buffer views
+preserve byte offsets and update aligned lengths as their backing storage
+changes. Cross-Realm getter functions and TypeErrors use the getter Realm, and
+the getters plus backing buffers survive forced GC. The audited file set is
+frozen rather than prefix-admitted: `byteLength` is **18 pass / 0 fail**,
+`byteOffset` is **16 pass / 0 fail**, and `length` is **18 pass / 0 fail**, for
+**52 pass / 0 fail / 0 skip / 52 total**. The supported subset remains **11589
+pass / 0 fail / 8850 skip / 20439 total** against test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1`.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by
