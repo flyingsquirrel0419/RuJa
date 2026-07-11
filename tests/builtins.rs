@@ -2243,6 +2243,35 @@ fn typed_array_filter_keeps_current_values_across_resize() {
 }
 
 #[test]
+fn typed_array_index_of_uses_strict_equality() {
+    assert_eq!(
+        run(r#"
+            var numbers = new Float64Array([0, NaN, 2]);
+            var bigints = new BigInt64Array([1n, 2n]);
+            [numbers.indexOf(-0), numbers.indexOf(NaN), bigints.indexOf(2n),
+             bigints.indexOf(2)].join("|");
+        "#),
+        Value::String(Arc::from("0|-1|1|-1"))
+    );
+}
+
+#[test]
+fn typed_array_index_of_observes_resize_during_from_index() {
+    assert_eq!(
+        run(r#"
+            var buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            var values = new Uint8Array(buffer);
+            values[0] = 1;
+            values[2] = 2;
+            var from = { valueOf: function () { buffer.resize(2); return 0; } };
+            [values.indexOf(1, from), values.indexOf(2),
+             values.indexOf(undefined)].join("|");
+        "#),
+        Value::String(Arc::from("0|-1|-1"))
+    );
+}
+
+#[test]
 fn typed_array_prototype_set_keeps_proxy_descriptor_rooted() {
     assert_eq!(
         run(r#"

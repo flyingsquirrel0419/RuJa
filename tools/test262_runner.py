@@ -421,6 +421,22 @@ TYPED_ARRAY_INCLUDES_FEATURES = {
     "resizable-arraybuffer",
 }
 
+TYPED_ARRAY_INDEX_OF_PREFIXES = (
+    "built-ins/TypedArray/prototype/indexOf/",
+)
+
+TYPED_ARRAY_INDEX_OF_FEATURES = {
+    "ArrayBuffer",
+    "Array.prototype.includes",
+    "BigInt",
+    "Reflect.construct",
+    "Symbol",
+    "TypedArray",
+    "align-detached-buffer-semantics-with-web-reality",
+    "arrow-function",
+    "resizable-arraybuffer",
+}
+
 TYPED_ARRAY_REDUCE_RIGHT_PREFIXES = (
     "built-ins/TypedArray/prototype/reduceRight/",
 )
@@ -1159,6 +1175,13 @@ def typed_array_includes_path(path):
         return False
     return rel.as_posix().startswith(TYPED_ARRAY_INCLUDES_PREFIXES)
 
+def typed_array_index_of_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix().startswith(TYPED_ARRAY_INDEX_OF_PREFIXES)
+
 def typed_array_reduce_right_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -1460,6 +1483,8 @@ def should_skip(meta, path=None):
         feats.difference_update(TYPED_ARRAY_FOR_EACH_FEATURES)
     if path is not None and typed_array_includes_path(path):
         feats.difference_update(TYPED_ARRAY_INCLUDES_FEATURES)
+    if path is not None and typed_array_index_of_path(path):
+        feats.difference_update(TYPED_ARRAY_INDEX_OF_FEATURES)
     if path is not None and typed_array_reduce_right_path(path):
         feats.difference_update(TYPED_ARRAY_REDUCE_RIGHT_FEATURES)
     if path is not None and typed_array_reduce_path(path):

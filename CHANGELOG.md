@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `%TypedArray%.prototype.indexOf` now validates and snapshots its receiver,
+  coerces `fromIndex` in specification order, skips integer indexes invalidated
+  by detach or resize, and compares Number/BigInt elements with strict equality.
 - `%TypedArray%.prototype.filter` now visits the snapshot range before species
   construction, preserves each selected current value, and creates a writable
   same-content-type destination sized to the final selection count.
@@ -212,6 +215,10 @@
 
 ### Test tooling
 
+- The exact `built-ins/TypedArray/prototype/indexOf/` path now closes at **43
+  pass / 0 fail / 0 skip / 43 total**, up from **6 pass / 37 fail**, covering
+  Number/BigInt strict comparison, `fromIndex` coercion, detached buffers, and
+  fixed-length and length-tracking resizable views.
 - The exact `built-ins/TypedArray/prototype/filter/` path now closes at **85
   pass / 0 fail / 0 skip / 85 total**, covering callback-before-species order,
   Number/BigInt results, immutable destinations, and resizable buffers.

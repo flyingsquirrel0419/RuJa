@@ -749,6 +749,15 @@ pass-or-fail executed**, or **79.9%** of pass-or-fail files and **55.5%** of the
 matrix. Against the preceding identical matrix, exactly 85 focused files moved
 from skip to pass.
 
+Focused TypedArray `indexOf` coverage check:
+`%TypedArray%.prototype.indexOf` validates its receiver and snapshots the view
+length before coercing `fromIndex`. It then checks each snapshot index for
+current integer-index validity and compares present Number or BigInt values
+with Strict Equality, so detach and shrink during coercion do not turn missing
+elements into matches for `undefined`, while growth does not extend the search.
+The exact path improves from **6 pass / 37 fail / 0 skip** to **43 pass / 0 fail
+/ 0 skip / 43 total**.
+
 Focused TypedArray `sort` coverage check:
 `%TypedArray%.prototype.sort` validates write access and snapshots all values
 before comparison. Its stable merge sort uses numeric Number/BigInt ordering by

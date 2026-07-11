@@ -3721,6 +3721,61 @@ pub(crate) fn typed_array_includes(
     result
 }
 
+pub(crate) fn typed_array_index_of(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let this = this.ok_or_else(|| Error::type_err("TypedArray indexOf called without this"))?;
+    let Value::Object(array_idx) = &this else {
+        return Err(Error::type_err("TypedArray indexOf called on non-object"));
+    };
+    let slots = vm.heap.with_obj(array_idx.0, |obj| {
+        let HeapObj::TypedArray(array) = obj else {
+            return None;
+        };
+        Some((
+            array.kind,
+            array.viewed_array_buffer.clone(),
+            array.byte_offset,
+            array.byte_length,
+            array.length_tracking,
+        ))
+    });
+    let (kind, backing, byte_offset, fixed_byte_length, length_tracking) =
+        slots.ok_or_else(|| Error::type_err("TypedArray indexOf called on non-TypedArray"))?;
+    let byte_length = effective_view_byte_length(
+        vm,
+        backing.as_ref(),
+        byte_offset,
+        fixed_byte_length,
+        length_tracking,
+        kind.element_size(),
+    )
+    .ok_or_else(|| Error::type_err("TypedArray indexOf called on out-of-bounds view"))?;
+    let length = typed_array_element_count(kind, byte_length);
+    let target = args.first().cloned().unwrap_or(Value::Undefined);
+
+    let pin_count = vm.pin(&this) + vm.pin(&target);
+    let result: error::Result<Value> = (|| {
+        let Some(start) = array_search_start(vm, args, length, 0.0)? else {
+            return Ok(Value::Number(-1.0));
+        };
+        for index in start..length {
+            let key = index.to_string();
+            if vm.has_property(&this, &key)? {
+                let value = vm.get_property(&this, &key)?;
+                if vm.strict_eq(&value, &target) {
+                    return Ok(Value::Number(index as f64));
+                }
+            }
+        }
+        Ok(Value::Number(-1.0))
+    })();
+    vm.unpin_many(pin_count);
+    result
+}
+
 pub(crate) fn typed_array_reduce_right(
     vm: &mut Vm,
     args: &[Value],
