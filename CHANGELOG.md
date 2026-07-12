@@ -154,6 +154,20 @@
   `29207058806` pass for commit `954de2f`; artifacts move only expressions by
   **+251 pass / -251 skip** to **28344 pass / 6720 fail / 12 timeout / 0 error /
   13241 skip / 48317 total / 35064 pass-or-fail executed**.
+- Dynamic import attributes now evaluate options in the specified observable
+  order, enumerate `with` through Proxy-aware property operations, require
+  string values, and support relative JSON/text data modules without executing
+  JSON as JavaScript or colliding with real module cache paths. Unsupported
+  keys and types reject with `TypeError`. Shared Proxy `ownKeys` handling now
+  rejects duplicates and target-invariant violations, while `JSON.parse`
+  applies `ToString`, exposes length 2, preserves negative zero and large
+  exponents, and decodes standard escapes. The 23-file import-attributes slice
+  is **23/23**, exact dynamic import is **621/621**, and the supported subset is
+  **12232 pass / 0 fail / 8207 skip / 20439 total**. CI `29209531923` and
+  `test262-full` `29209531948` confirm feature commit `22c49ec`; downloaded
+  artifacts aggregate to **28398 pass / 6689 fail / 13218 skip / 12 timeout /
+  0 error / 48317 total / 35087 pass-or-fail executed**, exactly **+54 pass /
+  -31 fail / -23 skip** from the preceding matrix.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

@@ -77,14 +77,15 @@ guarantees, run RuJa in a separately killable process as well.
   through SCC-aware graph evaluation. Script- and module-origin dynamic imports
   resolve relative file specifiers, share canonical module records, and reject
   loading, coercion, instantiation, and evaluation failures asynchronously.
-  Import-attributes syntax is accepted, but host attribute semantics,
-  bare-specifier resolution, `import.source`, and `import.defer` are not
-  implemented yet.
+  Dynamic import attributes enumerate observable `with` properties and support
+  `type: "json"` and `type: "text"` for relative files; other keys and types
+  reject. Bare-specifier resolution, `import.source`, and `import.defer` are
+  not implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 58.7% of all matrix files and 80.8% of executed files; within the
+  rate of 58.8% of all matrix files and 80.9% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -107,10 +108,10 @@ guarantees, run RuJa in a separately killable process as well.
   rather than the live value; callers must not re-enter on the same idx.
 - `yield*` throw/return propagation into a delegated generator is not yet
   forwarded (direct `g.throw`/`g.return` work)
-- Dynamic `import()` currently supports relative imports originating from
-  file-backed Script chunks. Module-origin imports that participate in an
-  in-flight top-level-await graph, import attributes, and the full
-  rejection/error-object matrix remain gated.
+- Dynamic `import()` supports relative imports from file-backed Script and
+  Module chunks, including in-flight top-level-await graphs, cached rejection
+  objects, namespace identity, and JSON/text import attributes. Bare host
+  specifiers and the source/defer proposals remain gated.
 - Some strict-mode edge cases are not fully enforced: `this` defaults to
   `undefined` in all modes by design (strict mode does not rebind it to the
   global object), and a top-level strict `eval` `var` still routes through the

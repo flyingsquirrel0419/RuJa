@@ -18,7 +18,7 @@ missing-marker, process-error, and timeout outcomes.
 RuJa does **not** claim full ES conformance. Instead, it targets a
 deliberately scoped subset of ES5.1 + selected ES2015+ features (see
 [Supported subset](#supported-subset) below). Tests requiring unsupported
-features (module linking/import/export, Intl, etc.) are skipped via the
+features (bare module host resolution, source/defer imports, Intl, etc.) are skipped via the
 runner's `SKIP_FEATURES` set. The `explicit-resource-management` feature is
 still skipped for syntax/runtime coverage, with a narrow exception for the
 already-supported `Symbol.dispose` and `Symbol.asyncDispose` intrinsics.
@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.7% of all matrix files; 80.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.8% of all matrix files; 80.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -66,9 +66,10 @@ chaining, nullish coalescing, logical assignment. TypedArray `fill`, `values`,
 `join`, `set`, `subarray`, and default iteration are also included.
 
 **Intentionally unsupported**: bare-specifier ES Module host resolution,
-import attributes, dynamic import, Intl, a public multi-agent embedder API,
-and tail-call optimization. File-backed relative module graphs, including
-namespace objects, are supported in the frozen module slice.
+source-phase and deferred imports, Intl, a public multi-agent embedder API,
+and tail-call optimization. File-backed relative module graphs, dynamic
+imports, namespace objects, and JSON/text import attributes are supported in
+the frozen module slice.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -346,6 +347,24 @@ Downloaded artifacts change only expressions by **+251 pass / -251 skip**,
 producing **28344 pass / 6720 fail / 12 timeout / 0 error / 13241 skip / 48317
 total / 35064 pass-or-fail executed**, or **80.8%** of executed files and
 **58.7%** of the matrix.
+
+Dynamic import attributes now complete the remaining 23 standard files. The
+options expression permits `in`, specifier coercion precedes observable
+options access, and enumerable `with` keys follow Proxy descriptor and
+`ownKeys` invariants. The relative-file host accepts only string-valued
+`type: "json"` and `type: "text"` attributes, rejects unsupported keys/types,
+parses JSON as data rather than executable source, and keeps typed module
+cache identities distinct from real filesystem paths. Exact dynamic-import
+coverage is **621 pass / 0 fail / 384 skip / 1005 total**; the remaining 384
+files are the `import.source` and `import.defer` proposals. The supported
+subset is **12232 pass / 0 fail / 8207 skip / 20439 total**.
+Feature commit `22c49ec` is confirmed by CI `29209531923` and
+`test262-full` `29209531948`. Downloaded artifacts aggregate to **28398 pass /
+6689 fail / 13218 skip / 12 timeout / 0 error / 48317 total / 35087
+pass-or-fail executed**, or **58.8%** of all files and **80.9%** of executed
+files. Against the preceding matrix this is **+54 pass / -31 fail / -23
+skip**: the 23 exact admissions move skip to pass, while strict JSON parsing
+and Proxy `ownKeys` invariants convert 31 existing failures to passes.
 Focused WeakRef coverage check:
 `WeakRef` now uses a dedicated weak heap object whose object target is omitted
 from normal marking and cleared during sweep. Construction and `deref()` add
