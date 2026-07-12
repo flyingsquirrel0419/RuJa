@@ -5917,6 +5917,66 @@ fn json_stringify_shared_reference_ok() {
 }
 
 #[test]
+fn json_stringify_uses_serialize_json_property_semantics() {
+    assert_eq!(
+        run(r#"
+            var holders = [];
+            var value = { a: { toJSON: function(key) { return key + ':json'; } } };
+            var result = JSON.stringify(value, function(key, current) {
+              if (key === '' || key === 'a') holders.push(this);
+              return current;
+            });
+            [result, holders[0] !== value, holders[1] === value].join('|');
+        "#),
+        Value::String(Arc::from("{\"a\":\"a:json\"}|true|true"))
+    );
+    assert!(
+        run_err("JSON.stringify({ get value() { throw new TypeError('get'); } });").contains("get")
+    );
+    assert!(run_err(
+        "JSON.stringify({ value: { toJSON: function() { throw new TypeError('json'); } } });"
+    )
+    .contains("json"));
+    assert!(run_err(
+        "JSON.stringify({}, function(key, value) { if (key === '') { value.self = value; } return value; });"
+    )
+    .contains("circular"));
+    assert_eq!(
+        run(r#"
+            var number = new Number(42);
+            number.valueOf = function() { return 2; };
+            var string = new String('x');
+            string.toString = function() { return 'y'; };
+            JSON.stringify([number, string, "\u0000\uD834"]);
+        "#),
+        Value::String(Arc::from("[2,\"y\",\"\\u0000\\ud834\"]"))
+    );
+    assert_eq!(
+        run(r#"
+            var order = [];
+            var replacer = ['a'];
+            Object.defineProperty(replacer, '0', {
+              get: function() { order.push('replacer'); return 'a'; }
+            });
+            var space = new Number(1);
+            space.valueOf = function() { order.push('space'); return 1; };
+            JSON.stringify({ a: 1 }, replacer, space);
+            order.join(',');
+        "#),
+        Value::String(Arc::from("replacer,space"))
+    );
+    assert_eq!(
+        run(r#"
+            var callable = new Proxy(function() {}, {
+              ownKeys: function() { throw new Error('must not run'); }
+            });
+            JSON.stringify(callable) === undefined;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn json_stringify_nested_object() {
     assert_eq!(
         run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#),

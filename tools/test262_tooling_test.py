@@ -12,6 +12,7 @@ import test262_runner
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
+from test262_json_stringify_admission import JSON_STRINGIFY_FILES
 from test262_module_admission import (
     MODULE_STATIC_SEMANTICS_FILES,
     MODULE_TLA_RUNTIME_FILES,
@@ -777,6 +778,30 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_json_stringify_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(JSON_STRINGIFY_FILES), 66)
+        self.assertTrue(
+            all(path.startswith("built-ins/JSON/stringify/") for path in JSON_STRINGIFY_FILES)
+        )
+        admitted = "built-ins/JSON/stringify/value-object-proxy.js"
+        outside = "built-ins/Array/isArray/proxy.js"
+        self.assertIn(admitted, JSON_STRINGIFY_FILES)
+        self.assertNotIn(outside, JSON_STRINGIFY_FILES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_path = root / "test" / admitted
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(
+                        tool.should_skip({"features": ["Proxy"]}, admitted_path)
+                    )
+                    self.assertTrue(tool.should_skip({"features": ["Proxy"]}, outside_path))
+                    self.assertTrue(tool.json_stringify_path(admitted_path))
+                finally:
+                    tool.TEST262 = original_root
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):
     def test_typed_array_static_features_are_frozen_to_audited_files(self):

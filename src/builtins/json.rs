@@ -3,43 +3,6 @@ use super::*;
 // =========================================================================
 // JSON
 // =========================================================================
-/// Returns the numeric array index if `s` is a canonical decimal integer in
-/// [0, 2^32-1) (no leading zeros), else None. Used to order keys like Object.keys.
-fn json_array_index(s: &str) -> Option<u32> {
-    if s.is_empty() || (s.len() > 1 && s.starts_with('0')) || !s.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    s.parse::<u32>().ok().filter(|n| (*n as u64) < (1u64 << 32))
-}
-
-fn json_ordered_string_keys(
-    props: &IndexMap<PropertyKey, PropertyDescriptor>,
-    enumerable_only: bool,
-) -> Vec<String> {
-    let mut keys: Vec<String> = props
-        .iter()
-        .filter_map(|(k, d)| {
-            if enumerable_only && !d.enumerable {
-                return None;
-            }
-            match k {
-                PropertyKey::Str(s) => Some(s.to_string()),
-                PropertyKey::Symbol(_) => None,
-            }
-        })
-        .collect();
-    keys.sort_by(
-        |a, b| match (json_array_index(a.as_str()), json_array_index(b.as_str())) {
-            (Some(x), Some(y)) => x.cmp(&y),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        },
-    );
-    keys
-}
-
 pub(crate) fn json_stringify(
     vm: &mut Vm,
     args: &[Value],
@@ -49,288 +12,293 @@ pub(crate) fn json_stringify(
     let replacer = args.get(1).cloned().unwrap_or(Value::Undefined);
     let space_arg = args.get(2).cloned().unwrap_or(Value::Undefined);
 
-    // Determine the gap (indentation) string.
-    let gap: String = match &space_arg {
-        Value::Number(n) => {
-            let n = (*n as usize).min(10);
-            " ".repeat(n)
-        }
-        Value::String(s) => {
-            if s.len() <= 10 {
-                s.to_string()
-            } else {
-                s[..10].to_string()
-            }
-        }
-        _ => String::new(),
-    };
-
-    // Build the replacer whitelist from an array replacer.
-    let whitelist: Option<Vec<String>> = if let Value::Object(idx) = &replacer {
-        let is_arr = vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
-        if is_arr {
-            let items = vm.heap.with_obj(idx.0, |o| {
-                if let HeapObj::Array(a) = o {
-                    a.items.lock().clone()
-                } else {
-                    Vec::new()
-                }
-            });
-            let mut wl = Vec::new();
-            for item in items {
-                match item {
-                    Value::String(s) => wl.push(s.to_string()),
-                    Value::Number(n) => wl.push(crate::value::num_to_string(n)),
-                    _ => {}
-                }
-            }
-            Some(wl)
-        } else {
-            None
-        }
+    let whitelist = if crate::builtins::is_array_or_throw(vm, &replacer)? {
+        Some(json_stringify_property_list(vm, &replacer)?)
     } else {
         None
     };
-    let replacer_fn = if matches!(replacer, Value::Object(_)) && whitelist.is_none() {
-        let is_fn = if let Value::Object(idx) = &replacer {
-            vm.heap.with_obj(idx.0, |o| o.is_function())
-        } else {
-            false
-        };
-        if is_fn {
-            Some(replacer.clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let replacer_fn = (whitelist.is_none() && crate::builtins::is_callable(&replacer, &vm.heap))
+        .then_some(replacer.clone());
+    let gap = json_stringify_gap(vm, space_arg)?;
 
-    // Reject circular references per ECMAScript (TypeError).
-    if let Value::Object(_) = &v {
-        if has_json_cycle(vm, &v, &mut Vec::new()) {
-            return Err(Error::type_err(
-                "Converting circular structure to JSON".to_string(),
-            ));
-        }
-    }
     let mut ctx = StringifyCtx {
         gap,
         whitelist,
         replacer_fn,
+        stack: Vec::new(),
     };
-    match stringify_value(vm, &v, &mut Vec::new(), "", &mut ctx, 0) {
+    let wrapper = Value::Object(vm.new_object()?);
+    vm.define_data_property(&wrapper, PropertyKey::from(""), v)?;
+    match serialize_json_property(vm, &wrapper, PropertyKey::from(""), "", &mut ctx, 0)? {
         Some(s) => Ok(Value::String(Arc::from(s.as_str()))),
         None => Ok(Value::Undefined),
     }
+}
+
+fn json_stringify_gap(vm: &mut Vm, mut space: Value) -> error::Result<String> {
+    if let Value::Object(index) = &space {
+        let primitive = vm.heap.with_obj(index.0, |object| match object {
+            HeapObj::Object(data) => data.primitive.lock().clone(),
+            _ => None,
+        });
+        space = match primitive {
+            Some(Value::Number(_)) => Value::Number(vm.to_number(&space)?),
+            Some(Value::String(_)) => Value::String(Arc::from(vm.to_string_pub(&space)?)),
+            _ => space,
+        };
+    }
+    Ok(match space {
+        Value::Number(number) => " ".repeat(number.trunc().clamp(0.0, 10.0) as usize),
+        Value::String(string) => {
+            crate::value::utf16_slice(&string, 0, crate::value::utf16_len(&string).min(10))
+        }
+        _ => String::new(),
+    })
+}
+
+fn json_stringify_property_list(vm: &mut Vm, replacer: &Value) -> error::Result<Vec<String>> {
+    let length_value = vm.get_property(replacer, "length")?;
+    let length = vm.to_number(&length_value)?;
+    let length = if length.is_nan() || length <= 0.0 {
+        0
+    } else {
+        length.trunc().min(9_007_199_254_740_991.0) as usize
+    };
+    let mut property_list = Vec::new();
+    for index in 0..length {
+        let item = vm.get_property(replacer, &index.to_string())?;
+        let name = match &item {
+            Value::String(string) => Some(string.to_string()),
+            Value::Number(number) => Some(crate::value::num_to_string(*number)),
+            Value::Object(index) => {
+                let primitive = vm.heap.with_obj(index.0, |object| match object {
+                    HeapObj::Object(data) => data.primitive.lock().clone(),
+                    _ => None,
+                });
+                match primitive {
+                    Some(Value::String(_) | Value::Number(_)) => {
+                        Some(vm.to_string_pub(&item)?.to_string())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(name) = name {
+            if !property_list.contains(&name) {
+                property_list.push(name);
+            }
+        }
+    }
+    Ok(property_list)
 }
 
 struct StringifyCtx {
     gap: String,
     whitelist: Option<Vec<String>>,
     replacer_fn: Option<Value>,
+    stack: Vec<usize>,
 }
 
-/// Detect whether `v` (transitively) contains a cycle through object/array
-/// references. Strings, numbers, and other primitives are never cyclic.
-fn has_json_cycle(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>) -> bool {
-    has_json_cycle_depth(vm, v, seen, 0)
-}
-
-fn has_json_cycle_depth(vm: &mut Vm, v: &Value, seen: &mut Vec<usize>, depth: usize) -> bool {
-    // Guard the recursion so deep (but acyclic) input cannot overflow the
-    // native stack before stringify_value's own depth cap is reached.
-    if depth > 256 {
-        return false;
-    }
-    let idx = match v {
-        Value::Object(idx) => idx.0,
-        _ => return false,
-    };
-    if seen.contains(&idx) {
-        return true;
-    }
-    seen.push(idx);
-    // Collect child values out of the borrow scope before recursing.
-    let children: Vec<Value> = vm.heap.with_obj(idx, |obj| match obj {
-        HeapObj::Array(a) => a.items.lock().clone(),
-        HeapObj::Object(o) => o
-            .props
-            .lock()
-            .values()
-            .filter(|d| d.enumerable)
-            .map(|d| d.value.clone())
-            .collect(),
-        _ => Vec::new(),
-    });
-    let result = children
-        .iter()
-        .any(|c| has_json_cycle_depth(vm, c, seen, depth + 1));
-    seen.pop();
-    result
-}
-fn stringify_value(
+fn serialize_json_property(
     vm: &mut Vm,
-    v: &Value,
-    seen: &mut Vec<usize>,
+    holder: &Value,
+    key: PropertyKey,
     indent: &str,
     ctx: &mut StringifyCtx,
     depth: usize,
-) -> Option<String> {
+) -> error::Result<Option<String>> {
     // Guard against deeply-nested user values overflowing the native stack.
     const MAX_STRINGIFY_DEPTH: usize = 256;
     if depth > MAX_STRINGIFY_DEPTH {
-        return None;
+        return Ok(None);
     }
-    // (Top-level replacer application is handled by callers; this function
-    //  applies the replacer per-property via apply_replacer.)
-    match v.clone() {
-        Value::Undefined => None,
-        Value::Null => Some("null".into()),
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Number(n) => Some(if n.is_nan() || n.is_infinite() {
+    let key_value = match &key {
+        PropertyKey::Str(key) => Value::String(key.clone()),
+        PropertyKey::Symbol(symbol) => Value::Symbol(*symbol),
+    };
+    let mut value = vm.get_property_by_key(holder, &key)?;
+    let value_pin = vm.pin(&value);
+    let result = (|| {
+        if matches!(value, Value::Object(_) | Value::BigInt(_)) {
+            let to_json = vm.get_property(&value, "toJSON")?;
+            if crate::builtins::is_callable(&to_json, &vm.heap) {
+                value =
+                    vm.call_function(&to_json, std::slice::from_ref(&key_value), Some(value))?;
+            }
+        }
+        if let Some(replacer) = &ctx.replacer_fn {
+            value = vm.call_function(replacer, &[key_value, value], Some(holder.clone()))?;
+        }
+        value = unbox_json_primitive(vm, value)?;
+        let transformed_pin = vm.pin(&value);
+        let result = serialize_json_value(vm, value, indent, ctx, depth);
+        vm.unpin(transformed_pin);
+        result
+    })();
+    vm.unpin(value_pin);
+    result
+}
+
+fn unbox_json_primitive(vm: &mut Vm, value: Value) -> error::Result<Value> {
+    let Value::Object(index) = &value else {
+        return Ok(value);
+    };
+    let primitive = vm.heap.with_obj(index.0, |object| match object {
+        HeapObj::Object(data) => data.primitive.lock().clone(),
+        _ => None,
+    });
+    match primitive {
+        Some(Value::Number(_)) => Ok(Value::Number(vm.to_number(&value)?)),
+        Some(Value::String(_)) => Ok(Value::String(Arc::from(vm.to_string_pub(&value)?))),
+        Some(Value::Bool(value)) => Ok(Value::Bool(value)),
+        Some(Value::BigInt(value)) => Ok(Value::BigInt(value)),
+        _ => Ok(value),
+    }
+}
+
+fn quote_json_string(value: &str) -> String {
+    let units = crate::value::utf16_from_str(value);
+    let mut output = String::from("\"");
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        match unit {
+            0x08 => output.push_str("\\b"),
+            0x09 => output.push_str("\\t"),
+            0x0a => output.push_str("\\n"),
+            0x0c => output.push_str("\\f"),
+            0x0d => output.push_str("\\r"),
+            0x22 => output.push_str("\\\""),
+            0x5c => output.push_str("\\\\"),
+            0x00..=0x1f => output.push_str(&format!("\\u{unit:04x}")),
+            0xd800..=0xdbff
+                if units
+                    .get(index + 1)
+                    .is_some_and(|low| (0xdc00..=0xdfff).contains(low)) =>
+            {
+                output.push_str(&crate::value::utf16_to_string(&units[index..=index + 1]));
+                index += 1;
+            }
+            0xd800..=0xdfff => output.push_str(&format!("\\u{unit:04x}")),
+            _ => output.push_str(&crate::value::utf16_to_string(&[unit])),
+        }
+        index += 1;
+    }
+    output.push('"');
+    output
+}
+
+fn serialize_json_value(
+    vm: &mut Vm,
+    value: Value,
+    indent: &str,
+    ctx: &mut StringifyCtx,
+    depth: usize,
+) -> error::Result<Option<String>> {
+    match value {
+        Value::Undefined => Ok(None),
+        Value::Null => Ok(Some("null".into())),
+        Value::Bool(value) => Ok(Some(value.to_string())),
+        Value::Number(value) => Ok(Some(if value.is_nan() || value.is_infinite() {
             "null".to_string()
         } else {
-            crate::value::num_to_string(n)
-        }),
-        Value::BigInt(n) => Some(n.to_string()),
-        Value::String(s) => Some(format!(
-            "\"{}\"",
-            s.replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n")
-                .replace('\t', "\\t")
-        )),
-        Value::Symbol(_) | Value::PrivateName(_) => None,
-        Value::Reference(_) => None,
+            crate::value::num_to_string(value)
+        })),
+        Value::BigInt(_) => Err(Error::type_err("Do not know how to serialize a BigInt")),
+        Value::String(value) => Ok(Some(quote_json_string(&value))),
+        Value::Symbol(_) | Value::PrivateName(_) | Value::Reference(_) => Ok(None),
         Value::Object(idx) => {
-            // Check for toJSON method before any other processing.
-            let to_json = vm.heap.with_obj(idx.0, |obj| {
-                obj.props()
-                    .lock()
-                    .get(&PropertyKey::from("toJSON"))
-                    .cloned()
-            });
-            if let Some(desc) = to_json {
-                let to_json_val = desc.value.clone();
-                let is_fn = vm.heap.with_obj(idx.0, |_obj| {
-                    if let Value::Object(fidx) = &to_json_val {
-                        vm.heap.with_obj(fidx.0, |o| o.is_function())
-                    } else {
-                        false
-                    }
-                });
-                if is_fn {
-                    let key_val = Value::String(Arc::from(""));
-                    let result = vm.call_function(&to_json_val, &[], Some(v.clone()));
-                    if let Ok(to_jsoned) = result {
-                        let val = apply_replacer(vm, ctx, &key_val, &to_jsoned);
-                        return stringify_value(vm, &val, seen, indent, ctx, depth);
-                    }
-                }
+            let value = Value::Object(idx);
+            if crate::builtins::is_callable(&value, &vm.heap) {
+                return Ok(None);
             }
-            if seen.contains(&idx.0) {
-                return None;
+            if ctx.stack.contains(&idx.0) {
+                return Err(Error::type_err("Converting circular structure to JSON"));
             }
-            seen.push(idx.0);
-            let is_function = vm.heap.with_obj(idx.0, |obj| obj.is_function());
-            if is_function {
-                seen.pop();
-                return None;
-            }
-            let (is_arr, items, props) = vm.heap.with_obj(idx.0, |obj| match obj {
-                HeapObj::Array(a) => (true, a.items.lock().clone(), IndexMap::new()),
-                HeapObj::Object(o) => (false, Vec::new(), o.props.lock().clone()),
-                HeapObj::Function(_) => (false, Vec::new(), IndexMap::new()),
-                _ => (false, Vec::new(), obj.props().lock().clone()),
-            });
+            ctx.stack.push(idx.0);
             let child_indent = if ctx.gap.is_empty() {
                 String::new()
             } else {
                 format!("{}{}", indent, ctx.gap)
             };
-            if is_arr {
-                let parts: Vec<String> = items
-                    .iter()
-                    .enumerate()
-                    .map(|(i, item)| {
-                        // Apply replacer
-                        let val = apply_replacer(
-                            vm,
-                            ctx,
-                            &Value::String(Arc::from(i.to_string().as_str())),
-                            item,
-                        );
-                        let s = stringify_value(vm, &val, seen, &child_indent, ctx, depth + 1);
-                        let s = s.unwrap_or_else(|| "null".to_string());
-                        if ctx.gap.is_empty() {
-                            s
-                        } else {
-                            format!("{}{}", child_indent, s)
-                        }
-                    })
-                    .collect();
-                seen.pop();
-                if parts.is_empty() {
-                    Some("[]".into())
-                } else if ctx.gap.is_empty() {
-                    Some(format!("[{}]", parts.join(",")))
+            let serialized = if crate::builtins::is_array_or_throw(vm, &value)? {
+                let length_value = vm.get_property(&value, "length")?;
+                let length = vm.to_number(&length_value)?;
+                let length = if length.is_nan() || length <= 0.0 {
+                    0
                 } else {
-                    Some(format!("[\n{}\n{}]", parts.join(",\n"), indent))
+                    length.trunc().min(9_007_199_254_740_991.0) as usize
+                };
+                let mut parts = Vec::with_capacity(length);
+                for index in 0..length {
+                    let part = serialize_json_property(
+                        vm,
+                        &value,
+                        PropertyKey::from(index.to_string()),
+                        &child_indent,
+                        ctx,
+                        depth + 1,
+                    )?
+                    .unwrap_or_else(|| "null".to_string());
+                    parts.push(if ctx.gap.is_empty() {
+                        part
+                    } else {
+                        format!("{}{}", child_indent, part)
+                    });
+                }
+                if parts.is_empty() {
+                    "[]".into()
+                } else if ctx.gap.is_empty() {
+                    format!("[{}]", parts.join(","))
+                } else {
+                    format!("[\n{}\n{}]", parts.join(",\n"), indent)
                 }
             } else {
-                let mut pairs = Vec::new();
-                let keys: Vec<String> = if let Some(wl) = &ctx.whitelist {
-                    props
+                let keys = if let Some(whitelist) = &ctx.whitelist {
+                    whitelist
                         .iter()
-                        .filter_map(|(k, d)| {
-                            let ks = match k {
-                                crate::value::PropertyKey::Str(s) => s.to_string(),
-                                _ => return None,
-                            };
-                            if wl.contains(&ks) && d.enumerable {
-                                Some(ks)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
+                        .map(|key| PropertyKey::from(key.as_str()))
+                        .collect::<Vec<_>>()
                 } else {
-                    json_ordered_string_keys(&props, true)
+                    own_property_keys_or_throw(vm, &value, true, true, false)?
                 };
-                for key_str in keys {
-                    let val = vm.get_property(v, &key_str).unwrap_or(Value::Undefined);
-                    let val =
-                        apply_replacer(vm, ctx, &Value::String(Arc::from(key_str.as_str())), &val);
-                    if let Some(vs) = stringify_value(vm, &val, seen, &child_indent, ctx, depth + 1)
-                    {
+                let mut pairs = Vec::new();
+                for key in keys {
+                    let PropertyKey::Str(key_string) = &key else {
+                        continue;
+                    };
+                    if let Some(serialized) = serialize_json_property(
+                        vm,
+                        &value,
+                        key.clone(),
+                        &child_indent,
+                        ctx,
+                        depth + 1,
+                    )? {
                         if ctx.gap.is_empty() {
-                            pairs.push(format!("\"{}\":{}", key_str, vs));
+                            pairs.push(format!("{}:{}", quote_json_string(key_string), serialized));
                         } else {
-                            pairs.push(format!("{}\"{}\": {}", child_indent, key_str, vs));
+                            pairs.push(format!(
+                                "{}{}: {}",
+                                child_indent,
+                                quote_json_string(key_string),
+                                serialized
+                            ));
                         }
                     }
                 }
-                seen.pop();
                 if pairs.is_empty() {
-                    Some("{}".into())
+                    "{}".into()
                 } else if ctx.gap.is_empty() {
-                    Some(format!("{{{}}}", pairs.join(",")))
+                    format!("{{{}}}", pairs.join(","))
                 } else {
-                    Some(format!("{{\n{}\n{}}}", pairs.join(",\n"), indent))
+                    format!("{{\n{}\n{}}}", pairs.join(",\n"), indent)
                 }
-            }
+            };
+            ctx.stack.pop();
+            Ok(Some(serialized))
         }
-    }
-}
-
-/// Apply a function replacer: replacer(key, value) -> new value.
-fn apply_replacer(vm: &mut Vm, ctx: &StringifyCtx, key: &Value, val: &Value) -> Value {
-    if let Some(rf) = &ctx.replacer_fn {
-        vm.call_function(rf, &[key.clone(), val.clone()], Some(val.clone()))
-            .unwrap_or_else(|_| val.clone())
-    } else {
-        val.clone()
     }
 }
 
