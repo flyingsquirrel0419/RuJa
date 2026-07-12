@@ -4605,20 +4605,40 @@ pub(crate) fn own_property_keys_or_throw(
             let mut seen = IndexSet::new();
             for item in items {
                 let key = to_property_key_descriptor(vm, &item)?;
+                if !seen.insert(key.clone()) {
+                    return Err(Error::type_err(
+                        "Proxy ownKeys trap returned duplicate entries",
+                    ));
+                }
                 if enumerable_only
-                    && !own_property_descriptor_for_key(vm, &target, &key)
+                    && !own_property_descriptor_for_key_or_throw(vm, obj, &key)?
                         .is_some_and(|desc| desc.enumerable)
                 {
                     continue;
                 }
                 match key {
-                    PropertyKey::Str(_) if include_strings => {
-                        push_unique_key(&mut keys, &mut seen, key);
-                    }
-                    PropertyKey::Symbol(_) if include_symbols => {
-                        push_unique_key(&mut keys, &mut seen, key);
-                    }
+                    PropertyKey::Str(_) if include_strings => keys.push(key),
+                    PropertyKey::Symbol(_) if include_symbols => keys.push(key),
                     _ => {}
+                }
+            }
+            let target_keys = own_property_keys_or_throw(vm, &target, false, true, true)?;
+            for target_key in &target_keys {
+                let descriptor = own_property_descriptor_for_key_or_throw(vm, &target, target_key)?;
+                if descriptor.is_some_and(|descriptor| !descriptor.configurable)
+                    && !seen.contains(target_key)
+                {
+                    return Err(Error::type_err(
+                        "Proxy ownKeys trap omitted a non-configurable key",
+                    ));
+                }
+            }
+            if !vm.is_extensible(&target)? {
+                let target_key_set: IndexSet<_> = target_keys.into_iter().collect();
+                if target_key_set != seen {
+                    return Err(Error::type_err(
+                        "Proxy ownKeys trap does not match a non-extensible target",
+                    ));
                 }
             }
             return Ok(keys);

@@ -674,8 +674,8 @@ fn dynamic_import_from_script_resolves_canonical_module_namespace() {
         import('./missing.js').catch(error => {
             globalThis.dynamicImportErrorIsSyntax = error instanceof SyntaxError;
         });
-        import('./dependency.js', {}).catch(error => {
-            globalThis.dynamicImportOptionsErrorIsType = error instanceof TypeError;
+        import('./dependency.js', {}).then(ns => {
+            globalThis.dynamicImportOptionsValue = ns.value;
         });
         "#,
     )
@@ -686,10 +686,66 @@ fn dynamic_import_from_script_resolves_canonical_module_namespace() {
         .expect("script dynamic imports should settle");
     assert_eq!(
         vm.run(
-            "[dynamicPromisesAreFresh, dynamicImportResult, dynamicImportIdentityValue, evalDynamicValue, thenableNamespaceAssimilated, dynamicImportErrorIsSyntax, dynamicImportOptionsErrorIsType].join('|')"
+            "[dynamicPromisesAreFresh, dynamicImportResult, dynamicImportIdentityValue, evalDynamicValue, thenableNamespaceAssimilated, dynamicImportErrorIsSyntax, dynamicImportOptionsValue].join('|')"
         )
         .expect("dynamic import results should be readable"),
-        Value::String(Arc::from("true|42|42|42|true|true|true"))
+        Value::String(Arc::from("true|42|42|42|true|true|42"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_attributes_load_data_without_executing_or_colliding() {
+    let dir = module_fixture_dir("dynamic-import-attributes");
+    fs::write(dir.join("data.json"), r#"{"answer":42}"#).expect("JSON module should be written");
+    fs::write(dir.join("note.txt"), "first\nsecond").expect("text module should be written");
+    fs::write(
+        dir.join("payload.json"),
+        "0); globalThis.dataModuleExecuted = true; (0",
+    )
+    .expect("invalid JSON payload should be written");
+    fs::write(
+        dir.join("data.json.__ruja_import_type_json__"),
+        "export default 7;",
+    )
+    .expect("cache-collision probe module should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        globalThis.dataModuleExecuted = false;
+        import('./data.json', { with: { type: 'json' } }).then(ns => {
+            globalThis.jsonModuleValue = ns.default.answer;
+        });
+        import('./note.txt', { with: { type: 'text' } }).then(ns => {
+            globalThis.textModuleValue = ns.default;
+        });
+        import('./data.json.__ruja_import_type_json__').then(ns => {
+            globalThis.collisionModuleValue = ns.default;
+        });
+        import('./payload.json', { with: { type: 'json' } }).catch(error => {
+            globalThis.invalidJsonIsSyntaxError = error instanceof SyntaxError;
+        });
+        import('./data.json', { with: { integrity: 'x' } }).catch(error => {
+            globalThis.unknownAttributeIsTypeError = error instanceof TypeError;
+        });
+        import('./data.json', { with: { type: 'bogus' } }).catch(error => {
+            globalThis.unknownTypeIsTypeError = error instanceof TypeError;
+        });
+        "#,
+    )
+    .expect("dynamic import attributes entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_file(dir.join("entry.js"))
+        .expect("data module imports should settle");
+    assert_eq!(
+        vm.run(
+            "[jsonModuleValue, textModuleValue, collisionModuleValue, dataModuleExecuted, invalidJsonIsSyntaxError, unknownAttributeIsTypeError, unknownTypeIsTypeError].join('|')"
+        )
+        .expect("data module results should be readable"),
+        Value::String(Arc::from(
+            "42|first\nsecond|7|false|true|true|true"
+        ))
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }

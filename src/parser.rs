@@ -3676,12 +3676,13 @@ impl Parser {
                             "Dynamic import requires a module specifier",
                         ));
                     }
-                    let specifier = self.parse_assign()?;
+                    let specifier = self.with_in_allowed(|p| p.parse_assign())?;
                     let options = if self.eat(&TokenKind::Comma) {
                         if self.check(&TokenKind::RParen) {
                             None
                         } else {
-                            let options = Some(Box::new(self.parse_assign()?));
+                            let options =
+                                Some(Box::new(self.with_in_allowed(|p| p.parse_assign())?));
                             self.eat(&TokenKind::Comma);
                             options
                         }

@@ -377,6 +377,7 @@ pub enum Microtask {
         reject: Value,
         referrer: Arc<std::path::PathBuf>,
         specifier: Arc<str>,
+        import_type: Option<Arc<str>>,
     },
     FinalizationCleanup {
         registry: GcIdx,

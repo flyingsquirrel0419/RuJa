@@ -3062,10 +3062,69 @@ impl Vm {
         result
     }
 
-    fn op_import_call(&mut self, has_options: bool) -> error::Result<()> {
-        if has_options {
-            self.stack.pop();
+    fn dynamic_import_type_from_options(
+        &mut self,
+        options: &Value,
+    ) -> error::Result<Option<Arc<str>>> {
+        if options.is_undefined() {
+            return Ok(None);
         }
+        if !matches!(options, Value::Object(_)) {
+            return Err(Error::type_err("Dynamic import options must be an object"));
+        }
+        let attributes = self.get_property(options, "with")?;
+        if attributes.is_undefined() {
+            return Ok(None);
+        }
+        if !matches!(attributes, Value::Object(_)) {
+            return Err(Error::type_err(
+                "Dynamic import 'with' attributes must be an object",
+            ));
+        }
+        let attributes_pin = self.pin(&attributes);
+        let result = (|| {
+            let keys =
+                crate::builtins::own_property_keys_or_throw(self, &attributes, false, true, false)?;
+            let mut import_type = None;
+            for key in keys {
+                if !crate::builtins::own_property_descriptor_for_key_or_throw(
+                    self,
+                    &attributes,
+                    &key,
+                )?
+                .is_some_and(|descriptor| descriptor.enumerable)
+                {
+                    continue;
+                }
+                let value = self.get_property_by_key(&attributes, &key)?;
+                let Value::String(value) = value else {
+                    return Err(Error::type_err(
+                        "Dynamic import attribute values must be strings",
+                    ));
+                };
+                if key.as_str() != Some("type") {
+                    return Err(Error::type_err("Unsupported dynamic import attribute"));
+                }
+                import_type = Some(value);
+            }
+            if import_type
+                .as_deref()
+                .is_some_and(|value| value != "json" && value != "text")
+            {
+                return Err(Error::type_err("Unsupported dynamic import type"));
+            }
+            Ok(import_type)
+        })();
+        self.unpin(attributes_pin);
+        result
+    }
+
+    fn op_import_call(&mut self, has_options: bool) -> error::Result<()> {
+        let options = if has_options {
+            self.stack.pop().unwrap_or(Value::Undefined)
+        } else {
+            Value::Undefined
+        };
         let specifier = self.stack.pop().unwrap_or(Value::Undefined);
         let capability = crate::builtins::new_promise_capability(self, self.promise_ctor.clone())?;
         let promise = match capability.promise.clone() {
@@ -3080,35 +3139,34 @@ impl Vm {
             Value::Object(promise),
             capability.resolve.clone(),
             capability.reject.clone(),
+            specifier.clone(),
+            options.clone(),
         ]);
-        if has_options {
-            let error = Error::type_err("Dynamic import options are not supported yet");
-            let settlement = self.reject_dynamic_import(&capability.reject, &error);
-            self.stack.push(Value::Object(promise));
-            self.unpin_many(pins);
-            settlement?;
-            return Ok(());
-        }
         let referrer = self
             .current_frame()
             .ok()
             .and_then(|frame| frame.chunk.source_path.clone());
         let settlement = match self.to_string_pub(&specifier) {
-            Ok(specifier) => {
-                if let Some(referrer) = referrer {
-                    self.microtask_queue.push_back(Microtask::DynamicImport {
-                        promise,
-                        resolve: capability.resolve.clone(),
-                        reject: capability.reject.clone(),
-                        referrer,
-                        specifier: specifier.into(),
-                    });
-                    Ok(Value::Undefined)
-                } else {
-                    let error = Error::type_err("Dynamic import requires a source-file referrer");
-                    self.reject_dynamic_import(&capability.reject, &error)
+            Ok(specifier) => match self.dynamic_import_type_from_options(&options) {
+                Ok(import_type) => {
+                    if let Some(referrer) = referrer {
+                        self.microtask_queue.push_back(Microtask::DynamicImport {
+                            promise,
+                            resolve: capability.resolve.clone(),
+                            reject: capability.reject.clone(),
+                            referrer,
+                            specifier: specifier.into(),
+                            import_type,
+                        });
+                        Ok(Value::Undefined)
+                    } else {
+                        let error =
+                            Error::type_err("Dynamic import requires a source-file referrer");
+                        self.reject_dynamic_import(&capability.reject, &error)
+                    }
                 }
-            }
+                Err(error) => self.reject_dynamic_import(&capability.reject, &error),
+            },
             Err(error) => self.reject_dynamic_import(&capability.reject, &error),
         };
         self.stack.push(Value::Object(promise));

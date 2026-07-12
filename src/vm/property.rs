@@ -2996,10 +2996,12 @@ impl Vm {
                 reject,
                 referrer,
                 specifier,
+                import_type,
             } => {
                 let capability_pins =
                     self.pin_many(&[Value::Object(promise), resolve.clone(), reject.clone()]);
-                let outcome = self.dynamic_import_module(&referrer, &specifier);
+                let outcome =
+                    self.dynamic_import_module(&referrer, &specifier, import_type.as_deref());
                 let settlement = match outcome {
                     Ok(crate::module::DynamicImportResult::Ready(namespace)) => {
                         let value_pin = self.pin(&namespace);

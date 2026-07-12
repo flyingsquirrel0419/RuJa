@@ -5236,6 +5236,32 @@ fn object_spread_rechecks_descriptors_and_propagates_proxy_own_keys() {
 }
 
 #[test]
+fn proxy_own_keys_enforces_duplicate_and_target_invariants() {
+    assert_eq!(
+        run(r#"
+            function errorName(target, keys) {
+              try {
+                Reflect.ownKeys(new Proxy(target, { ownKeys: function() { return keys; } }));
+                return "none";
+              } catch (error) {
+                return error.name;
+              }
+            }
+            var fixed = {};
+            Object.defineProperty(fixed, "fixed", { configurable: false });
+            var sealed = Object.preventExtensions({ present: 1 });
+            [
+              errorName({}, ["x", "x"]),
+              errorName(fixed, []),
+              errorName(sealed, ["present", "extra"]),
+              errorName(sealed, [])
+            ].join("|");
+        "#),
+        Value::String(Arc::from("TypeError|TypeError|TypeError|TypeError"))
+    );
+}
+
+#[test]
 fn object_property_is_enumerable() {
     assert_eq!(run("({a:1}).propertyIsEnumerable('a');"), Value::Bool(true));
     assert_eq!(
@@ -10212,6 +10238,20 @@ fn json_parse_invalid_returns_error() {
     // Invalid JSON must throw (not hang). run returns Undefined on error.
     let r = run("var r; try { JSON.parse('{bad}'); } catch(e) { r = e.name; } r;");
     assert_eq!(r, Value::String(Arc::from("SyntaxError")));
+    assert_eq!(run("JSON.parse('1e400') === Infinity;"), Value::Bool(true));
+    assert_eq!(
+        run("1 / JSON.parse('-0') === -Infinity;"),
+        Value::Bool(true)
+    );
+    assert_eq!(run("JSON.parse.length;"), Value::Number(2.0));
+    assert_eq!(
+        run("JSON.parse({ toString: function() { return '42'; } });"),
+        Value::Number(42.0)
+    );
+    assert_eq!(
+        run(r#"JSON.parse('"\u0061"');"#),
+        Value::String(Arc::from("a"))
+    );
 }
 
 #[test]

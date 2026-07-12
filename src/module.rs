@@ -106,6 +106,15 @@ fn load_graph(
     let source = std::fs::read_to_string(&path).map_err(|err| {
         Error::syntax(format!("Cannot read module '{}': {}", path.display(), err))
     })?;
+    load_graph_from_source(vm, path, &source, graph)
+}
+
+fn load_graph_from_source(
+    vm: &mut Vm,
+    path: PathBuf,
+    source: &str,
+    graph: &mut HashMap<PathBuf, ModuleRecord>,
+) -> error::Result<()> {
     let program = Parser::parse_module(&source)?;
     let env = crate::environment::new_env(&vm.heap, Some(vm.global), true)?;
     crate::environment::declare(
@@ -148,6 +157,12 @@ fn load_graph(
         .expect("module record inserted before dependencies")
         .dependencies = dependencies;
     Ok(())
+}
+
+fn data_module_cache_key(target: &Path, import_type: &str) -> PathBuf {
+    let mut key = target.as_os_str().to_os_string();
+    key.push(format!("\0ruja-data-module:{import_type}"));
+    PathBuf::from(key)
 }
 
 fn resolve_export(
@@ -924,8 +939,55 @@ impl Vm {
         &mut self,
         referrer: &Path,
         specifier: &str,
+        import_type: Option<&str>,
     ) -> error::Result<DynamicImportResult> {
         let target = resolve_specifier(referrer, specifier)?;
+        if matches!(import_type, Some("json" | "text")) {
+            let import_type = import_type.expect("matched supported data module type");
+            let virtual_target = data_module_cache_key(&target, import_type);
+            if !self.module_records.contains_key(&virtual_target) {
+                let source = std::fs::read_to_string(&target).map_err(|error| {
+                    Error::syntax(format!(
+                        "Cannot read {} module '{}': {}",
+                        import_type,
+                        target.display(),
+                        error
+                    ))
+                })?;
+                let value = if import_type == "json" {
+                    crate::builtins::json::parse_json_text(self, &source)?
+                } else {
+                    Value::String(Arc::from(source))
+                };
+                let value_pin = self.pin(&value);
+                let mut graph = HashMap::new();
+                let loaded = load_graph_from_source(
+                    self,
+                    virtual_target.clone(),
+                    "export let __ruja_data_module_default; export { __ruja_data_module_default as default };",
+                    &mut graph,
+                )
+                .and_then(|()| self.run_loaded_module_graph(&virtual_target, graph, false));
+                self.unpin(value_pin);
+                loaded?;
+                let record = self.module_records.get(&virtual_target).ok_or_else(|| {
+                    Error::syntax("Data module evaluation did not produce a record".to_string())
+                })?;
+                if !crate::environment::set(
+                    &self.heap,
+                    record.env,
+                    "__ruja_data_module_default",
+                    value,
+                ) {
+                    return Err(Error::syntax(
+                        "Data module default binding is unavailable".to_string(),
+                    ));
+                }
+            }
+            return self
+                .finish_dynamic_import(&virtual_target)
+                .map(DynamicImportResult::Ready);
+        }
         if let Some(record) = self.module_records.get(&target) {
             if record.status() == ModuleStatus::Evaluating {
                 let evaluation_promise = record.evaluation_promise().ok_or_else(|| {
@@ -989,6 +1051,15 @@ impl Vm {
         })?;
         let mut graph = HashMap::new();
         load_graph(self, root.clone(), &mut graph)?;
+        self.run_loaded_module_graph(&root, graph, drain_microtasks)
+    }
+
+    fn run_loaded_module_graph(
+        &mut self,
+        root: &Path,
+        mut graph: HashMap<PathBuf, ModuleRecord>,
+        drain_microtasks: bool,
+    ) -> error::Result<Value> {
         assign_scc_ids(&mut graph);
         link_imports_with_vm(self, &mut graph)?;
 
@@ -996,14 +1067,14 @@ impl Vm {
         for record in graph.values() {
             self.gc_pins.push(record.env.0);
         }
-        let (result, cache_graph) = match instantiate_module(self, &root, &mut graph) {
+        let (result, cache_graph) = match instantiate_module(self, root, &mut graph) {
             Ok(()) => {
                 // Publish the canonical runtime before evaluation so nested
                 // dynamic imports share status, Promise, and namespace state.
                 for (path, record) in &graph {
                     self.module_records.insert(path.clone(), record.clone());
                 }
-                (evaluate_module(self, &root, &mut graph), true)
+                (evaluate_module(self, root, &mut graph), true)
             }
             Err(error) => (Err(error), false),
         };

@@ -21,13 +21,13 @@ num-rational = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
 parking_lot = "0.12"
-serde_json = { version = "1", optional = true }
+serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 unicode-ident = "1"
 unicode-normalization = "0.1"
 
 [features]
 default = []
-serde = ["serde_json"]
+serde = []
 
 [lib]
 name = "ruja"

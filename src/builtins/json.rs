@@ -335,23 +335,27 @@ fn apply_replacer(vm: &mut Vm, ctx: &StringifyCtx, key: &Value, val: &Value) -> 
 }
 
 pub(crate) fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
-    let s = match args.first() {
-        Some(Value::String(s)) => s.to_string(),
-        _ => return Ok(Value::Null),
-    };
+    let input = args.first().cloned().unwrap_or(Value::Undefined);
+    let s = vm.to_string_pub(&input)?;
     let reviver = args.get(1).cloned();
     let is_reviver_fn = if let Some(Value::Object(idx)) = &reviver {
         vm.heap.with_obj(idx.0, |o| o.is_function())
     } else {
         false
     };
-    let parsed = parse_json_value(vm, &mut s.chars().peekable(), 0)?;
+    let parsed = parse_json_text(vm, &s)?;
     if is_reviver_fn {
         if let Some(rf) = reviver {
             return apply_reviver(vm, &rf, &Value::String(Arc::from("")), &parsed, 0);
         }
     }
     Ok(parsed)
+}
+
+pub(crate) fn parse_json_text(vm: &mut Vm, source: &str) -> error::Result<Value> {
+    serde_json::from_str::<serde_json::Value>(source)
+        .map_err(|error| Error::syntax(format!("Invalid JSON: {error}")))?;
+    parse_json_value(vm, &mut source.chars().peekable(), 0)
 }
 
 /// Walk the parsed tree bottom-up, calling reviver(key, value) on each.
@@ -578,11 +582,46 @@ fn parse_json_str(chars: &mut std::iter::Peekable<std::str::Chars>) -> error::Re
         }
         if c == '\\' {
             match chars.next() {
+                Some('b') => s.push('\u{0008}'),
+                Some('f') => s.push('\u{000c}'),
                 Some('n') => s.push('\n'),
+                Some('r') => s.push('\r'),
                 Some('t') => s.push('\t'),
                 Some('"') => s.push('"'),
+                Some('/') => s.push('/'),
                 Some('\\') => s.push('\\'),
-                Some(c) => s.push(c),
+                Some('u') => {
+                    let mut value = 0u32;
+                    for _ in 0..4 {
+                        let digit = chars
+                            .next()
+                            .and_then(|digit| digit.to_digit(16))
+                            .ok_or_else(|| Error::syntax("Invalid JSON Unicode escape"))?;
+                        value = value * 16 + digit;
+                    }
+                    if (0xd800..=0xdbff).contains(&value) {
+                        if chars.next() != Some('\\') || chars.next() != Some('u') {
+                            return Err(Error::syntax("Unsupported lone surrogate in JSON string"));
+                        }
+                        let mut low = 0u32;
+                        for _ in 0..4 {
+                            let digit = chars
+                                .next()
+                                .and_then(|digit| digit.to_digit(16))
+                                .ok_or_else(|| Error::syntax("Invalid JSON Unicode escape"))?;
+                            low = low * 16 + digit;
+                        }
+                        if !(0xdc00..=0xdfff).contains(&low) {
+                            return Err(Error::syntax("Unsupported lone surrogate in JSON string"));
+                        }
+                        value = 0x10000 + ((value - 0xd800) << 10) + (low - 0xdc00);
+                    }
+                    let decoded = char::from_u32(value).ok_or_else(|| {
+                        Error::syntax("Unsupported lone surrogate in JSON string")
+                    })?;
+                    s.push(decoded);
+                }
+                Some(_) => return Err(Error::syntax("Invalid JSON escape")),
                 None => break,
             }
         } else {
@@ -1723,7 +1762,7 @@ pub(crate) fn build_reflect(vm: &mut Vm) -> error::Result<Value> {
 
 pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
-    let pi = vm.new_native_function("parse", json_parse, 1)?;
+    let pi = vm.new_native_function("parse", json_parse, 2)?;
     let si = vm.new_native_function("stringify", json_stringify, 3)?;
     props.insert(PropertyKey::from("parse"), data_prop(Value::Object(pi)));
     props.insert(PropertyKey::from("stringify"), data_prop(Value::Object(si)));
