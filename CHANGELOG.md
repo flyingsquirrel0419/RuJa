@@ -50,6 +50,10 @@
   record, assimilate generic thenables exactly once, reject self-resolution,
   preserve native JavaScript Error objects, and keep the first resolve/reject
   call authoritative even when a thenable job is still pending.
+  CI `29186666321` and `test262-full` `29186666320` confirm the combined unit;
+  downloaded artifacts aggregate to **27730 pass / 6720 fail / 12 timeout / 0
+  error / 14005 skip / 48467 total / 34450 pass-or-fail executed**, exactly
+  **+6 pass / -6 skip** from the preceding matrix.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

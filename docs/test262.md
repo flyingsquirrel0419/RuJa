@@ -1049,7 +1049,12 @@ is **6 pass / 0 fail / 999 skip / 1005 total** and tooling is **59/59**.
 Module-origin imports inside an in-flight top-level-await graph, import
 attributes, and rejection/catch matrices remain gated.
 The supported subset rises to **11595 pass / 0 fail / 8844 skip / 20439
-total**. Full-matrix deltas are recorded after CI.
+total**. CI `29186666321` and `test262-full` `29186666320` confirm feature
+commit `66a0f4a`. Downloaded artifacts aggregate to **27730 pass / 6720 fail /
+12 timeout / 0 error / 14005 skip / 48467 total / 34450 pass-or-fail
+executed**, or **80.5%** of pass-or-fail files and **57.2%** of the matrix.
+The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
+outcome and shard are unchanged.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
