@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.2% of all matrix files; 80.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.3% of all matrix files; 80.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -951,6 +951,14 @@ and early errors all use the existing named-binding resolver with export name
 `default`. Namespace imports and namespace objects remain gated as a separate
 feature boundary. The authoritative supported subset remains **11589 pass / 0
 fail / 8850 skip / 20439 total**.
+
+Feature commit `f74d4bb` is confirmed by CI `29177056387` and `test262-full`
+`29177056390`. Downloaded artifacts aggregate to **27276 pass / 6750 fail / 12
+timeout / 0 error / 14429 skip / 48467 total / 34026 pass-or-fail executed**,
+or **80.2%** of pass-or-fail files and **56.3%** of the matrix. The module job
+moved exactly **+47 pass / -47 skip**. One unrelated built-ins test moved from
+the preceding run's pass result back to timeout, so the aggregate delta is
+**+46 pass / -47 skip / +1 timeout**.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

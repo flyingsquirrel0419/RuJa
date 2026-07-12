@@ -268,6 +268,11 @@
   generator, async, and async-generator default declarations, default
   expressions and name inference, mixed imports, live bindings, re-exports,
   abrupt completion, and early errors. Namespace-dependent files remain gated.
+  Feature commit `f74d4bb` is confirmed by CI `29177056387` and `test262-full`
+  `29177056390`; artifacts are **27276 pass / 6750 fail / 14429 skip / 12
+  timeout / 0 error / 48467 total**. The module slice is exactly **+47 pass /
+  -47 skip**; one unrelated built-ins pass returned to timeout as timing
+  variance.
 - The cyclic Module slice adds 22 exact `language/module-code/` files, bringing
   that subtree to **68 pass / 0 fail / 531 skip**. Negative parse, resolution,
   and runtime tests use phase-specific CLI paths, and parse checks include
