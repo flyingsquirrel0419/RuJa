@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.0% of all matrix files; 80.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.1% of all matrix files; 80.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -316,6 +316,21 @@ Downloaded artifacts change only expressions by **+102 pass / -102 skip**,
 producing **28028 pass / 6720 fail / 12 timeout / 0 error / 13557 skip / 48317
 total / 34748 pass-or-fail executed**, or **80.7%** of executed files and
 **58.0%** of the matrix.
+
+The standard `dynamic-import/namespace` subtree is complete at **67/67**. The
+65 newly admitted await and Promise-reaction cases cover string and Symbol
+gets, `[[HasProperty]]`, descriptors, sorted own keys, strict/non-strict set and
+delete, non-extensibility, null prototype, nested namespaces, and
+`Symbol.toStringTag`. Exact dynamic-import paths now also lift supported
+`Symbol`, `Symbol.iterator`, `Symbol.toStringTag`, and `Reflect` metadata in the
+runner and analyzer, with a regression proving the descriptor case executes.
+Exact dynamic-import coverage is **347 pass / 0 fail / 658 skip / 1005 total**;
+the supported subset is **11958 pass / 0 fail / 8481 skip / 20439 total**. CI
+`29205144135` and `test262-full` `29205144132` pass for commit `65f2b45`.
+Downloaded artifacts change only expressions by **+65 pass / -65 skip**,
+producing **28093 pass / 6720 fail / 12 timeout / 0 error / 13492 skip / 48317
+total / 34813 pass-or-fail executed**, or **80.7%** of executed files and
+**58.1%** of the matrix.
 Focused WeakRef coverage check:
 `WeakRef` now uses a dedicated weak heap object whose object target is omitted
 from normal marking and cleared during sweep. Construction and `deref()` add

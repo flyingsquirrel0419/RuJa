@@ -135,6 +135,16 @@
   `test262-full` `29203471334` pass for commit `1299636`; artifacts move only
   expressions by **+102 pass / -102 skip** to **28028 pass / 6720 fail / 12
   timeout / 0 error / 13557 skip / 48317 total / 34748 pass-or-fail executed**.
+- The standard dynamic-import `namespace/` subtree is complete at **67/67**.
+  Await and Promise-reaction variants cover get/has, descriptors, sorted keys,
+  set/delete strictness, extensibility, prototype invariants, nested namespaces,
+  and Symbol surfaces. Exact paths now lift supported Symbol and Reflect
+  metadata in both runner and analyzer, so all admitted files execute. Exact
+  coverage is **347/347** and the supported subset is **11958/11958**. CI
+  `29205144135` and `test262-full` `29205144132` pass for commit `65f2b45`;
+  artifacts move only expressions by **+65 pass / -65 skip** to **28093 pass /
+  6720 fail / 12 timeout / 0 error / 13492 skip / 48317 total / 34813
+  pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
