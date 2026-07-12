@@ -127,6 +127,14 @@
   commit `65b881f`; artifacts move only expressions by **+16 pass / -16 skip**
   to **27926 pass / 6720 fail / 12 timeout / 0 error / 13659 skip / 48317 total
   / 34646 pass-or-fail executed**.
+- The standard dynamic-import `usage/` subtree is complete at **108/108**.
+  Generated arrow, async-function, async-generator, block, label, branch, and
+  loop contexts now cover named/default live bindings, host resolution,
+  computed `then` calls, thenables, and specifier coercion. Exact coverage is
+  **282/282** and the supported subset is **11893/11893**. CI `29203471348` and
+  `test262-full` `29203471334` pass for commit `1299636`; artifacts move only
+  expressions by **+102 pass / -102 skip** to **28028 pass / 6720 fail / 12
+  timeout / 0 error / 13557 skip / 48317 total / 34748 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

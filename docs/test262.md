@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.8% of all matrix files; 80.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.0% of all matrix files; 80.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -303,6 +303,19 @@ CI `29108590113` and `test262-full` `29108590134` confirm the change. The full
 aggregate is **25028 pass / 6830 fail / 11 timeout / 0 error / 16598 skip /
 48467 total / 31869 ran**, or **78.5%** of executed files and **51.6%** of the
 matrix.
+
+The standard `dynamic-import/usage` subtree is complete at **108/108**. The 102
+newly admitted generated contexts cover named and default live-binding updates,
+script-origin host resolution to Module Records, computed `['then']` call
+grammar, thenable use, and observable specifier coercion across arrows, async
+functions, async generators, blocks, labels, branches, and loops. Exact
+dynamic-import coverage is **282 pass / 0 fail / 723 skip / 1005 total**; the
+supported subset is **11893 pass / 0 fail / 8546 skip / 20439 total**. CI
+`29203471348` and `test262-full` `29203471334` pass for commit `1299636`.
+Downloaded artifacts change only expressions by **+102 pass / -102 skip**,
+producing **28028 pass / 6720 fail / 12 timeout / 0 error / 13557 skip / 48317
+total / 34748 pass-or-fail executed**, or **80.7%** of executed files and
+**58.0%** of the matrix.
 Focused WeakRef coverage check:
 `WeakRef` now uses a dedicated weak heap object whose object target is omitted
 from normal marking and cleared during sweep. Construction and `deref()` add
