@@ -554,7 +554,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 282)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 347)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
@@ -593,6 +593,14 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "language/expressions/dynamic-import/usage/"
             "nested-while-import-then-eval-script-code-host-resolves-module-code.js"
         )
+        namespace_own_keys_admitted = (
+            "language/expressions/dynamic-import/namespace/"
+            "await-ns-own-property-keys-sort.js"
+        )
+        namespace_define_admitted = (
+            "language/expressions/dynamic-import/namespace/"
+            "promise-then-ns-define-own-property.js"
+        )
         root_tla_cycle_admitted = (
             "language/expressions/dynamic-import/"
             "import-fulfilled-member-of-errored-cycle.js"
@@ -611,6 +619,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertIn(root_namespace_admitted, DYNAMIC_IMPORT_FILES)
         self.assertIn(usage_live_binding_admitted, DYNAMIC_IMPORT_FILES)
         self.assertIn(usage_host_resolution_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(namespace_own_keys_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(namespace_define_admitted, DYNAMIC_IMPORT_FILES)
         self.assertNotIn(outside, DYNAMIC_IMPORT_FILES)
         meta = {"flags": ["generated", "async"], "features": ["dynamic-import"]}
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -618,6 +628,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             path = root / "test" / admitted
             module_path = root / "test" / module_admitted
             root_tla_cycle_path = root / "test" / root_tla_cycle_admitted
+            namespace_define_path = root / "test" / namespace_define_admitted
             outside_path = root / "test" / outside
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -637,6 +648,21 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                                 "features": ["dynamic-import", "top-level-await"],
                             },
                             root_tla_cycle_path,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {
+                                "flags": ["async"],
+                                "features": [
+                                    "dynamic-import",
+                                    "Symbol",
+                                    "Symbol.iterator",
+                                    "Symbol.toStringTag",
+                                    "Reflect",
+                                ],
+                            },
+                            namespace_define_path,
                         )
                     )
                     self.assertTrue(tool.should_skip(meta, outside_path))
