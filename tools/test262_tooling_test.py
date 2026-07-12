@@ -553,12 +553,15 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 6)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 12)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
         )
-        outside = "language/expressions/dynamic-import/always-create-new-promise.js"
+        outside = (
+            "language/expressions/dynamic-import/catch/"
+            "top-level-import-catch-import-source-specifier-tostring.js"
+        )
         self.assertIn(admitted, DYNAMIC_IMPORT_FILES)
         self.assertNotIn(outside, DYNAMIC_IMPORT_FILES)
         meta = {"flags": ["generated", "async"], "features": ["dynamic-import"]}
