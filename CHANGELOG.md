@@ -63,6 +63,17 @@
   fail / 12 timeout / 0 error / 13849 skip / 48317 total / 34456 pass-or-fail
   executed**. This also corrects the preceding prose aggregate, which
   overstated artifact skip and total by 150.
+- Module-origin dynamic imports now use a shared canonical module runtime for
+  status, namespace, evaluation Promise, rejection, and host completion state.
+  Static/dynamic namespace identity, repeated self-imports, and in-flight TLA
+  imports no longer duplicate evaluation or recursively drain the host queue;
+  pending imports settle through evaluation-Promise reactions, with capability
+  and completion state traced through GC. The frozen admission is **44/44** and
+  the supported subset is **11633 pass / 0 fail**. CI `29190914767` and
+  `test262-full` `29190914770` pass for commit `8c2a5a4`; artifacts move only
+  the expressions shard by **+32 pass / -32 skip** to **27768 pass / 6720 fail
+  / 12 timeout / 0 error / 13817 skip / 48317 total / 34488 pass-or-fail
+  executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

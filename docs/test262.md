@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.4% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11601 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.5% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11633 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -1066,6 +1066,20 @@ to **27736 pass / 6720 fail / 12 timeout / 0 error / 13849 skip / 48317 total /
 34456 pass-or-fail executed**, or **80.5%** of executed files and **57.4%** of
 the matrix. This corrects the earlier prose transcription that overstated skip
 and total by 150; the artifacts themselves are the authoritative denominator.
+
+Module-origin dynamic imports now share a canonical `ModuleRuntime` across the
+active graph and the VM registry. Static and dynamic imports reuse one namespace
+object, self-imports evaluate once, and imports of an in-flight TLA module
+settle through a reaction on its canonical evaluation Promise rather than a
+recursive host drain. TLA continuation completion is separated from the host
+API completion value, and all pending capability/runtime values participate in
+GC tracing. The exact dynamic-import admission is **44 pass / 0 fail / 961 skip
+/ 1005 total**; the supported subset is **11633 pass / 0 fail / 8806 skip /
+20439 total**. CI `29190914767` and `test262-full` `29190914770` pass for commit
+`8c2a5a4`. Artifact comparison changes only the expressions shard by **+32 pass
+/ -32 skip**, producing **27768 pass / 6720 fail / 12 timeout / 0 error / 13817
+skip / 48317 total / 34488 pass-or-fail executed**, or **80.5%** of executed
+files and **57.5%** of the matrix.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 
