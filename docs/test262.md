@@ -894,7 +894,13 @@ CLI path and freezes admission to 35 import/export-free
 The remaining 564 files in that subtree stay gated pending real import/export
 parsing, resolution, linking, namespaces, live bindings, cycles, and module
 evaluation. The supported subset remains **11589 pass / 0 fail / 8850 skip /
-20439 total**.
+20439 total**. Independent parser review also exposed an accidental
+`AsyncFunction` constructor pass that depended on permitting AwaitExpression
+inside an ordinary function. RuJa now has a distinct `%AsyncFunction%`
+intrinsic and dynamic async constructor; the focused built-ins path closes at
+**15 pass / 0 fail / 3 skip / 18 total** without weakening module Await
+grammar. A follow-up audit also isolated `%AsyncFunction%` and its prototype
+per Realm, including dynamic-constructor fallback and GC roots.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

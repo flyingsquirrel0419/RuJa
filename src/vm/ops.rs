@@ -3384,6 +3384,12 @@ impl Vm {
                 } else {
                     self.generator_function_proto.clone()
                 }
+            } else if is_async {
+                let realm = crate::environment::global_env_root(&self.heap, env_idx);
+                self.realm_async_function_prototypes
+                    .get(&realm.0)
+                    .cloned()
+                    .unwrap_or_else(|| self.function_proto.clone())
             } else {
                 let realm = crate::environment::global_env_root(&self.heap, env_idx);
                 self.realm_function_prototypes

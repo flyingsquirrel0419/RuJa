@@ -22,9 +22,10 @@ pub(crate) mod proxy;
 pub(crate) mod typed_array;
 pub(crate) use function::*;
 pub(crate) use global::{
-    async_generator_function_constructor, bigint_as_int_n, bigint_as_uint_n, bigint_to_string,
-    bigint_value_of, function_constructor, generator_function_constructor, global_bigint,
-    global_eval, global_is_finite, global_is_nan, global_parse_float, global_parse_int,
+    async_function_constructor, async_generator_function_constructor, bigint_as_int_n,
+    bigint_as_uint_n, bigint_to_string, bigint_value_of, function_constructor,
+    generator_function_constructor, global_bigint, global_eval, global_is_finite, global_is_nan,
+    global_parse_float, global_parse_int,
 };
 pub(crate) use json::{
     build_json, build_reflect, date_constructor, date_get_component, date_get_time,
@@ -2753,6 +2754,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         "Function",
         Value::Object(function_ctor_idx),
     );
+    install_async_function_intrinsic(vm, realm_env, &realm_function_proto, function_ctor_idx)?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",
@@ -5827,6 +5829,50 @@ pub fn setup(vm: &mut Vm) -> error::Result<()> {
 // =========================================================================
 // Extended setup
 // =========================================================================
+fn install_async_function_intrinsic(
+    vm: &mut Vm,
+    env: GcIdx,
+    function_proto: &Value,
+    function_ctor: GcIdx,
+) -> error::Result<()> {
+    let constructor =
+        vm.new_native_function_in_env("AsyncFunction", async_function_constructor, 1, env)?;
+    set_function_object_proto(vm, constructor, &Value::Object(function_ctor));
+    let prototype = Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(function_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("AsyncFunction")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?));
+    if let Value::Object(prototype_idx) = &prototype {
+        vm.heap.with_obj(prototype_idx.0, |obj| {
+            let mut props = obj.props().lock();
+            let mut constructor_desc = data_prop(Value::Object(constructor));
+            constructor_desc.writable = false;
+            props.insert(PropertyKey::from("constructor"), constructor_desc);
+            let mut tag_desc = data_prop(Value::String(Arc::from("AsyncFunction")));
+            tag_desc.writable = false;
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                tag_desc,
+            );
+        });
+    }
+    vm.heap.with_obj(constructor.0, |obj| {
+        if let HeapObj::Function(f) = obj {
+            *f.prototype.lock() = Some(prototype.clone());
+            f.props.lock().insert(
+                PropertyKey::from("prototype"),
+                const_prop(prototype.clone()),
+            );
+        }
+    });
+    vm.realm_async_function_prototypes.insert(env.0, prototype);
+    Ok(())
+}
+
 pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // Allocate Function.prototype first so that every function created during
     // the rest of bootstrap inherits call/apply/bind via its [[Prototype]].
@@ -6416,6 +6462,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         }
     });
     define_global(vm, "Function", Value::Object(function_ctor_idx));
+    // %AsyncFunction% is not a global binding. Async function objects inherit
+    // from its Realm's prototype, whose constructor exposes the intrinsic.
+    let function_proto = vm.function_proto.clone();
+    install_async_function_intrinsic(vm, vm.global, &function_proto, function_ctor_idx)?;
     // %GeneratorFunction% is not exposed as a global binding, but generator
     // functions inherit from %GeneratorFunction.prototype%, whose constructor
     // property exposes it.

@@ -10,6 +10,12 @@
   `await` grammar parameters, and duplicate-label early errors. Static
   import/export parsing and module-graph linking remain separate follow-up
   work.
+- Async functions now inherit from a distinct `%AsyncFunction.prototype%`
+  with the standard constructor and `Symbol.toStringTag`. The dynamic
+  `%AsyncFunction%` constructor parses async bodies, creates non-constructable
+  functions without an own `prototype`, and preserves constructor/prototype
+  identity per Realm instead of accidentally routing through the ordinary
+  Function constructor or sharing the main Realm's async intrinsic.
 - `%TypedArray%.prototype[Symbol.toStringTag]` is now the standard configurable
   getter, returning the internal TypedArray kind name even after detach while
   returning `undefined` for primitives and objects without TypedArray slots.

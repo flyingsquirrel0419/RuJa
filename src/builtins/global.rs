@@ -345,6 +345,14 @@ pub(crate) fn generator_function_constructor(
     dynamic_function_constructor(vm, args, true, false)
 }
 
+pub(crate) fn async_function_constructor(
+    vm: &mut Vm,
+    args: &[Value],
+    _: Option<Value>,
+) -> error::Result<Value> {
+    dynamic_function_constructor(vm, args, false, true)
+}
+
 pub(crate) fn async_generator_function_constructor(
     vm: &mut Vm,
     args: &[Value],
@@ -387,6 +395,7 @@ fn dynamic_function_constructor(
     // is parsed as a function statement list (not a top-level block).
     let wrapped = match (is_async, is_generator) {
         (true, true) => format!("async function* _f({}) {{ {} }}", params_src, body_src),
+        (true, false) => format!("async function _f({}) {{ {} }}", params_src, body_src),
         (false, true) => format!("function* _f({}) {{ {} }}", params_src, body_src),
         _ => format!("function _f({}) {{ {} }}", params_src, body_src),
     };
@@ -443,23 +452,28 @@ fn dynamic_function_constructor(
     vm.functions.push(fdef.clone());
     let func_idx = vm.functions.len() - 1;
     // Create the function object with a fresh prototype.
-    let proto = HeapObj::Object(crate::value::ObjectData {
-        props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(if is_generator {
-            if is_async {
-                vm.async_generator_proto.clone()
+    let has_prototype = !is_async || is_generator;
+    let proto_val = if has_prototype {
+        let proto = HeapObj::Object(crate::value::ObjectData {
+            props: Mutex::new(IndexMap::new()),
+            proto: Mutex::new(Some(if is_generator {
+                if is_async {
+                    vm.async_generator_proto.clone()
+                } else {
+                    vm.generator_proto.clone()
+                }
             } else {
-                vm.generator_proto.clone()
-            }
-        } else {
-            vm.object_proto.clone()
-        })),
-        extensible: AtomicBool::new(true),
-        class_name: None,
-        private_fields: Mutex::new(std::collections::HashMap::new()),
-        primitive: Mutex::new(None),
-    });
-    let proto_val = Value::Object(GcIdx(vm.heap.allocate(proto)?));
+                vm.object_proto.clone()
+            })),
+            extensible: AtomicBool::new(true),
+            class_name: None,
+            private_fields: Mutex::new(std::collections::HashMap::new()),
+            primitive: Mutex::new(None),
+        });
+        Value::Object(GcIdx(vm.heap.allocate(proto)?))
+    } else {
+        Value::Undefined
+    };
     let fallback_function_proto = if is_generator {
         let proto = if is_async {
             vm.async_generator_function_proto.clone()
@@ -475,6 +489,12 @@ fn dynamic_function_constructor(
                 .cloned()
                 .unwrap_or_else(|| vm.function_proto.clone())
         }
+    } else if is_async {
+        let realm = crate::environment::global_env_root(&vm.heap, function_realm);
+        vm.realm_async_function_prototypes
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| vm.function_proto.clone())
     } else {
         let realm = crate::environment::global_env_root(&vm.heap, function_realm);
         vm.realm_function_prototypes
@@ -510,10 +530,12 @@ fn dynamic_function_constructor(
     name_desc.enumerable = false;
     name_desc.configurable = true;
     props.insert(PropertyKey::from("name"), name_desc);
-    let mut proto_desc = PropertyDescriptor::data(proto_val.clone());
-    proto_desc.enumerable = false;
-    proto_desc.configurable = false;
-    props.insert(PropertyKey::from("prototype"), proto_desc);
+    if has_prototype {
+        let mut proto_desc = PropertyDescriptor::data(proto_val.clone());
+        proto_desc.enumerable = false;
+        proto_desc.configurable = false;
+        props.insert(PropertyKey::from("prototype"), proto_desc);
+    }
 
     let fd = FunctionData {
         name: Some(Arc::from("anonymous")),
@@ -521,7 +543,7 @@ fn dynamic_function_constructor(
         closure: function_realm,
         lexical_new_target: Value::Undefined,
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
-        prototype: Mutex::new(Some(proto_val.clone())),
+        prototype: Mutex::new(has_prototype.then_some(proto_val.clone())),
         proto: Mutex::new(match function_object_proto {
             Value::Object(_) => Some(function_object_proto),
             _ => None,
@@ -532,7 +554,7 @@ fn dynamic_function_constructor(
     };
     let f_idx = vm.heap.allocate(HeapObj::Function(fd))?;
     // link prototype.constructor back to the function
-    if !is_generator {
+    if has_prototype && !is_generator {
         if let Value::Object(pidx) = &proto_val {
             vm.heap.with_obj(pidx.0, |obj| {
                 let mut desc = crate::value::PropertyDescriptor::data(Value::Object(GcIdx(f_idx)));

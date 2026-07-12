@@ -129,6 +129,9 @@ pub struct Vm {
     /// `%Function.prototype%` object. Dynamic `Function(...)` calls use this
     /// when there is no explicit `new.target` prototype.
     pub(crate) realm_function_prototypes: HashMap<usize, Value>,
+    /// Realm global environment index -> that Realm's intrinsic
+    /// `%AsyncFunction.prototype%` object.
+    pub(crate) realm_async_function_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + native error constructor name -> that
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
@@ -489,6 +492,7 @@ impl Vm {
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
+            realm_async_function_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),

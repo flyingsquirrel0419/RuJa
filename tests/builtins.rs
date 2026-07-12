@@ -9097,6 +9097,55 @@ fn array_of_cross_realm_constructor_fallbacks_to_constructor_realm_object_proto(
 // --- async/await ---
 
 #[test]
+fn async_function_intrinsics_and_dynamic_constructor_match_the_source_form() {
+    assert_eq!(
+        run(r#"
+            var AsyncFunction = (async function() {}).constructor;
+            var dynamic = AsyncFunction("value", "return await value;");
+            var constructThrows = false;
+            try { new dynamic(1); } catch (error) {
+                constructThrows = error instanceof TypeError;
+            }
+            [
+              AsyncFunction.name,
+              AsyncFunction.length,
+              Object.getPrototypeOf(AsyncFunction) === Function,
+              Object.getPrototypeOf(AsyncFunction.prototype) === Function.prototype,
+              AsyncFunction.prototype[Symbol.toStringTag],
+              Object.getPrototypeOf(dynamic) === AsyncFunction.prototype,
+              dynamic.length,
+              dynamic.prototype === undefined,
+              constructThrows
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "AsyncFunction|1|true|true|AsyncFunction|true|1|true|true"
+        ))
+    );
+}
+
+#[test]
+fn async_function_intrinsics_are_isolated_per_realm() {
+    assert_eq!(
+        run(r#"
+            var mainProto = (async function() {}).constructor.prototype;
+            var other = $262.createRealm().global;
+            var otherFunction = other.eval("async function f() {}; f");
+            var otherProto = Object.getPrototypeOf(otherFunction);
+            var OtherAsyncFunction = otherProto.constructor;
+            var dynamic = OtherAsyncFunction("return await 1;");
+            [
+              mainProto !== otherProto,
+              Object.getPrototypeOf(otherProto) === other.Function.prototype,
+              Object.getPrototypeOf(OtherAsyncFunction) === other.Function,
+              Object.getPrototypeOf(dynamic) === otherProto
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}
+
+#[test]
 fn async_function_returns_promise() {
     let r = run("async function f(){ return 5; } typeof f();");
     assert_eq!(r, Value::String(Arc::from("object")));
