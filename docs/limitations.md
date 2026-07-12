@@ -77,13 +77,14 @@ guarantees, run RuJa in a separately killable process as well.
   through SCC-aware graph evaluation. Script- and module-origin dynamic imports
   resolve relative file specifiers, share canonical module records, and reject
   loading, coercion, instantiation, and evaluation failures asynchronously.
-  Bare-specifier host resolution, import attributes, `import.source`, and
-  `import.defer` are not implemented yet.
+  Import-attributes syntax is accepted, but host attribute semantics,
+  bare-specifier resolution, `import.source`, and `import.defer` are not
+  implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 58.1% of all matrix files and 80.7% of executed files; within the
+  rate of 58.7% of all matrix files and 80.8% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.

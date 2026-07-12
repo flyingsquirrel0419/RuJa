@@ -145,6 +145,15 @@
   artifacts move only expressions by **+65 pass / -65 skip** to **28093 pass /
   6720 fail / 12 timeout / 0 error / 13492 skip / 48317 total / 34813
   pass-or-fail executed**.
+- Direct `new import(...)` and property-access variants now produce early
+  SyntaxError, while parenthesized `new (import(...))` remains a valid
+  NewExpression constructor operand. Standard dynamic-import syntax is complete
+  at **251/251**, including import-attributes trailing-comma grammar; source and
+  defer proposals remain excluded. Exact coverage is **598/598** and the
+  supported subset is **12209/12209**. CI `29207058820` and `test262-full`
+  `29207058806` pass for commit `954de2f`; artifacts move only expressions by
+  **+251 pass / -251 skip** to **28344 pass / 6720 fail / 12 timeout / 0 error /
+  13241 skip / 48317 total / 35064 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

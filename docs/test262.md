@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.1% of all matrix files; 80.7% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.7% of all matrix files; 80.8% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -331,6 +331,21 @@ Downloaded artifacts change only expressions by **+65 pass / -65 skip**,
 producing **28093 pass / 6720 fail / 12 timeout / 0 error / 13492 skip / 48317
 total / 34813 pass-or-fail executed**, or **80.7%** of executed files and
 **58.1%** of the matrix.
+
+Standard dynamic-import syntax coverage is complete at **251/251**: 143 parse
+negatives and 108 valid forms, including the current `import-attributes`
+trailing-comma grammar. Direct `new import(...)` and property-access variants
+now raise early SyntaxError in every generated context, while parenthesized
+`new (import(...))` remains valid and fails only at runtime constructability as
+required. Exact paths lift `import-attributes` metadata in both runner and
+analyzer; source-phase and deferred-import proposal tests remain excluded.
+Exact dynamic-import coverage is **598 pass / 0 fail / 407 skip / 1005 total**;
+the supported subset is **12209 pass / 0 fail / 8230 skip / 20439 total**. CI
+`29207058820` and `test262-full` `29207058806` pass for commit `954de2f`.
+Downloaded artifacts change only expressions by **+251 pass / -251 skip**,
+producing **28344 pass / 6720 fail / 12 timeout / 0 error / 13241 skip / 48317
+total / 35064 pass-or-fail executed**, or **80.8%** of executed files and
+**58.7%** of the matrix.
 Focused WeakRef coverage check:
 `WeakRef` now uses a dedicated weak heap object whose object target is omitted
 from normal marking and cleared during sweep. Construction and `deref()` add
