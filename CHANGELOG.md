@@ -261,7 +261,10 @@
   entries are staged with their relative fixture graph in an isolated
   temporary directory instead of modifying the upstream checkout. The
   authoritative supported language subset remains **11589 pass / 0 fail /
-  8850 skip / 20439 total**.
+  8850 skip / 20439 total**. Feature commit `f0d5525` is confirmed by CI
+  `29174854010` and `test262-full` `29174854002`; downloaded artifacts are
+  **27207 pass / 6750 fail / 14498 skip / 12 timeout / 0 error / 48467
+  total**, exactly **+11 pass / -11 skip** with failures unchanged.
 - The first frozen ES Module source-goal slice admits 35 exact
   `language/module-code/` files at **35 pass / 0 fail / 0 skip**. Test262
   module files now execute through the CLI's real `--module` path; files that

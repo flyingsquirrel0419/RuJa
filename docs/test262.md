@@ -921,7 +921,13 @@ cached module environments through GC. Cyclic graphs currently produce an
 explicit SyntaxError rather than running with partial instantiation. The
 Test262 runner stages module entries and relative fixtures in an isolated
 temporary graph, leaving the pinned upstream checkout untouched. The supported
-subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. Feature
+commit `f0d5525` is confirmed by CI `29174854010` and `test262-full`
+`29174854002`. Downloaded artifacts aggregate to **27207 pass / 6750 fail /
+12 timeout / 0 error / 14498 skip / 48467 total / 33957 pass-or-fail
+executed**, or **80.1%** of pass-or-fail files and **56.1%** of the matrix.
+The admission moved exactly 11 files from skip to pass with fail, timeout, and
+error outcomes unchanged.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
