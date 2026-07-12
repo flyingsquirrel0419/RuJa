@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.6% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.6% of all matrix files; 80.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -1106,6 +1106,18 @@ change only expressions by **+32 pass / -32 skip**, producing **27823 pass /
 6720 fail / 12 timeout / 0 error / 13762 skip / 48317 total / 34543
 pass-or-fail executed**, or **80.5%** of executed files and **57.6%** of the
 matrix.
+
+The ordinary module-evaluation rejection family is now complete across its 32
+generated TypeError and URIError cases. The 30 newly admitted nested variants
+cover arrow functions, async functions, async generators, blocks, labels,
+branches, and loops while preserving the fixture's original error kind through
+the import Promise. Exact dynamic-import coverage is **107 pass / 0 fail / 898
+skip / 1005 total**; the supported subset is **11718 pass / 0 fail / 8721 skip
+/ 20439 total**. CI `29197086179` and `test262-full` `29197086220` pass for
+commit `14341e0`. Downloaded artifacts change only expressions by **+30 pass /
+-30 skip**, producing **27853 pass / 6720 fail / 12 timeout / 0 error / 13732
+skip / 48317 total / 34573 pass-or-fail executed**, or **80.6%** of executed
+files and **57.6%** of the matrix.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 

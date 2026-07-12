@@ -93,6 +93,14 @@
   move only expressions by **+32 pass / -32 skip** to **27823 pass / 6720 fail
   / 12 timeout / 0 error / 13762 skip / 48317 total / 34543 pass-or-fail
   executed**.
+- Dynamic import now admits all 32 generated module-evaluation rejection cases,
+  preserving fixture-thrown TypeError and URIError objects through Promise
+  rejection in nested arrow, async-function, async-generator, block, branch,
+  and loop contexts. Exact coverage is **107/107** and the supported subset is
+  **11718/11718**. CI `29197086179` and `test262-full` `29197086220` pass for
+  commit `14341e0`; artifacts move only expressions by **+30 pass / -30 skip**
+  to **27853 pass / 6720 fail / 12 timeout / 0 error / 13732 skip / 48317 total
+  / 34573 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
