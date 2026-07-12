@@ -11,10 +11,10 @@ from pathlib import Path
 
 try:
     from test262_support import append_async_harness, execute_source
-    from test262_module_admission import MODULE_STATIC_SEMANTICS_FILES
+    from test262_module_admission import MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_SYNTAX_FILES
 except ModuleNotFoundError:
     from tools.test262_support import append_async_harness, execute_source
-    from tools.test262_module_admission import MODULE_STATIC_SEMANTICS_FILES
+    from tools.test262_module_admission import MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_SYNTAX_FILES
 
 RUJA = str(Path(__file__).resolve().parent.parent / "target/release/ruja")
 TEST262 = os.environ.get("TEST262", "/root/test262")
@@ -134,6 +134,7 @@ MODULE_NAMESPACE_FILES = {
 }
 MODULE_CORE_FILES.update(MODULE_NAMESPACE_FILES)
 MODULE_CORE_FILES.update(MODULE_STATIC_SEMANTICS_FILES)
+MODULE_CORE_FILES.update(MODULE_TLA_SYNTAX_FILES)
 
 MODULE_NAMESPACE_FEATURES = {
     "Symbol", "Symbol.iterator", "Symbol.toStringTag", "Reflect",
@@ -1816,12 +1817,23 @@ def module_namespace_path(path):
         return False
     return rel.as_posix() in MODULE_NAMESPACE_FILES
 
+def module_tla_syntax_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in MODULE_TLA_SYNTAX_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
         feats.discard("generators")
     if path is not None and module_namespace_path(path):
         feats.difference_update(MODULE_NAMESPACE_FEATURES)
+    if path is not None and module_tla_syntax_path(path):
+        feats.difference_update({"top-level-await", "async-iteration"})
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):

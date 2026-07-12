@@ -23,6 +23,9 @@
   export names, including namespace re-exports, while rejecting string names
   without a required local import binding and lone-surrogate export names as
   early SyntaxErrors.
+- The frozen Test262 module admission now covers top-level `await` syntax in
+  module blocks, exports, classes, loops, and expression contexts while keeping
+  dynamic-import syntax and asynchronous module evaluation separately gated.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

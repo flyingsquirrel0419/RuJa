@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import test262_analyze
 import test262_runner
-from test262_module_admission import MODULE_STATIC_SEMANTICS_FILES
+from test262_module_admission import MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_SYNTAX_FILES
 from test262_support import ASYNC_COMPLETE, ASYNC_PRINT_SHIM, execute_source
 
 
@@ -439,6 +439,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         })
         expected = {f"language/module-code/{name}" for name in expected_names}
         expected.update(MODULE_STATIC_SEMANTICS_FILES)
+        expected.update(MODULE_TLA_SYNTAX_FILES)
         meta = {"flags": ["module"], "features": []}
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -482,6 +483,30 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertNotIn(malformed_upstream, MODULE_STATIC_SEMANTICS_FILES)
         for tool in (test262_runner, test262_analyze):
             self.assertTrue(MODULE_STATIC_SEMANTICS_FILES <= tool.MODULE_CORE_FILES)
+
+    def test_module_tla_syntax_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(MODULE_TLA_SYNTAX_FILES), 209)
+        admitted = (
+            "language/module-code/top-level-await/syntax/"
+            "top-level-await-expr-literal-number.js"
+        )
+        dynamic = "language/module-code/top-level-await/syntax/await-expr-dyn-import.js"
+        dynamic_parameter = "language/module-code/top-level-await/syntax/catch-parameter.js"
+        self.assertIn(admitted, MODULE_TLA_SYNTAX_FILES)
+        self.assertNotIn(dynamic, MODULE_TLA_SYNTAX_FILES)
+        self.assertNotIn(dynamic_parameter, MODULE_TLA_SYNTAX_FILES)
+        meta = {"flags": ["module"], "features": ["top-level-await"]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            path = root / "test" / admitted
+            for tool in (test262_runner, test262_analyze):
+                self.assertTrue(MODULE_TLA_SYNTAX_FILES <= tool.MODULE_CORE_FILES)
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, path))
+                finally:
+                    tool.TEST262 = original_root
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):

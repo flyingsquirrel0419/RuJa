@@ -1,5 +1,7 @@
 """Frozen Test262 module files admitted after static-semantics auditing."""
 
+from pathlib import Path
+
 MODULE_STATIC_SEMANTICS_FILES = frozenset(
     f"language/module-code/{name}"
     for name in (
@@ -95,4 +97,11 @@ MODULE_STATIC_SEMANTICS_FILES = frozenset(
         "parse-err-invoke-anon-fun-decl.js", "parse-err-semi-named-export-from.js",
         "parse-err-semi-named-export.js", "parse-export-empty.js",
     )
+)
+
+_TLA_SYNTAX_MANIFEST = Path(__file__).with_name("test262_tla_syntax_admission.txt")
+MODULE_TLA_SYNTAX_FILES = frozenset(
+    line
+    for raw_line in _TLA_SYNTAX_MANIFEST.read_text().splitlines()
+    if (line := raw_line.strip()) and not line.startswith("#")
 )

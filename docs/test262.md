@@ -1000,6 +1000,19 @@ or **80.4%** of pass-or-fail files and **56.7%** of the matrix. The module
 shard accounts for exactly **+125 pass / -125 skip**; fail, timeout, error, and
 every other shard are unchanged.
 
+The first top-level-await slice freezes 209 exact syntax files and brings
+`language/module-code/` to **502 pass / 0 fail / 97 skip / 599 total**. It
+verifies AwaitExpression grammar across top-level statements, nested blocks,
+exports, class heritage, `for await`, and other expression contexts while
+preserving module early errors and ordinary-function Await grammar boundaries.
+Two syntax files that require dynamic import remain gated. Runtime async-module
+evaluation is deliberately not claimed by this slice: pending Promise
+suspension, sibling dependency ordering, rejection propagation, and async SCC
+completion require a persistent Promise-returning module evaluator rather than
+the current synchronous DFS and microtask drain. The supported subset remains
+**11589 pass / 0 fail / 8850 skip / 20439 total**; CI and full-matrix evidence
+are recorded after the admission commit.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs
