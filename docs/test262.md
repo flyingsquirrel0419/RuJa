@@ -909,6 +909,20 @@ the matrix. Relative to the pre-module baseline, this is **+40 pass / -5 fail
 / -35 skip**; the module slice accounts for the 35 skip-to-pass moves and the
 AsyncFunction intrinsic closes five previously failing files.
 
+Focused ES Module graph check:
+The next frozen slice adds 11 exact `language/module-code/` files for exported
+var/let/const/function/generator/class declarations, side-effect imports,
+named imports with aliases and trailing commas, live binding updates, shared
+global state, and abrupt dependency completion. The subtree now reports
+**46 pass / 0 fail / 553 skip / 599 total**. `Vm::run_module_file` resolves
+relative canonical paths, links indirect environment bindings, evaluates each
+dependency once per Realm, validates named and star re-exports, and preserves
+cached module environments through GC. Cyclic graphs currently produce an
+explicit SyntaxError rather than running with partial instantiation. The
+Test262 runner stages module entries and relative fixtures in an isolated
+temporary graph, leaving the pinned upstream checkout untouched. The supported
+subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs

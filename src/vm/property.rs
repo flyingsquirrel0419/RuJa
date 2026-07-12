@@ -2591,6 +2591,14 @@ impl Vm {
         for v in self.realm_typed_array_constructors.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for module in self.module_records.values() {
+            roots.push(module.env.0);
+            if let Some(error) = &module.error {
+                if let Some(value) = &error.thrown_value {
+                    Self::push_value_roots(&mut roots, value);
+                }
+            }
+        }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
         roots.extend_from_slice(&self.gc_pins);
         roots.extend_from_slice(&self.kept_objects);

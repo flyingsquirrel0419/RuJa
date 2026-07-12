@@ -32,6 +32,7 @@ pub mod error;
 pub mod function;
 pub mod gc;
 pub mod lexer;
+mod module;
 pub mod parser;
 pub mod token;
 pub mod value;

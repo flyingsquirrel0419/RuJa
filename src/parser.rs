@@ -655,20 +655,351 @@ impl Parser {
         let has_strict_directive = self.peek_use_strict_directive();
         self.is_strict_context = has_strict_directive || self.is_strict_context;
         let mut body = Vec::new();
+        let mut module_requests = Vec::new();
+        let mut import_entries = Vec::new();
+        let mut export_entries = Vec::new();
         while !self.check(&TokenKind::Eof) {
-            body.push(self.parse_stmt()?);
+            if self.source_type == SourceType::Module && self.is_unescaped_ident("import") {
+                self.parse_import_declaration(&mut module_requests, &mut import_entries)?;
+            } else if self.source_type == SourceType::Module && self.is_unescaped_ident("export") {
+                if let Some(stmt) =
+                    self.parse_export_declaration(&mut module_requests, &mut export_entries)?
+                {
+                    body.push(stmt);
+                }
+            } else {
+                body.push(self.parse_stmt()?);
+            }
         }
         check_statement_list_declaration_early_errors(
             &body,
             self.is_strict_context,
             StatementListScope::Script,
         )?;
+        Self::check_module_early_errors(&body, &import_entries, &export_entries)?;
         Self::validate_private_names_statement_list(&body, inherited_private_names)?;
         Ok(Program {
             body,
             is_strict: self.is_strict_context,
             source_type: self.source_type,
+            module_requests,
+            import_entries,
+            export_entries,
         })
+    }
+
+    fn is_unescaped_ident(&self, word: &str) -> bool {
+        matches!(&self.peek_at_tok(0).kind, TokenKind::Ident(name) if name == word)
+            && !self.peek_at_tok(0).had_escape
+    }
+
+    fn eat_contextual(&mut self, word: &str) -> bool {
+        if self.is_unescaped_ident(word) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_contextual(&mut self, word: &str) -> error::Result<()> {
+        if self.eat_contextual(word) {
+            Ok(())
+        } else {
+            Err(error::Error::syntax(format!(
+                "Expected '{}', got {:?}",
+                word,
+                self.peek()
+            )))
+        }
+    }
+
+    /// Parse IdentifierName for module import/export names. Unlike binding
+    /// names, keywords such as `default` are permitted here.
+    fn parse_module_identifier_name(&mut self) -> error::Result<Arc<str>> {
+        let token = self.peek().clone();
+        let name = match token {
+            TokenKind::Ident(name) => name,
+            other => other.as_keyword_str().map(str::to_owned).ok_or_else(|| {
+                error::Error::syntax(format!("Expected module identifier name, got {:?}", other))
+            })?,
+        };
+        self.advance();
+        Ok(Arc::from(name.as_str()))
+    }
+
+    fn parse_module_binding_name(&mut self) -> error::Result<Arc<str>> {
+        let name = match self.peek().clone() {
+            TokenKind::Ident(name) => Arc::from(name.as_str()),
+            TokenKind::Undefined => Arc::from("undefined"),
+            TokenKind::Of => Arc::from("of"),
+            TokenKind::Async => Arc::from("async"),
+            TokenKind::Await if self.await_as_identifier_allowed() => Arc::from("await"),
+            TokenKind::Yield if self.yield_as_identifier_allowed() => Arc::from("yield"),
+            other => {
+                return Err(error::Error::syntax(format!(
+                    "Expected binding identifier, got {:?}",
+                    other
+                )))
+            }
+        };
+        self.advance();
+        self.check_binding_name(&name)?;
+        Ok(name)
+    }
+
+    fn parse_module_specifier(&mut self) -> error::Result<ModuleRequest> {
+        match self.advance() {
+            TokenKind::String(specifier) => Ok(ModuleRequest {
+                specifier: Arc::from(specifier.as_str()),
+            }),
+            other => Err(error::Error::syntax(format!(
+                "Expected module specifier string, got {:?}",
+                other
+            ))),
+        }
+    }
+
+    fn parse_import_declaration(
+        &mut self,
+        module_requests: &mut Vec<ModuleRequest>,
+        import_entries: &mut Vec<ImportEntry>,
+    ) -> error::Result<()> {
+        self.stmt_start_line = self.current_line();
+        self.advance(); // import
+        if matches!(self.peek(), TokenKind::String(_)) {
+            let request = self.parse_module_specifier()?;
+            self.expect_semi()?;
+            module_requests.push(request);
+            return Ok(());
+        }
+        if !self.eat(&TokenKind::LBrace) {
+            return Err(error::Error::syntax(
+                "Only named imports are supported".to_string(),
+            ));
+        }
+
+        let mut entries = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let import_name = self.parse_module_identifier_name()?;
+            let local_name = if self.eat_contextual("as") {
+                self.parse_module_binding_name()?
+            } else {
+                self.check_binding_name(&import_name)?;
+                import_name.clone()
+            };
+            entries.push((import_name, local_name));
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            if self.check(&TokenKind::RBrace) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace, "}")?;
+        self.expect_contextual("from")?;
+        let request = self.parse_module_specifier()?;
+        self.expect_semi()?;
+        for (import_name, local_name) in entries {
+            import_entries.push(ImportEntry {
+                module_request: request.clone(),
+                import_name,
+                local_name,
+            });
+        }
+        module_requests.push(request);
+        Ok(())
+    }
+
+    fn parse_export_specifiers(&mut self) -> error::Result<Vec<(Arc<str>, Arc<str>)>> {
+        self.expect(&TokenKind::LBrace, "{")?;
+        let mut specifiers = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let local_name = self.parse_module_identifier_name()?;
+            let export_name = if self.eat_contextual("as") {
+                self.parse_module_identifier_name()?
+            } else {
+                local_name.clone()
+            };
+            specifiers.push((local_name, export_name));
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+            if self.check(&TokenKind::RBrace) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RBrace, "}")?;
+        Ok(specifiers)
+    }
+
+    fn parse_export_declaration(
+        &mut self,
+        module_requests: &mut Vec<ModuleRequest>,
+        export_entries: &mut Vec<ExportEntry>,
+    ) -> error::Result<Option<Stmt>> {
+        self.stmt_start_line = self.current_line();
+        self.advance(); // export
+        if self.check(&TokenKind::Default) {
+            return Err(error::Error::syntax(
+                "Export default declarations are not supported".to_string(),
+            ));
+        }
+        if self.eat(&TokenKind::Star) {
+            if self.eat_contextual("as") {
+                return Err(error::Error::syntax(
+                    "Namespace exports are not supported".to_string(),
+                ));
+            }
+            self.expect_contextual("from")?;
+            let request = self.parse_module_specifier()?;
+            self.expect_semi()?;
+            export_entries.push(ExportEntry::Star {
+                module_request: request.clone(),
+            });
+            module_requests.push(request);
+            return Ok(None);
+        }
+        if self.check(&TokenKind::LBrace) {
+            let specifiers = self.parse_export_specifiers()?;
+            if self.eat_contextual("from") {
+                let request = self.parse_module_specifier()?;
+                self.expect_semi()?;
+                for (import_name, export_name) in specifiers {
+                    export_entries.push(ExportEntry::ReExport {
+                        module_request: request.clone(),
+                        import_name,
+                        export_name,
+                    });
+                }
+                module_requests.push(request);
+            } else {
+                self.expect_semi()?;
+                for (local_name, export_name) in specifiers {
+                    export_entries.push(ExportEntry::Local {
+                        local_name,
+                        export_name,
+                    });
+                }
+            }
+            return Ok(None);
+        }
+
+        let stmt = match self.peek() {
+            TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl()?,
+            TokenKind::Function => self.parse_function_decl()?,
+            TokenKind::Async
+                if matches!(self.peek_at_tok(1).kind, TokenKind::Function)
+                    && !self.peek_at_tok(1).preceded_by_newline =>
+            {
+                self.advance();
+                self.parse_function_decl_with_async(true)?
+            }
+            TokenKind::Class => self.parse_class_decl()?,
+            _ => {
+                return Err(error::Error::syntax(
+                    "Expected export declaration".to_string(),
+                ))
+            }
+        };
+        let mut names = Vec::new();
+        Self::collect_top_level_decl_names(&stmt.node, &mut names);
+        if names.is_empty() {
+            return Err(error::Error::syntax(
+                "Expected named export declaration".to_string(),
+            ));
+        }
+        for name in names {
+            export_entries.push(ExportEntry::Local {
+                local_name: name.clone(),
+                export_name: name,
+            });
+        }
+        Ok(Some(stmt))
+    }
+
+    fn collect_top_level_decl_names(node: &StmtNode, names: &mut Vec<Arc<str>>) {
+        match node {
+            StmtNode::VarDecl { decls, .. } => {
+                names.extend(decls.iter().map(|(name, _)| name.clone()));
+            }
+            StmtNode::Destructure { pattern, .. } => collect_pattern_names(pattern, names),
+            StmtNode::FunctionDecl(function) => {
+                if let Some(name) = &function.name {
+                    names.push(name.clone());
+                }
+            }
+            StmtNode::ExprStmt(Expr::Class(class)) if class.is_declaration => {
+                if let Some(name) = &class.name {
+                    names.push(name.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn check_module_early_errors(
+        body: &[Stmt],
+        import_entries: &[ImportEntry],
+        export_entries: &[ExportEntry],
+    ) -> error::Result<()> {
+        let mut lexical = Vec::new();
+        let mut vars = Vec::new();
+        for stmt in body {
+            collect_decl_names(
+                &stmt.node,
+                &mut lexical,
+                &mut vars,
+                true,
+                StatementListScope::Script,
+            );
+        }
+        let declared: Vec<Arc<str>> = lexical.into_iter().chain(vars).collect();
+        let mut import_names = Vec::new();
+        for import in import_entries {
+            if import_names.contains(&import.local_name) || declared.contains(&import.local_name) {
+                return Err(error::Error::syntax(format!(
+                    "Identifier '{}' has already been declared",
+                    import.local_name
+                )));
+            }
+            import_names.push(import.local_name.clone());
+        }
+
+        let mut exported_names = Vec::new();
+        for export in export_entries {
+            match export {
+                ExportEntry::Local {
+                    local_name,
+                    export_name,
+                } => {
+                    if !declared.contains(local_name) && !import_names.contains(local_name) {
+                        return Err(error::Error::syntax(format!(
+                            "Export '{}' is not defined",
+                            local_name
+                        )));
+                    }
+                    if exported_names.contains(export_name) {
+                        return Err(error::Error::syntax(format!(
+                            "Duplicate export name '{}'",
+                            export_name
+                        )));
+                    }
+                    exported_names.push(export_name.clone());
+                }
+                ExportEntry::ReExport { export_name, .. } => {
+                    if exported_names.contains(export_name) {
+                        return Err(error::Error::syntax(format!(
+                            "Duplicate export name '{}'",
+                            export_name
+                        )));
+                    }
+                    exported_names.push(export_name.clone());
+                }
+                ExportEntry::Star { .. } => {}
+            }
+        }
+        Ok(())
     }
 
     /// Peek the token stream for a leading `"use strict"` string-literal
@@ -6387,6 +6718,192 @@ mod tests {
                 assert_eq!(decls[0].0.as_ref(), "x");
             }
             other => panic!("{:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_module_import_export_metadata() {
+        let p = Parser::parse_module(
+            r#"
+                import "side-effect";
+                import { x, x as y, } from "dep";
+                export var a = 1;
+                export let b = 2;
+                export const c = 3;
+                export function f() {}
+                export class C {}
+                export { a as renamed, y, };
+                export { remote as reexported, } from "other";
+                export * from "all";
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(p.body.len(), 5);
+        assert!(matches!(p.body[0].node, StmtNode::VarDecl { .. }));
+        assert!(matches!(p.body[3].node, StmtNode::FunctionDecl(_)));
+        assert!(matches!(p.body[4].node, StmtNode::ExprStmt(Expr::Class(_))));
+        assert_eq!(
+            p.module_requests,
+            vec![
+                ModuleRequest {
+                    specifier: Arc::from("side-effect"),
+                },
+                ModuleRequest {
+                    specifier: Arc::from("dep"),
+                },
+                ModuleRequest {
+                    specifier: Arc::from("other"),
+                },
+                ModuleRequest {
+                    specifier: Arc::from("all"),
+                },
+            ]
+        );
+        assert_eq!(
+            p.import_entries,
+            vec![
+                ImportEntry {
+                    module_request: ModuleRequest {
+                        specifier: Arc::from("dep"),
+                    },
+                    import_name: Arc::from("x"),
+                    local_name: Arc::from("x"),
+                },
+                ImportEntry {
+                    module_request: ModuleRequest {
+                        specifier: Arc::from("dep"),
+                    },
+                    import_name: Arc::from("x"),
+                    local_name: Arc::from("y"),
+                },
+            ]
+        );
+        assert_eq!(
+            p.export_entries,
+            vec![
+                ExportEntry::Local {
+                    local_name: Arc::from("a"),
+                    export_name: Arc::from("a"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("b"),
+                    export_name: Arc::from("b"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("c"),
+                    export_name: Arc::from("c"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("f"),
+                    export_name: Arc::from("f"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("C"),
+                    export_name: Arc::from("C"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("a"),
+                    export_name: Arc::from("renamed"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("y"),
+                    export_name: Arc::from("y"),
+                },
+                ExportEntry::ReExport {
+                    module_request: ModuleRequest {
+                        specifier: Arc::from("other"),
+                    },
+                    import_name: Arc::from("remote"),
+                    export_name: Arc::from("reexported"),
+                },
+                ExportEntry::Star {
+                    module_request: ModuleRequest {
+                        specifier: Arc::from("all"),
+                    },
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_module_import_export_early_errors_and_escapes() {
+        for src in [
+            "import { x } from 'dep'; let x;",
+            "import { x as y, z as y } from 'dep';",
+            "export { missing };",
+            "var x; export { x }; export { x as x };",
+            "import { x \\u0061s y } from 'dep';",
+            "import { x } \\u0066rom 'dep';",
+            "export { x \\u0061s y };",
+            "\\u0069mport 'dep';",
+            "\\u0065xport var x;",
+            "export default 1;",
+            "import defaultName from 'dep';",
+            "import * as ns from 'dep';",
+            "export * as ns from 'dep';",
+        ] {
+            assert!(Parser::parse_module(src).is_err(), "{src}");
+        }
+
+        let p =
+            Parser::parse_module("import { x as \\u0061s, } from 'dep'; export { as, };").unwrap();
+        assert_eq!(p.import_entries[0].local_name.as_ref(), "as");
+        assert_eq!(
+            p.export_entries[0],
+            ExportEntry::Local {
+                local_name: Arc::from("as"),
+                export_name: Arc::from("as"),
+            }
+        );
+
+        assert!(Parser::parse_module(
+            "import { a as async, b as undefined, c as of } from 'dep'; export { async, undefined, of };"
+        )
+        .is_ok());
+
+        assert!(Parser::parse_module(
+            "export { x as publicX }; import { original as x } from 'dep';"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn parse_module_export_declaration_variants() {
+        let p = Parser::parse_module(
+            "export const { x, y: z } = value; export async function load() {}",
+        )
+        .unwrap();
+
+        assert_eq!(p.body.len(), 2);
+        assert!(matches!(p.body[0].node, StmtNode::Destructure { .. }));
+        assert!(matches!(p.body[1].node, StmtNode::FunctionDecl(_)));
+        assert_eq!(
+            p.export_entries,
+            vec![
+                ExportEntry::Local {
+                    local_name: Arc::from("x"),
+                    export_name: Arc::from("x"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("z"),
+                    export_name: Arc::from("z"),
+                },
+                ExportEntry::Local {
+                    local_name: Arc::from("load"),
+                    export_name: Arc::from("load"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn import_export_are_module_top_level_only() {
+        for src in ["import 'dep';", "export var x;"] {
+            assert!(Parser::parse(src).is_err(), "{src}");
+        }
+        for src in ["{ import 'dep'; }", "if (true) export var x;"] {
+            assert!(Parser::parse_module(src).is_err(), "{src}");
         }
     }
 

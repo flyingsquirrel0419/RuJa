@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- File-backed ES Module graphs now parse and link side-effect and named
+  imports, local/named/star exports, dependency-first evaluation, immutable
+  live import bindings, abrupt dependency completion, and a canonical-path
+  Realm cache. Cyclic graphs are rejected until declaration instantiation is
+  split from evaluation; default and namespace forms remain follow-up work.
 - Programs now carry an explicit Script or Module source type. `Vm::run_module`
   and CLI `--module`/`.mjs` execution use implicit strict mode, an isolated
   declarative top-level environment, undefined top-level `this`, module-aware
@@ -251,6 +256,12 @@
 
 ### Test tooling
 
+- The frozen Module graph slice adds 11 exact `language/module-code/` files,
+  bringing that subtree to **46 pass / 0 fail / 553 skip**. Test262 module
+  entries are staged with their relative fixture graph in an isolated
+  temporary directory instead of modifying the upstream checkout. The
+  authoritative supported language subset remains **11589 pass / 0 fail /
+  8850 skip / 20439 total**.
 - The first frozen ES Module source-goal slice admits 35 exact
   `language/module-code/` files at **35 pass / 0 fail / 0 skip**. Test262
   module files now execute through the CLI's real `--module` path; files that

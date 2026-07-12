@@ -401,10 +401,46 @@ pub struct Program {
     /// `"use strict"` directive prologue or an inherited strict context.
     pub is_strict: bool,
     pub source_type: SourceType,
+    /// Module specifiers requested by top-level import/re-export declarations.
+    /// Empty for Script source text.
+    pub module_requests: Vec<ModuleRequest>,
+    /// Import bindings declared by a Module source text. Side-effect-only
+    /// imports contribute a ModuleRequest but no ImportEntry.
+    pub import_entries: Vec<ImportEntry>,
+    /// Export bindings and re-exports declared by a Module source text.
+    pub export_entries: Vec<ExportEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceType {
     Script,
     Module,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleRequest {
+    pub specifier: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportEntry {
+    pub module_request: ModuleRequest,
+    pub import_name: Arc<str>,
+    pub local_name: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExportEntry {
+    Local {
+        local_name: Arc<str>,
+        export_name: Arc<str>,
+    },
+    ReExport {
+        module_request: ModuleRequest,
+        import_name: Arc<str>,
+        export_name: Arc<str>,
+    },
+    Star {
+        module_request: ModuleRequest,
+    },
 }

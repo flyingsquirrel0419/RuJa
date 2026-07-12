@@ -144,6 +144,7 @@ pub struct Vm {
     /// constructor. Same-type copy methods must not consult mutable globals.
     pub(crate) realm_typed_array_constructors:
         HashMap<(usize, crate::value::TypedArrayKind), Value>,
+    pub(crate) module_records: HashMap<std::path::PathBuf, crate::module::ModuleRecord>,
     pub(crate) functions: Vec<Arc<crate::function::FunctionDef>>,
     /// Optional execution fuel: when set, each dispatched opcode decrements
     /// this; reaching zero throws a "fuel exhausted" RangeError. `None` means
@@ -496,6 +497,7 @@ impl Vm {
             realm_error_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),
+            module_records: HashMap::new(),
             functions: Vec::new(),
             fuel: None,
             max_heap_objects: 0,
@@ -661,6 +663,11 @@ impl Vm {
     /// point establishes the strict, declarative module execution context.
     pub fn run_module(&mut self, src: &str) -> error::Result<Value> {
         let program = crate::parser::Parser::parse_module(src)?;
+        if !program.module_requests.is_empty() {
+            return Err(Error::syntax(
+                "Module requests require run_module_file with a resolvable origin",
+            ));
+        }
         let module_env = crate::environment::new_env(&self.heap, Some(self.global), true)?;
         crate::environment::declare(
             &self.heap,
@@ -699,7 +706,12 @@ impl Vm {
         result
     }
 
-    fn execute_chunk(&mut self, chunk: Chunk, env: GcIdx, this_val: Value) -> error::Result<Value> {
+    pub(crate) fn execute_chunk(
+        &mut self,
+        chunk: Chunk,
+        env: GcIdx,
+        this_val: Value,
+    ) -> error::Result<Value> {
         let chunk = Arc::new(chunk);
         let stack_base = self.stack.len();
         self.frames.push(CallFrame::new(
@@ -2188,7 +2200,11 @@ impl Vm {
                                                 None, None,
                                             );
                                         }
-                                        if b.kind == crate::value::BindingKind::Const {
+                                        if matches!(
+                                            b.kind,
+                                            crate::value::BindingKind::Const
+                                                | crate::value::BindingKind::Import
+                                        ) {
                                             return (
                                                 false, true, false, false, false, false, false,
                                                 None, None,

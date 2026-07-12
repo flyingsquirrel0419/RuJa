@@ -361,7 +361,8 @@ impl Vm {
                     match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
                     {
                         crate::environment::SetOutcome::Set => {}
-                        crate::environment::SetOutcome::Const => {
+                        crate::environment::SetOutcome::Const
+                        | crate::environment::SetOutcome::Import => {
                             return Err(Error::type_err(format!(
                                 "Assignment to constant variable '{}'",
                                 name
@@ -510,7 +511,8 @@ impl Vm {
                     match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
                     {
                         crate::environment::SetOutcome::Set => {}
-                        crate::environment::SetOutcome::Const => {
+                        crate::environment::SetOutcome::Const
+                        | crate::environment::SetOutcome::Import => {
                             return Err(Error::type_err(format!(
                                 "Assignment to constant variable '{}'",
                                 name
@@ -894,7 +896,8 @@ impl Vm {
                     match crate::environment::set_checked(&self.heap, cur_env, &name, value.clone())
                     {
                         crate::environment::SetOutcome::Set => {}
-                        crate::environment::SetOutcome::Const => {
+                        crate::environment::SetOutcome::Const
+                        | crate::environment::SetOutcome::Import => {
                             return Err(Error::type_err(format!(
                                 "Assignment to constant variable '{}'",
                                 name
@@ -975,16 +978,17 @@ impl Vm {
                     let mut found = false;
                     let mut cur_env = Some(env);
                     while let Some(e_idx) = cur_env {
-                        let (binding_val, in_tdz, has_with, with_obj_val, parent) =
+                        let (binding_val, indirect, in_tdz, has_with, with_obj_val, parent) =
                             self.heap.with_obj(e_idx.0, |obj| {
                                 if let HeapObj::Environment(e) = obj {
                                     // 1. Check var/let/const bindings.
                                     if let Some(b) = e.vars.lock().get(name.as_str()) {
                                         if !b.initialized.load(Ordering::Relaxed) {
-                                            return (None, true, false, None, None);
+                                            return (None, None, true, false, None, None);
                                         }
                                         return (
                                             Some(b.value.lock().clone()),
+                                            b.indirect.clone(),
                                             false,
                                             false,
                                             None,
@@ -995,15 +999,16 @@ impl Vm {
                                     if let Some(with_obj) = e.with_object.lock().clone() {
                                         return (
                                             None,
+                                            None,
                                             false,
                                             true,
                                             Some(with_obj),
                                             *e.parent.lock(),
                                         );
                                     }
-                                    return (None, false, false, None, *e.parent.lock());
+                                    return (None, None, false, false, None, *e.parent.lock());
                                 }
-                                (None, false, false, None, None)
+                                (None, None, false, false, None, None)
                             });
                         if in_tdz {
                             return Err(Error::reference(format!(
@@ -1011,7 +1016,25 @@ impl Vm {
                                 name
                             )));
                         }
-                        if let Some(v) = binding_val {
+                        if let Some((_target_env, _target_name)) = indirect {
+                            match crate::environment::get_checked(&self.heap, e_idx, &name) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) | Err(false) => {
+                                    return Err(Error::reference(format!(
+                                        "{} is not defined",
+                                        name
+                                    )))
+                                }
+                                Err(true) => {
+                                    return Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    )))
+                                }
+                            }
+                            found = true;
+                            break;
+                        } else if let Some(v) = binding_val {
                             self.stack.push(v);
                             found = true;
                             break;
@@ -1072,7 +1095,8 @@ impl Vm {
                         match crate::environment::set_checked(&self.heap, env, &name, value.clone())
                         {
                             crate::environment::SetOutcome::Set => {}
-                            crate::environment::SetOutcome::Const => {
+                            crate::environment::SetOutcome::Const
+                            | crate::environment::SetOutcome::Import => {
                                 return Err(Error::type_err(format!(
                                     "Assignment to constant variable '{}'",
                                     name

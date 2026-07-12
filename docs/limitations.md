@@ -62,9 +62,12 @@ guarantees, run RuJa in a separately killable process as well.
   allows hosts to execute one microtask at a time cooperatively.
 - `Vm::run_module`, CLI `--module`, and `.mjs` files use the Module source goal:
   code is implicitly strict, top-level `this` is `undefined`, and top-level
-  declarations live in a module-local declarative environment. Static
-  `import`/`export`, module resolution/linking, live imported bindings, module
-  namespaces, cycles, and dynamic import are not implemented yet.
+  declarations live in a module-local declarative environment. File-backed
+  module graphs support relative side-effect and named imports, local/named/
+  star exports, live imported bindings, dependency-first evaluation, and
+  canonical-path caching. Default imports/exports, namespace objects, cyclic
+  graph declaration instantiation, bare-specifier host resolution, import
+  attributes, and dynamic import are not implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full

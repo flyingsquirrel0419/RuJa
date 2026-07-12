@@ -1,8 +1,10 @@
 """Shared process and async-harness support for RuJa's test262 tools."""
 
 import os
+import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 
 ASYNC_COMPLETE = "Test262:AsyncTestComplete"
@@ -56,12 +58,33 @@ def classify_result(meta, returncode, stdout, stderr):
     return "fail", out
 
 
-def execute_source(source, meta, ruja, timeout=8):
+def execute_source(source, meta, ruja, timeout=8, source_path=None):
     """Execute one assembled test262 source and classify its result."""
     try:
-        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as test_file:
-            test_file.write(source)
-            path = test_file.name
+        staging = None
+        if source_path is not None:
+            original = Path(source_path).resolve()
+            staging = tempfile.TemporaryDirectory(prefix="ruja-test262-module-")
+            staging_dir = Path(staging.name)
+            for sibling in original.parent.iterdir():
+                destination = staging_dir / sibling.name
+                try:
+                    destination.symlink_to(sibling, target_is_directory=sibling.is_dir())
+                except OSError:
+                    if sibling.is_dir():
+                        shutil.copytree(sibling, destination)
+                    else:
+                        shutil.copy2(sibling, destination)
+            path = staging_dir / original.name
+            if path.exists() or path.is_symlink():
+                path.unlink()
+            path.write_text(source)
+        else:
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".js", prefix=".ruja-test262-", delete=False
+            ) as test_file:
+                test_file.write(source)
+                path = Path(test_file.name)
         try:
             process_env = os.environ.copy()
             flags = meta.get("flags", [])
@@ -72,7 +95,7 @@ def execute_source(source, meta, ruja, timeout=8):
             command = [ruja]
             if "module" in flags:
                 command.append("--module")
-            command.append(path)
+            command.append(str(path))
             result = subprocess.run(
                 command,
                 capture_output=True,
@@ -81,7 +104,10 @@ def execute_source(source, meta, ruja, timeout=8):
                 env=process_env,
             )
         finally:
-            os.unlink(path)
+            if staging is not None:
+                staging.cleanup()
+            else:
+                os.unlink(path)
         return classify_result(
             meta, result.returncode, result.stdout, result.stderr
         )

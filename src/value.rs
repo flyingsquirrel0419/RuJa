@@ -689,6 +689,8 @@ pub struct EnvironmentData {
 pub struct Binding {
     pub value: Mutex<Value>,
     pub kind: BindingKind,
+    /// Target environment and binding name for an immutable live import.
+    pub indirect: Option<(GcIdx, Arc<str>)>,
     pub initialized: AtomicBool,
     pub deletable: bool,
 }
@@ -702,6 +704,7 @@ pub enum BindingKind {
     /// to this environment binding; strict code throws, sloppy code ignores.
     FunctionName,
     Const,
+    Import,
 }
 
 pub struct MapData {

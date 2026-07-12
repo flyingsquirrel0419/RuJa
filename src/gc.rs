@@ -104,6 +104,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
     if let HeapObj::Environment(e) = obj {
         for (_, b) in e.vars.lock().iter() {
             push_value(&b.value.lock(), worklist);
+            if let Some((target, _)) = &b.indirect {
+                worklist.push(target.0);
+            }
         }
         if let Some(p) = *e.parent.lock() {
             worklist.push(p.0);
@@ -165,6 +168,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         HeapObj::Environment(e) => {
             for (_, b) in e.vars.lock().iter() {
                 push_value(&b.value.lock(), worklist);
+                if let Some((target, _)) = &b.indirect {
+                    worklist.push(target.0);
+                }
             }
             if let Some(p) = *e.parent.lock() {
                 worklist.push(p.0);

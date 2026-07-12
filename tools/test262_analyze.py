@@ -33,6 +33,12 @@ MODULE_CORE_FILES = {
         "instn-local-bndng-var-dup.js", "instn-local-bndng-var.js",
         "parse-err-hoist-lex-fun.js", "parse-err-return.js",
         "parse-err-syntax-1.js", "parse-err-syntax-2.js", "parse-err-yield.js",
+        "instn-local-bndng-export-var.js", "instn-local-bndng-export-let.js",
+        "instn-local-bndng-export-const.js", "instn-local-bndng-export-fun.js",
+        "instn-local-bndng-export-gen.js", "instn-local-bndng-export-cls.js",
+        "eval-gtbndng-indirect-update.js", "eval-gtbndng-indirect-update-as.js",
+        "eval-gtbndng-indirect-trlng-comma.js", "instn-same-global.js",
+        "eval-rqstd-abrupt.js",
     )
 }
 
@@ -1900,7 +1906,10 @@ def run_test(path):
     if should_skip(meta, path):
         return 'skip', ''
     timeout = 600 if typed_array_copy_within_extended_timeout_path(path) else 8
-    return execute_source(full, meta, RUJA, timeout=timeout)
+    source_path = path if "module" in meta.get("flags", []) else None
+    return execute_source(
+        full, meta, RUJA, timeout=timeout, source_path=source_path
+    )
 
 def bucket(err):
     if not err:

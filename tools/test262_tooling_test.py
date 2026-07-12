@@ -81,6 +81,44 @@ class CanBlockEnvironmentTests(unittest.TestCase):
                 )
 
 
+class ModuleStagingTests(unittest.TestCase):
+    def test_module_graph_is_staged_without_writing_to_the_source_tree(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_dir = Path(temp_dir)
+            entry = source_dir / "entry.js"
+            fixture = source_dir / "dependency_FIXTURE.js"
+            entry.write_text("import './dependency_FIXTURE.js';")
+            fixture.write_text("export const value = 1;")
+            before = set(source_dir.iterdir())
+            observed = {}
+
+            def run_process(command, **kwargs):
+                staged_entry = Path(command[-1])
+                observed["parent"] = staged_entry.parent
+                observed["fixture_exists"] = (
+                    staged_entry.parent / "dependency_FIXTURE.js"
+                ).exists()
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="", stderr=""
+                )
+
+            with patch(
+                "test262_support.subprocess.run", side_effect=run_process
+            ):
+                self.assertEqual(
+                    execute_source(
+                        "import './dependency_FIXTURE.js';",
+                        {"flags": ["module"]},
+                        "ruja",
+                        source_path=entry,
+                    ),
+                    ("pass", ""),
+                )
+                self.assertNotEqual(observed["parent"], source_dir)
+                self.assertTrue(observed["fixture_exists"])
+            self.assertEqual(set(source_dir.iterdir()), before)
+
+
 class HarnessAssemblyTests(unittest.TestCase):
     def test_strict_directive_precedes_async_harness_in_both_tools(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -283,6 +321,12 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "instn-local-bndng-var-dup.js", "instn-local-bndng-var.js",
             "parse-err-hoist-lex-fun.js", "parse-err-return.js",
             "parse-err-syntax-1.js", "parse-err-syntax-2.js", "parse-err-yield.js",
+            "instn-local-bndng-export-var.js", "instn-local-bndng-export-let.js",
+            "instn-local-bndng-export-const.js", "instn-local-bndng-export-fun.js",
+            "instn-local-bndng-export-gen.js", "instn-local-bndng-export-cls.js",
+            "eval-gtbndng-indirect-update.js", "eval-gtbndng-indirect-update-as.js",
+            "eval-gtbndng-indirect-trlng-comma.js", "instn-same-global.js",
+            "eval-rqstd-abrupt.js",
         }
         expected = {f"language/module-code/{name}" for name in expected_names}
         meta = {"flags": ["module"], "features": []}

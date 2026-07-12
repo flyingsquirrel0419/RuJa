@@ -47,6 +47,7 @@ pub fn clone_lexical_env(heap: &Heap, env: GcIdx) -> Result<GcIdx, crate::gc::He
                         crate::value::Binding {
                             value: Mutex::new(b.value.lock().clone()),
                             kind: b.kind,
+                            indirect: b.indirect.clone(),
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
                             ),
@@ -91,6 +92,7 @@ pub fn clone_loop_vars(
                         crate::value::Binding {
                             value: Mutex::new(b.value.lock().clone()),
                             kind: b.kind,
+                            indirect: b.indirect.clone(),
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
                             ),
@@ -140,6 +142,7 @@ pub fn clone_loop_vars_to_sibling(
                         crate::value::Binding {
                             value: Mutex::new(b.value.lock().clone()),
                             kind: b.kind,
+                            indirect: b.indirect.clone(),
                             initialized: AtomicBool::new(
                                 b.initialized.load(std::sync::atomic::Ordering::Relaxed),
                             ),
@@ -215,6 +218,7 @@ pub fn declare(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: BindingK
                 crate::value::Binding {
                     value: Mutex::new(value.clone()),
                     kind,
+                    indirect: None,
                     initialized: AtomicBool::new(true),
                     deletable: false,
                 },
@@ -247,7 +251,33 @@ pub fn declare_uninit(heap: &Heap, env: GcIdx, name: &str, kind: BindingKind) {
                 crate::value::Binding {
                     value: Mutex::new(Value::Undefined),
                     kind,
+                    indirect: None,
                     initialized: AtomicBool::new(false),
+                    deletable: false,
+                },
+            );
+        }
+    });
+}
+
+/// Create an immutable live import binding that resolves through the target
+/// module environment on every read.
+pub fn declare_import(
+    heap: &Heap,
+    env: GcIdx,
+    local_name: &str,
+    target_env: GcIdx,
+    target_name: Arc<str>,
+) {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(e) = obj {
+            e.vars.lock().insert(
+                Arc::from(local_name),
+                crate::value::Binding {
+                    value: Mutex::new(Value::Undefined),
+                    kind: BindingKind::Import,
+                    indirect: Some((target_env, target_name)),
+                    initialized: AtomicBool::new(true),
                     deletable: false,
                 },
             );
@@ -277,23 +307,39 @@ pub fn with_objects(heap: &Heap, env: GcIdx) -> Vec<Value> {
     out
 }
 /// Get a binding, returning an error if it exists but is in the TDZ.
-pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Option<Value>, bool> {
+fn get_checked_inner(
+    heap: &Heap,
+    env: GcIdx,
+    name: &str,
+    seen: &mut std::collections::HashSet<(usize, Arc<str>)>,
+) -> Result<Option<Value>, bool> {
     let mut cur = Some(env);
     while let Some(e_idx) = cur {
-        let (val, in_tdz, parent) = heap.with_obj(e_idx.0, |obj| {
+        let (val, indirect, in_tdz, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
                 if let Some(b) = e.vars.lock().get(name) {
                     if !b.initialized.load(Ordering::Relaxed) {
-                        return (None, true, None);
+                        return (None, None, true, None);
                     }
-                    return (Some(b.value.lock().clone()), false, None);
+                    return (
+                        Some(b.value.lock().clone()),
+                        b.indirect.clone(),
+                        false,
+                        None,
+                    );
                 }
-                return (None, false, *e.parent.lock());
+                return (None, None, false, *e.parent.lock());
             }
-            (None, false, None)
+            (None, None, false, None)
         });
         if in_tdz {
             return Err(true);
+        }
+        if let Some((target_env, target_name)) = indirect {
+            if !seen.insert((target_env.0, target_name.clone())) {
+                return Err(true);
+            }
+            return get_checked_inner(heap, target_env, &target_name, seen);
         }
         if let Some(v) = val {
             return Ok(Some(v));
@@ -301,6 +347,11 @@ pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Option<Value>,
         cur = parent;
     }
     Err(false)
+}
+
+pub fn get_checked(heap: &Heap, env: GcIdx, name: &str) -> Result<Option<Value>, bool> {
+    let mut seen = std::collections::HashSet::new();
+    get_checked_inner(heap, env, name, &mut seen)
 }
 
 /// Initialize (or re-initialize) a binding's value and mark it initialized.
@@ -405,6 +456,7 @@ pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: Bi
                 crate::value::Binding {
                     value: Mutex::new(value),
                     kind,
+                    indirect: None,
                     initialized: AtomicBool::new(true),
                     deletable: false,
                 },
@@ -413,23 +465,7 @@ pub fn declare_typed(heap: &Heap, env: GcIdx, name: &str, value: Value, kind: Bi
     });
 }
 pub fn get(heap: &Heap, env: GcIdx, name: &str) -> Option<Value> {
-    let mut cur = Some(env);
-    while let Some(e_idx) = cur {
-        let (val, parent) = heap.with_obj(e_idx.0, |obj| {
-            if let HeapObj::Environment(e) = obj {
-                if let Some(b) = e.vars.lock().get(name) {
-                    return (Some(b.value.lock().clone()), None);
-                }
-                return (None, *e.parent.lock());
-            }
-            (None, None)
-        });
-        if let Some(v) = val {
-            return Some(v);
-        }
-        cur = parent;
-    }
-    None
+    get_checked(heap, env, name).ok().flatten()
 }
 
 pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
@@ -440,7 +476,10 @@ pub fn set(heap: &Heap, env: GcIdx, name: &str, value: Value) -> bool {
                 if let Some(b) = e.vars.lock().get(name) {
                     return (
                         true,
-                        matches!(b.kind, BindingKind::Const | BindingKind::FunctionName),
+                        matches!(
+                            b.kind,
+                            BindingKind::Const | BindingKind::FunctionName | BindingKind::Import
+                        ),
                         None,
                     );
                 }
@@ -472,6 +511,7 @@ pub enum SetOutcome {
     Set,
     Const,
     FunctionName,
+    Import,
     /// Binding exists but is in the TDZ (not yet initialized).
     Tdz,
     NotFound,
@@ -492,6 +532,9 @@ pub fn set_checked(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutc
                     }
                     if b.kind == BindingKind::Const {
                         return (SetOutcome::Const, None);
+                    }
+                    if b.kind == BindingKind::Import {
+                        return (SetOutcome::Import, None);
                     }
                     *b.value.lock() = value.clone();
                     return (SetOutcome::Set, None);
@@ -536,7 +579,10 @@ pub fn is_const(heap: &Heap, env: GcIdx, name: &str) -> bool {
         let (is_c, parent) = heap.with_obj(e_idx.0, |obj| {
             if let HeapObj::Environment(e) = obj {
                 if let Some(b) = e.vars.lock().get(name) {
-                    return (b.kind == BindingKind::Const, None);
+                    return (
+                        matches!(b.kind, BindingKind::Const | BindingKind::Import),
+                        None,
+                    );
                 }
                 return (false, *e.parent.lock());
             }
@@ -705,6 +751,7 @@ pub fn ensure_var_with_deletable(heap: &Heap, env: GcIdx, name: &str, deletable:
                     crate::value::Binding {
                         value: Mutex::new(Value::Undefined),
                         kind: BindingKind::Var,
+                        indirect: None,
                         initialized: AtomicBool::new(true),
                         deletable,
                     },
@@ -742,6 +789,7 @@ pub fn declare_var_with_deletable(
                     crate::value::Binding {
                         value: Mutex::new(Value::Undefined),
                         kind: BindingKind::Var,
+                        indirect: None,
                         initialized: AtomicBool::new(true),
                         deletable,
                     },
@@ -774,6 +822,7 @@ pub fn declare_var_with_deletable(
                     crate::value::Binding {
                         value: Mutex::new(value),
                         kind: BindingKind::Var,
+                        indirect: None,
                         initialized: AtomicBool::new(true),
                         deletable,
                     },

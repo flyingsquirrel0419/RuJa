@@ -133,16 +133,42 @@ fn error_kind_from_value(v: &Value, heap: &crate::gc::Heap) -> Option<ErrorKind>
     let Value::Object(idx) = v else {
         return None;
     };
-    heap.with_obj(idx.0, |obj| {
-        let name = obj
-            .props()
-            .lock()
-            .get(&PropertyKey::from("name"))
-            .and_then(|desc| match &desc.value {
-                Value::String(s) => Some(s.as_ref().to_string()),
+    let mut current = Some(*idx);
+    let mut seen = std::collections::HashSet::new();
+    while let Some(index) = current {
+        if !seen.insert(index.0) {
+            break;
+        }
+        let (name, parent) = heap.with_obj(index.0, |obj| {
+            let name = obj
+                .props()
+                .lock()
+                .get(&PropertyKey::from("name"))
+                .and_then(|desc| match &desc.value {
+                    Value::String(s) => Some(s.as_ref().to_string()),
+                    _ => None,
+                });
+            (name, obj.proto().lock().clone())
+        });
+        if let Some(name) = name {
+            return match name.as_str() {
+                "SyntaxError" => Some(ErrorKind::Syntax),
+                "ReferenceError" => Some(ErrorKind::Reference),
+                "TypeError" => Some(ErrorKind::Type),
+                "RangeError" => Some(ErrorKind::Range),
+                "EvalError" => Some(ErrorKind::Eval),
+                "URIError" => Some(ErrorKind::Uri),
+                "Error" => Some(ErrorKind::User),
                 _ => None,
-            })
-            .unwrap_or_else(|| obj.class_name().to_string());
+            };
+        }
+        current = match parent {
+            Some(Value::Object(parent)) => Some(parent),
+            _ => None,
+        };
+    }
+    heap.with_obj(idx.0, |obj| {
+        let name = obj.class_name().to_string();
         match name.as_str() {
             "SyntaxError" => Some(ErrorKind::Syntax),
             "ReferenceError" => Some(ErrorKind::Reference),
