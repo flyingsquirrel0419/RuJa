@@ -11,6 +11,7 @@ import test262_analyze
 import test262_runner
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
+from test262_json_parse_admission import JSON_PARSE_FILES
 from test262_module_admission import (
     MODULE_STATIC_SEMANTICS_FILES,
     MODULE_TLA_RUNTIME_FILES,
@@ -738,6 +739,41 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.import_meta_path(admitted_path))
                     self.assertFalse(tool.should_skip(meta, admitted_path))
                     self.assertTrue(tool.should_skip(meta, outside_path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_json_parse_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(JSON_PARSE_FILES), 77)
+        self.assertTrue(
+            all(path.startswith("built-ins/JSON/parse/") for path in JSON_PARSE_FILES)
+        )
+        admitted = "built-ins/JSON/parse/reviver-context-source-primitive-literal.js"
+        proxy_admitted = "built-ins/JSON/parse/revived-proxy.js"
+        outside = "built-ins/JSON/stringify/replacer.js"
+        self.assertIn(admitted, JSON_PARSE_FILES)
+        self.assertIn(proxy_admitted, JSON_PARSE_FILES)
+        self.assertNotIn(outside, JSON_PARSE_FILES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_path = root / "test" / admitted
+            proxy_path = root / "test" / proxy_admitted
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"features": ["json-parse-with-source"]}, admitted_path
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip({"features": ["Proxy"]}, proxy_path)
+                    )
+                    self.assertTrue(
+                        tool.should_skip({"features": ["Proxy"]}, outside_path)
+                    )
+                    self.assertTrue(tool.json_parse_path(admitted_path))
                 finally:
                     tool.TEST262 = original_root
 

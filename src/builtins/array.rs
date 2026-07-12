@@ -134,10 +134,7 @@ pub(crate) fn array_is_array(
     args: &[Value],
     _: Option<Value>,
 ) -> error::Result<Value> {
-    Ok(Value::Bool(is_array(
-        args.first().unwrap_or(&Value::Undefined),
-        &vm.heap,
-    )))
+    is_array_or_throw(vm, args.first().unwrap_or(&Value::Undefined)).map(Value::Bool)
 }
 pub(crate) fn array_push(vm: &mut Vm, args: &[Value], this: Option<Value>) -> error::Result<Value> {
     if let Some(Value::Object(idx)) = this {

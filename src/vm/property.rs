@@ -27,6 +27,39 @@ pub(crate) struct TypedArrayDefineDescriptor<'a> {
     pub(crate) writable: bool,
 }
 
+fn descriptor_same_value(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            (left.is_nan() && right.is_nan()) || left.to_bits() == right.to_bits()
+        }
+        _ => left == right,
+    }
+}
+
+fn compatible_complete_descriptor(
+    current: Option<&crate::value::PropertyDescriptor>,
+    desc: &crate::value::PropertyDescriptor,
+    extensible: bool,
+) -> bool {
+    let Some(current) = current else {
+        return extensible;
+    };
+    if current.configurable {
+        return true;
+    }
+    if desc.configurable
+        || desc.enumerable != current.enumerable
+        || desc.is_accessor != current.is_accessor
+    {
+        return false;
+    }
+    if current.is_accessor {
+        desc.get == current.get && desc.set == current.set
+    } else {
+        current.writable || (!desc.writable && descriptor_same_value(&desc.value, &current.value))
+    }
+}
+
 impl Vm {
     pub(crate) fn function_caller_value(&self, callee_idx: GcIdx) -> error::Result<Value> {
         let Some(frame_index) = self
@@ -481,12 +514,36 @@ impl Vm {
         self.define_own_property_or_throw(obj, key, crate::value::PropertyDescriptor::data(value))
     }
 
+    pub(crate) fn create_data_property(
+        &mut self,
+        obj: &Value,
+        key: crate::value::PropertyKey,
+        value: Value,
+    ) -> error::Result<bool> {
+        self.define_own_property(obj, key, crate::value::PropertyDescriptor::data(value))
+    }
+
     pub(crate) fn define_own_property_or_throw(
         &mut self,
         obj: &Value,
         key: crate::value::PropertyKey,
         desc: crate::value::PropertyDescriptor,
     ) -> error::Result<()> {
+        if self.define_own_property(obj, key, desc)? {
+            Ok(())
+        } else {
+            Err(Error::type_err(
+                "Cannot define property: descriptor is incompatible or object is not extensible",
+            ))
+        }
+    }
+
+    pub(crate) fn define_own_property(
+        &mut self,
+        obj: &Value,
+        key: crate::value::PropertyKey,
+        desc: crate::value::PropertyDescriptor,
+    ) -> error::Result<bool> {
         if let Value::Object(idx) = obj {
             let proxy_info = self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Proxy(proxy) = o {
@@ -504,7 +561,7 @@ impl Vm {
                 let (target, handler) = result?;
                 let trap = self.get_property(&handler, "defineProperty")?;
                 if trap.is_undefined() || trap.is_null() {
-                    return self.define_own_property_or_throw(&target, key, desc);
+                    return self.define_own_property(&target, key, desc);
                 }
                 let key_value = match &key {
                     crate::value::PropertyKey::Str(s) => Value::String(s.clone()),
@@ -517,9 +574,25 @@ impl Vm {
                     Some(handler),
                 )?;
                 if !self.to_boolean(&trap_result) {
-                    return Err(Error::type_err("Proxy defineProperty trap returned false"));
+                    return Ok(false);
                 }
-                return Ok(());
+                let target_desc =
+                    crate::builtins::own_property_descriptor_for_key_or_throw(self, &target, &key)?;
+                let extensible = self.is_extensible(&target)?;
+                if !compatible_complete_descriptor(target_desc.as_ref(), &desc, extensible)
+                    || target_desc.as_ref().is_some_and(|target_desc| {
+                        (!desc.configurable && target_desc.configurable)
+                            || (!target_desc.configurable
+                                && !target_desc.is_accessor
+                                && target_desc.writable
+                                && !desc.writable)
+                    })
+                {
+                    return Err(Error::type_err(
+                        "Proxy defineProperty trap violated the target invariant",
+                    ));
+                }
+                return Ok(true);
             }
             let is_namespace = self
                 .heap
@@ -533,41 +606,12 @@ impl Vm {
                         && (!desc.writable || current.writable)
                         && desc.value == current.value
                 });
-                return if compatible {
-                    Ok(())
-                } else {
-                    Err(Error::type_err("Cannot redefine module namespace property"))
-                };
+                return Ok(compatible);
             }
-            let current = self
-                .heap
-                .with_obj(idx.0, |o| o.props().lock().get(&key).cloned());
-            if current.is_none() {
-                let extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
-                if !extensible {
-                    return Err(Error::type_err(
-                        "Cannot define property, object is not extensible",
-                    ));
-                }
-            }
-            if let Some(current) = current {
-                if !current.configurable {
-                    if desc.configurable
-                        || desc.enumerable != current.enumerable
-                        || desc.is_accessor != current.is_accessor
-                    {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
-                    }
-                    if current.is_accessor {
-                        if desc.get != current.get || desc.set != current.set {
-                            return Err(Error::type_err(
-                                "Cannot redefine non-configurable property",
-                            ));
-                        }
-                    } else if !current.writable && (desc.writable || desc.value != current.value) {
-                        return Err(Error::type_err("Cannot redefine non-configurable property"));
-                    }
-                }
+            let current = self.own_property_descriptor_for_proxy_invariant(obj, &key);
+            let extensible = self.heap.with_obj(idx.0, |o| o.is_extensible());
+            if !compatible_complete_descriptor(current.as_ref(), &desc, extensible) {
+                return Ok(false);
             }
             self.heap.with_obj(idx.0, |o| {
                 if let HeapObj::Array(a) = o {
@@ -595,7 +639,7 @@ impl Vm {
                 }
                 o.props().lock().insert(key, desc);
             });
-            Ok(())
+            Ok(true)
         } else {
             Err(Error::type_err(
                 "Cannot define property of primitive".to_string(),

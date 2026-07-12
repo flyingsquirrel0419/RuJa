@@ -1372,6 +1372,33 @@ pub(crate) fn is_array(value: &Value, heap: &Heap) -> bool {
     }
 }
 
+pub(crate) fn is_array_or_throw(vm: &Vm, value: &Value) -> error::Result<bool> {
+    let Value::Object(idx) = value else {
+        return Ok(false);
+    };
+    let proxy = vm.heap.with_obj(idx.0, |obj| match obj {
+        HeapObj::Array(array) => Some(Ok((!array.is_arguments.load(Ordering::Relaxed), None))),
+        HeapObj::Object(object) if object.class_name.as_deref() == Some("Array") => {
+            Some(Ok((true, None)))
+        }
+        HeapObj::Proxy(proxy) => {
+            if *proxy.revoked.lock() {
+                return Some(Err(Error::type_err(
+                    "Cannot determine whether a revoked Proxy is an array",
+                )));
+            }
+            Some(Ok((false, Some(proxy.target.clone()))))
+        }
+        _ => Some(Ok((false, None))),
+    });
+    let (is_array, target) = proxy.expect("object classification is exhaustive")?;
+    if let Some(target) = target {
+        is_array_or_throw(vm, &target)
+    } else {
+        Ok(is_array)
+    }
+}
+
 pub(crate) fn is_callable(value: &Value, heap: &Heap) -> bool {
     match value {
         Value::Object(idx) => heap.with_obj(idx.0, |obj| match obj {

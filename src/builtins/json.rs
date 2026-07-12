@@ -338,18 +338,37 @@ pub(crate) fn json_parse(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error
     let input = args.first().cloned().unwrap_or(Value::Undefined);
     let s = vm.to_string_pub(&input)?;
     let reviver = args.get(1).cloned();
-    let is_reviver_fn = if let Some(Value::Object(idx)) = &reviver {
-        vm.heap.with_obj(idx.0, |o| o.is_function())
-    } else {
-        false
-    };
-    let parsed = parse_json_text(vm, &s)?;
+    let is_reviver_fn = reviver
+        .as_ref()
+        .is_some_and(|reviver| crate::builtins::is_callable(reviver, &vm.heap));
     if is_reviver_fn {
         if let Some(rf) = reviver {
-            return apply_reviver(vm, &rf, &Value::String(Arc::from("")), &parsed, 0);
+            let (parsed, mut source_node) = parse_json_with_source(vm, &s)?;
+            let mut source_pins = Vec::new();
+            let attached =
+                attach_json_source_values(vm, &parsed, &mut source_node, &mut source_pins);
+            let result = attached.and_then(|()| {
+                let root = Value::Object(vm.new_object()?);
+                vm.define_data_property(&root, PropertyKey::from(""), parsed)?;
+                let pins = vm.pin_many(&[root.clone(), rf.clone()]);
+                let result = internalize_json_property(
+                    vm,
+                    &rf,
+                    &root,
+                    PropertyKey::from(""),
+                    Some(&source_node),
+                    0,
+                );
+                vm.unpin_many(pins);
+                result
+            });
+            for pin in source_pins {
+                vm.unpin(pin);
+            }
+            return result;
         }
     }
-    Ok(parsed)
+    parse_json_text(vm, &s)
 }
 
 pub(crate) fn parse_json_text(vm: &mut Vm, source: &str) -> error::Result<Value> {
@@ -358,12 +377,199 @@ pub(crate) fn parse_json_text(vm: &mut Vm, source: &str) -> error::Result<Value>
     parse_json_value(vm, &mut source.chars().peekable(), 0)
 }
 
-/// Walk the parsed tree bottom-up, calling reviver(key, value) on each.
-fn apply_reviver(
+#[derive(Debug)]
+enum JsonSourceKind {
+    Primitive(Arc<str>),
+    Array(Vec<JsonSourceNode>),
+    Object(Vec<(Arc<str>, JsonSourceNode)>),
+}
+
+#[derive(Debug)]
+struct JsonSourceNode {
+    original: Value,
+    kind: JsonSourceKind,
+}
+
+struct JsonSourceParser<'a> {
+    source: &'a str,
+    offset: usize,
+}
+
+impl<'a> JsonSourceParser<'a> {
+    fn new(source: &'a str) -> Self {
+        Self { source, offset: 0 }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self
+            .source
+            .as_bytes()
+            .get(self.offset)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            self.offset += 1;
+        }
+    }
+
+    fn scan_string(&mut self) -> error::Result<&'a str> {
+        let start = self.offset;
+        if self.source.as_bytes().get(self.offset) != Some(&b'"') {
+            return Err(Error::syntax("Invalid JSON string"));
+        }
+        self.offset += 1;
+        while let Some(byte) = self.source.as_bytes().get(self.offset) {
+            match byte {
+                b'"' => {
+                    self.offset += 1;
+                    return Ok(&self.source[start..self.offset]);
+                }
+                b'\\' => {
+                    self.offset += 2;
+                }
+                _ => self.offset += 1,
+            }
+        }
+        Err(Error::syntax("Unterminated JSON string"))
+    }
+
+    fn parse_node(&mut self) -> error::Result<JsonSourceNode> {
+        self.skip_whitespace();
+        let start = self.offset;
+        let kind = match self.source.as_bytes().get(self.offset) {
+            Some(b'[') => {
+                self.offset += 1;
+                self.skip_whitespace();
+                let mut children = Vec::new();
+                if self.source.as_bytes().get(self.offset) != Some(&b']') {
+                    loop {
+                        children.push(self.parse_node()?);
+                        self.skip_whitespace();
+                        if self.source.as_bytes().get(self.offset) == Some(&b']') {
+                            break;
+                        }
+                        self.offset += 1;
+                    }
+                }
+                self.offset += 1;
+                JsonSourceKind::Array(children)
+            }
+            Some(b'{') => {
+                self.offset += 1;
+                self.skip_whitespace();
+                let mut children = Vec::new();
+                if self.source.as_bytes().get(self.offset) != Some(&b'}') {
+                    loop {
+                        let key_source = self.scan_string()?;
+                        let key: String = serde_json::from_str(key_source)
+                            .map_err(|error| Error::syntax(format!("Invalid JSON key: {error}")))?;
+                        self.skip_whitespace();
+                        self.offset += 1;
+                        let child = self.parse_node()?;
+                        children.push((Arc::from(key), child));
+                        self.skip_whitespace();
+                        if self.source.as_bytes().get(self.offset) == Some(&b'}') {
+                            break;
+                        }
+                        self.offset += 1;
+                        self.skip_whitespace();
+                    }
+                }
+                self.offset += 1;
+                JsonSourceKind::Object(children)
+            }
+            Some(b'"') => {
+                self.scan_string()?;
+                JsonSourceKind::Primitive(Arc::from(&self.source[start..self.offset]))
+            }
+            Some(_) => {
+                while self.source.as_bytes().get(self.offset).is_some_and(|byte| {
+                    !matches!(byte, b',' | b']' | b'}' | b' ' | b'\n' | b'\r' | b'\t')
+                }) {
+                    self.offset += 1;
+                }
+                JsonSourceKind::Primitive(Arc::from(&self.source[start..self.offset]))
+            }
+            None => return Err(Error::syntax("Invalid JSON source record")),
+        };
+        Ok(JsonSourceNode {
+            original: Value::Undefined,
+            kind,
+        })
+    }
+}
+
+fn parse_json_with_source(vm: &mut Vm, source: &str) -> error::Result<(Value, JsonSourceNode)> {
+    let value = parse_json_text(vm, source)?;
+    let node = JsonSourceParser::new(source).parse_node()?;
+    Ok((value, node))
+}
+
+fn attach_json_source_values(
+    vm: &mut Vm,
+    value: &Value,
+    node: &mut JsonSourceNode,
+    pins: &mut Vec<usize>,
+) -> error::Result<()> {
+    node.original = value.clone();
+    pins.push(vm.pin(value));
+    match &mut node.kind {
+        JsonSourceKind::Primitive(_) => {}
+        JsonSourceKind::Array(children) => {
+            for (index, child) in children.iter_mut().enumerate() {
+                let value = vm.get_property(value, &index.to_string())?;
+                attach_json_source_values(vm, &value, child, pins)?;
+            }
+        }
+        JsonSourceKind::Object(children) => {
+            let mut last = std::collections::HashMap::new();
+            for (index, (key, _)) in children.iter().enumerate() {
+                last.insert(key.clone(), index);
+            }
+            for (index, (key, child)) in children.iter_mut().enumerate() {
+                if last.get(key).copied() != Some(index) {
+                    continue;
+                }
+                let value = vm.get_property(value, key)?;
+                attach_json_source_values(vm, &value, child, pins)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn json_same_value(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => {
+            (left.is_nan() && right.is_nan()) || left.to_bits() == right.to_bits()
+        }
+        _ => left == right,
+    }
+}
+
+fn json_source_child<'a>(
+    node: &'a JsonSourceNode,
+    key: &PropertyKey,
+) -> Option<&'a JsonSourceNode> {
+    match (&node.kind, key) {
+        (JsonSourceKind::Array(children), PropertyKey::Str(key)) => key
+            .parse::<usize>()
+            .ok()
+            .and_then(|index| children.get(index)),
+        (JsonSourceKind::Object(children), PropertyKey::Str(key)) => children
+            .iter()
+            .rev()
+            .find_map(|(candidate, child)| (candidate == key).then_some(child)),
+        _ => None,
+    }
+}
+
+/// Apply InternalizeJSONProperty in place so reviver mutations stay observable.
+fn internalize_json_property(
     vm: &mut Vm,
     reviver: &Value,
-    key: &Value,
-    val: &Value,
+    holder: &Value,
+    name: PropertyKey,
+    source_node: Option<&JsonSourceNode>,
     depth: usize,
 ) -> error::Result<Value> {
     // The parse step already caps nesting, but guard defensively.
@@ -372,60 +578,80 @@ fn apply_reviver(
             "Maximum JSON nesting depth exceeded".to_string(),
         ));
     }
-    let walked = match val {
-        Value::Object(idx) => {
-            let (is_arr, items, props) = vm.heap.with_obj(idx.0, |o| match o {
-                HeapObj::Array(a) => (true, a.items.lock().clone(), IndexMap::new()),
-                HeapObj::Object(o) => (false, Vec::new(), o.props.lock().clone()),
-                _ => (false, Vec::new(), IndexMap::new()),
-            });
-            if is_arr {
-                let mut new_items = Vec::new();
-                for (i, item) in items.iter().enumerate() {
-                    let k = Value::String(Arc::from(i.to_string().as_str()));
-                    let w = apply_reviver(vm, reviver, &k, item, depth + 1)?;
-                    if !w.is_undefined() {
-                        new_items.push(w);
+    let value = vm.get_property_by_key(holder, &name)?;
+    let source_node = source_node.filter(|node| json_same_value(&node.original, &value));
+    let value_pin = vm.pin(&value);
+    let result = (|| {
+        if matches!(value, Value::Object(_)) {
+            if crate::builtins::is_array_or_throw(vm, &value)? {
+                let length = vm.get_property(&value, "length")?;
+                let length = vm.to_number(&length)?;
+                let length = if length.is_nan() || length <= 0.0 {
+                    0
+                } else {
+                    length.trunc().min(9_007_199_254_740_991.0) as usize
+                };
+                for index in 0..length {
+                    let key = PropertyKey::from(index.to_string());
+                    let revived = internalize_json_property(
+                        vm,
+                        reviver,
+                        &value,
+                        key.clone(),
+                        source_node.and_then(|node| json_source_child(node, &key)),
+                        depth + 1,
+                    )?;
+                    if revived.is_undefined() {
+                        vm.delete_property_key(&value, &key)?;
+                    } else {
+                        vm.create_data_property(&value, key, revived)?;
                     }
                 }
-                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Array(
-                    crate::value::ArrayData::new(new_items, Some(vm.array_proto.clone())),
-                ))?))
             } else {
-                let mut new_props = IndexMap::new();
-                for key in json_ordered_string_keys(&props, false) {
-                    let pk = PropertyKey::from(key.as_str());
-                    if let Some(d) = props.get(&pk) {
-                        let k = Value::String(Arc::from(key.as_str()));
-                        let w = apply_reviver(vm, reviver, &k, &d.value, depth + 1)?;
-                        if !w.is_undefined() {
-                            let mut desc = data_prop(w);
-                            desc.enumerable = true;
-                            new_props.insert(pk, desc);
-                        }
+                let keys = own_property_keys_or_throw(vm, &value, true, true, false)?;
+                for key in keys {
+                    let revived = internalize_json_property(
+                        vm,
+                        reviver,
+                        &value,
+                        key.clone(),
+                        source_node.and_then(|node| json_source_child(node, &key)),
+                        depth + 1,
+                    )?;
+                    if revived.is_undefined() {
+                        vm.delete_property_key(&value, &key)?;
+                    } else {
+                        vm.create_data_property(&value, key, revived)?;
                     }
                 }
-                Value::Object(GcIdx(vm.heap.allocate(HeapObj::Object(
-                    crate::value::ObjectData {
-                        props: Mutex::new(new_props),
-                        proto: Mutex::new(Some(vm.object_proto.clone())),
-                        extensible: AtomicBool::new(true),
-                        class_name: None,
-                        private_fields: Mutex::new(std::collections::HashMap::new()),
-                        primitive: Mutex::new(None),
-                    },
-                ))?))
             }
         }
-        _ => val.clone(),
-    };
-    // Call the reviver on this level.
-    let result = vm.call_function(
-        reviver,
-        &[key.clone(), walked.clone()],
-        Some(walked.clone()),
-    )?;
-    Ok(result)
+        let key = match &name {
+            PropertyKey::Str(key) => Value::String(key.clone()),
+            PropertyKey::Symbol(symbol) => Value::Symbol(*symbol),
+        };
+        let context = Value::Object(vm.new_object()?);
+        if !matches!(value, Value::Object(_)) {
+            if let Some(JsonSourceNode {
+                kind: JsonSourceKind::Primitive(source),
+                ..
+            }) = source_node
+            {
+                vm.define_data_property(
+                    &context,
+                    PropertyKey::from("source"),
+                    Value::String(source.clone()),
+                )?;
+            }
+        }
+        vm.call_function(
+            reviver,
+            &[key, value.clone(), context],
+            Some(holder.clone()),
+        )
+    })();
+    vm.unpin(value_pin);
+    result
 }
 fn parse_json_value(
     vm: &mut Vm,

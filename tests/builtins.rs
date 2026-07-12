@@ -10255,6 +10255,57 @@ fn json_parse_invalid_returns_error() {
 }
 
 #[test]
+fn json_parse_reviver_internalizes_in_place_with_source_context() {
+    assert_eq!(
+        run(r#"
+            var calls = [];
+            var rootHolder;
+            var result = JSON.parse('{"a":1,"b":2}', function(key, value, context) {
+              calls.push(key + ':' + context.source);
+              if (key === 'a') {
+                Object.defineProperty(this, 'b', { configurable: false });
+              }
+              if (key === 'b') return 9;
+              if (key === '') rootHolder = this;
+              return value;
+            });
+            [
+              result.b,
+              calls.join(','),
+              Object.getOwnPropertyNames(rootHolder).join(','),
+              Array.isArray(new Proxy([], {}))
+            ].join('|');
+        "#),
+        Value::String(Arc::from("2|a:1,b:2,:undefined||true"))
+    );
+    assert_eq!(
+        run("JSON.parse('[1]', function(k, v) { if (k === '0') { Object.preventExtensions(this); return 9; } return v; })[0];"),
+        Value::Number(9.0)
+    );
+    assert_eq!(
+        run("JSON.parse('1', new Proxy(function(k, v) { return v + 1; }, {}));"),
+        Value::Number(2.0)
+    );
+    assert!(run_err(
+        "var pair = Proxy.revocable(function(k, v) { return v; }, {}); pair.revoke(); JSON.parse('1', pair.proxy);"
+    )
+    .contains("revoked"));
+    assert!(run_err(
+        r#"
+            var target = {};
+            Object.defineProperty(target, 'fixed', { value: 1, configurable: false, enumerable: true });
+            var proxy = new Proxy(target, { defineProperty: function() { return true; } });
+            JSON.parse('[0,0]', function(k, v) {
+              if (k === '0') this[1] = proxy;
+              if (k === 'fixed') return 2;
+              return v;
+            });
+        "#
+    )
+    .contains("target invariant"));
+}
+
+#[test]
 fn function_error_reaches_caller_catch() {
     let r =
         run("var r; function f(){ return missing; } try { f(); } catch(e) { r = 'caught'; } r;");
