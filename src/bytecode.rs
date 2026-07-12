@@ -4,6 +4,7 @@
 //! stack, and operations consume from the top.
 
 use crate::value::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// A compiled function's bytecode.
@@ -23,6 +24,8 @@ pub struct Chunk {
     /// For function chunks, the first instruction that belongs to the actual
     /// body after parameter initialization and declaration instantiation.
     pub body_start_ip: usize,
+    /// Canonical source file that owns this script or module chunk.
+    pub source_path: Option<Arc<PathBuf>>,
 }
 
 impl Chunk {
@@ -34,6 +37,7 @@ impl Chunk {
             lines: Vec::new(),
             is_strict: false,
             body_start_ip: 0,
+            source_path: None,
         }
     }
 
@@ -247,6 +251,10 @@ pub enum Op {
     CallThis(usize),
     /// Call a function with an explicit `this`: stack [this, fn, argsArray].
     CallThisSpread,
+    /// Dynamic import: pop options (when present) and specifier, push Promise.
+    ImportCall {
+        has_options: bool,
+    },
     /// Push a private field value from `this`. arg = name constant idx.
     GetPrivate(usize),
     /// Create a fresh class private-name identity. arg = description constant idx.

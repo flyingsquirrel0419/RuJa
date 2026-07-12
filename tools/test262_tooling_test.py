@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import test262_analyze
 import test262_runner
+from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_module_admission import (
     MODULE_STATIC_SEMANTICS_FILES,
     MODULE_TLA_RUNTIME_FILES,
@@ -548,6 +549,30 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 tool.TEST262 = str(root)
                 try:
                     self.assertFalse(tool.should_skip(meta, path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_dynamic_import_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 6)
+        admitted = (
+            "language/expressions/dynamic-import/usage/"
+            "top-level-import-then-returns-thenable.js"
+        )
+        outside = "language/expressions/dynamic-import/always-create-new-promise.js"
+        self.assertIn(admitted, DYNAMIC_IMPORT_FILES)
+        self.assertNotIn(outside, DYNAMIC_IMPORT_FILES)
+        meta = {"flags": ["generated", "async"], "features": ["dynamic-import"]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            path = root / "test" / admitted
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(meta, path))
+                    self.assertTrue(tool.should_skip(meta, outside_path))
+                    self.assertTrue(tool.dynamic_import_path(path))
                 finally:
                     tool.TEST262 = original_root
 

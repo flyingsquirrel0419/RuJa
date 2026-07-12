@@ -7449,6 +7449,55 @@ fn promise_then_rejects_self_resolution_with_type_error() {
 }
 
 #[test]
+fn promise_capability_resolve_assimilates_thenables_and_rejects_self_resolution() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var assimilated;
+        new Promise(resolve => resolve({ then(resolve) { resolve(7); } }))
+          .then(value => { assimilated = value; });
+
+        var resolveSelf;
+        var self = new Promise(resolve => { resolveSelf = resolve; });
+        var selfRejected = false;
+        resolveSelf(self);
+        self.catch(error => { selfRejected = error instanceof TypeError; });
+
+        var marker = {};
+        var getterReason;
+        new Promise(resolve => resolve({ get then() { throw marker; } }))
+          .catch(reason => { getterReason = reason; });
+
+        var resumeThenable, rejectPending;
+        var firstCallResult, firstCallRejected = false;
+        var pending = new Promise((resolve, reject) => {
+          rejectPending = reject;
+          resolve({ then(resolveThenable) { resumeThenable = resolveThenable; } });
+        });
+        pending.then(value => { firstCallResult = value; }, () => { firstCallRejected = true; });
+        rejectPending('late');
+        Promise.resolve().then(() => { resumeThenable(9); });
+
+        var resumeAfterExecutorThrow, executorThrowResult, executorThrowRejected = false;
+        new Promise(resolve => {
+          resolve({ then(resolveThenable) { resumeAfterExecutorThrow = resolveThenable; } });
+          throw marker;
+        }).then(
+          value => { executorThrowResult = value; },
+          () => { executorThrowRejected = true; }
+        );
+        Promise.resolve().then(() => { resumeAfterExecutorThrow(11); });
+        "#,
+    )
+    .expect("Promise resolution jobs should settle");
+    assert_eq!(
+        vm.run("assimilated === 7 && selfRejected && getterReason === marker && firstCallResult === 9 && !firstCallRejected && executorThrowResult === 11 && !executorThrowRejected;")
+            .expect("Promise settlement results should be readable"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn promise_catch_reject() {
     // reject -> catch returns a derived promise (object), not the error value.
     let r = run("new Promise(function(_, rej){ rej('boom'); }) \

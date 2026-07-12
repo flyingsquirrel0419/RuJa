@@ -11,11 +11,13 @@ from pathlib import Path
 
 try:
     from test262_support import append_async_harness, execute_source
+    from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from test262_module_admission import (
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
 except ModuleNotFoundError:
     from tools.test262_support import append_async_harness, execute_source
+    from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from tools.test262_module_admission import (
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
@@ -1840,6 +1842,15 @@ def module_tla_runtime_path(path):
         return False
     return rel.as_posix() in MODULE_TLA_RUNTIME_FILES
 
+def dynamic_import_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in DYNAMIC_IMPORT_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -1850,6 +1861,8 @@ def should_skip(meta, path=None):
         feats.difference_update({"top-level-await", "async-iteration"})
     if path is not None and module_tla_runtime_path(path):
         feats.discard("top-level-await")
+    if path is not None and dynamic_import_path(path):
+        feats.discard("dynamic-import")
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
@@ -2009,6 +2022,7 @@ def should_skip(meta, path=None):
         or async_generator_path(path)
         or atomics_sync_path(path)
         or module_tla_runtime_path(path)
+        or dynamic_import_path(path)
     )
     module_admitted = path is not None and module_core_path(path)
     if ('module' in flags and not module_admitted) or (
@@ -2051,7 +2065,7 @@ def run_test(path):
     if should_skip(meta, path):
         return 'skip'
     timeout = 600 if typed_array_copy_within_extended_timeout_path(path) else 8
-    source_path = path if "module" in meta.get("flags", []) else None
+    source_path = path if "module" in meta.get("flags", []) or dynamic_import_path(path) else None
     status, _ = execute_source(
         full, meta, RUJA, timeout=timeout, source_path=source_path
     )

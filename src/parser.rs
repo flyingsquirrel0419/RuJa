@@ -665,7 +665,10 @@ impl Parser {
         let mut import_entries = Vec::new();
         let mut export_entries = Vec::new();
         while !self.check(&TokenKind::Eof) {
-            if self.source_type == SourceType::Module && self.is_unescaped_ident("import") {
+            if self.source_type == SourceType::Module
+                && self.is_unescaped_ident("import")
+                && !matches!(self.peek_at_tok(1).kind, TokenKind::LParen | TokenKind::Dot)
+            {
                 self.parse_import_declaration(&mut module_requests, &mut import_entries)?;
             } else if self.source_type == SourceType::Module && self.is_unescaped_ident("export") {
                 if let Some(stmt) =
@@ -2930,6 +2933,13 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expr::ImportCall { specifier, options } => {
+                Self::reject_object_literal_assignment_cover(specifier)?;
+                if let Some(options) = options {
+                    Self::reject_object_literal_assignment_cover(options)?;
+                }
+                Ok(())
+            }
             Expr::Member {
                 object, property, ..
             } => {
@@ -3645,6 +3655,37 @@ impl Parser {
                 self.parse_class_body(false).map(Expr::Class)
             }
             TokenKind::Ident(s) => {
+                if s == "import" && !self.peek_at_tok(0).had_escape {
+                    if !matches!(self.peek_at_tok(1).kind, TokenKind::LParen) {
+                        return Err(error::Error::syntax(
+                            "import must be followed by a call or meta-property",
+                        ));
+                    }
+                    self.advance();
+                    self.advance();
+                    if self.check(&TokenKind::RParen) {
+                        return Err(error::Error::syntax(
+                            "Dynamic import requires a module specifier",
+                        ));
+                    }
+                    let specifier = self.parse_assign()?;
+                    let options = if self.eat(&TokenKind::Comma) {
+                        if self.check(&TokenKind::RParen) {
+                            None
+                        } else {
+                            let options = Some(Box::new(self.parse_assign()?));
+                            self.eat(&TokenKind::Comma);
+                            options
+                        }
+                    } else {
+                        None
+                    };
+                    self.expect(&TokenKind::RParen, ")")?;
+                    return Ok(Expr::ImportCall {
+                        specifier: Box::new(specifier),
+                        options,
+                    });
+                }
                 if (s == "await" && !self.await_as_identifier_allowed())
                     || (s == "yield" && !self.yield_as_identifier_allowed())
                 {
@@ -5154,6 +5195,12 @@ impl Parser {
                         .iter()
                         .any(Self::class_field_initializer_contains_arguments_expr)
             }
+            Expr::ImportCall { specifier, options } => {
+                Self::class_field_initializer_contains_arguments_expr(specifier)
+                    || options.as_ref().is_some_and(|options| {
+                        Self::class_field_initializer_contains_arguments_expr(options)
+                    })
+            }
             Expr::Member {
                 object, property, ..
             } => {
@@ -5457,6 +5504,13 @@ impl Parser {
                 Self::check_static_block_expr(callee)?;
                 for arg in args {
                     Self::check_static_block_expr(arg)?;
+                }
+                Ok(())
+            }
+            Expr::ImportCall { specifier, options } => {
+                Self::check_static_block_expr(specifier)?;
+                if let Some(options) = options {
+                    Self::check_static_block_expr(options)?;
                 }
                 Ok(())
             }
@@ -5930,6 +5984,13 @@ impl Parser {
                 Self::validate_private_names_expr(callee, names)?;
                 for arg in args {
                     Self::validate_private_names_expr(arg, names)?;
+                }
+                Ok(())
+            }
+            Expr::ImportCall { specifier, options } => {
+                Self::validate_private_names_expr(specifier, names)?;
+                if let Some(options) = options {
+                    Self::validate_private_names_expr(options, names)?;
                 }
                 Ok(())
             }
@@ -6992,6 +7053,28 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parse_dynamic_import_as_a_dedicated_call_expression() {
+        let script = Parser::parse("import('./dep.js');").expect("script import call should parse");
+        assert!(matches!(
+            &script.body[0].node,
+            StmtNode::ExprStmt(Expr::ImportCall { options: None, .. })
+        ));
+        let module = Parser::parse_module("import('./dep.js', {});")
+            .expect("module import call should parse");
+        assert!(matches!(
+            &module.body[0].node,
+            StmtNode::ExprStmt(Expr::ImportCall {
+                options: Some(_),
+                ..
+            })
+        ));
+        assert!(Parser::parse("import();").is_err());
+        assert!(Parser::parse("import('./dep.js', {}, 1);").is_err());
+        assert!(Parser::parse("import('./dep.js',);").is_ok());
+        assert!(Parser::parse("import('./dep.js', {},);").is_ok());
     }
 
     #[test]

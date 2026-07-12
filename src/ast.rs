@@ -127,6 +127,10 @@ pub enum Expr {
         optional: bool,
         optional_chain: bool,
     },
+    ImportCall {
+        specifier: Box<Expr>,
+        options: Option<Box<Expr>>,
+    },
     New {
         callee: Box<Expr>,
         args: Vec<Expr>,

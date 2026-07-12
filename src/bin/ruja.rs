@@ -68,26 +68,17 @@ fn run_file(path: &str, module: bool) -> i32 {
             }
         };
     }
-    match fs::read_to_string(path) {
-        Ok(src) => {
-            let mut vm = new_vm();
-            let result = vm.run(&src);
-            match result {
-                Ok(_) => match vm.run_external_jobs_until_idle() {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        1
-                    }
-                },
-                Err(e) => {
-                    eprintln!("{}", e);
-                    1
-                }
+    let mut vm = new_vm();
+    match vm.run_file(path) {
+        Ok(_) => match vm.run_external_jobs_until_idle() {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", e);
+                1
             }
-        }
+        },
         Err(e) => {
-            eprintln!("ruja: cannot read '{}': {}", path, e);
+            eprintln!("{}", e);
             1
         }
     }

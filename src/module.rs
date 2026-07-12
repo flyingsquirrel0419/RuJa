@@ -524,7 +524,11 @@ fn instantiate_module(
     };
     let mut compiler = Compiler::new();
     let (chunk, funcs) = compiler.compile_program(&program)?;
-    let chunk = Arc::new(vm.append_compiled_functions(chunk, funcs));
+    let chunk = Arc::new(vm.append_compiled_functions_with_source(
+        chunk,
+        funcs,
+        Arc::new(path.to_path_buf()),
+    ));
     if let Err(error) = vm.instantiate_module_chunk(chunk.clone(), env) {
         let record = graph.get_mut(path).expect("module exists");
         record.status = ModuleStatus::Errored;
@@ -748,6 +752,13 @@ fn evaluate_module(
             }
         }
 
+        if graph
+            .get(path)
+            .is_some_and(|record| record.status == ModuleStatus::Evaluated)
+        {
+            continue;
+        }
+
         match vm.tick() {
             Ok(true) => progressed = true,
             Ok(false) => {}
@@ -766,6 +777,23 @@ fn evaluate_module(
 }
 
 impl Vm {
+    pub(crate) fn dynamic_import_module(
+        &mut self,
+        referrer: &Path,
+        specifier: &str,
+    ) -> error::Result<Value> {
+        let target = resolve_specifier(referrer, specifier)?;
+        self.run_module_file_inner(&target, false)?;
+
+        let mut graph = HashMap::new();
+        load_graph(self, target.clone(), &mut graph)?;
+        let namespace = get_module_namespace(self, &target, &mut graph)?;
+        for (path, record) in graph {
+            self.module_records.insert(path, record);
+        }
+        Ok(Value::Object(namespace))
+    }
+
     /// Parse, resolve, and instantiate a module graph without evaluating it.
     pub fn link_module_file(&mut self, path: impl AsRef<Path>) -> error::Result<()> {
         let root = path.as_ref().canonicalize().map_err(|err| {
@@ -796,10 +824,18 @@ impl Vm {
 
     /// Load, link, and evaluate an ECMAScript module graph rooted at `path`.
     pub fn run_module_file(&mut self, path: impl AsRef<Path>) -> error::Result<Value> {
-        let root = path.as_ref().canonicalize().map_err(|err| {
+        self.run_module_file_inner(path.as_ref(), true)
+    }
+
+    fn run_module_file_inner(
+        &mut self,
+        path: &Path,
+        drain_microtasks: bool,
+    ) -> error::Result<Value> {
+        let root = path.canonicalize().map_err(|err| {
             Error::syntax(format!(
                 "Cannot resolve entry module '{}': {}",
-                path.as_ref().display(),
+                path.display(),
                 err
             ))
         })?;
@@ -830,7 +866,7 @@ impl Vm {
         };
         let pinned_result = self.pin_many(&result_roots);
         self.clear_kept_objects();
-        let microtask_result = if !self.microtask_queue.is_empty() {
+        let microtask_result = if drain_microtasks && !self.microtask_queue.is_empty() {
             self.run_microtasks()
         } else {
             Ok(())

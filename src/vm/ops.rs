@@ -2552,6 +2552,7 @@ impl Vm {
                 Op::CallEvalRefClassField(arg_count) => {
                     self.op_call_eval_ref_with_context(arg_count, true)?
                 }
+                Op::ImportCall { has_options } => self.op_import_call(has_options)?,
                 Op::YieldValue => {
                     // Lazy generator: pop the yielded value and suspend execution.
                     // The `yield` expression's *result* (the value sent in by the
@@ -3028,6 +3029,80 @@ impl Vm {
             }
         }
         Value::Undefined
+    }
+
+    fn reject_dynamic_import(
+        &mut self,
+        reject: &Value,
+        error: &Arc<Error>,
+    ) -> error::Result<Value> {
+        let reason = match &error.thrown_value {
+            Some(value) => value.clone(),
+            None => self.make_error_value(error)?,
+        };
+        let reason_pin = self.pin(&reason);
+        let result = self.call_function(
+            reject,
+            std::slice::from_ref(&reason),
+            Some(Value::Undefined),
+        );
+        self.unpin(reason_pin);
+        result
+    }
+
+    fn op_import_call(&mut self, has_options: bool) -> error::Result<()> {
+        if has_options {
+            self.stack.pop();
+        }
+        let specifier = self.stack.pop().unwrap_or(Value::Undefined);
+        let capability = crate::builtins::new_promise_capability(self, self.promise_ctor.clone())?;
+        let promise = match capability.promise.clone() {
+            Value::Object(promise) => promise,
+            _ => {
+                return Err(Error::internal(
+                    "Promise capability did not create an object",
+                ))
+            }
+        };
+        let pins = self.pin_many(&[
+            Value::Object(promise),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+        ]);
+        if has_options {
+            let error = Error::type_err("Dynamic import options are not supported yet");
+            let settlement = self.reject_dynamic_import(&capability.reject, &error);
+            self.stack.push(Value::Object(promise));
+            self.unpin_many(pins);
+            settlement?;
+            return Ok(());
+        }
+        let referrer = self
+            .current_frame()
+            .ok()
+            .and_then(|frame| frame.chunk.source_path.clone());
+        let settlement = match self.to_string_pub(&specifier) {
+            Ok(specifier) => {
+                if let Some(referrer) = referrer {
+                    self.microtask_queue.push_back(Microtask::DynamicImport {
+                        promise,
+                        resolve: capability.resolve.clone(),
+                        reject: capability.reject.clone(),
+                        referrer,
+                        specifier: specifier.into(),
+                    });
+                    Ok(Value::Undefined)
+                } else {
+                    let error = Error::type_err("Dynamic import requires a source-file referrer");
+                    self.reject_dynamic_import(&capability.reject, &error)
+                }
+            }
+            Err(error) => self.reject_dynamic_import(&capability.reject, &error),
+        };
+        self.stack.push(Value::Object(promise));
+        self.unpin_many(pins);
+        settlement?;
+        Ok(())
     }
 
     /// `Op::Call(arg_count)`: pop callee + args and call with an unbound

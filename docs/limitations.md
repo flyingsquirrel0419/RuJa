@@ -104,6 +104,10 @@ guarantees, run RuJa in a separately killable process as well.
   rather than the live value; callers must not re-enter on the same idx.
 - `yield*` throw/return propagation into a delegated generator is not yet
   forwarded (direct `g.throw`/`g.return` work)
+- Dynamic `import()` currently supports relative imports originating from
+  file-backed Script chunks. Module-origin imports that participate in an
+  in-flight top-level-await graph, import attributes, and the full
+  rejection/error-object matrix remain gated.
 - Some strict-mode edge cases are not fully enforced: `this` defaults to
   `undefined` in all modes by design (strict mode does not rebind it to the
   global object), and a top-level strict `eval` `var` still routes through the

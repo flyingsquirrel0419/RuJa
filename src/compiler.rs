@@ -1821,6 +1821,7 @@ impl Compiler {
 
     pub fn compile_function(&mut self, f: &FunctionExpr) -> error::Result<(Chunk, Vec<usize>)> {
         let saved_chunk = std::mem::take(&mut self.chunk);
+        self.chunk.source_path = saved_chunk.source_path.clone();
         let saved_names = std::mem::take(&mut self.name_map);
         let saved_switch_val = self.switch_val_depth;
         let saved_async_generator = self.current_async_generator;
@@ -4507,6 +4508,18 @@ impl Compiler {
             Expr::Await(inner) => {
                 self.compile_expr(inner)?;
                 self.chunk.emit(Op::Await, self.current_line);
+            }
+            Expr::ImportCall { specifier, options } => {
+                self.compile_expr(specifier)?;
+                if let Some(options) = options {
+                    self.compile_expr(options)?;
+                }
+                self.chunk.emit(
+                    Op::ImportCall {
+                        has_options: options.is_some(),
+                    },
+                    self.current_line,
+                );
             }
             Expr::Yield(inner) => {
                 // Eager generator: evaluate the yielded value and emit it.

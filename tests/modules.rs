@@ -638,3 +638,58 @@ fn pending_sibling_evaluation_survives_another_dependency_rejection() {
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
+
+#[test]
+fn dynamic_import_from_script_resolves_canonical_module_namespace() {
+    let dir = module_fixture_dir("dynamic-import-script");
+    fs::write(
+        dir.join("dependency.js"),
+        r#"
+        export let value = 41;
+        export function increment() { value += 1; }
+        "#,
+    )
+    .expect("dynamic dependency should be written");
+    fs::write(
+        dir.join("thenable.js"),
+        "export function then(resolve) { resolve('assimilated'); }",
+    )
+    .expect("thenable namespace dependency should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        var specifier = { toString() { return './dependency.js'; } };
+        var first = import(specifier);
+        var second = import('./dependency.js');
+        globalThis.dynamicPromisesAreFresh = first !== second;
+        first.then(ns => {
+            ns.increment();
+            globalThis.dynamicImportResult = ns.value;
+        });
+        second.then(ns => { globalThis.dynamicImportIdentityValue = ns.value; });
+        eval("import('./dependency.js').then(ns => { globalThis.evalDynamicValue = ns.value; });");
+        import('./thenable.js').then(value => {
+            globalThis.thenableNamespaceAssimilated = value === 'assimilated';
+        });
+        import('./missing.js').catch(error => {
+            globalThis.dynamicImportErrorIsSyntax = error instanceof SyntaxError;
+        });
+        import('./dependency.js', {}).catch(error => {
+            globalThis.dynamicImportOptionsErrorIsType = error instanceof TypeError;
+        });
+        "#,
+    )
+    .expect("dynamic import entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_file(dir.join("entry.js"))
+        .expect("script dynamic imports should settle");
+    assert_eq!(
+        vm.run(
+            "[dynamicPromisesAreFresh, dynamicImportResult, dynamicImportIdentityValue, evalDynamicValue, thenableNamespaceAssimilated, dynamicImportErrorIsSyntax, dynamicImportOptionsErrorIsType].join('|')"
+        )
+        .expect("dynamic import results should be readable"),
+        Value::String(Arc::from("true|42|42|42|true|true|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}

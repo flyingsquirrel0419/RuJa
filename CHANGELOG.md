@@ -39,6 +39,17 @@
   the feature; downloaded artifacts aggregate to **27724 pass / 6720 fail / 12
   timeout / 0 error / 14011 skip / 48467 total / 34444 pass-or-fail
   executed**, exactly **+31 pass / -31 skip** from the preceding matrix.
+- Script-file dynamic `import()` now has a dedicated AST and bytecode path,
+  preserves the canonical source referrer through nested function chunks,
+  returns a fresh intrinsic Promise for every call, and resolves relative
+  modules to their cached live Module Namespace object without recursively
+  draining unrelated Promise jobs. The first exact Test262 runtime slice covers
+  six top-level script imports, specifier coercion, thenable use, and live
+  default/named bindings.
+- Promise resolving functions now share a heap-backed `[[AlreadyResolved]]`
+  record, assimilate generic thenables exactly once, reject self-resolution,
+  preserve native JavaScript Error objects, and keep the first resolve/reject
+  call authoritative even when a thenable job is still pending.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

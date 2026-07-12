@@ -2639,6 +2639,16 @@ impl Vm {
                     roots.push(promise.0);
                     Self::push_value_roots(&mut roots, reason);
                 }
+                Microtask::DynamicImport {
+                    promise,
+                    resolve,
+                    reject,
+                    ..
+                } => {
+                    roots.push(promise.0);
+                    Self::push_value_roots(&mut roots, resolve);
+                    Self::push_value_roots(&mut roots, reject);
+                }
                 Microtask::FinalizationCleanup { registry } => roots.push(registry.0),
             }
         }
@@ -2902,6 +2912,57 @@ impl Vm {
             Microtask::Reject { promise, reason } => {
                 self.promise_reject(promise.0, reason);
                 Ok(())
+            }
+            Microtask::DynamicImport {
+                promise,
+                resolve,
+                reject,
+                referrer,
+                specifier,
+            } => {
+                let capability_pins =
+                    self.pin_many(&[Value::Object(promise), resolve.clone(), reject.clone()]);
+                let outcome = self.dynamic_import_module(&referrer, &specifier);
+                let settlement = match outcome {
+                    Ok(namespace) => {
+                        let value_pin = self.pin(&namespace);
+                        let result = self.call_function(
+                            &resolve,
+                            std::slice::from_ref(&namespace),
+                            Some(Value::Undefined),
+                        );
+                        self.unpin(value_pin);
+                        result
+                    }
+                    Err(error) => match &error.thrown_value {
+                        Some(value) => {
+                            let reason = value.clone();
+                            let reason_pin = self.pin(&reason);
+                            let result = self.call_function(
+                                &reject,
+                                std::slice::from_ref(&reason),
+                                Some(Value::Undefined),
+                            );
+                            self.unpin(reason_pin);
+                            result
+                        }
+                        None => match self.make_error_value(&error) {
+                            Ok(reason) => {
+                                let reason_pin = self.pin(&reason);
+                                let result = self.call_function(
+                                    &reject,
+                                    std::slice::from_ref(&reason),
+                                    Some(Value::Undefined),
+                                );
+                                self.unpin(reason_pin);
+                                result
+                            }
+                            Err(error) => Err(error),
+                        },
+                    },
+                };
+                self.unpin_many(capability_pins);
+                settlement.map(|_| ())
             }
             Microtask::FinalizationCleanup { registry } => {
                 crate::builtins::run_finalization_registry_cleanup_job(self, registry)?;

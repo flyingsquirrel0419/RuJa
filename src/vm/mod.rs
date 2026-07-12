@@ -367,6 +367,13 @@ pub enum Microtask {
         promise: GcIdx,
         reason: Value,
     },
+    DynamicImport {
+        promise: GcIdx,
+        resolve: Value,
+        reject: Value,
+        referrer: Arc<std::path::PathBuf>,
+        specifier: Arc<str>,
+    },
     FinalizationCleanup {
         registry: GcIdx,
     },
@@ -409,6 +416,43 @@ impl Vm {
         });
         self.functions.extend(adjusted);
         chunk
+    }
+
+    pub(crate) fn append_compiled_functions_with_source(
+        &mut self,
+        mut chunk: Chunk,
+        funcs: Vec<Arc<crate::function::FunctionDef>>,
+        source_path: Arc<std::path::PathBuf>,
+    ) -> Chunk {
+        chunk.source_path = Some(source_path.clone());
+        let funcs = funcs
+            .into_iter()
+            .map(|func| {
+                let mut func = (*func).clone();
+                let mut func_chunk = (*func.chunk).clone();
+                func_chunk.source_path = Some(source_path.clone());
+                func.chunk = Arc::new(func_chunk);
+                Arc::new(func)
+            })
+            .collect();
+        self.append_compiled_functions(chunk, funcs)
+    }
+
+    fn append_compiled_functions_with_active_source(
+        &mut self,
+        chunk: Chunk,
+        funcs: Vec<Arc<crate::function::FunctionDef>>,
+    ) -> Chunk {
+        let source_path = self
+            .frames
+            .iter()
+            .rev()
+            .find_map(|frame| frame.chunk.source_path.clone());
+        if let Some(source_path) = source_path {
+            self.append_compiled_functions_with_source(chunk, funcs, source_path)
+        } else {
+            self.append_compiled_functions(chunk, funcs)
+        }
     }
 
     fn current_frame(&self) -> error::Result<&CallFrame> {
@@ -615,11 +659,42 @@ impl Vm {
 
     /// Run a source string and return the value of the last top-level expression.
     pub fn run(&mut self, src: &str) -> error::Result<Value> {
+        self.run_with_source_path(src, None)
+    }
+
+    /// Run a Script source file while preserving its canonical host referrer.
+    pub fn run_file(&mut self, path: impl AsRef<std::path::Path>) -> error::Result<Value> {
+        let canonical = path.as_ref().canonicalize().map_err(|err| {
+            Error::syntax(format!(
+                "Cannot resolve script '{}': {}",
+                path.as_ref().display(),
+                err
+            ))
+        })?;
+        let src = std::fs::read_to_string(&canonical).map_err(|err| {
+            Error::syntax(format!(
+                "Cannot read script '{}': {}",
+                canonical.display(),
+                err
+            ))
+        })?;
+        self.run_with_source_path(&src, Some(Arc::new(canonical)))
+    }
+
+    fn run_with_source_path(
+        &mut self,
+        src: &str,
+        source_path: Option<Arc<std::path::PathBuf>>,
+    ) -> error::Result<Value> {
         let program = crate::parser::Parser::parse(src)?;
         self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let chunk = self.append_compiled_functions(chunk, funcs);
+        let chunk = if let Some(source_path) = source_path {
+            self.append_compiled_functions_with_source(chunk, funcs, source_path)
+        } else {
+            self.append_compiled_functions(chunk, funcs)
+        };
         // Script top-level `this` is the global object even for strict scripts.
         crate::environment::declare(
             &self.heap,
@@ -678,7 +753,7 @@ impl Vm {
         );
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let chunk = self.append_compiled_functions(chunk, funcs);
+        let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         let result = self.execute_chunk(chunk, module_env, Value::Undefined);
         let result_roots: Vec<Value> = match &result {
             Ok(value) => vec![value.clone()],
@@ -837,7 +912,7 @@ impl Vm {
         self.check_global_declaration_instantiation(&program, self.global, &self.global_this)?;
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let chunk = self.append_compiled_functions(chunk, funcs);
+        let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         crate::environment::declare(
             &self.heap,
             self.global,
@@ -879,7 +954,7 @@ impl Vm {
         }
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let chunk = self.append_compiled_functions(chunk, funcs);
+        let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         let eval_env = if global_env == self.global {
             crate::environment::new_env(&self.heap, Some(global_env), is_strict)?
         } else {
@@ -1055,7 +1130,7 @@ impl Vm {
         }
         let mut compiler = crate::compiler::Compiler::new();
         let (chunk, funcs) = compiler.compile_program(&program)?;
-        let chunk = self.append_compiled_functions(chunk, funcs);
+        let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         // Per spec, direct eval runs in a dedicated lexical environment whose
         // parent is the caller's environment. `let`/`const`/`class` declared in
         // eval stay local to that environment (they do NOT leak to the caller),

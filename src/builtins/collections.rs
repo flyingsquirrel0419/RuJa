@@ -1924,20 +1924,24 @@ pub(crate) fn promise_constructor(
             proto: Mutex::new(Some(proto)),
         }))?;
     let p_val = Value::Object(GcIdx(p_idx));
-    let resolve_fn = create_promise_resolving_function(vm, p_val.clone(), promise_resolve)?;
-    let pins = vm.pin_many(&[p_val.clone(), resolve_fn.clone()]);
-    let reject_fn = create_promise_resolving_function(vm, p_val.clone(), promise_reject);
-    vm.unpin_many(pins);
-    let reject_fn = reject_fn?;
-    match vm.call_function(&executor, &[resolve_fn, reject_fn], Some(Value::Undefined)) {
+    let (resolve_fn, reject_fn) = create_promise_resolving_functions(vm, p_val.clone())?;
+    match vm.call_function(
+        &executor,
+        &[resolve_fn, reject_fn.clone()],
+        Some(Value::Undefined),
+    ) {
         Ok(_) => {}
         Err(e) => {
             // executor threw: reject the promise with the thrown value
-            let reason: Value = e
-                .thrown_value
-                .clone()
-                .unwrap_or_else(|| Value::String(Arc::from(e.message.as_str())));
-            vm.promise_reject(p_idx, reason);
+            let reason = match &e.thrown_value {
+                Some(reason) => reason.clone(),
+                None => vm.make_error_value(&e)?,
+            };
+            vm.call_function(
+                &reject_fn,
+                std::slice::from_ref(&reason),
+                Some(Value::Undefined),
+            )?;
         }
     }
     Ok(p_val)
@@ -1978,12 +1982,61 @@ fn create_bound_native_function(
     Ok(Value::Object(GcIdx(idx)))
 }
 
-fn create_promise_resolving_function(
+fn create_promise_resolving_functions(
     vm: &mut Vm,
     promise: Value,
-    func: NativeFn,
-) -> error::Result<Value> {
-    create_bound_native_function(vm, "", "", func, 1, promise)
+) -> error::Result<(Value, Value)> {
+    let state_idx = vm.new_object()?;
+    let state = Value::Object(state_idx);
+    vm.heap.with_obj(state_idx.0, |object| {
+        let mut props = object.props().lock();
+        props.insert(
+            PropertyKey::from("promise"),
+            PropertyDescriptor::data(promise.clone()),
+        );
+        props.insert(
+            PropertyKey::from("alreadyResolved"),
+            PropertyDescriptor::data(Value::Bool(false)),
+        );
+    });
+    let pins = vm.pin_many(&[promise, state.clone()]);
+    let resolve = create_bound_native_function(vm, "", "", promise_resolve, 1, state.clone());
+    let resolve = match resolve {
+        Ok(resolve) => resolve,
+        Err(error) => {
+            vm.unpin_many(pins);
+            return Err(error);
+        }
+    };
+    let resolve_pin = vm.pin(&resolve);
+    let reject = create_bound_native_function(vm, "", "", promise_reject, 1, state);
+    vm.unpin(resolve_pin);
+    vm.unpin_many(pins);
+    Ok((resolve, reject?))
+}
+
+fn take_promise_resolving_target(vm: &Vm, this: Option<Value>) -> Option<usize> {
+    let Some(Value::Object(state)) = this else {
+        return None;
+    };
+    vm.heap.with_obj(state.0, |object| {
+        let mut props = object.props().lock();
+        let already_resolved = props
+            .get(&PropertyKey::from("alreadyResolved"))
+            .is_some_and(|descriptor| descriptor.value == Value::Bool(true));
+        if already_resolved {
+            return None;
+        }
+        if let Some(descriptor) = props.get_mut(&PropertyKey::from("alreadyResolved")) {
+            descriptor.value = Value::Bool(true);
+        }
+        props
+            .get(&PropertyKey::from("promise"))
+            .and_then(|descriptor| match descriptor.value {
+                Value::Object(promise) => Some(promise.0),
+                _ => None,
+            })
+    })
 }
 
 pub(crate) struct PromiseCapability {
@@ -2087,11 +2140,62 @@ pub(crate) fn promise_resolve(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let p_idx = match &this {
-        Some(Value::Object(idx)) => idx.0,
-        _ => return Ok(Value::Undefined),
+    let p_idx = match take_promise_resolving_target(vm, this) {
+        Some(promise) => promise,
+        None => return Ok(Value::Undefined),
     };
     let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if value == Value::Object(GcIdx(p_idx)) {
+        let error = Error::type_err("A Promise cannot resolve to itself");
+        let reason = vm.make_error_value(&error)?;
+        vm.promise_reject(p_idx, reason);
+        return Ok(Value::Undefined);
+    }
+    if matches!(value, Value::Object(_)) {
+        let pins = vm.pin_many(&[Value::Object(GcIdx(p_idx)), value.clone()]);
+        let then = match vm.get_property(&value, "then") {
+            Ok(then) => then,
+            Err(error) => {
+                let reason = match &error.thrown_value {
+                    Some(reason) => Ok(reason.clone()),
+                    None => vm.make_error_value(&error),
+                };
+                let reason = match reason {
+                    Ok(reason) => reason,
+                    Err(error) => {
+                        vm.unpin_many(pins);
+                        return Err(error);
+                    }
+                };
+                vm.promise_reject(p_idx, reason);
+                vm.unpin_many(pins);
+                return Ok(Value::Undefined);
+            }
+        };
+        if is_callable(&then, &vm.heap) {
+            let then_pin = vm.pin(&then);
+            let resolving = create_promise_resolving_functions(vm, Value::Object(GcIdx(p_idx)));
+            let (resolve, reject) = match resolving {
+                Ok(resolving) => resolving,
+                Err(error) => {
+                    vm.unpin(then_pin);
+                    vm.unpin_many(pins);
+                    return Err(error);
+                }
+            };
+            vm.microtask_queue
+                .push_back(crate::vm::Microtask::Thenable {
+                    thenable: value,
+                    then,
+                    resolve,
+                    reject,
+                });
+            vm.unpin(then_pin);
+            vm.unpin_many(pins);
+            return Ok(Value::Undefined);
+        }
+        vm.unpin_many(pins);
+    }
     vm.promise_resolve(p_idx, value);
     Ok(Value::Undefined)
 }
@@ -2100,9 +2204,9 @@ pub(crate) fn promise_reject(
     args: &[Value],
     this: Option<Value>,
 ) -> error::Result<Value> {
-    let p_idx = match &this {
-        Some(Value::Object(idx)) => idx.0,
-        _ => return Ok(Value::Undefined),
+    let p_idx = match take_promise_resolving_target(vm, this) {
+        Some(promise) => promise,
+        None => return Ok(Value::Undefined),
     };
     let reason = args.first().cloned().unwrap_or(Value::Undefined);
     vm.promise_reject(p_idx, reason);

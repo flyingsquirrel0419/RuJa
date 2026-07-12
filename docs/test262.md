@@ -1031,14 +1031,25 @@ outside importers until the whole cycle settles, propagates rejection through
 dependent SCCs, and persists every pending evaluation Promise in the canonical
 module record as a GC root, including siblings left running after another
 dependency rejects. The remaining TLA files depend on dynamic import or related
-host semantics. The
-supported subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**;
+host semantics. The supported subset remains **11589 pass / 0 fail / 8850 skip
+/ 20439 total**;
 CI `29184350526` and `test262-full` `29184350527` confirm feature commit
 `535fa28`. Downloaded artifacts aggregate to **27724 pass / 6720 fail / 12
 timeout / 0 error / 14011 skip / 48467 total / 34444 pass-or-fail executed**,
 or **80.5%** of pass-or-fail files and **57.2%** of the matrix. The module
 shard accounts for exactly **+31 pass / -31 skip**; every other outcome and
 shard are unchanged.
+
+The first dynamic-import runtime slice freezes six exact
+`language/expressions/dynamic-import/usage/top-level-import-then-*` script
+files. A dedicated ImportCall opcode creates a fresh intrinsic Promise, uses
+the canonical script-file referrer, loads and evaluates the relative module,
+and fulfills with its cached live Module Namespace object. The focused subtree
+is **6 pass / 0 fail / 999 skip / 1005 total** and tooling is **59/59**.
+Module-origin imports inside an in-flight top-level-await graph, import
+attributes, and rejection/catch matrices remain gated.
+The supported subset rises to **11595 pass / 0 fail / 8844 skip / 20439
+total**. Full-matrix deltas are recorded after CI.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

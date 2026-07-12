@@ -1,0 +1,7 @@
+# Frozen script-origin dynamic import runtime files.
+language/expressions/dynamic-import/usage/top-level-import-then-eval-gtbndng-indirect-update-dflt.js
+language/expressions/dynamic-import/usage/top-level-import-then-eval-gtbndng-indirect-update.js
+language/expressions/dynamic-import/usage/top-level-import-then-eval-script-code-host-resolves-module-code.js
+language/expressions/dynamic-import/usage/top-level-import-then-is-call-expression-square-brackets.js
+language/expressions/dynamic-import/usage/top-level-import-then-returns-thenable.js
+language/expressions/dynamic-import/usage/top-level-import-then-specifier-tostring.js

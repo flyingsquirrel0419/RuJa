@@ -83,65 +83,7 @@ impl Vm {
         capability: &PromiseReactionCapability,
         value: Value,
     ) -> error::Result<()> {
-        let pins = self.pin_many(&[
-            capability.promise.clone(),
-            capability.resolve.clone(),
-            capability.reject.clone(),
-            value.clone(),
-        ]);
-        let result = (|| -> error::Result<()> {
-            if value == capability.promise {
-                let error = Error::type_err("Cannot resolve promise with itself");
-                let reason = self.make_error_value(&error)?;
-                let reason_pin = self.pin(&reason);
-                let rejected =
-                    self.call_function(&capability.reject, &[reason], Some(Value::Undefined));
-                self.unpin(reason_pin);
-                rejected?;
-                return Ok(());
-            }
-
-            let then = if matches!(value, Value::Object(_)) {
-                match self.get_property(&value, "then") {
-                    Ok(then) => then,
-                    Err(error) => {
-                        let reason = match error.thrown_value.clone() {
-                            Some(reason) => reason,
-                            None => self.make_error_value(&error)?,
-                        };
-                        let reason_pin = self.pin(&reason);
-                        let rejected = self.call_function(
-                            &capability.reject,
-                            &[reason],
-                            Some(Value::Undefined),
-                        );
-                        self.unpin(reason_pin);
-                        rejected?;
-                        return Ok(());
-                    }
-                }
-            } else {
-                Value::Undefined
-            };
-
-            if crate::builtins::is_callable(&then, &self.heap) {
-                self.microtask_queue.push_back(Microtask::Thenable {
-                    thenable: value.clone(),
-                    then,
-                    resolve: capability.resolve.clone(),
-                    reject: capability.reject.clone(),
-                });
-            } else {
-                self.call_function(
-                    &capability.resolve,
-                    std::slice::from_ref(&value),
-                    Some(Value::Undefined),
-                )?;
-            }
-            Ok(())
-        })();
-        self.unpin_many(pins);
-        result
+        self.settle_promise_capability(capability, value, false)
     }
 
     fn reject_promise_capability_error(
@@ -527,12 +469,21 @@ impl Vm {
         ]);
         let call_result = self.call_function(&then, &[resolve, reject.clone()], Some(thenable));
         let result = if let Err(error) = call_result {
-            let reason = error
-                .thrown_value
-                .clone()
-                .unwrap_or_else(|| Value::String(Arc::from(error.message.as_str())));
-            self.call_function(&reject, &[reason], Some(Value::Undefined))
-                .map(|_| ())
+            let reason = match &error.thrown_value {
+                Some(reason) => Ok(reason.clone()),
+                None => self.make_error_value(&error),
+            };
+            match reason {
+                Ok(reason) => {
+                    let reason_pin = self.pin(&reason);
+                    let result = self
+                        .call_function(&reject, &[reason], Some(Value::Undefined))
+                        .map(|_| ());
+                    self.unpin(reason_pin);
+                    result
+                }
+                Err(error) => Err(error),
+            }
         } else {
             Ok(())
         };
