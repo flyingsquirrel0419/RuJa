@@ -131,6 +131,7 @@ pub enum Expr {
         specifier: Box<Expr>,
         options: Option<Box<Expr>>,
     },
+    ImportMeta,
     New {
         callee: Box<Expr>,
         args: Vec<Expr>,

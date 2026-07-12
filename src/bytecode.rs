@@ -3,6 +3,7 @@
 //! The VM is a stack machine: operands are pushed/popped on a value
 //! stack, and operations consume from the top.
 
+use crate::value::GcIdx;
 use crate::value::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,6 +27,8 @@ pub struct Chunk {
     pub body_start_ip: usize,
     /// Canonical source file that owns this script or module chunk.
     pub source_path: Option<Arc<PathBuf>>,
+    /// Canonical import.meta object for an inline module source.
+    pub import_meta: Option<GcIdx>,
 }
 
 impl Chunk {
@@ -38,6 +41,7 @@ impl Chunk {
             is_strict: false,
             body_start_ip: 0,
             source_path: None,
+            import_meta: None,
         }
     }
 
@@ -255,6 +259,8 @@ pub enum Op {
     ImportCall {
         has_options: bool,
     },
+    /// Push the canonical import.meta object for the current module.
+    ImportMeta,
     /// Push a private field value from `this`. arg = name constant idx.
     GetPrivate(usize),
     /// Create a fresh class private-name identity. arg = description constant idx.

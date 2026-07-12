@@ -756,7 +756,19 @@ impl Vm {
             crate::value::BindingKind::Const,
         );
         let mut compiler = crate::compiler::Compiler::new();
-        let (chunk, funcs) = compiler.compile_program(&program)?;
+        let (mut chunk, funcs) = compiler.compile_program(&program)?;
+        let import_meta = self.allocate_import_meta()?;
+        chunk.import_meta = Some(import_meta);
+        let funcs = funcs
+            .into_iter()
+            .map(|func| {
+                let mut func = (*func).clone();
+                let mut func_chunk = (*func.chunk).clone();
+                func_chunk.import_meta = Some(import_meta);
+                func.chunk = Arc::new(func_chunk);
+                Arc::new(func)
+            })
+            .collect();
         let chunk = self.append_compiled_functions_with_active_source(chunk, funcs);
         let result = self.execute_chunk(chunk, module_env, Value::Undefined);
         let result_roots: Vec<Value> = match &result {

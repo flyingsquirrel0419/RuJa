@@ -10,6 +10,7 @@ from unittest.mock import patch
 import test262_analyze
 import test262_runner
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
+from test262_import_meta_admission import IMPORT_META_FILES
 from test262_module_admission import (
     MODULE_STATIC_SEMANTICS_FILES,
     MODULE_TLA_RUNTIME_FILES,
@@ -553,7 +554,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 44)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 45)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
@@ -588,6 +589,31 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(tool.should_skip(meta, outside_path))
                     self.assertTrue(tool.dynamic_import_path(path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_import_meta_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(IMPORT_META_FILES), 23)
+        admitted = "language/expressions/import.meta/same-object-returned.js"
+        dynamic = (
+            "language/expressions/dynamic-import/assignment-expression/import-meta.js"
+        )
+        outside = "language/expressions/import.meta/unknown-future-test.js"
+        self.assertIn(admitted, IMPORT_META_FILES)
+        self.assertIn(dynamic, IMPORT_META_FILES)
+        self.assertNotIn(outside, IMPORT_META_FILES)
+        meta = {"flags": ["module", "async"], "features": ["import.meta"]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_path = root / "test" / admitted
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.import_meta_path(admitted_path))
+                    self.assertFalse(tool.should_skip(meta, admitted_path))
+                    self.assertTrue(tool.should_skip(meta, outside_path))
                 finally:
                     tool.TEST262 = original_root
 

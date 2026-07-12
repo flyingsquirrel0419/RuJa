@@ -2516,6 +2516,9 @@ impl Vm {
             Self::push_value_roots(&mut roots, &f.callee);
             roots.push(f.env.0);
             Self::push_value_roots(&mut roots, &f.this_val);
+            if let Some(meta) = f.chunk.import_meta {
+                roots.push(meta.0);
+            }
             for l in &f.locals {
                 Self::push_value_roots(&mut roots, l);
             }
@@ -2683,6 +2686,9 @@ impl Vm {
         }
         for module in self.module_records.values() {
             roots.push(module.env.0);
+            if let Some(meta) = module.import_meta() {
+                roots.push(meta.0);
+            }
             if let Some(promise) = module.evaluation_promise() {
                 roots.push(promise.0);
             }
@@ -2693,6 +2699,11 @@ impl Vm {
             }
             if let Some(value) = module.completion_value() {
                 Self::push_value_roots(&mut roots, &value);
+            }
+        }
+        for function in &self.functions {
+            if let Some(meta) = function.chunk.import_meta {
+                roots.push(meta.0);
             }
         }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).

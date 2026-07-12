@@ -41,6 +41,7 @@ struct ModuleRuntime {
     evaluation_promise: Option<GcIdx>,
     completion_value: Option<Value>,
     namespace: Option<GcIdx>,
+    import_meta: Option<GcIdx>,
     namespace_initializing: bool,
     status: ModuleStatus,
     error: Option<Arc<Error>>,
@@ -61,6 +62,10 @@ impl ModuleRecord {
 
     pub(crate) fn completion_value(&self) -> Option<Value> {
         self.runtime.lock().completion_value.clone()
+    }
+
+    pub(crate) fn import_meta(&self) -> Option<GcIdx> {
+        self.runtime.lock().import_meta
     }
 }
 
@@ -122,6 +127,7 @@ fn load_graph(
                 evaluation_promise: None,
                 completion_value: None,
                 namespace: None,
+                import_meta: None,
                 namespace_initializing: false,
                 status: ModuleStatus::Linked,
                 error: None,
@@ -871,6 +877,33 @@ fn evaluate_module(
 }
 
 impl Vm {
+    pub(crate) fn allocate_import_meta(&mut self) -> error::Result<GcIdx> {
+        Ok(GcIdx(self.heap.allocate(HeapObj::Object(
+            crate::value::ObjectData {
+                props: Mutex::new(IndexMap::new()),
+                proto: Mutex::new(None),
+                extensible: std::sync::atomic::AtomicBool::new(true),
+                class_name: None,
+                private_fields: Mutex::new(HashMap::new()),
+                primitive: Mutex::new(None),
+            },
+        ))?))
+    }
+
+    pub(crate) fn import_meta_object(&mut self, path: &Path) -> error::Result<Value> {
+        let record = self
+            .module_records
+            .get(path)
+            .cloned()
+            .ok_or_else(|| Error::syntax("import.meta module record is unavailable"))?;
+        if let Some(meta) = record.import_meta() {
+            return Ok(Value::Object(meta));
+        }
+        let meta = self.allocate_import_meta()?;
+        record.runtime.lock().import_meta = Some(meta);
+        Ok(Value::Object(meta))
+    }
+
     pub(crate) fn set_module_completion(&mut self, path: &Path, value: Value) {
         if let Some(record) = self.module_records.get(path) {
             record.runtime.lock().completion_value = Some(value);

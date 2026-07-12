@@ -1,0 +1,24 @@
+# Frozen import.meta syntax and runtime files.
+language/expressions/dynamic-import/assignment-expression/import-meta.js
+language/expressions/import.meta/distinct-for-each-module.js
+language/expressions/import.meta/import-meta-is-an-ordinary-object.js
+language/expressions/import.meta/not-accessible-from-direct-eval.js
+language/expressions/import.meta/same-object-returned.js
+language/expressions/import.meta/syntax/escape-sequence-import.js
+language/expressions/import.meta/syntax/escape-sequence-meta.js
+language/expressions/import.meta/syntax/goal-async-function-params-or-body.js
+language/expressions/import.meta/syntax/goal-async-generator-params-or-body.js
+language/expressions/import.meta/syntax/goal-function-params-or-body.js
+language/expressions/import.meta/syntax/goal-generator-params-or-body.js
+language/expressions/import.meta/syntax/goal-module-nested-function.js
+language/expressions/import.meta/syntax/goal-module.js
+language/expressions/import.meta/syntax/goal-script.js
+language/expressions/import.meta/syntax/invalid-assignment-target-array-destructuring-expr.js
+language/expressions/import.meta/syntax/invalid-assignment-target-array-rest-destructuring-expr.js
+language/expressions/import.meta/syntax/invalid-assignment-target-assignment-expr.js
+language/expressions/import.meta/syntax/invalid-assignment-target-for-await-of-loop.js
+language/expressions/import.meta/syntax/invalid-assignment-target-for-in-loop.js
+language/expressions/import.meta/syntax/invalid-assignment-target-for-of-loop.js
+language/expressions/import.meta/syntax/invalid-assignment-target-object-destructuring-expr.js
+language/expressions/import.meta/syntax/invalid-assignment-target-object-rest-destructuring-expr.js
+language/expressions/import.meta/syntax/invalid-assignment-target-update-expr.js

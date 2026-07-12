@@ -2791,16 +2791,7 @@ impl Parser {
     }
 
     fn is_import_meta(target: &Expr) -> bool {
-        matches!(
-            target,
-            Expr::Member {
-                object,
-                property,
-                computed: false,
-                ..
-            } if matches!(object.as_ref(), Expr::Ident(name) if name.as_ref() == "import")
-                && matches!(property.as_ref(), Expr::String(name) if name.as_ref() == "meta")
-        )
+        matches!(target, Expr::ImportMeta)
     }
 
     fn is_for_in_of_assignment_target(target: &Expr) -> bool {
@@ -3656,6 +3647,23 @@ impl Parser {
             }
             TokenKind::Ident(s) => {
                 if s == "import" && !self.peek_at_tok(0).had_escape {
+                    if matches!(self.peek_at_tok(1).kind, TokenKind::Dot)
+                        && matches!(
+                            &self.peek_at_tok(2).kind,
+                            TokenKind::Ident(name) if name == "meta"
+                        )
+                        && !self.peek_at_tok(2).had_escape
+                    {
+                        if self.source_type != SourceType::Module {
+                            return Err(error::Error::syntax(
+                                "import.meta is only valid in module code",
+                            ));
+                        }
+                        self.advance();
+                        self.advance();
+                        self.advance();
+                        return Ok(Expr::ImportMeta);
+                    }
                     if !matches!(self.peek_at_tok(1).kind, TokenKind::LParen) {
                         return Err(error::Error::syntax(
                             "import must be followed by a call or meta-property",
@@ -5302,6 +5310,7 @@ impl Parser {
             | Expr::ArrayHole
             | Expr::Regex(_, _)
             | Expr::NewTarget
+            | Expr::ImportMeta
             | Expr::Yield(None)
             | Expr::PrivateFieldDecl { init: None, .. } => false,
         }
@@ -5618,7 +5627,8 @@ impl Parser {
             | Expr::Super
             | Expr::ArrayHole
             | Expr::Regex(_, _)
-            | Expr::NewTarget => Ok(()),
+            | Expr::NewTarget
+            | Expr::ImportMeta => Ok(()),
             Expr::PrivateFieldDecl { init: None, .. } => Ok(()),
         }
     }
@@ -6013,6 +6023,7 @@ impl Parser {
             | Expr::ArrayHole
             | Expr::Regex(_, _)
             | Expr::NewTarget
+            | Expr::ImportMeta
             | Expr::Yield(None) => Ok(()),
         }
     }
@@ -7331,6 +7342,14 @@ mod tests {
     fn parse_import_meta_is_not_assignment_target() {
         for src in ["import.meta = 1;", "(import.meta) = 1;"] {
             assert!(Parser::parse(src).is_err(), "{src}");
+        }
+    }
+
+    #[test]
+    fn parse_import_meta_is_a_module_only_expression() {
+        assert!(Parser::parse_module("import.meta; import(import.meta);").is_ok());
+        for source in ["import.meta;", "import.\\u006deta;", "import.other;"] {
+            assert!(Parser::parse(source).is_err(), "{source}");
         }
     }
 

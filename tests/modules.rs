@@ -805,3 +805,58 @@ fn dynamic_import_of_tla_self_propagates_cached_rejection() {
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
+
+#[test]
+fn import_meta_is_canonical_null_prototype_and_rejects_as_specifier() {
+    let dir = module_fixture_dir("import-meta-runtime");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        const first = import.meta;
+        first.marker = 42;
+        globalThis.importMetaIdentity = first === import.meta;
+        globalThis.importMetaPrototypeIsNull = Object.getPrototypeOf(first) === null;
+        globalThis.importMetaIsExtensible = Object.isExtensible(first);
+        globalThis.importMetaMutationPersists = import.meta.marker;
+        import(import.meta).catch(error => {
+            globalThis.importMetaSpecifierErrorIsType = error instanceof TypeError;
+        });
+        "#,
+    )
+    .expect("import.meta module should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("import.meta module should evaluate");
+    assert_eq!(
+        vm.run(
+            "[importMetaIdentity, importMetaPrototypeIsNull, importMetaIsExtensible, importMetaMutationPersists, importMetaSpecifierErrorIsType].join('|')"
+        )
+        .expect("import.meta markers should be readable"),
+        Value::String(Arc::from("true|true|true|42|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn inline_module_import_meta_is_canonical_per_evaluation() {
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module(
+        "globalThis.firstInlineMeta = import.meta; \
+         globalThis.inlineMetaSame = import.meta === firstInlineMeta; \
+         globalThis.getFirstInlineMeta = () => import.meta;",
+    )
+    .expect("first inline module should evaluate");
+    vm.run_module(
+        "globalThis.inlineMetaIsFresh = import.meta !== firstInlineMeta; \
+         globalThis.getSecondInlineMeta = () => import.meta;",
+    )
+    .expect("second inline module should evaluate");
+    assert_eq!(
+        vm.run(
+            "[inlineMetaSame, inlineMetaIsFresh, getFirstInlineMeta() === firstInlineMeta, getSecondInlineMeta() !== firstInlineMeta].join('|')"
+        )
+            .expect("inline import.meta markers should be readable"),
+        Value::String(Arc::from("true|true|true|true"))
+    );
+}

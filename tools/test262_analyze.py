@@ -8,12 +8,14 @@ from collections import Counter, defaultdict
 try:
     from test262_support import append_async_harness, execute_source
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
+    from test262_import_meta_admission import IMPORT_META_FILES
     from test262_module_admission import (
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
 except ModuleNotFoundError:
     from tools.test262_support import append_async_harness, execute_source
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
+    from tools.test262_import_meta_admission import IMPORT_META_FILES
     from tools.test262_module_admission import (
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
@@ -1843,6 +1845,15 @@ def dynamic_import_path(path):
         return False
     return rel.as_posix() in DYNAMIC_IMPORT_FILES
 
+def import_meta_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in IMPORT_META_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -1857,6 +1868,11 @@ def should_skip(meta, path=None):
         feats.difference_update({
             "dynamic-import", "generators", "async-iteration",
             "export-star-as-namespace-from-module",
+        })
+    if path is not None and import_meta_path(path):
+        feats.difference_update({
+            "import.meta", "dynamic-import", "generators", "async-functions",
+            "async-iteration", "object-rest",
         })
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
@@ -2018,9 +2034,10 @@ def should_skip(meta, path=None):
         or atomics_sync_path(path)
         or module_tla_runtime_path(path)
         or dynamic_import_path(path)
+        or import_meta_path(path)
     )
     module_admitted = path is not None and (
-        module_core_path(path) or dynamic_import_path(path)
+        module_core_path(path) or dynamic_import_path(path) or import_meta_path(path)
     )
     if ('module' in flags and not module_admitted) or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)

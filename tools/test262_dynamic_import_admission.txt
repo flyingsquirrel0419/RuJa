@@ -1,4 +1,5 @@
 # Frozen script- and module-origin dynamic import runtime files.
+language/expressions/dynamic-import/assignment-expression/import-meta.js
 language/expressions/dynamic-import/always-create-new-promise.js
 language/expressions/dynamic-import/usage-from-eval.js
 language/expressions/dynamic-import/catch/top-level-import-catch-eval-rqstd-abrupt-typeerror.js

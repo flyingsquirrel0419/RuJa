@@ -4521,6 +4521,7 @@ impl Compiler {
                     self.current_line,
                 );
             }
+            Expr::ImportMeta => self.chunk.emit(Op::ImportMeta, self.current_line),
             Expr::Yield(inner) => {
                 // Eager generator: evaluate the yielded value and emit it.
                 match inner {

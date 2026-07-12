@@ -2553,6 +2553,18 @@ impl Vm {
                     self.op_call_eval_ref_with_context(arg_count, true)?
                 }
                 Op::ImportCall { has_options } => self.op_import_call(has_options)?,
+                Op::ImportMeta => {
+                    let path = self.current_frame()?.chunk.source_path.clone();
+                    let meta =
+                        if let Some(path) = path {
+                            self.import_meta_object(&path)?
+                        } else {
+                            Value::Object(self.current_frame()?.chunk.import_meta.ok_or_else(
+                                || Error::syntax("import.meta requires module source"),
+                            )?)
+                        };
+                    self.stack.push(meta);
+                }
                 Op::YieldValue => {
                     // Lazy generator: pop the yielded value and suspend execution.
                     // The `yield` expression's *result* (the value sent in by the
