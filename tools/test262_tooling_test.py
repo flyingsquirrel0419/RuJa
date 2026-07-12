@@ -554,7 +554,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 347)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 598)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
@@ -601,6 +601,18 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "language/expressions/dynamic-import/namespace/"
             "promise-then-ns-define-own-property.js"
         )
+        syntax_new_invalid_admitted = (
+            "language/expressions/dynamic-import/syntax/invalid/"
+            "top-level-no-new-call-expression.js"
+        )
+        syntax_new_covered_admitted = (
+            "language/expressions/dynamic-import/syntax/valid/"
+            "new-covered-expression-is-valid.js"
+        )
+        syntax_attributes_admitted = (
+            "language/expressions/dynamic-import/syntax/valid/"
+            "top-level-import-attributes-trailing-comma-second.js"
+        )
         root_tla_cycle_admitted = (
             "language/expressions/dynamic-import/"
             "import-fulfilled-member-of-errored-cycle.js"
@@ -621,6 +633,9 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertIn(usage_host_resolution_admitted, DYNAMIC_IMPORT_FILES)
         self.assertIn(namespace_own_keys_admitted, DYNAMIC_IMPORT_FILES)
         self.assertIn(namespace_define_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(syntax_new_invalid_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(syntax_new_covered_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(syntax_attributes_admitted, DYNAMIC_IMPORT_FILES)
         self.assertNotIn(outside, DYNAMIC_IMPORT_FILES)
         meta = {"flags": ["generated", "async"], "features": ["dynamic-import"]}
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -629,6 +644,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             module_path = root / "test" / module_admitted
             root_tla_cycle_path = root / "test" / root_tla_cycle_admitted
             namespace_define_path = root / "test" / namespace_define_admitted
+            syntax_attributes_path = root / "test" / syntax_attributes_admitted
             outside_path = root / "test" / outside
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
@@ -663,6 +679,15 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                                 ],
                             },
                             namespace_define_path,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {
+                                "flags": ["generated"],
+                                "features": ["dynamic-import", "import-attributes"],
+                            },
+                            syntax_attributes_path,
                         )
                     )
                     self.assertTrue(tool.should_skip(meta, outside_path))

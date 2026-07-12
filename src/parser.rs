@@ -4424,7 +4424,15 @@ impl Parser {
             }
         }
         // parse the constructor (primary + member/tagged access, but NOT call parens)
+        self.last_primary_parenthesized = false;
         let mut callee = self.parse_primary()?;
+        let parenthesized_callee = self.last_primary_parenthesized;
+        self.last_primary_parenthesized = false;
+        if matches!(callee, Expr::ImportCall { .. }) && !parenthesized_callee {
+            return Err(error::Error::syntax(
+                "import() cannot be used as a new expression constructor".to_string(),
+            ));
+        }
         loop {
             match self.peek().clone() {
                 TokenKind::Dot => {
@@ -7086,6 +7094,9 @@ mod tests {
         assert!(Parser::parse("import('./dep.js', {}, 1);").is_err());
         assert!(Parser::parse("import('./dep.js',);").is_ok());
         assert!(Parser::parse("import('./dep.js', {},);").is_ok());
+        assert!(Parser::parse("new import('./dep.js');").is_err());
+        assert!(Parser::parse("new import('./dep.js').value;").is_err());
+        assert!(Parser::parse("new (import('./dep.js'));").is_ok());
     }
 
     #[test]

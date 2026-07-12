@@ -1869,6 +1869,7 @@ def should_skip(meta, path=None):
             "dynamic-import", "generators", "async-iteration",
             "export-star-as-namespace-from-module", "top-level-await",
             "Symbol", "Symbol.iterator", "Symbol.toStringTag", "Reflect",
+            "import-attributes",
         })
     if path is not None and import_meta_path(path):
         feats.difference_update({
