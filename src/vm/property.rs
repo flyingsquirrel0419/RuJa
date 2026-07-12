@@ -2592,6 +2592,13 @@ impl Vm {
                     }
                     if let Some(continuation) = continuation {
                         match continuation {
+                            crate::value::PromiseContinuation::DynamicImport {
+                                capability, ..
+                            } => {
+                                Self::push_value_roots(&mut roots, &capability.promise);
+                                Self::push_value_roots(&mut roots, &capability.resolve);
+                                Self::push_value_roots(&mut roots, &capability.reject);
+                            }
                             crate::value::PromiseContinuation::AsyncGenerator {
                                 generator, ..
                             } => roots.push(generator.0),
@@ -2676,13 +2683,16 @@ impl Vm {
         }
         for module in self.module_records.values() {
             roots.push(module.env.0);
-            if let Some(promise) = module.evaluation_promise {
+            if let Some(promise) = module.evaluation_promise() {
                 roots.push(promise.0);
             }
-            if let Some(error) = &module.error {
+            if let Some(error) = module.error() {
                 if let Some(value) = &error.thrown_value {
                     Self::push_value_roots(&mut roots, value);
                 }
+            }
+            if let Some(value) = module.completion_value() {
+                Self::push_value_roots(&mut roots, &value);
             }
         }
         // Pinned temporary roots (e.g. Promise handlers held across call_function).
@@ -2876,6 +2886,59 @@ impl Vm {
         }
     }
 
+    fn run_dynamic_import_reaction(
+        &mut self,
+        evaluation_promise: GcIdx,
+        target: &std::path::Path,
+        capability: crate::value::PromiseReactionCapability,
+    ) -> error::Result<()> {
+        let (state, result) = self.heap.with_obj(evaluation_promise.0, |object| {
+            if let HeapObj::Promise(data) = object {
+                (*data.state.lock(), data.result.lock().clone())
+            } else {
+                (PromiseStatus::Rejected, Value::Undefined)
+            }
+        });
+        let pins = self.pin_many(&[
+            capability.promise.clone(),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+            result.clone(),
+        ]);
+        let settlement = if state == PromiseStatus::Rejected {
+            self.call_function(
+                &capability.reject,
+                std::slice::from_ref(&result),
+                Some(Value::Undefined),
+            )
+        } else {
+            match self.finish_dynamic_import(target) {
+                Ok(namespace) => self.call_function(
+                    &capability.resolve,
+                    std::slice::from_ref(&namespace),
+                    Some(Value::Undefined),
+                ),
+                Err(error) => match error.thrown_value.clone() {
+                    Some(reason) => self.call_function(
+                        &capability.reject,
+                        std::slice::from_ref(&reason),
+                        Some(Value::Undefined),
+                    ),
+                    None => {
+                        let reason = self.make_error_value(&error)?;
+                        self.call_function(
+                            &capability.reject,
+                            std::slice::from_ref(&reason),
+                            Some(Value::Undefined),
+                        )
+                    }
+                },
+            }
+        };
+        self.unpin_many(pins);
+        settlement.map(|_| ())
+    }
+
     fn run_microtask(&mut self, task: Microtask) -> error::Result<()> {
         match task {
             Microtask::Then {
@@ -2896,6 +2959,9 @@ impl Vm {
                 }) => self.run_async_from_sync_iterator_reaction(capability, done, promise),
                 Some(crate::value::PromiseContinuation::AsyncFunction(frame)) => {
                     self.run_async_function_reaction(*frame, promise)
+                }
+                Some(crate::value::PromiseContinuation::DynamicImport { target, capability }) => {
+                    self.run_dynamic_import_reaction(promise, &target, capability)
                 }
                 None => self.run_then(promise, on_fulfilled, on_rejected, derived),
             },
@@ -2924,7 +2990,7 @@ impl Vm {
                     self.pin_many(&[Value::Object(promise), resolve.clone(), reject.clone()]);
                 let outcome = self.dynamic_import_module(&referrer, &specifier);
                 let settlement = match outcome {
-                    Ok(namespace) => {
+                    Ok(crate::module::DynamicImportResult::Ready(namespace)) => {
                         let value_pin = self.pin(&namespace);
                         let result = self.call_function(
                             &resolve,
@@ -2933,6 +2999,48 @@ impl Vm {
                         );
                         self.unpin(value_pin);
                         result
+                    }
+                    Ok(crate::module::DynamicImportResult::Pending {
+                        target,
+                        evaluation_promise,
+                    }) => {
+                        let capability = crate::value::PromiseReactionCapability {
+                            promise: Value::Object(promise),
+                            resolve: resolve.clone(),
+                            reject: reject.clone(),
+                        };
+                        let continuation = Some(crate::value::PromiseContinuation::DynamicImport {
+                            target,
+                            capability,
+                        });
+                        let state = self.heap.with_obj(evaluation_promise.0, |object| {
+                            if let HeapObj::Promise(data) = object {
+                                *data.state.lock()
+                            } else {
+                                PromiseStatus::Rejected
+                            }
+                        });
+                        if state == PromiseStatus::Pending {
+                            self.heap.with_obj(evaluation_promise.0, |object| {
+                                if let HeapObj::Promise(data) = object {
+                                    data.handlers.lock().push(crate::value::PromiseHandler {
+                                        on_fulfilled: Value::Undefined,
+                                        on_rejected: Value::Undefined,
+                                        derived: None,
+                                        continuation,
+                                    });
+                                }
+                            });
+                        } else {
+                            self.microtask_queue.push_back(Microtask::Then {
+                                promise: evaluation_promise,
+                                on_fulfilled: Value::Undefined,
+                                on_rejected: Value::Undefined,
+                                derived: None,
+                                continuation,
+                            });
+                        }
+                        Ok(Value::Undefined)
                     }
                     Err(error) => match &error.thrown_value {
                         Some(value) => {

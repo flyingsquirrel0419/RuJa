@@ -553,27 +553,39 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 12)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 44)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
+        )
+        module_admitted = (
+            "language/expressions/dynamic-import/"
+            "reuse-namespace-object-from-import.js"
         )
         outside = (
             "language/expressions/dynamic-import/catch/"
             "top-level-import-catch-import-source-specifier-tostring.js"
         )
         self.assertIn(admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(module_admitted, DYNAMIC_IMPORT_FILES)
         self.assertNotIn(outside, DYNAMIC_IMPORT_FILES)
         meta = {"flags": ["generated", "async"], "features": ["dynamic-import"]}
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             path = root / "test" / admitted
+            module_path = root / "test" / module_admitted
             outside_path = root / "test" / outside
             for tool in (test262_runner, test262_analyze):
                 original_root = tool.TEST262
                 tool.TEST262 = str(root)
                 try:
                     self.assertFalse(tool.should_skip(meta, path))
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"flags": ["module", "async"], "features": ["dynamic-import"]},
+                            module_path,
+                        )
+                    )
                     self.assertTrue(tool.should_skip(meta, outside_path))
                     self.assertTrue(tool.dynamic_import_path(path))
                 finally:

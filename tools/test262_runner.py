@@ -1862,7 +1862,10 @@ def should_skip(meta, path=None):
     if path is not None and module_tla_runtime_path(path):
         feats.discard("top-level-await")
     if path is not None and dynamic_import_path(path):
-        feats.discard("dynamic-import")
+        feats.difference_update({
+            "dynamic-import", "generators", "async-iteration",
+            "export-star-as-namespace-from-module",
+        })
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
@@ -2024,7 +2027,9 @@ def should_skip(meta, path=None):
         or module_tla_runtime_path(path)
         or dynamic_import_path(path)
     )
-    module_admitted = path is not None and module_core_path(path)
+    module_admitted = path is not None and (
+        module_core_path(path) or dynamic_import_path(path)
+    )
     if ('module' in flags and not module_admitted) or (
         'async' in flags and not (RUN_ASYNC_TESTS or async_admitted)
     ):

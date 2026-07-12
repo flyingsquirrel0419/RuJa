@@ -693,3 +693,115 @@ fn dynamic_import_from_script_resolves_canonical_module_namespace() {
     );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
+
+#[test]
+fn dynamic_import_from_module_reuses_static_namespace() {
+    let dir = module_fixture_dir("dynamic-import-module-namespace");
+    fs::write(dir.join("dependency.js"), "export const value = 42;")
+        .expect("dynamic dependency should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        import * as staticNamespace from './dependency.js';
+        import('./dependency.js').then(dynamicNamespace => {
+            globalThis.moduleNamespacesMatch = dynamicNamespace === staticNamespace;
+        });
+        "#,
+    )
+    .expect("module entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("module dynamic import should settle");
+    assert_eq!(
+        vm.run("moduleNamespacesMatch")
+            .expect("namespace identity marker should be readable"),
+        Value::Bool(true)
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_of_evaluating_self_waits_without_reentry() {
+    let dir = module_fixture_dir("dynamic-import-module-self");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        globalThis.selfEvaluationCount = (globalThis.selfEvaluationCount || 0) + 1;
+        Promise.all([import('./entry.js'), import('./entry.js')]).then(() => {
+            globalThis.selfImportsSettled = true;
+        });
+        "#,
+    )
+    .expect("self-importing module should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("self imports should settle after the module evaluation");
+    assert_eq!(
+        vm.run("[selfEvaluationCount, selfImportsSettled].join('|')")
+            .expect("self-import markers should be readable"),
+        Value::String(Arc::from("1|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_of_tla_self_uses_evaluation_reaction() {
+    let dir = module_fixture_dir("dynamic-import-module-tla-self");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        globalThis.tlaSelfEvaluationCount =
+            (globalThis.tlaSelfEvaluationCount || 0) + 1;
+        await Promise.resolve();
+        Promise.all([import('./entry.js'), import('./entry.js')]).then(([a, b]) => {
+            globalThis.tlaSelfImportsSettled = a === b;
+        });
+        "#,
+    )
+    .expect("TLA self-importing module should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect("TLA self imports should follow the evaluation Promise");
+    assert_eq!(
+        vm.run("[tlaSelfEvaluationCount, tlaSelfImportsSettled].join('|')")
+            .expect("TLA self-import markers should be readable"),
+        Value::String(Arc::from("1|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn dynamic_import_of_tla_self_propagates_cached_rejection() {
+    let dir = module_fixture_dir("dynamic-import-module-tla-self-reject");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        globalThis.tlaSelfRejectCount = (globalThis.tlaSelfRejectCount || 0) + 1;
+        globalThis.tlaSelfReason = { marker: true };
+        await Promise.resolve();
+        import('./entry.js').catch(reason => {
+            globalThis.firstTlaSelfReason = reason;
+        });
+        import('./entry.js').catch(reason => {
+            globalThis.secondTlaSelfReason = reason;
+        });
+        throw globalThis.tlaSelfReason;
+        "#,
+    )
+    .expect("rejecting TLA self-importing module should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    vm.run_module_file(dir.join("entry.js"))
+        .expect_err("the root module should preserve its rejection");
+    assert_eq!(
+        vm.run(
+            "[tlaSelfRejectCount, firstTlaSelfReason === tlaSelfReason, secondTlaSelfReason === tlaSelfReason].join('|')"
+        )
+        .expect("TLA self-rejection markers should be readable"),
+        Value::String(Arc::from("1|true|true"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}

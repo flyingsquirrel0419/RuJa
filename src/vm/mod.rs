@@ -213,6 +213,9 @@ pub struct CallFrame {
     pub gen_yield_is_iterator_result: AtomicBool,
     /// Ordinary async functions set this while their frame is executing.
     pub async_mode: bool,
+    /// Module evaluation resumes like an async function but discards its
+    /// completion value when settling the evaluation Promise.
+    pub module_evaluation: bool,
     /// Set by `Op::Await` so the async wrapper captures this frame instead of
     /// treating the interpreter return as function completion.
     pub async_awaiting: bool,
@@ -293,6 +296,7 @@ impl CallFrame {
             gen_delegate_resume: Mutex::new(None),
             gen_yield_is_iterator_result: AtomicBool::new(false),
             async_mode: false,
+            module_evaluation: false,
             async_awaiting: false,
             async_await_value: None,
             force_throw: Mutex::new(None),

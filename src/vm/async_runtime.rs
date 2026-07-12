@@ -16,7 +16,7 @@ impl Vm {
         &mut self,
         chunk: Arc<crate::bytecode::Chunk>,
         env: GcIdx,
-    ) -> error::Result<GcIdx> {
+    ) -> error::Result<(GcIdx, Option<Value>)> {
         let capability = self.new_intrinsic_promise_capability()?;
         let Value::Object(promise) = capability.promise.clone() else {
             return Err(Error::internal(
@@ -38,6 +38,7 @@ impl Vm {
             Value::Undefined,
         );
         frame.async_mode = true;
+        frame.module_evaluation = true;
         self.frames.push(frame);
         let target_depth = self.frames.len() - 1;
         let result = self.interpret_to_depth(target_depth);
@@ -45,11 +46,21 @@ impl Vm {
             .frames
             .get(target_depth)
             .is_some_and(|frame| frame.async_awaiting);
-        let settled = if suspended {
-            self.begin_async_function_await(target_depth, capability)
+        let (settled, completion) = if suspended {
+            (
+                self.begin_async_function_await(target_depth, capability),
+                None,
+            )
         } else {
-            match result {
-                Ok(value) => self.resolve_promise_capability_value(&capability, value),
+            let mut completion = None;
+            let settled = match result {
+                // Module evaluation exposes only completion, never the value
+                // of its final expression statement. Assimilating that value
+                // can deadlock when it is a Promise that imports this module.
+                Ok(value) => {
+                    completion = Some(value);
+                    self.resolve_promise_capability_value(&capability, Value::Undefined)
+                }
                 Err(error) if !error.catchable() => {
                     self.frames.truncate(target_depth);
                     self.stack.truncate(stack_base);
@@ -57,7 +68,8 @@ impl Vm {
                     return Err(error);
                 }
                 Err(error) => self.reject_promise_capability_error(&capability, &error),
-            }
+            };
+            (settled, completion)
         };
         if self.frames.len() > target_depth {
             self.frames.truncate(target_depth);
@@ -65,7 +77,7 @@ impl Vm {
         self.stack.truncate(stack_base);
         self.unpin_many(capability_pins);
         settled?;
-        Ok(promise)
+        Ok((promise, completion))
     }
 
     fn new_intrinsic_promise_capability(&mut self) -> error::Result<PromiseReactionCapability> {
@@ -224,6 +236,7 @@ impl Vm {
             in_parameter_initializers: frame.in_parameter_initializers,
             direct_eval_new_target_allowed: frame.direct_eval_new_target_allowed,
             is_derived_ctor: frame.is_derived_ctor,
+            module_evaluation: frame.module_evaluation,
         })
     }
 
@@ -355,7 +368,9 @@ impl Vm {
             in_parameter_initializers,
             direct_eval_new_target_allowed,
             is_derived_ctor,
+            module_evaluation,
         } = continuation;
+        let module_path = chunk.source_path.clone();
         let capability_pins = self.pin_many(&[
             capability.promise.clone(),
             capability.resolve.clone(),
@@ -378,6 +393,7 @@ impl Vm {
         frame.in_parameter_initializers = in_parameter_initializers;
         frame.direct_eval_new_target_allowed = direct_eval_new_target_allowed;
         frame.is_derived_ctor = is_derived_ctor;
+        frame.module_evaluation = module_evaluation;
         frame.async_mode = true;
         if state == PromiseStatus::Rejected {
             *frame.force_throw.lock() = Some(result);
@@ -395,6 +411,12 @@ impl Vm {
             self.begin_async_function_await(target_depth, capability)
         } else {
             match run_result {
+                Ok(value) if module_evaluation => {
+                    if let Some(path) = module_path.as_deref() {
+                        self.set_module_completion(path, value);
+                    }
+                    self.resolve_promise_capability_value(&capability, Value::Undefined)
+                }
                 Ok(value) => self.resolve_promise_capability_value(&capability, value),
                 Err(error) if !error.catchable() => {
                     if self.frames.len() > target_depth {

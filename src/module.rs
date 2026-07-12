@@ -19,18 +19,49 @@ enum ModuleStatus {
     Errored,
 }
 
+pub(crate) enum DynamicImportResult {
+    Ready(Value),
+    Pending {
+        target: PathBuf,
+        evaluation_promise: GcIdx,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct ModuleRecord {
     pub(crate) program: Program,
     pub(crate) env: GcIdx,
     pub(crate) dependencies: Vec<PathBuf>,
     chunk: Option<Arc<Chunk>>,
-    pub(crate) evaluation_promise: Option<GcIdx>,
     scc_id: usize,
+    runtime: Arc<Mutex<ModuleRuntime>>,
+}
+
+struct ModuleRuntime {
+    evaluation_promise: Option<GcIdx>,
+    completion_value: Option<Value>,
     namespace: Option<GcIdx>,
     namespace_initializing: bool,
     status: ModuleStatus,
-    pub(crate) error: Option<Arc<Error>>,
+    error: Option<Arc<Error>>,
+}
+
+impl ModuleRecord {
+    fn status(&self) -> ModuleStatus {
+        self.runtime.lock().status
+    }
+
+    pub(crate) fn evaluation_promise(&self) -> Option<GcIdx> {
+        self.runtime.lock().evaluation_promise
+    }
+
+    pub(crate) fn error(&self) -> Option<Arc<Error>> {
+        self.runtime.lock().error.clone()
+    }
+
+    pub(crate) fn completion_value(&self) -> Option<Value> {
+        self.runtime.lock().completion_value.clone()
+    }
 }
 
 fn resolve_specifier(referrer: &Path, specifier: &str) -> error::Result<PathBuf> {
@@ -86,12 +117,15 @@ fn load_graph(
             env,
             dependencies: Vec::new(),
             chunk: None,
-            evaluation_promise: None,
             scc_id: usize::MAX,
-            namespace: None,
-            namespace_initializing: false,
-            status: ModuleStatus::Linked,
-            error: None,
+            runtime: Arc::new(Mutex::new(ModuleRuntime {
+                evaluation_promise: None,
+                completion_value: None,
+                namespace: None,
+                namespace_initializing: false,
+                status: ModuleStatus::Linked,
+                error: None,
+            })),
         },
     );
 
@@ -233,7 +267,7 @@ fn get_module_namespace(
     graph: &mut HashMap<PathBuf, ModuleRecord>,
 ) -> error::Result<GcIdx> {
     if let Some(record) = graph.get(path) {
-        if let Some(namespace) = record.namespace {
+        if let Some(namespace) = record.runtime.lock().namespace {
             return Ok(namespace);
         }
     }
@@ -257,8 +291,10 @@ fn get_module_namespace(
         let record = graph
             .get_mut(path)
             .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
-        record.namespace = Some(namespace);
-        record.namespace_initializing = true;
+        let mut runtime = record.runtime.lock();
+        runtime.namespace = Some(namespace);
+        runtime.namespace_initializing = true;
+        drop(runtime);
         crate::environment::declare(
             &vm.heap,
             record.env,
@@ -308,8 +344,10 @@ fn get_module_namespace(
         }
     });
     graph
-        .get_mut(path)
+        .get(path)
         .expect("module exists")
+        .runtime
+        .lock()
         .namespace_initializing = false;
     Ok(namespace)
 }
@@ -479,11 +517,26 @@ fn mark_dependent_errors(
             break;
         }
     }
-    for record in graph.values_mut() {
+    for record in graph.values() {
         if failed_components.contains(&record.scc_id) {
-            record.status = ModuleStatus::Errored;
-            record.error = Some(error.clone());
-            record.evaluation_promise = None;
+            let mut runtime = record.runtime.lock();
+            runtime.status = ModuleStatus::Errored;
+            runtime.error = Some(error.clone());
+            runtime.evaluation_promise = None;
+            runtime.completion_value = None;
+        }
+    }
+}
+
+fn clear_settled_module_runtime(graph: &HashMap<PathBuf, ModuleRecord>) {
+    for record in graph.values() {
+        let mut runtime = record.runtime.lock();
+        if matches!(
+            runtime.status,
+            ModuleStatus::Evaluated | ModuleStatus::Errored
+        ) {
+            runtime.evaluation_promise = None;
+            runtime.completion_value = None;
         }
     }
 }
@@ -497,11 +550,7 @@ fn instantiate_module(
         let record = graph
             .get(path)
             .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
-        (
-            record.status,
-            record.error.clone(),
-            record.dependencies.clone(),
-        )
+        (record.status(), record.error(), record.dependencies.clone())
     };
     match status {
         ModuleStatus::Instantiating
@@ -513,7 +562,12 @@ fn instantiate_module(
         }
         ModuleStatus::Linked => {}
     }
-    graph.get_mut(path).expect("module exists").status = ModuleStatus::Instantiating;
+    graph
+        .get(path)
+        .expect("module exists")
+        .runtime
+        .lock()
+        .status = ModuleStatus::Instantiating;
     for dependency in dependencies {
         instantiate_module(vm, &dependency, graph)?;
     }
@@ -530,14 +584,15 @@ fn instantiate_module(
         Arc::new(path.to_path_buf()),
     ));
     if let Err(error) = vm.instantiate_module_chunk(chunk.clone(), env) {
-        let record = graph.get_mut(path).expect("module exists");
-        record.status = ModuleStatus::Errored;
-        record.error = Some(error.clone());
+        let record = graph.get(path).expect("module exists");
+        let mut runtime = record.runtime.lock();
+        runtime.status = ModuleStatus::Errored;
+        runtime.error = Some(error.clone());
         return Err(error);
     }
     let record = graph.get_mut(path).expect("module exists");
     record.chunk = Some(chunk);
-    record.status = ModuleStatus::Instantiated;
+    record.runtime.lock().status = ModuleStatus::Instantiated;
     Ok(())
 }
 
@@ -581,16 +636,19 @@ fn evaluate_module(
     graph: &mut HashMap<PathBuf, ModuleRecord>,
 ) -> error::Result<Value> {
     if let Some(record) = graph.get(path) {
-        match record.status {
+        match record.status() {
             ModuleStatus::Evaluated => return Ok(Value::Undefined),
             ModuleStatus::Errored => {
-                return Err(record
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| Error::syntax("Module evaluation failed")));
+                let error = record
+                    .error()
+                    .unwrap_or_else(|| Error::syntax("Module evaluation failed"));
+                clear_settled_module_runtime(graph);
+                return Err(error);
             }
             ModuleStatus::Linked | ModuleStatus::Instantiating => {
-                return Err(Error::internal("Module evaluated before instantiation"));
+                let error = Error::internal("Module evaluated before instantiation");
+                clear_settled_module_runtime(graph);
+                return Err(error);
             }
             ModuleStatus::Instantiated | ModuleStatus::Evaluating => {}
         }
@@ -615,9 +673,9 @@ fn evaluate_module(
         .collect();
     for module in &order {
         let record = graph.get(module).expect("module exists");
-        if record.status == ModuleStatus::Evaluating {
+        if record.status() == ModuleStatus::Evaluating {
             let promise = record
-                .evaluation_promise
+                .evaluation_promise()
                 .ok_or_else(|| Error::internal("Evaluating module has no evaluation Promise"))?;
             running_pin_count += vm.pin(&Value::Object(promise));
             running.insert(module.clone(), promise);
@@ -635,16 +693,28 @@ fn evaluate_module(
                 PromiseStatus::Pending => {}
                 PromiseStatus::Fulfilled => {
                     running.remove(&module);
-                    completion_values.insert(module.clone(), result);
-                    let record = graph.get_mut(&module).expect("module exists");
-                    record.status = ModuleStatus::Evaluated;
-                    record.evaluation_promise = None;
+                    let completion = graph
+                        .get(&module)
+                        .expect("module exists")
+                        .runtime
+                        .lock()
+                        .completion_value
+                        .clone()
+                        .unwrap_or(result);
+                    completion_values.insert(module.clone(), completion);
+                    graph
+                        .get(&module)
+                        .expect("module exists")
+                        .runtime
+                        .lock()
+                        .status = ModuleStatus::Evaluated;
                     progressed = true;
                 }
                 PromiseStatus::Rejected => {
                     let error = Error::thrown(result, &vm.heap);
                     mark_dependent_errors(graph, &module, error.clone());
                     vm.unpin_many(running_pin_count);
+                    clear_settled_module_runtime(graph);
                     return Err(error);
                 }
             }
@@ -652,16 +722,18 @@ fn evaluate_module(
 
         if graph
             .get(path)
-            .is_some_and(|record| record.status == ModuleStatus::Evaluated)
+            .is_some_and(|record| record.status() == ModuleStatus::Evaluated)
         {
             vm.unpin_many(running_pin_count);
-            return Ok(completion_values.remove(path).unwrap_or(Value::Undefined));
+            let completion = completion_values.remove(path).unwrap_or(Value::Undefined);
+            clear_settled_module_runtime(graph);
+            return Ok(completion);
         }
 
         for module in &order {
             let (status, scc_id, dependencies) = {
                 let record = graph.get(module).expect("module exists");
-                (record.status, record.scc_id, record.dependencies.clone())
+                (record.status(), record.scc_id, record.dependencies.clone())
             };
             if status != ModuleStatus::Instantiated {
                 continue;
@@ -671,7 +743,7 @@ fn evaluate_module(
             for earlier in &order[..module_position] {
                 let earlier_record = graph.get(earlier).expect("module exists");
                 if earlier_record.scc_id == scc_id
-                    && earlier_record.status != ModuleStatus::Evaluated
+                    && earlier_record.status() != ModuleStatus::Evaluated
                 {
                     ready = false;
                     break;
@@ -682,19 +754,20 @@ fn evaluate_module(
             }
             for dependency in dependencies {
                 let dependency_record = graph.get(&dependency).expect("dependency exists");
-                if dependency_record.status == ModuleStatus::Errored {
+                if dependency_record.status() == ModuleStatus::Errored {
                     let error = dependency_record
-                        .error
-                        .clone()
+                        .error()
                         .unwrap_or_else(|| Error::syntax("Module dependency evaluation failed"));
                     mark_dependent_errors(graph, &dependency, error.clone());
                     vm.unpin_many(running_pin_count);
+                    clear_settled_module_runtime(graph);
                     return Err(error);
                 }
                 if dependency_record.scc_id != scc_id {
                     let dependency_scc = dependency_record.scc_id;
                     if graph.values().any(|record| {
-                        record.scc_id == dependency_scc && record.status != ModuleStatus::Evaluated
+                        record.scc_id == dependency_scc
+                            && record.status() != ModuleStatus::Evaluated
                     }) {
                         ready = false;
                         break;
@@ -714,15 +787,21 @@ fn evaluate_module(
                     record.env,
                 )
             };
-            graph.get_mut(module).expect("module exists").status = ModuleStatus::Evaluating;
+            graph
+                .get(module)
+                .expect("module exists")
+                .runtime
+                .lock()
+                .status = ModuleStatus::Evaluating;
             match vm.evaluate_module_chunk_async(chunk, env) {
-                Ok(promise) => {
+                Ok((promise, completion)) => {
                     let pin = vm.pin(&Value::Object(promise));
                     running_pin_count += pin;
-                    graph
-                        .get_mut(module)
-                        .expect("module exists")
-                        .evaluation_promise = Some(promise);
+                    {
+                        let mut runtime = graph.get(module).expect("module exists").runtime.lock();
+                        runtime.evaluation_promise = Some(promise);
+                        runtime.completion_value = completion;
+                    }
                     let (state, result) = promise_state(vm, promise);
                     match state {
                         PromiseStatus::Pending => {
@@ -730,16 +809,28 @@ fn evaluate_module(
                             progressed = true;
                         }
                         PromiseStatus::Fulfilled => {
-                            completion_values.insert(module.clone(), result);
-                            let record = graph.get_mut(module).expect("module exists");
-                            record.status = ModuleStatus::Evaluated;
-                            record.evaluation_promise = None;
+                            let completion = graph
+                                .get(module)
+                                .expect("module exists")
+                                .runtime
+                                .lock()
+                                .completion_value
+                                .clone()
+                                .unwrap_or(result);
+                            completion_values.insert(module.clone(), completion);
+                            graph
+                                .get(module)
+                                .expect("module exists")
+                                .runtime
+                                .lock()
+                                .status = ModuleStatus::Evaluated;
                             progressed = true;
                         }
                         PromiseStatus::Rejected => {
                             let error = Error::thrown(result, &vm.heap);
                             mark_dependent_errors(graph, module, error.clone());
                             vm.unpin_many(running_pin_count);
+                            clear_settled_module_runtime(graph);
                             return Err(error);
                         }
                     }
@@ -747,6 +838,7 @@ fn evaluate_module(
                 Err(error) => {
                     mark_dependent_errors(graph, module, error.clone());
                     vm.unpin_many(running_pin_count);
+                    clear_settled_module_runtime(graph);
                     return Err(error);
                 }
             }
@@ -754,7 +846,7 @@ fn evaluate_module(
 
         if graph
             .get(path)
-            .is_some_and(|record| record.status == ModuleStatus::Evaluated)
+            .is_some_and(|record| record.status() == ModuleStatus::Evaluated)
         {
             continue;
         }
@@ -764,34 +856,57 @@ fn evaluate_module(
             Ok(false) => {}
             Err(error) => {
                 vm.unpin_many(running_pin_count);
+                clear_settled_module_runtime(graph);
                 return Err(error);
             }
         }
         if !progressed {
             vm.unpin_many(running_pin_count);
-            return Err(Error::internal(
-                "Async module evaluation is pending without a runnable job",
-            ));
+            let error =
+                Error::internal("Async module evaluation is pending without a runnable job");
+            clear_settled_module_runtime(graph);
+            return Err(error);
         }
     }
 }
 
 impl Vm {
-    pub(crate) fn dynamic_import_module(
-        &mut self,
-        referrer: &Path,
-        specifier: &str,
-    ) -> error::Result<Value> {
-        let target = resolve_specifier(referrer, specifier)?;
-        self.run_module_file_inner(&target, false)?;
+    pub(crate) fn set_module_completion(&mut self, path: &Path, value: Value) {
+        if let Some(record) = self.module_records.get(path) {
+            record.runtime.lock().completion_value = Some(value);
+        }
+    }
 
+    pub(crate) fn finish_dynamic_import(&mut self, target: &Path) -> error::Result<Value> {
         let mut graph = HashMap::new();
-        load_graph(self, target.clone(), &mut graph)?;
-        let namespace = get_module_namespace(self, &target, &mut graph)?;
+        load_graph(self, target.to_path_buf(), &mut graph)?;
+        let namespace = get_module_namespace(self, target, &mut graph)?;
         for (path, record) in graph {
             self.module_records.insert(path, record);
         }
         Ok(Value::Object(namespace))
+    }
+
+    pub(crate) fn dynamic_import_module(
+        &mut self,
+        referrer: &Path,
+        specifier: &str,
+    ) -> error::Result<DynamicImportResult> {
+        let target = resolve_specifier(referrer, specifier)?;
+        if let Some(record) = self.module_records.get(&target) {
+            if record.status() == ModuleStatus::Evaluating {
+                let evaluation_promise = record.evaluation_promise().ok_or_else(|| {
+                    Error::internal("Evaluating module has no evaluation Promise")
+                })?;
+                return Ok(DynamicImportResult::Pending {
+                    target,
+                    evaluation_promise,
+                });
+            }
+        }
+        self.run_module_file_inner(&target, false)?;
+        self.finish_dynamic_import(&target)
+            .map(DynamicImportResult::Ready)
     }
 
     /// Parse, resolve, and instantiate a module graph without evaluating it.
@@ -849,7 +964,14 @@ impl Vm {
             self.gc_pins.push(record.env.0);
         }
         let (result, cache_graph) = match instantiate_module(self, &root, &mut graph) {
-            Ok(()) => (evaluate_module(self, &root, &mut graph), true),
+            Ok(()) => {
+                // Publish the canonical runtime before evaluation so nested
+                // dynamic imports share status, Promise, and namespace state.
+                for (path, record) in &graph {
+                    self.module_records.insert(path.clone(), record.clone());
+                }
+                (evaluate_module(self, &root, &mut graph), true)
+            }
             Err(error) => (Err(error), false),
         };
         if cache_graph {

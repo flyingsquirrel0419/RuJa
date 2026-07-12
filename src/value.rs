@@ -835,6 +835,10 @@ pub struct PromiseHandler {
 }
 
 pub enum PromiseContinuation {
+    DynamicImport {
+        target: std::path::PathBuf,
+        capability: PromiseReactionCapability,
+    },
     AsyncGenerator {
         generator: GcIdx,
         kind: AsyncGeneratorAwaitKind,
@@ -889,6 +893,7 @@ pub struct AsyncFunctionContinuation {
     pub in_parameter_initializers: bool,
     pub direct_eval_new_target_allowed: bool,
     pub is_derived_ctor: bool,
+    pub module_evaluation: bool,
 }
 
 pub struct GeneratorData {

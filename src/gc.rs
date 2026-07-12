@@ -236,6 +236,11 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 }
                 if let Some(continuation) = &h.continuation {
                     match continuation {
+                        crate::value::PromiseContinuation::DynamicImport { capability, .. } => {
+                            push_value(&capability.promise, worklist);
+                            push_value(&capability.resolve, worklist);
+                            push_value(&capability.reject, worklist);
+                        }
                         crate::value::PromiseContinuation::AsyncGenerator { generator, .. } => {
                             worklist.push(generator.0)
                         }
