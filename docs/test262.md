@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.1% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.4% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11601 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -1051,8 +1051,21 @@ attributes, and rejection/catch matrices remain gated.
 The supported subset rises to **11595 pass / 0 fail / 8844 skip / 20439
 total**. CI `29186666321` and `test262-full` `29186666320` confirm feature
 commit `66a0f4a`. Downloaded artifacts aggregate to **27730 pass / 6720 fail /
-12 timeout / 0 error / 14005 skip / 48467 total / 34450 pass-or-fail
-executed**, or **80.5%** of pass-or-fail files and **57.2%** of the matrix.
+12 timeout / 0 error / 13855 skip / 48317 total / 34450 pass-or-fail
+executed**, or **80.5%** of pass-or-fail files and **57.4%** of the matrix.
+
+The second script-origin dynamic-import admission adds six exact files for a
+fresh Promise per call, direct-eval referrer inheritance, missing-module
+rejection, abrupt specifier coercion, and TypeError/URIError evaluation
+rejections. Its exact path is now **12 pass / 0 fail / 993 skip / 1005 total**;
+the supported subset is **11601 pass / 0 fail / 8838 skip / 20439 total**.
+CI `29188197692` and `test262-full` `29188197664` pass for commit `6a81a07`.
+Artifact-to-artifact comparison against the preceding run changes only the
+expressions shard by **+6 pass / -6 skip**. The current 30 artifacts aggregate
+to **27736 pass / 6720 fail / 12 timeout / 0 error / 13849 skip / 48317 total /
+34456 pass-or-fail executed**, or **80.5%** of executed files and **57.4%** of
+the matrix. This corrects the earlier prose transcription that overstated skip
+and total by 150; the artifacts themselves are the authoritative denominator.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 

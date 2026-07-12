@@ -52,8 +52,17 @@
   call authoritative even when a thenable job is still pending.
   CI `29186666321` and `test262-full` `29186666320` confirm the combined unit;
   downloaded artifacts aggregate to **27730 pass / 6720 fail / 12 timeout / 0
-  error / 14005 skip / 48467 total / 34450 pass-or-fail executed**, exactly
+  error / 13855 skip / 48317 total / 34450 pass-or-fail executed**, exactly
   **+6 pass / -6 skip** from the preceding matrix.
+- The frozen script-origin dynamic-import admission now covers twelve exact
+  files, adding fresh-Promise identity, direct-eval referrer inheritance,
+  missing-module rejection, abrupt specifier coercion, and TypeError/URIError
+  module-evaluation rejection. CI `29188197692` and `test262-full`
+  `29188197664` pass for commit `6a81a07`; artifact comparison changes only the
+  expressions shard by **+6 pass / -6 skip**, yielding **27736 pass / 6720
+  fail / 12 timeout / 0 error / 13849 skip / 48317 total / 34456 pass-or-fail
+  executed**. This also corrects the preceding prose aggregate, which
+  overstated artifact skip and total by 150.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
