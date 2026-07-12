@@ -1,4 +1,8 @@
 # Frozen top-level-await syntax files; one repository-relative path per line.
+language/module-code/top-level-await/early-errors-await-not-simple-assignment-target.js
+language/module-code/top-level-await/new-await-script-code.js
+language/module-code/top-level-await/new-await.js
+language/module-code/top-level-await/no-operand.js
 language/module-code/top-level-await/syntax/block-await-expr-array-literal.js
 language/module-code/top-level-await/syntax/block-await-expr-func-expression.js
 language/module-code/top-level-await/syntax/block-await-expr-identifier.js

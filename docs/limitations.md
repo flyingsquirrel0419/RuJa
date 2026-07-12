@@ -72,6 +72,9 @@ guarantees, run RuJa in a separately killable process as well.
   null-prototype Module Namespace Exotic Objects with live bindings, sorted
   export keys, and the specified non-extensible mutation semantics. Import and
   export specifiers support arbitrary well-formed string export names.
+  Top-level `await` suspends module bodies through Promise continuations;
+  sibling dependencies, async cycles, and rejection propagation are scheduled
+  through SCC-aware graph evaluation. Dynamic import remains separate.
   Bare-specifier host resolution, import attributes, and dynamic import are not
   implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately

@@ -12,6 +12,62 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 impl Vm {
+    pub(crate) fn evaluate_module_chunk_async(
+        &mut self,
+        chunk: Arc<crate::bytecode::Chunk>,
+        env: GcIdx,
+    ) -> error::Result<GcIdx> {
+        let capability = self.new_intrinsic_promise_capability()?;
+        let Value::Object(promise) = capability.promise.clone() else {
+            return Err(Error::internal(
+                "Module evaluation capability has no Promise",
+            ));
+        };
+        let capability_pins = self.pin_many(&[
+            Value::Object(promise),
+            capability.resolve.clone(),
+            capability.reject.clone(),
+        ]);
+        let stack_base = self.stack.len();
+        let mut frame = CallFrame::new(
+            chunk.clone(),
+            chunk.body_start_ip,
+            stack_base,
+            vec![Value::Undefined; 256],
+            env,
+            Value::Undefined,
+        );
+        frame.async_mode = true;
+        self.frames.push(frame);
+        let target_depth = self.frames.len() - 1;
+        let result = self.interpret_to_depth(target_depth);
+        let suspended = self
+            .frames
+            .get(target_depth)
+            .is_some_and(|frame| frame.async_awaiting);
+        let settled = if suspended {
+            self.begin_async_function_await(target_depth, capability)
+        } else {
+            match result {
+                Ok(value) => self.resolve_promise_capability_value(&capability, value),
+                Err(error) if !error.catchable() => {
+                    self.frames.truncate(target_depth);
+                    self.stack.truncate(stack_base);
+                    self.unpin_many(capability_pins);
+                    return Err(error);
+                }
+                Err(error) => self.reject_promise_capability_error(&capability, &error),
+            }
+        };
+        if self.frames.len() > target_depth {
+            self.frames.truncate(target_depth);
+        }
+        self.stack.truncate(stack_base);
+        self.unpin_many(capability_pins);
+        settled?;
+        Ok(promise)
+    }
+
     fn new_intrinsic_promise_capability(&mut self) -> error::Result<PromiseReactionCapability> {
         let constructor = self.promise_ctor.clone();
         let capability = crate::builtins::new_promise_capability(self, constructor)?;

@@ -1,7 +1,7 @@
 use crate::ast::{ExportEntry, Program};
 use crate::bytecode::Chunk;
 use crate::error::{self, Error};
-use crate::value::{GcIdx, Value};
+use crate::value::{GcIdx, HeapObj, PromiseStatus, Value};
 use crate::{Compiler, Parser, Vm};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
@@ -25,6 +25,7 @@ pub(crate) struct ModuleRecord {
     pub(crate) env: GcIdx,
     pub(crate) dependencies: Vec<PathBuf>,
     chunk: Option<Arc<Chunk>>,
+    pub(crate) evaluation_promise: Option<GcIdx>,
     scc_id: usize,
     namespace: Option<GcIdx>,
     namespace_initializing: bool,
@@ -85,6 +86,7 @@ fn load_graph(
             env,
             dependencies: Vec::new(),
             chunk: None,
+            evaluation_promise: None,
             scc_id: usize::MAX,
             namespace: None,
             namespace_initializing: false,
@@ -449,15 +451,39 @@ fn assign_scc_ids(graph: &mut HashMap<PathBuf, ModuleRecord>) {
     }
 }
 
-fn mark_scc_error(graph: &mut HashMap<PathBuf, ModuleRecord>, path: &Path, error: Arc<Error>) {
-    let component = graph
+fn mark_dependent_errors(
+    graph: &mut HashMap<PathBuf, ModuleRecord>,
+    path: &Path,
+    error: Arc<Error>,
+) {
+    let mut failed_components = HashSet::from([graph
         .get(path)
         .map(|record| record.scc_id)
-        .unwrap_or(usize::MAX);
+        .unwrap_or(usize::MAX)]);
+    loop {
+        let mut changed = false;
+        for record in graph.values() {
+            if failed_components.contains(&record.scc_id) {
+                continue;
+            }
+            if record.dependencies.iter().any(|dependency| {
+                graph
+                    .get(dependency)
+                    .is_some_and(|dependency| failed_components.contains(&dependency.scc_id))
+            }) {
+                failed_components.insert(record.scc_id);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     for record in graph.values_mut() {
-        if record.scc_id == component {
+        if failed_components.contains(&record.scc_id) {
             record.status = ModuleStatus::Errored;
             record.error = Some(error.clone());
+            record.evaluation_promise = None;
         }
     }
 }
@@ -511,55 +537,230 @@ fn instantiate_module(
     Ok(())
 }
 
+fn module_evaluation_order(
+    path: &Path,
+    graph: &HashMap<PathBuf, ModuleRecord>,
+    visiting: &mut HashSet<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+    order: &mut Vec<PathBuf>,
+) -> error::Result<()> {
+    if visited.contains(path) || !visiting.insert(path.to_path_buf()) {
+        return Ok(());
+    }
+    let dependencies = graph
+        .get(path)
+        .ok_or_else(|| Error::syntax("Module graph is incomplete"))?
+        .dependencies
+        .clone();
+    for dependency in dependencies {
+        module_evaluation_order(&dependency, graph, visiting, visited, order)?;
+    }
+    visiting.remove(path);
+    visited.insert(path.to_path_buf());
+    order.push(path.to_path_buf());
+    Ok(())
+}
+
+fn promise_state(vm: &Vm, promise: GcIdx) -> (PromiseStatus, Value) {
+    vm.heap.with_obj(promise.0, |object| {
+        if let HeapObj::Promise(data) = object {
+            (*data.state.lock(), data.result.lock().clone())
+        } else {
+            (PromiseStatus::Rejected, Value::Undefined)
+        }
+    })
+}
+
 fn evaluate_module(
     vm: &mut Vm,
     path: &Path,
     graph: &mut HashMap<PathBuf, ModuleRecord>,
 ) -> error::Result<Value> {
-    let (status, cached_error) = {
-        let record = graph
-            .get(path)
-            .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
-        (record.status, record.error.clone())
-    };
-    match status {
-        ModuleStatus::Evaluated => return Ok(Value::Undefined),
-        ModuleStatus::Evaluating => return Ok(Value::Undefined),
-        ModuleStatus::Errored => {
-            return Err(cached_error.unwrap_or_else(|| Error::syntax("Module evaluation failed")));
-        }
-        ModuleStatus::Linked | ModuleStatus::Instantiating => {
-            return Err(Error::internal("Module evaluated before instantiation"));
-        }
-        ModuleStatus::Instantiated => {}
-    }
-    graph.get_mut(path).expect("module exists").status = ModuleStatus::Evaluating;
-    let dependencies = graph.get(path).expect("module exists").dependencies.clone();
-    for dependency in dependencies {
-        if let Err(err) = evaluate_module(vm, &dependency, graph) {
-            mark_scc_error(graph, path, err.clone());
-            return Err(err);
+    if let Some(record) = graph.get(path) {
+        match record.status {
+            ModuleStatus::Evaluated => return Ok(Value::Undefined),
+            ModuleStatus::Errored => {
+                return Err(record
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| Error::syntax("Module evaluation failed")));
+            }
+            ModuleStatus::Linked | ModuleStatus::Instantiating => {
+                return Err(Error::internal("Module evaluated before instantiation"));
+            }
+            ModuleStatus::Instantiated | ModuleStatus::Evaluating => {}
         }
     }
 
-    let (chunk, env) = {
-        let record = graph.get(path).expect("module exists");
-        (
-            record
-                .chunk
-                .clone()
-                .ok_or_else(|| Error::internal("Instantiated module has no bytecode"))?,
-            record.env,
-        )
-    };
-    match vm.evaluate_module_chunk(chunk, env) {
-        Ok(value) => {
-            graph.get_mut(path).expect("module exists").status = ModuleStatus::Evaluated;
-            Ok(value)
+    let mut order = Vec::new();
+    module_evaluation_order(
+        path,
+        graph,
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+        &mut order,
+    )?;
+    let mut running: HashMap<PathBuf, GcIdx> = HashMap::new();
+    let mut running_pin_count = 0;
+    let mut completion_values: HashMap<PathBuf, Value> = HashMap::new();
+    let order_positions: HashMap<PathBuf, usize> = order
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, path)| (path, index))
+        .collect();
+    for module in &order {
+        let record = graph.get(module).expect("module exists");
+        if record.status == ModuleStatus::Evaluating {
+            let promise = record
+                .evaluation_promise
+                .ok_or_else(|| Error::internal("Evaluating module has no evaluation Promise"))?;
+            running_pin_count += vm.pin(&Value::Object(promise));
+            running.insert(module.clone(), promise);
         }
-        Err(err) => {
-            mark_scc_error(graph, path, err.clone());
-            Err(err)
+    }
+
+    loop {
+        let mut progressed = false;
+
+        let running_paths: Vec<PathBuf> = running.keys().cloned().collect();
+        for module in running_paths {
+            let promise = running[&module];
+            let (state, result) = promise_state(vm, promise);
+            match state {
+                PromiseStatus::Pending => {}
+                PromiseStatus::Fulfilled => {
+                    running.remove(&module);
+                    completion_values.insert(module.clone(), result);
+                    let record = graph.get_mut(&module).expect("module exists");
+                    record.status = ModuleStatus::Evaluated;
+                    record.evaluation_promise = None;
+                    progressed = true;
+                }
+                PromiseStatus::Rejected => {
+                    let error = Error::thrown(result, &vm.heap);
+                    mark_dependent_errors(graph, &module, error.clone());
+                    vm.unpin_many(running_pin_count);
+                    return Err(error);
+                }
+            }
+        }
+
+        if graph
+            .get(path)
+            .is_some_and(|record| record.status == ModuleStatus::Evaluated)
+        {
+            vm.unpin_many(running_pin_count);
+            return Ok(completion_values.remove(path).unwrap_or(Value::Undefined));
+        }
+
+        for module in &order {
+            let (status, scc_id, dependencies) = {
+                let record = graph.get(module).expect("module exists");
+                (record.status, record.scc_id, record.dependencies.clone())
+            };
+            if status != ModuleStatus::Instantiated {
+                continue;
+            }
+            let mut ready = true;
+            let module_position = order_positions[module];
+            for earlier in &order[..module_position] {
+                let earlier_record = graph.get(earlier).expect("module exists");
+                if earlier_record.scc_id == scc_id
+                    && earlier_record.status != ModuleStatus::Evaluated
+                {
+                    ready = false;
+                    break;
+                }
+            }
+            if !ready {
+                continue;
+            }
+            for dependency in dependencies {
+                let dependency_record = graph.get(&dependency).expect("dependency exists");
+                if dependency_record.status == ModuleStatus::Errored {
+                    let error = dependency_record
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| Error::syntax("Module dependency evaluation failed"));
+                    mark_dependent_errors(graph, &dependency, error.clone());
+                    vm.unpin_many(running_pin_count);
+                    return Err(error);
+                }
+                if dependency_record.scc_id != scc_id {
+                    let dependency_scc = dependency_record.scc_id;
+                    if graph.values().any(|record| {
+                        record.scc_id == dependency_scc && record.status != ModuleStatus::Evaluated
+                    }) {
+                        ready = false;
+                        break;
+                    }
+                }
+            }
+            if !ready {
+                continue;
+            }
+            let (chunk, env) = {
+                let record = graph.get(module).expect("module exists");
+                (
+                    record
+                        .chunk
+                        .clone()
+                        .ok_or_else(|| Error::internal("Instantiated module has no bytecode"))?,
+                    record.env,
+                )
+            };
+            graph.get_mut(module).expect("module exists").status = ModuleStatus::Evaluating;
+            match vm.evaluate_module_chunk_async(chunk, env) {
+                Ok(promise) => {
+                    let pin = vm.pin(&Value::Object(promise));
+                    running_pin_count += pin;
+                    graph
+                        .get_mut(module)
+                        .expect("module exists")
+                        .evaluation_promise = Some(promise);
+                    let (state, result) = promise_state(vm, promise);
+                    match state {
+                        PromiseStatus::Pending => {
+                            running.insert(module.clone(), promise);
+                            progressed = true;
+                        }
+                        PromiseStatus::Fulfilled => {
+                            completion_values.insert(module.clone(), result);
+                            let record = graph.get_mut(module).expect("module exists");
+                            record.status = ModuleStatus::Evaluated;
+                            record.evaluation_promise = None;
+                            progressed = true;
+                        }
+                        PromiseStatus::Rejected => {
+                            let error = Error::thrown(result, &vm.heap);
+                            mark_dependent_errors(graph, module, error.clone());
+                            vm.unpin_many(running_pin_count);
+                            return Err(error);
+                        }
+                    }
+                }
+                Err(error) => {
+                    mark_dependent_errors(graph, module, error.clone());
+                    vm.unpin_many(running_pin_count);
+                    return Err(error);
+                }
+            }
+        }
+
+        match vm.tick() {
+            Ok(true) => progressed = true,
+            Ok(false) => {}
+            Err(error) => {
+                vm.unpin_many(running_pin_count);
+                return Err(error);
+            }
+        }
+        if !progressed {
+            vm.unpin_many(running_pin_count);
+            return Err(Error::internal(
+                "Async module evaluation is pending without a runnable job",
+            ));
         }
     }
 }

@@ -105,3 +105,10 @@ MODULE_TLA_SYNTAX_FILES = frozenset(
     for raw_line in _TLA_SYNTAX_MANIFEST.read_text().splitlines()
     if (line := raw_line.strip()) and not line.startswith("#")
 )
+
+_TLA_RUNTIME_MANIFEST = Path(__file__).with_name("test262_tla_runtime_admission.txt")
+MODULE_TLA_RUNTIME_FILES = frozenset(
+    line
+    for raw_line in _TLA_RUNTIME_MANIFEST.read_text().splitlines()
+    if (line := raw_line.strip()) and not line.startswith("#")
+)

@@ -1018,6 +1018,23 @@ pass-or-fail executed**, or **80.5%** of pass-or-fail files and **57.1%** of
 the matrix. The module shard accounts for exactly **+209 pass / -209 skip**;
 every other outcome and shard are unchanged.
 
+The async-module evaluator adds 27 exact non-dynamic-import module-runtime TLA
+files. Three parse-negative files and the script-goal `new await` test move to
+the syntax manifest, which now contains 213 exact files. Together the syntax
+and runtime admissions bring `language/module-code/` to **533 pass / 0 fail /
+66 skip / 599 total**.
+Module bodies execute with Promise capabilities and reuse the VM's suspended
+async continuation state instead of synchronously draining `await_value`.
+Evaluation starts ready siblings while async dependencies are pending, waits
+for external dependency SCCs, runs cycle members in DFS postorder, delays
+outside importers until the whole cycle settles, propagates rejection through
+dependent SCCs, and persists every pending evaluation Promise in the canonical
+module record as a GC root, including siblings left running after another
+dependency rejects. The
+remaining TLA files depend on dynamic import or related host semantics. The
+supported subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**;
+CI and full-matrix evidence are recorded after the feature commit.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs

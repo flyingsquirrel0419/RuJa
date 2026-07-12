@@ -248,6 +248,89 @@ fn module_graph_exposes_live_namespace_exotic_objects() {
 }
 
 #[test]
+fn top_level_await_suspends_and_preserves_module_graph_order() {
+    let single = module_fixture_dir("tla-single");
+    fs::write(
+        single.join("entry.js"),
+        r#"
+        var log = [];
+        Promise.resolve().then(() => log.push('tick'));
+        await 1;
+        log.push('await');
+        log.join(',');
+        "#,
+    )
+    .expect("single TLA fixture should be written");
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run_module_file(single.join("entry.js"))
+            .expect("single TLA module should settle"),
+        Value::String(Arc::from("tick,await"))
+    );
+    fs::remove_dir_all(single).expect("single TLA fixtures should be removed");
+
+    let graph = module_fixture_dir("tla-graph");
+    fs::write(graph.join("setup.js"), "globalThis.order = [];")
+        .expect("TLA setup should be written");
+    fs::write(
+        graph.join("async.js"),
+        "order.push('async-start'); await 1; order.push('async-end');",
+    )
+    .expect("async sibling should be written");
+    fs::write(graph.join("sync.js"), "order.push('sync');")
+        .expect("sync sibling should be written");
+    fs::write(
+        graph.join("entry.js"),
+        "import './setup.js'; import './async.js'; import './sync.js'; order.join(',');",
+    )
+    .expect("TLA graph entry should be written");
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run_module_file(graph.join("entry.js"))
+            .expect("TLA sibling graph should settle"),
+        Value::String(Arc::from("async-start,sync,async-end"))
+    );
+    fs::remove_dir_all(graph).expect("TLA graph fixtures should be removed");
+}
+
+#[test]
+fn top_level_await_cycles_complete_before_external_importers() {
+    let dir = module_fixture_dir("tla-cycle");
+    fs::write(dir.join("setup.js"), "globalThis.order = [];")
+        .expect("cycle setup should be written");
+    fs::write(
+        dir.join("leaf.js"),
+        "import './root.js'; order.push('leaf-start'); await 1; order.push('leaf-end');",
+    )
+    .expect("cycle leaf should be written");
+    fs::write(
+        dir.join("root.js"),
+        "import './leaf.js'; order.push('root-start'); await 1; order.push('root-end');",
+    )
+    .expect("cycle root should be written");
+    fs::write(
+        dir.join("importer.js"),
+        "import './leaf.js'; order.push('importer');",
+    )
+    .expect("cycle importer should be written");
+    fs::write(
+        dir.join("entry.js"),
+        "import './setup.js'; import './root.js'; import './importer.js'; order.join(',');",
+    )
+    .expect("cycle entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run_module_file(dir.join("entry.js"))
+            .expect("TLA cycle should settle"),
+        Value::String(Arc::from(
+            "leaf-start,leaf-end,root-start,root-end,importer"
+        ))
+    );
+    fs::remove_dir_all(dir).expect("TLA cycle fixtures should be removed");
+}
+
+#[test]
 fn module_graph_evaluates_each_dependency_once_and_supports_named_reexports() {
     let dir = module_fixture_dir("once-reexport");
     fs::write(
@@ -435,8 +518,13 @@ fn module_graph_rejects_import_assignment_and_propagates_dependency_errors() {
     fs::write(dir.join("throw.js"), "throw new TypeError('dependency');")
         .expect("throwing dependency should be written");
     fs::write(
+        dir.join("skipped.js"),
+        "globalThis.skippedDependencyRan = true; throw new RangeError('skipped');",
+    )
+    .expect("skipped dependency should be written");
+    fs::write(
         dir.join("abrupt.js"),
-        "import './throw.js'; throw new RangeError('entry');",
+        "import './throw.js'; import './skipped.js'; throw new URIError('entry');",
     )
     .expect("abrupt entry should be written");
 
@@ -451,5 +539,102 @@ fn module_graph_rejects_import_assignment_and_propagates_dependency_errors() {
         .run_module_file(dir.join("abrupt.js"))
         .expect_err("dependency error should abort entry evaluation");
     assert_eq!(abrupt.kind, ruja::ErrorKind::Type);
+    assert_eq!(
+        vm.run("globalThis.skippedDependencyRan === undefined;")
+            .expect("skipped dependency marker should be readable"),
+        Value::Bool(true)
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn async_module_rejection_is_cached_across_dependent_entries() {
+    let dir = module_fixture_dir("async-rejection");
+    fs::write(
+        dir.join("dependency.js"),
+        "await Promise.resolve(); throw new TypeError('async dependency');",
+    )
+    .expect("async dependency should be written");
+    fs::write(
+        dir.join("first.js"),
+        "import './dependency.js'; globalThis.firstImporterRan = true;",
+    )
+    .expect("first importer should be written");
+    fs::write(
+        dir.join("second.js"),
+        "import './dependency.js'; globalThis.secondImporterRan = true;",
+    )
+    .expect("second importer should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    let first = vm
+        .run_module_file(dir.join("first.js"))
+        .expect_err("async dependency rejection should abort its importer");
+    assert_eq!(first.kind, ruja::ErrorKind::Type);
+    assert_eq!(
+        vm.run("globalThis.firstImporterRan === undefined;")
+            .expect("first importer marker should be readable"),
+        Value::Bool(true)
+    );
+
+    let second = vm
+        .run_module_file(dir.join("second.js"))
+        .expect_err("cached rejection should abort later importers");
+    assert_eq!(second.kind, ruja::ErrorKind::Type);
+    assert_eq!(second.message, first.message);
+    assert_eq!(
+        vm.run("globalThis.secondImporterRan === undefined;")
+            .expect("second importer marker should be readable"),
+        Value::Bool(true)
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn pending_sibling_evaluation_survives_another_dependency_rejection() {
+    let dir = module_fixture_dir("pending-sibling");
+    fs::write(
+        dir.join("reject.js"),
+        "await Promise.resolve(); throw new TypeError('async dependency');",
+    )
+    .expect("rejecting dependency should be written");
+    fs::write(
+        dir.join("pending.js"),
+        r#"
+        globalThis.pendingModuleStarted = true;
+        await new Promise(resolve => { globalThis.resolvePendingModule = resolve; });
+        globalThis.pendingModuleFinished = true;
+        "#,
+    )
+    .expect("pending dependency should be written");
+    fs::write(
+        dir.join("first.js"),
+        "import './reject.js'; import './pending.js';",
+    )
+    .expect("first entry should be written");
+    fs::write(dir.join("second.js"), "import './pending.js';")
+        .expect("second entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    let first = vm
+        .run_module_file(dir.join("first.js"))
+        .expect_err("one async dependency should reject the first entry");
+    assert_eq!(first.kind, ruja::ErrorKind::Type);
+    assert_eq!(
+        vm.run("globalThis.pendingModuleStarted === true;")
+            .expect("pending marker should be readable"),
+        Value::Bool(true)
+    );
+
+    vm.gc();
+    vm.run("globalThis.resolvePendingModule();")
+        .expect("cached module evaluation Promise should remain live");
+    vm.run_module_file(dir.join("second.js"))
+        .expect("later importer should reuse the settled module evaluation");
+    assert_eq!(
+        vm.run("globalThis.pendingModuleFinished === true;")
+            .expect("completion marker should be readable"),
+        Value::Bool(true)
+    );
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }

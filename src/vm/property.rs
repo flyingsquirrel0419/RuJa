@@ -2666,6 +2666,9 @@ impl Vm {
         }
         for module in self.module_records.values() {
             roots.push(module.env.0);
+            if let Some(promise) = module.evaluation_promise {
+                roots.push(promise.0);
+            }
             if let Some(error) = &module.error {
                 if let Some(value) = &error.thrown_value {
                     Self::push_value_roots(&mut roots, value);

@@ -26,6 +26,16 @@
 - The frozen Test262 module admission now covers top-level `await` syntax in
   module blocks, exports, classes, loops, and expression contexts while keeping
   dynamic-import syntax and asynchronous module evaluation separately gated.
+- File-backed module evaluation now runs each body through a Promise-backed
+  continuation, schedules ready sibling modules without blocking on suspended
+  dependencies, serializes async cycle members in DFS order, waits for whole
+  dependency SCCs, propagates rejections through importer SCCs, and pins all
+  evaluation Promises through GC until the root module settles. Pending sibling
+  evaluations persist in canonical module records when another dependency
+  rejects, so later importers resume the same Promise instead of re-evaluating
+  the module or inheriting a stale state. Its exact
+  Test262 admission separates 27 module-runtime files from parse and script-goal
+  syntax coverage.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
