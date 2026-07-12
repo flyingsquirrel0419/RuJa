@@ -981,6 +981,20 @@ change made the `in` operator preserve Symbol PropertyKeys, independently
 moving 30 built-ins files from fail to pass; the aggregate delta is therefore
 **+83 pass / -30 fail / -53 skip** with timeout and error counts unchanged.
 
+The static-semantics slice admits 125 additional exact module files, bringing
+`language/module-code/` to **293 pass / 0 fail / 306 skip / 599 total**.
+Arbitrary ModuleExportName string literals now work in named imports, direct
+and indirect exports, and namespace re-exports. String import names require an
+explicit local binding, local export specifiers cannot use a string as their
+LocalName, and lone UTF-16 surrogate export names are rejected by the required
+IsStringWellFormedUnicode early error. The slice also freezes already-supported
+module declaration-position early errors, resolution failures, star/cycle
+identity, and evaluation cases in a shared 125-file runner/analyzer manifest.
+One upstream file that imports another non-fixture test and executes its
+unprovided `assert` remains excluded. The authoritative supported subset stays
+**11589 pass / 0 fail / 8850 skip / 20439 total**; full-matrix evidence is
+recorded after the feature commit.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs

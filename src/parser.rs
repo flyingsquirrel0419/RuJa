@@ -3,6 +3,12 @@ use crate::error;
 use crate::token::{Token, TokenKind};
 use std::sync::Arc;
 
+struct ParsedExportSpecifier {
+    local_name: Arc<str>,
+    export_name: Arc<str>,
+    local_name_is_string: bool,
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -729,6 +735,25 @@ impl Parser {
         Ok(Arc::from(name.as_str()))
     }
 
+    fn parse_module_export_name(&mut self) -> error::Result<(Arc<str>, bool)> {
+        if let TokenKind::String(name) = self.peek().clone() {
+            if self.peek_at_tok(0).string_had_legacy_escape {
+                return Err(error::Error::syntax(
+                    "Legacy string escapes are not allowed in module export names".to_string(),
+                ));
+            }
+            if self.peek_at_tok(0).string_not_well_formed {
+                return Err(error::Error::syntax(
+                    "Module export names must be well-formed Unicode strings".to_string(),
+                ));
+            }
+            self.advance();
+            return Ok((Arc::from(name.as_str()), true));
+        }
+        self.parse_module_identifier_name()
+            .map(|name| (name, false))
+    }
+
     fn parse_module_binding_name(&mut self) -> error::Result<Arc<str>> {
         let name = match self.peek().clone() {
             TokenKind::Ident(name) => Arc::from(name.as_str()),
@@ -797,10 +822,15 @@ impl Parser {
         if parse_named {
             self.expect(&TokenKind::LBrace, "{")?;
             while !self.check(&TokenKind::RBrace) {
-                let import_name = self.parse_module_identifier_name()?;
+                let (import_name, import_name_is_string) = self.parse_module_export_name()?;
                 let local_name = if self.eat_contextual("as") {
                     self.parse_module_binding_name()?
                 } else {
+                    if import_name_is_string {
+                        return Err(error::Error::syntax(
+                            "A string import name requires an imported binding".to_string(),
+                        ));
+                    }
                     self.check_binding_name(&import_name)?;
                     import_name.clone()
                 };
@@ -825,17 +855,21 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_export_specifiers(&mut self) -> error::Result<Vec<(Arc<str>, Arc<str>)>> {
+    fn parse_export_specifiers(&mut self) -> error::Result<Vec<ParsedExportSpecifier>> {
         self.expect(&TokenKind::LBrace, "{")?;
         let mut specifiers = Vec::new();
         while !self.check(&TokenKind::RBrace) {
-            let local_name = self.parse_module_identifier_name()?;
+            let (local_name, local_name_is_string) = self.parse_module_export_name()?;
             let export_name = if self.eat_contextual("as") {
-                self.parse_module_identifier_name()?
+                self.parse_module_export_name()?.0
             } else {
                 local_name.clone()
             };
-            specifiers.push((local_name, export_name));
+            specifiers.push(ParsedExportSpecifier {
+                local_name,
+                export_name,
+                local_name_is_string,
+            });
             if !self.eat(&TokenKind::Comma) {
                 break;
             }
@@ -919,7 +953,7 @@ impl Parser {
         }
         if self.eat(&TokenKind::Star) {
             if self.eat_contextual("as") {
-                let export_name = self.parse_module_identifier_name()?;
+                let export_name = self.parse_module_export_name()?.0;
                 self.expect_contextual("from")?;
                 let request = self.parse_module_specifier()?;
                 self.expect_semi()?;
@@ -944,25 +978,30 @@ impl Parser {
             if self.eat_contextual("from") {
                 let request = self.parse_module_specifier()?;
                 self.expect_semi()?;
-                for (import_name, export_name) in specifiers {
+                for specifier in specifiers {
                     export_entries.push(ExportEntry::ReExport {
                         module_request: request.clone(),
-                        import_name,
-                        export_name,
+                        import_name: specifier.local_name,
+                        export_name: specifier.export_name,
                     });
                 }
                 module_requests.push(request);
             } else {
                 self.expect_semi()?;
-                for (local_name, export_name) in specifiers {
-                    if local_name.as_ref() == "default" {
+                for specifier in specifiers {
+                    if specifier.local_name_is_string {
+                        return Err(error::Error::syntax(
+                            "A local export name cannot be a string literal".to_string(),
+                        ));
+                    }
+                    if specifier.local_name.as_ref() == "default" {
                         return Err(error::Error::syntax(
                             "'default' is not a local binding name".to_string(),
                         ));
                     }
                     export_entries.push(ExportEntry::Local {
-                        local_name,
-                        export_name,
+                        local_name: specifier.local_name,
+                        export_name: specifier.export_name,
                     });
                 }
             }
@@ -7069,6 +7108,40 @@ mod tests {
             "export { x as publicX }; import { original as x } from 'dep';"
         )
         .is_ok());
+
+        let string_names = Parser::parse_module(
+            r#"import { "remote name" as local } from "dep";
+               export { local as "public name" };
+               export { "remote name" as "forwarded name" } from "dep";
+               export * as "namespace name" from "dep";"#,
+        )
+        .expect("string module export names should parse");
+        assert_eq!(
+            string_names.import_entries[0].import_name.as_ref(),
+            "remote name"
+        );
+        assert!(string_names.export_entries.iter().any(|entry| matches!(
+            entry,
+            ExportEntry::ReExport {
+                import_name,
+                export_name,
+                ..
+            } if import_name.as_ref() == "remote name" && export_name.as_ref() == "public name"
+        )));
+        assert!(string_names.export_entries.iter().any(|entry| matches!(
+            entry,
+            ExportEntry::NamespaceReExport { export_name, .. }
+                if export_name.as_ref() == "namespace name"
+        )));
+        assert!(Parser::parse_module(r#"import { "remote" } from "dep";"#).is_err());
+        assert!(Parser::parse_module(r#"export { "local" };"#).is_err());
+        for source in [
+            r#"import { "\1" as local } from "dep";"#,
+            r#"export { "\8" } from "dep";"#,
+            r#"export * as "\1" from "dep";"#,
+        ] {
+            assert!(Parser::parse_module(source).is_err(), "{source}");
+        }
     }
 
     #[test]

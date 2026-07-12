@@ -70,7 +70,8 @@ guarantees, run RuJa in a separately killable process as well.
   evaluation, preserve lexical TDZ, and cache abrupt evaluation per strongly
   connected component. Namespace imports and `export * as` expose canonical
   null-prototype Module Namespace Exotic Objects with live bindings, sorted
-  export keys, and the specified non-extensible mutation semantics.
+  export keys, and the specified non-extensible mutation semantics. Import and
+  export specifiers support arbitrary well-formed string export names.
   Bare-specifier host resolution, import attributes, and dynamic import are not
   implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately

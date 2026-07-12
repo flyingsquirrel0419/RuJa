@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import test262_analyze
 import test262_runner
+from test262_module_admission import MODULE_STATIC_SEMANTICS_FILES
 from test262_support import ASYNC_COMPLETE, ASYNC_PRINT_SHIM, execute_source
 
 
@@ -437,6 +438,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "namespace/internals/super-set-to-tdz-binding-with-accessor.js",
         })
         expected = {f"language/module-code/{name}" for name in expected_names}
+        expected.update(MODULE_STATIC_SEMANTICS_FILES)
         meta = {"flags": ["module"], "features": []}
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -462,6 +464,24 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:
                     tool.TEST262 = original_root
+
+    def test_module_static_semantics_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(MODULE_STATIC_SEMANTICS_FILES), 125)
+        self.assertIn(
+            "language/module-code/export-expname-binding-string.js",
+            MODULE_STATIC_SEMANTICS_FILES,
+        )
+        self.assertIn(
+            "language/module-code/parse-err-decl-pos-import-while.js",
+            MODULE_STATIC_SEMANTICS_FILES,
+        )
+        malformed_upstream = (
+            "language/module-code/ambiguous-export-bindings/"
+            "namespace-unambiguous-if-export-star-as-from-and-import-star-as-and-export.js"
+        )
+        self.assertNotIn(malformed_upstream, MODULE_STATIC_SEMANTICS_FILES)
+        for tool in (test262_runner, test262_analyze):
+            self.assertTrue(MODULE_STATIC_SEMANTICS_FILES <= tool.MODULE_CORE_FILES)
 
 
 class TypedArrayResizableAdmissionTests(unittest.TestCase):

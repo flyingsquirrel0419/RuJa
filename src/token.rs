@@ -153,6 +153,8 @@ pub struct Token {
     /// True when a string literal contained a legacy octal or non-octal
     /// decimal escape. Strict mode code must reject these escapes.
     pub string_had_legacy_escape: bool,
+    /// True when a string escape produced an unpaired UTF-16 surrogate.
+    pub string_not_well_formed: bool,
 }
 
 impl Token {
@@ -165,6 +167,7 @@ impl Token {
             had_escape: false,
             string_had_escape: false,
             string_had_legacy_escape: false,
+            string_not_well_formed: false,
         }
     }
 }

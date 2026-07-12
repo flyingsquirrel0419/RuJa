@@ -19,6 +19,10 @@
   null-prototype Module Namespace Exotic Objects with sorted keys, live export
   descriptors, TDZ behavior, immutable assignment semantics, and correct
   cyclic/ambiguous-star identity.
+- Module import/export specifiers now accept arbitrary well-formed string
+  export names, including namespace re-exports, while rejecting string names
+  without a required local import binding and lone-surrogate export names as
+  early SyntaxErrors.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

@@ -11,8 +11,10 @@ from pathlib import Path
 
 try:
     from test262_support import append_async_harness, execute_source
+    from test262_module_admission import MODULE_STATIC_SEMANTICS_FILES
 except ModuleNotFoundError:
     from tools.test262_support import append_async_harness, execute_source
+    from tools.test262_module_admission import MODULE_STATIC_SEMANTICS_FILES
 
 RUJA = str(Path(__file__).resolve().parent.parent / "target/release/ruja")
 TEST262 = os.environ.get("TEST262", "/root/test262")
@@ -131,6 +133,7 @@ MODULE_NAMESPACE_FILES = {
     )
 }
 MODULE_CORE_FILES.update(MODULE_NAMESPACE_FILES)
+MODULE_CORE_FILES.update(MODULE_STATIC_SEMANTICS_FILES)
 
 MODULE_NAMESPACE_FEATURES = {
     "Symbol", "Symbol.iterator", "Symbol.toStringTag", "Reflect",

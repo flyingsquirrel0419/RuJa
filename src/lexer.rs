@@ -145,6 +145,8 @@ pub struct Lexer<'a> {
     /// Whether the last string literal token contained a legacy octal or
     /// non-octal decimal escape.
     last_string_had_legacy_escape: bool,
+    /// Whether the last string contained an unpaired surrogate escape.
+    last_string_not_well_formed: bool,
 }
 
 impl<'a> Lexer<'a> {
@@ -165,6 +167,7 @@ impl<'a> Lexer<'a> {
             last_ident_had_escape: false,
             last_string_had_escape: false,
             last_string_had_legacy_escape: false,
+            last_string_not_well_formed: false,
         }
     }
 
@@ -502,6 +505,7 @@ impl<'a> Lexer<'a> {
     fn read_string(&mut self, quote: u8) -> TokenKind {
         self.last_string_had_escape = false;
         self.last_string_had_legacy_escape = false;
+        self.last_string_not_well_formed = false;
         self.advance(); // opening quote
         let mut s = String::new();
         let mut closed = false;
@@ -580,6 +584,7 @@ impl<'a> Lexer<'a> {
                                 self.pos = save;
                             }
                             if (0xD800..=0xDFFF).contains(&cp) {
+                                self.last_string_not_well_formed = true;
                                 s.push_str(&crate::value::utf16_to_string(&[cp as u16]));
                             } else if let Some(ch) = char::from_u32(cp) {
                                 s.push(ch);
@@ -1163,6 +1168,7 @@ impl<'a> Lexer<'a> {
         self.last_ident_had_escape = false;
         self.last_string_had_escape = false;
         self.last_string_had_legacy_escape = false;
+        self.last_string_not_well_formed = false;
 
         // Template-literal state machine.
         match self.template_state {
@@ -1348,6 +1354,7 @@ impl<'a> Lexer<'a> {
         tok.had_escape = self.last_ident_had_escape;
         tok.string_had_escape = self.last_string_had_escape;
         tok.string_had_legacy_escape = self.last_string_had_legacy_escape;
+        tok.string_not_well_formed = self.last_string_not_well_formed;
         tok
     }
 
