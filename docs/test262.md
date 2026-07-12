@@ -1143,6 +1143,21 @@ pass for commit `5a781d3`. Downloaded artifacts change only expressions by
 **+27 pass / -27 skip**, producing **27910 pass / 6720 fail / 12 timeout / 0
 error / 13675 skip / 48317 total / 34630 pass-or-fail executed**, or **80.6%**
 of executed files and **57.8%** of the matrix.
+
+The standard dynamic-import root runtime slice now admits 16 additional files
+covering intrinsic and fresh Promise identity, observable specifier coercion,
+once-only module evaluation, script/module namespace reuse, indirect
+resolution, errored async cycles, and for-await rejection propagation. The
+exact-path gate now also removes `top-level-await` for admitted dynamic-import
+tests whose imported fixture, rather than the script itself, contains TLA; the
+runner and analyzer share a regression for that boundary. Exact dynamic-import
+coverage is **180 pass / 0 fail / 825 skip / 1005 total**; the supported subset
+is **11791 pass / 0 fail / 8648 skip / 20439 total**. CI `29201893578` and
+`test262-full` `29201893579` pass for commit `65b881f`. Downloaded artifacts
+change only expressions by **+16 pass / -16 skip**, producing **27926 pass /
+6720 fail / 12 timeout / 0 error / 13659 skip / 48317 total / 34646
+pass-or-fail executed**, or **80.6%** of executed files and **57.8%** of the
+matrix.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 

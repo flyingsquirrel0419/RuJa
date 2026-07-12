@@ -117,6 +117,16 @@
   `29200204823` pass for commit `5a781d3`; artifacts move only expressions by
   **+27 pass / -27 skip** to **27910 pass / 6720 fail / 12 timeout / 0 error /
   13675 skip / 48317 total / 34630 pass-or-fail executed**.
+- Dynamic import now admits 16 additional root runtime files covering fresh
+  intrinsic Promises, once-only evaluation, canonical namespace reuse,
+  indirect resolution, errored async cycles, and for-await rejection. Exact
+  dynamic-import paths now remove fixture-level `top-level-await` consistently
+  in the runner and analyzer, so the errored-cycle test is executed rather than
+  only listed. Exact coverage is **180/180** and the supported subset is
+  **11791/11791**. CI `29201893578` and `test262-full` `29201893579` pass for
+  commit `65b881f`; artifacts move only expressions by **+16 pass / -16 skip**
+  to **27926 pass / 6720 fail / 12 timeout / 0 error / 13659 skip / 48317 total
+  / 34646 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

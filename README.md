@@ -54,7 +54,7 @@ full ES conformance — conformance is scoped to this subset. See
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
 
-**Supported-subset pass rate: 100.0%** (11,775 tests in `language/statements`
+**Supported-subset pass rate: 100.0%** (11,791 tests in `language/statements`
 + `language/expressions`, unsupported-feature tests skipped). The latest full
 matrix is 57.8% of all files and 80.6% of executed files — see
 [test262 conformance](docs/test262.md)
