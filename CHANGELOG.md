@@ -35,7 +35,10 @@
   rejects, so later importers resume the same Promise instead of re-evaluating
   the module or inheriting a stale state. Its exact
   Test262 admission separates 27 module-runtime files from parse and script-goal
-  syntax coverage.
+  syntax coverage. CI `29184350526` and `test262-full` `29184350527` confirm
+  the feature; downloaded artifacts aggregate to **27724 pass / 6720 fail / 12
+  timeout / 0 error / 14011 skip / 48467 total / 34444 pass-or-fail
+  executed**, exactly **+31 pass / -31 skip** from the preceding matrix.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

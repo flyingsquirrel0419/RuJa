@@ -1030,10 +1030,15 @@ for external dependency SCCs, runs cycle members in DFS postorder, delays
 outside importers until the whole cycle settles, propagates rejection through
 dependent SCCs, and persists every pending evaluation Promise in the canonical
 module record as a GC root, including siblings left running after another
-dependency rejects. The
-remaining TLA files depend on dynamic import or related host semantics. The
+dependency rejects. The remaining TLA files depend on dynamic import or related
+host semantics. The
 supported subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**;
-CI and full-matrix evidence are recorded after the feature commit.
+CI `29184350526` and `test262-full` `29184350527` confirm feature commit
+`535fa28`. Downloaded artifacts aggregate to **27724 pass / 6720 fail / 12
+timeout / 0 error / 14011 skip / 48467 total / 34444 pass-or-fail executed**,
+or **80.5%** of pass-or-fail files and **57.2%** of the matrix. The module
+shard accounts for exactly **+31 pass / -31 skip**; every other outcome and
+shard are unchanged.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
