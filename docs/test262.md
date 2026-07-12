@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.7% of all matrix files; 80.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.1% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -1011,7 +1011,12 @@ suspension, sibling dependency ordering, rejection propagation, and async SCC
 completion require a persistent Promise-returning module evaluator rather than
 the current synchronous DFS and microtask drain. The supported subset remains
 **11589 pass / 0 fail / 8850 skip / 20439 total**; CI and full-matrix evidence
-are recorded after the admission commit.
+are confirmed by admission commit `28a3e58`, CI `29182081049`, and
+`test262-full` `29182081069`. Downloaded artifacts aggregate to **27693 pass /
+6720 fail / 12 timeout / 0 error / 14042 skip / 48467 total / 34413
+pass-or-fail executed**, or **80.5%** of pass-or-fail files and **57.1%** of
+the matrix. The module shard accounts for exactly **+209 pass / -209 skip**;
+every other outcome and shard are unchanged.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
