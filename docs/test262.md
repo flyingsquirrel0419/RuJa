@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.0% of all matrix files; 80.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.1% of all matrix files; 80.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -900,7 +900,14 @@ inside an ordinary function. RuJa now has a distinct `%AsyncFunction%`
 intrinsic and dynamic async constructor; the focused built-ins path closes at
 **15 pass / 0 fail / 3 skip / 18 total** without weakening module Await
 grammar. A follow-up audit also isolated `%AsyncFunction%` and its prototype
-per Realm, including dynamic-constructor fallback and GC roots.
+per Realm, including dynamic-constructor fallback and GC roots. Feature
+commits `6d0254f` and `9a22731` are confirmed by CI `29173247360` and
+`test262-full` `29173247358`. Downloaded artifacts aggregate to **27196 pass /
+6750 fail / 12 timeout / 0 error / 14509 skip / 48467 total / 33946
+pass-or-fail executed**, or **80.1%** of pass-or-fail files and **56.1%** of
+the matrix. Relative to the pre-module baseline, this is **+40 pass / -5 fail
+/ -35 skip**; the module slice accounts for the 35 skip-to-pass moves and the
+AsyncFunction intrinsic closes five previously failing files.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

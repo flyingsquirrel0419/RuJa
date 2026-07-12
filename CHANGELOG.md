@@ -256,7 +256,11 @@
   module files now execute through the CLI's real `--module` path; files that
   require import/export syntax or linking remain gated. The authoritative
   supported language subset remains **11589 pass / 0 fail / 8850 skip /
-  20439 total**.
+  20439 total**. Feature commits `6d0254f` and `9a22731` are confirmed by CI
+  `29173247360` and `test262-full` `29173247358`. The final artifact is
+  **27196 pass / 6750 fail / 14509 skip / 12 timeout / 0 error / 48467
+  total**: 35 module files moved from skip to pass and the audited per-Realm
+  `%AsyncFunction%` intrinsic closed five existing failures.
 - The complete pinned `built-ins/TypedArray/` subtree is now admitted at
   **1446 pass / 0 fail / 0 skip / 1446 total**. The final 13 constructor
   surface, `Symbol.species`, and `%TypedArray%.of` descriptor/receiver files
