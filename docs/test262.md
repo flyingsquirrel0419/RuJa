@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.1% of all matrix files; 80.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.2% of all matrix files; 80.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -933,6 +933,14 @@ commit `f0d5525` is confirmed by CI `29174854010` and `test262-full`
 executed**, or **80.1%** of pass-or-fail files and **56.1%** of the matrix.
 The admission moved exactly 11 files from skip to pass with fail, timeout, and
 error outcomes unchanged.
+
+The cyclic-module follow-up is feature commit `55f3b87`, confirmed by CI
+`29176281928` and `test262-full` `29176281902`. Downloaded artifacts aggregate
+to **27230 pass / 6750 fail / 11 timeout / 0 error / 14476 skip / 48467 total /
+33980 pass-or-fail executed**, or **80.1%** of pass-or-fail files and **56.2%**
+of the matrix. The admitted module slice accounts for exactly **+22 pass / -22
+skip**; one pre-existing built-ins timeout also passed in this run and is
+recorded as timing variance rather than part of the module conformance claim.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

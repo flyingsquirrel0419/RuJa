@@ -261,6 +261,14 @@
 
 ### Test tooling
 
+- The cyclic Module slice adds 22 exact `language/module-code/` files, bringing
+  that subtree to **68 pass / 0 fail / 531 skip**. Negative parse, resolution,
+  and runtime tests use phase-specific CLI paths, and parse checks include
+  compiler-hosted static semantics without evaluation. Feature commit
+  `55f3b87` is confirmed by CI `29176281928` and `test262-full` `29176281902`;
+  downloaded artifacts are **27230 pass / 6750 fail / 14476 skip / 11 timeout /
+  0 error / 48467 total**. The module admission is exactly **+22 pass / -22
+  skip**; one unrelated built-ins timeout passed as timing variance.
 - The frozen Module graph slice adds 11 exact `language/module-code/` files,
   bringing that subtree to **46 pass / 0 fail / 553 skip**. Test262 module
   entries are staged with their relative fixture graph in an isolated
