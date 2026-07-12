@@ -1,4 +1,5 @@
 use crate::ast::{ExportEntry, Program};
+use crate::bytecode::Chunk;
 use crate::error::{self, Error};
 use crate::value::{GcIdx, Value};
 use crate::{Compiler, Parser, Vm};
@@ -9,6 +10,8 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ModuleStatus {
     Linked,
+    Instantiating,
+    Instantiated,
     Evaluating,
     Evaluated,
     Errored,
@@ -19,6 +22,8 @@ pub(crate) struct ModuleRecord {
     pub(crate) program: Program,
     pub(crate) env: GcIdx,
     pub(crate) dependencies: Vec<PathBuf>,
+    chunk: Option<Arc<Chunk>>,
+    scc_id: usize,
     status: ModuleStatus,
     pub(crate) error: Option<Arc<Error>>,
 }
@@ -75,6 +80,8 @@ fn load_graph(
             program: program.clone(),
             env,
             dependencies: Vec::new(),
+            chunk: None,
+            scc_id: usize::MAX,
             status: ModuleStatus::Linked,
             error: None,
         },
@@ -191,38 +198,139 @@ fn link_imports_with_vm(vm: &Vm, graph: &HashMap<PathBuf, ModuleRecord>) -> erro
     Ok(())
 }
 
-fn reject_cyclic_graph(graph: &HashMap<PathBuf, ModuleRecord>) -> error::Result<()> {
-    fn visit(
-        path: &Path,
-        graph: &HashMap<PathBuf, ModuleRecord>,
-        visiting: &mut HashSet<PathBuf>,
-        visited: &mut HashSet<PathBuf>,
-    ) -> error::Result<()> {
-        if visited.contains(path) {
-            return Ok(());
+fn assign_scc_ids(graph: &mut HashMap<PathBuf, ModuleRecord>) {
+    struct Tarjan {
+        next_index: usize,
+        next_component: usize,
+        indices: HashMap<PathBuf, usize>,
+        lowlinks: HashMap<PathBuf, usize>,
+        stack: Vec<PathBuf>,
+        on_stack: HashSet<PathBuf>,
+        components: HashMap<PathBuf, usize>,
+    }
+
+    fn visit(path: PathBuf, graph: &HashMap<PathBuf, ModuleRecord>, state: &mut Tarjan) {
+        let index = state.next_index;
+        state.next_index += 1;
+        state.indices.insert(path.clone(), index);
+        state.lowlinks.insert(path.clone(), index);
+        state.stack.push(path.clone());
+        state.on_stack.insert(path.clone());
+
+        let dependencies = graph
+            .get(&path)
+            .map(|record| record.dependencies.clone())
+            .unwrap_or_default();
+        for dependency in dependencies {
+            if !state.indices.contains_key(&dependency) {
+                visit(dependency.clone(), graph, state);
+                let dependency_low = state.lowlinks[&dependency];
+                let low = state.lowlinks[&path].min(dependency_low);
+                state.lowlinks.insert(path.clone(), low);
+            } else if state.on_stack.contains(&dependency) {
+                let dependency_index = state.indices[&dependency];
+                let low = state.lowlinks[&path].min(dependency_index);
+                state.lowlinks.insert(path.clone(), low);
+            }
         }
-        if !visiting.insert(path.to_path_buf()) {
-            return Err(Error::syntax(format!(
-                "Cyclic module graph at '{}' is not supported yet",
-                path.display()
-            )));
+
+        if state.lowlinks[&path] == state.indices[&path] {
+            loop {
+                let member = state.stack.pop().expect("SCC stack cannot be empty");
+                state.on_stack.remove(&member);
+                state
+                    .components
+                    .insert(member.clone(), state.next_component);
+                if member == path {
+                    break;
+                }
+            }
+            state.next_component += 1;
         }
+    }
+
+    let mut state = Tarjan {
+        next_index: 0,
+        next_component: 0,
+        indices: HashMap::new(),
+        lowlinks: HashMap::new(),
+        stack: Vec::new(),
+        on_stack: HashSet::new(),
+        components: HashMap::new(),
+    };
+    let mut paths: Vec<PathBuf> = graph.keys().cloned().collect();
+    paths.sort();
+    for path in paths {
+        if !state.indices.contains_key(&path) {
+            visit(path, graph, &mut state);
+        }
+    }
+    for (path, component) in state.components {
+        if let Some(record) = graph.get_mut(&path) {
+            record.scc_id = component;
+        }
+    }
+}
+
+fn mark_scc_error(graph: &mut HashMap<PathBuf, ModuleRecord>, path: &Path, error: Arc<Error>) {
+    let component = graph
+        .get(path)
+        .map(|record| record.scc_id)
+        .unwrap_or(usize::MAX);
+    for record in graph.values_mut() {
+        if record.scc_id == component {
+            record.status = ModuleStatus::Errored;
+            record.error = Some(error.clone());
+        }
+    }
+}
+
+fn instantiate_module(
+    vm: &mut Vm,
+    path: &Path,
+    graph: &mut HashMap<PathBuf, ModuleRecord>,
+) -> error::Result<()> {
+    let (status, cached_error, dependencies) = {
         let record = graph
             .get(path)
             .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
-        for dependency in &record.dependencies {
-            visit(dependency, graph, visiting, visited)?;
+        (
+            record.status,
+            record.error.clone(),
+            record.dependencies.clone(),
+        )
+    };
+    match status {
+        ModuleStatus::Instantiating
+        | ModuleStatus::Instantiated
+        | ModuleStatus::Evaluating
+        | ModuleStatus::Evaluated => return Ok(()),
+        ModuleStatus::Errored => {
+            return Err(cached_error.unwrap_or_else(|| Error::syntax("Module linking failed")));
         }
-        visiting.remove(path);
-        visited.insert(path.to_path_buf());
-        Ok(())
+        ModuleStatus::Linked => {}
+    }
+    graph.get_mut(path).expect("module exists").status = ModuleStatus::Instantiating;
+    for dependency in dependencies {
+        instantiate_module(vm, &dependency, graph)?;
     }
 
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-    for path in graph.keys() {
-        visit(path, graph, &mut visiting, &mut visited)?;
+    let (program, env) = {
+        let record = graph.get(path).expect("module exists");
+        (record.program.clone(), record.env)
+    };
+    let mut compiler = Compiler::new();
+    let (chunk, funcs) = compiler.compile_program(&program)?;
+    let chunk = Arc::new(vm.append_compiled_functions(chunk, funcs));
+    if let Err(error) = vm.instantiate_module_chunk(chunk.clone(), env) {
+        let record = graph.get_mut(path).expect("module exists");
+        record.status = ModuleStatus::Errored;
+        record.error = Some(error.clone());
+        return Err(error);
     }
+    let record = graph.get_mut(path).expect("module exists");
+    record.chunk = Some(chunk);
+    record.status = ModuleStatus::Instantiated;
     Ok(())
 }
 
@@ -243,41 +351,71 @@ fn evaluate_module(
         ModuleStatus::Errored => {
             return Err(cached_error.unwrap_or_else(|| Error::syntax("Module evaluation failed")));
         }
-        ModuleStatus::Linked => {}
+        ModuleStatus::Linked | ModuleStatus::Instantiating => {
+            return Err(Error::internal("Module evaluated before instantiation"));
+        }
+        ModuleStatus::Instantiated => {}
     }
     graph.get_mut(path).expect("module exists").status = ModuleStatus::Evaluating;
     let dependencies = graph.get(path).expect("module exists").dependencies.clone();
     for dependency in dependencies {
         if let Err(err) = evaluate_module(vm, &dependency, graph) {
-            let record = graph.get_mut(path).expect("module exists");
-            record.status = ModuleStatus::Errored;
-            record.error = Some(err.clone());
+            mark_scc_error(graph, path, err.clone());
             return Err(err);
         }
     }
 
-    let (program, env) = {
+    let (chunk, env) = {
         let record = graph.get(path).expect("module exists");
-        (record.program.clone(), record.env)
+        (
+            record
+                .chunk
+                .clone()
+                .ok_or_else(|| Error::internal("Instantiated module has no bytecode"))?,
+            record.env,
+        )
     };
-    let mut compiler = Compiler::new();
-    let (chunk, funcs) = compiler.compile_program(&program)?;
-    let chunk = vm.append_compiled_functions(chunk, funcs);
-    match vm.execute_chunk(chunk, env, Value::Undefined) {
+    match vm.evaluate_module_chunk(chunk, env) {
         Ok(value) => {
             graph.get_mut(path).expect("module exists").status = ModuleStatus::Evaluated;
             Ok(value)
         }
         Err(err) => {
-            let record = graph.get_mut(path).expect("module exists");
-            record.status = ModuleStatus::Errored;
-            record.error = Some(err.clone());
+            mark_scc_error(graph, path, err.clone());
             Err(err)
         }
     }
 }
 
 impl Vm {
+    /// Parse, resolve, and instantiate a module graph without evaluating it.
+    pub fn link_module_file(&mut self, path: impl AsRef<Path>) -> error::Result<()> {
+        let root = path.as_ref().canonicalize().map_err(|err| {
+            Error::syntax(format!(
+                "Cannot resolve entry module '{}': {}",
+                path.as_ref().display(),
+                err
+            ))
+        })?;
+        let mut graph = HashMap::new();
+        load_graph(self, root.clone(), &mut graph)?;
+        assign_scc_ids(&mut graph);
+        link_imports_with_vm(self, &graph)?;
+        let pin_count = graph.len();
+        for record in graph.values() {
+            self.gc_pins.push(record.env.0);
+        }
+        let result = instantiate_module(self, &root, &mut graph);
+        if result.is_ok() {
+            for (path, record) in graph {
+                self.module_records.insert(path, record);
+            }
+        }
+        self.gc_pins
+            .truncate(self.gc_pins.len().saturating_sub(pin_count));
+        result
+    }
+
     /// Load, link, and evaluate an ECMAScript module graph rooted at `path`.
     pub fn run_module_file(&mut self, path: impl AsRef<Path>) -> error::Result<Value> {
         let root = path.as_ref().canonicalize().map_err(|err| {
@@ -289,16 +427,21 @@ impl Vm {
         })?;
         let mut graph = HashMap::new();
         load_graph(self, root.clone(), &mut graph)?;
-        reject_cyclic_graph(&graph)?;
+        assign_scc_ids(&mut graph);
         link_imports_with_vm(self, &graph)?;
 
         let pin_count = graph.len();
         for record in graph.values() {
             self.gc_pins.push(record.env.0);
         }
-        let result = evaluate_module(self, &root, &mut graph);
-        for (path, record) in &graph {
-            self.module_records.insert(path.clone(), record.clone());
+        let (result, cache_graph) = match instantiate_module(self, &root, &mut graph) {
+            Ok(()) => (evaluate_module(self, &root, &mut graph), true),
+            Err(error) => (Err(error), false),
+        };
+        if cache_graph {
+            for (path, record) in &graph {
+                self.module_records.insert(path.clone(), record.clone());
+            }
         }
         self.gc_pins
             .truncate(self.gc_pins.len().saturating_sub(pin_count));

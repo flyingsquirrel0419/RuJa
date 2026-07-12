@@ -289,7 +289,14 @@ impl Compiler {
         // before any statement in the body runs.
         let mut fn_decl_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         if self.top_level_declarative {
-            let lex = Self::collect_lexical_names(&program.body);
+            let mut lex = Self::collect_lexical_names(&program.body);
+            for stmt in &program.body {
+                if let StmtNode::FunctionDecl(function) = &stmt.node {
+                    if let Some(name) = &function.name {
+                        lex.push((name.clone(), VarKind::Let));
+                    }
+                }
+            }
             self.emit_lexical_hoist(&lex)?;
         }
         for stmt in &program.body {
@@ -327,6 +334,10 @@ impl Compiler {
             let lex = Self::collect_lexical_names(&program.body);
             self.emit_lexical_hoist(&lex)?;
         }
+        // ModuleDeclarationInstantiation executes the declaration prefix for
+        // every module before cyclic evaluation begins. Script callers ignore
+        // this boundary and continue executing from instruction zero.
+        self.chunk.body_start_ip = self.chunk.code.len();
         // Allocate a completion-value slot. Expression statements store their
         // value here; if/while/for bodies inherit the slot so that the last
         // expression in a taken branch becomes the script's completion value.

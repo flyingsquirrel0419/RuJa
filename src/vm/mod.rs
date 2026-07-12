@@ -725,6 +725,52 @@ impl Vm {
         self.interpret()
     }
 
+    pub(crate) fn instantiate_module_chunk(
+        &mut self,
+        chunk: Arc<Chunk>,
+        env: GcIdx,
+    ) -> error::Result<()> {
+        let stack_base = self.stack.len();
+        self.frames.push(CallFrame::new(
+            chunk.clone(),
+            0,
+            stack_base,
+            vec![Value::Undefined; 256],
+            env,
+            Value::Undefined,
+        ));
+        let target_depth = self.frames.len() - 1;
+        if let Err(error) = self.interpret_to_depth_until_ip(target_depth, chunk.body_start_ip) {
+            self.frames.truncate(target_depth);
+            self.stack.truncate(stack_base);
+            return Err(error);
+        }
+        self.frames.truncate(target_depth);
+        self.stack.truncate(stack_base);
+        Ok(())
+    }
+
+    pub(crate) fn evaluate_module_chunk(
+        &mut self,
+        chunk: Arc<Chunk>,
+        env: GcIdx,
+    ) -> error::Result<Value> {
+        let stack_base = self.stack.len();
+        let frame_depth = self.frames.len();
+        self.frames.push(CallFrame::new(
+            chunk.clone(),
+            chunk.body_start_ip,
+            stack_base,
+            vec![Value::Undefined; 256],
+            env,
+            Value::Undefined,
+        ));
+        let result = self.interpret();
+        self.frames.truncate(frame_depth);
+        self.stack.truncate(stack_base);
+        result
+    }
+
     /// Like execute_chunk but guarantees the pushed frame is popped on return,
     /// so eval (which reuses the VM afterwards) leaves the caller's frame stack
     /// intact. Used by eval paths only.
@@ -2039,15 +2085,16 @@ impl Vm {
                         // outer var binding.
                         let mut cur_env = Some(*env_idx);
                         while let Some(e_idx) = cur_env {
-                            let (binding_val, in_tdz, has_with, with_obj_val, parent) =
+                            let (binding_val, indirect, in_tdz, has_with, with_obj_val, parent) =
                                 self.heap.with_obj(e_idx.0, |obj| {
                                     if let HeapObj::Environment(e) = obj {
                                         if let Some(b) = e.vars.lock().get(name.as_str()) {
                                             if !b.initialized.load(Ordering::Relaxed) {
-                                                return (None, true, false, None, None);
+                                                return (None, None, true, false, None, None);
                                             }
                                             return (
                                                 Some(b.value.lock().clone()),
+                                                b.indirect.clone(),
                                                 false,
                                                 false,
                                                 None,
@@ -2057,21 +2104,36 @@ impl Vm {
                                         if let Some(with_obj) = e.with_object.lock().clone() {
                                             return (
                                                 None,
+                                                None,
                                                 false,
                                                 true,
                                                 Some(with_obj),
                                                 *e.parent.lock(),
                                             );
                                         }
-                                        return (None, false, false, None, *e.parent.lock());
+                                        return (None, None, false, false, None, *e.parent.lock());
                                     }
-                                    (None, false, false, None, None)
+                                    (None, None, false, false, None, None)
                                 });
                             if in_tdz {
                                 return Err(Error::reference(format!(
                                     "Cannot access '{}' before initialization",
                                     name
                                 )));
+                            }
+                            if indirect.is_some() {
+                                return match crate::environment::get_checked(
+                                    &self.heap, e_idx, &name,
+                                ) {
+                                    Ok(Some(value)) => Ok(value),
+                                    Ok(None) | Err(false) => {
+                                        Err(Error::reference(format!("{} is not defined", name)))
+                                    }
+                                    Err(true) => Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    ))),
+                                };
                             }
                             if let Some(v) = binding_val {
                                 return Ok(v);

@@ -7,8 +7,13 @@
 - File-backed ES Module graphs now parse and link side-effect and named
   imports, local/named/star exports, dependency-first evaluation, immutable
   live import bindings, abrupt dependency completion, and a canonical-path
-  Realm cache. Cyclic graphs are rejected until declaration instantiation is
-  split from evaluation; default and namespace forms remain follow-up work.
+  Realm cache. Module declaration instantiation is now separated from
+  evaluation, so cyclic graphs expose hoisted functions, preserve lexical TDZ,
+  and cache one abrupt evaluation result across every member of the cycle.
+  Default and namespace forms remain follow-up work.
+- Test262 negative parse, resolution, and runtime tests now use distinct
+  non-evaluating CLI paths. Parse validation includes compiler-hosted static
+  semantics, so early errors are checked without accidentally executing code.
 - Programs now carry an explicit Script or Module source type. `Vm::run_module`
   and CLI `--module`/`.mjs` execution use implicit strict mode, an isolated
   declarative top-level environment, undefined top-level `this`, module-aware

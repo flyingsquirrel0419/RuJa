@@ -1,4 +1,4 @@
-use ruja::{Value, Vm};
+use ruja::{Compiler, Parser, Value, Vm};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -111,6 +111,41 @@ fn run_eval(code: &str) -> i32 {
     }
 }
 
+fn parse_file(path: &str, module: bool) -> i32 {
+    match fs::read_to_string(path) {
+        Ok(source) => {
+            let result = if module {
+                Parser::parse_module(&source)
+            } else {
+                Parser::parse(&source)
+            }
+            .and_then(|program| Compiler::new().compile_program(&program).map(|_| program));
+            match result {
+                Ok(_) => 0,
+                Err(error) => {
+                    eprintln!("{}", error);
+                    1
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("ruja: cannot read '{}': {}", path, error);
+            1
+        }
+    }
+}
+
+fn link_module_file(path: &str) -> i32 {
+    let mut vm = new_vm();
+    match vm.link_module_file(path) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("{}", error);
+            1
+        }
+    }
+}
+
 fn repl() -> i32 {
     let mut vm = new_vm();
     let stdin = io::stdin();
@@ -209,6 +244,18 @@ fn main_impl() -> i32 {
                     return 2;
                 }
                 return run_file(&args[i + 1], true);
+            }
+            "--parse" | "--module-parse" | "--module-link" => {
+                if i + 1 >= args.len() {
+                    eprintln!("ruja: {} requires a file", args[i]);
+                    return 2;
+                }
+                return match args[i].as_str() {
+                    "--parse" => parse_file(&args[i + 1], false),
+                    "--module-parse" => parse_file(&args[i + 1], true),
+                    "--module-link" => link_module_file(&args[i + 1]),
+                    _ => unreachable!(),
+                };
             }
             "--" => {
                 if i + 1 < args.len() {

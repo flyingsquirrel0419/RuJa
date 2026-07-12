@@ -68,13 +68,10 @@ def execute_source(source, meta, ruja, timeout=8, source_path=None):
             staging_dir = Path(staging.name)
             for sibling in original.parent.iterdir():
                 destination = staging_dir / sibling.name
-                try:
-                    destination.symlink_to(sibling, target_is_directory=sibling.is_dir())
-                except OSError:
-                    if sibling.is_dir():
-                        shutil.copytree(sibling, destination)
-                    else:
-                        shutil.copy2(sibling, destination)
+                if sibling.is_dir():
+                    shutil.copytree(sibling, destination)
+                else:
+                    shutil.copy2(sibling, destination)
             path = staging_dir / original.name
             if path.exists() or path.is_symlink():
                 path.unlink()
@@ -93,7 +90,12 @@ def execute_source(source, meta, ruja, timeout=8, source_path=None):
             elif "CanBlockIsFalse" in flags:
                 process_env["RUJA_AGENT_CAN_BLOCK"] = "0"
             command = [ruja]
-            if "module" in flags:
+            negative_phase = (meta.get("negative") or {}).get("phase")
+            if negative_phase == "parse":
+                command.append("--module-parse" if "module" in flags else "--parse")
+            elif negative_phase == "resolution":
+                command.append("--module-link")
+            elif "module" in flags:
                 command.append("--module")
             command.append(str(path))
             result = subprocess.run(

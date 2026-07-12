@@ -118,6 +118,33 @@ class ModuleStagingTests(unittest.TestCase):
                 self.assertTrue(observed["fixture_exists"])
             self.assertEqual(set(source_dir.iterdir()), before)
 
+    def test_negative_phases_select_distinct_cli_paths(self):
+        result = subprocess.CompletedProcess(
+            ["ruja", "test.js"], 1, stdout="", stderr="SyntaxError"
+        )
+        cases = [
+            ({"phase": "parse", "type": "SyntaxError"}, "--parse"),
+            (
+                {"phase": "parse", "type": "SyntaxError"},
+                "--module-parse",
+                ["module"],
+            ),
+            (
+                {"phase": "resolution", "type": "SyntaxError"},
+                "--module-link",
+                ["module"],
+            ),
+            ({"phase": "runtime", "type": "SyntaxError"}, "--module", ["module"]),
+        ]
+        for case in cases:
+            negative, expected = case[:2]
+            flags = case[2] if len(case) == 3 else []
+            with patch(
+                "test262_support.subprocess.run", return_value=result
+            ) as run_process:
+                execute_source("", {"negative": negative, "flags": flags}, "ruja")
+                self.assertIn(expected, run_process.call_args.args[0])
+
 
 class HarnessAssemblyTests(unittest.TestCase):
     def test_strict_directive_precedes_async_harness_in_both_tools(self):
@@ -327,6 +354,18 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "eval-gtbndng-indirect-update.js", "eval-gtbndng-indirect-update-as.js",
             "eval-gtbndng-indirect-trlng-comma.js", "instn-same-global.js",
             "eval-rqstd-abrupt.js",
+            "instn-named-bndng-var.js", "instn-named-bndng-let.js",
+            "instn-named-bndng-const.js", "instn-named-bndng-fun.js",
+            "instn-named-bndng-gen.js", "instn-named-bndng-cls.js",
+            "instn-named-bndng-trlng-comma.js", "instn-iee-bndng-var.js",
+            "instn-iee-bndng-let.js", "instn-iee-bndng-const.js",
+            "instn-iee-bndng-fun.js", "instn-iee-bndng-gen.js",
+            "instn-iee-bndng-cls.js", "instn-iee-trlng-comma.js",
+            "instn-named-id-name.js", "instn-iee-iee-cycle.js",
+            "instn-named-iee-cycle.js", "instn-iee-err-circular.js",
+            "instn-iee-err-circular-as.js", "instn-named-star-cycle.js",
+            "instn-star-iee-single-cycle-same-name.js",
+            "instn-star-iee-multi-cycle-same-name.js",
         }
         expected = {f"language/module-code/{name}" for name in expected_names}
         meta = {"flags": ["module"], "features": []}

@@ -43,6 +43,18 @@ MODULE_CORE_FILES = {
         "eval-gtbndng-indirect-update.js", "eval-gtbndng-indirect-update-as.js",
         "eval-gtbndng-indirect-trlng-comma.js", "instn-same-global.js",
         "eval-rqstd-abrupt.js",
+        "instn-named-bndng-var.js", "instn-named-bndng-let.js",
+        "instn-named-bndng-const.js", "instn-named-bndng-fun.js",
+        "instn-named-bndng-gen.js", "instn-named-bndng-cls.js",
+        "instn-named-bndng-trlng-comma.js", "instn-iee-bndng-var.js",
+        "instn-iee-bndng-let.js", "instn-iee-bndng-const.js",
+        "instn-iee-bndng-fun.js", "instn-iee-bndng-gen.js",
+        "instn-iee-bndng-cls.js", "instn-iee-trlng-comma.js",
+        "instn-named-id-name.js", "instn-iee-iee-cycle.js",
+        "instn-named-iee-cycle.js", "instn-iee-err-circular.js",
+        "instn-iee-err-circular-as.js", "instn-named-star-cycle.js",
+        "instn-star-iee-single-cycle-same-name.js",
+        "instn-star-iee-multi-cycle-same-name.js",
     )
 }
 
@@ -1715,6 +1727,8 @@ def module_core_path(path):
 
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
+    if path is not None and module_core_path(path):
+        feats.discard("generators")
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):

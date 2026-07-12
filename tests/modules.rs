@@ -211,25 +211,84 @@ fn module_graph_resolves_star_exports_and_validates_unused_reexports() {
 }
 
 #[test]
-fn module_graph_rejects_cycles_until_declaration_instantiation_is_split() {
+fn module_graph_instantiates_cycles_before_evaluation_and_preserves_tdz() {
     let dir = module_fixture_dir("cycle");
     fs::write(
         dir.join("a.js"),
-        "import { b } from './b.js'; export const a = b;",
+        r#"
+        import { callA } from './b.js';
+        export function value() { return 1; }
+        export const result = callA();
+        result;
+        "#,
     )
     .expect("module a should be written");
     fs::write(
         dir.join("b.js"),
-        "import { a } from './a.js'; export const b = a;",
+        r#"
+        import { value } from './a.js';
+        export function callA() { return value() + 1; }
+        "#,
     )
     .expect("module b should be written");
 
     let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run_module_file(dir.join("a.js"))
+            .expect("hoisted functions should be available through a cycle"),
+        Value::Number(2.0)
+    );
+
+    fs::write(
+        dir.join("tdz-a.js"),
+        "import { b } from './tdz-b.js'; export const a = b;",
+    )
+    .expect("TDZ module a should be written");
+    fs::write(
+        dir.join("tdz-b.js"),
+        "import { a } from './tdz-a.js'; export const b = a;",
+    )
+    .expect("TDZ module b should be written");
     let error = vm
+        .run_module_file(dir.join("tdz-a.js"))
+        .expect_err("cyclic lexical access before evaluation must stay in TDZ");
+    assert_eq!(error.kind, ruja::ErrorKind::Reference);
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
+fn module_cycle_members_cache_the_same_evaluation_error() {
+    let dir = module_fixture_dir("cycle-error");
+    fs::write(
+        dir.join("a.js"),
+        r#"
+        import { value } from './b.js';
+        export function fromA() { return value; }
+        throw new TypeError('cycle failure');
+        "#,
+    )
+    .expect("module a should be written");
+    fs::write(
+        dir.join("b.js"),
+        r#"
+        import { fromA } from './a.js';
+        export const value = 1;
+        "#,
+    )
+    .expect("module b should be written");
+    fs::write(dir.join("second-entry.js"), "import './b.js';")
+        .expect("second entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    let first = vm
         .run_module_file(dir.join("a.js"))
-        .expect_err("cycles must not run with partial instantiation");
-    assert_eq!(error.kind, ruja::ErrorKind::Syntax);
-    assert!(error.message.contains("Cyclic module graph"));
+        .expect_err("cycle root should fail");
+    assert_eq!(first.kind, ruja::ErrorKind::Type);
+    let cached = vm
+        .run_module_file(dir.join("second-entry.js"))
+        .expect_err("another cycle member must reuse the SCC failure");
+    assert_eq!(cached.kind, ruja::ErrorKind::Type);
+    assert_eq!(cached.message, first.message);
     fs::remove_dir_all(dir).expect("module fixtures should be removed");
 }
 

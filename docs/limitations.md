@@ -65,9 +65,11 @@ guarantees, run RuJa in a separately killable process as well.
   declarations live in a module-local declarative environment. File-backed
   module graphs support relative side-effect and named imports, local/named/
   star exports, live imported bindings, dependency-first evaluation, and
-  canonical-path caching. Default imports/exports, namespace objects, cyclic
-  graph declaration instantiation, bare-specifier host resolution, import
-  attributes, and dynamic import are not implemented yet.
+  canonical-path caching. Cyclic graphs instantiate declarations before
+  evaluation, preserve lexical TDZ, and cache abrupt evaluation per strongly
+  connected component. Default imports/exports, namespace objects,
+  bare-specifier host resolution, import attributes, and dynamic import are
+  not implemented yet.
 - test262 conformance is scoped, not full: RuJa targets a deliberately
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full

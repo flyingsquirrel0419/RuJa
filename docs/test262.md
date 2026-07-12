@@ -917,10 +917,15 @@ global state, and abrupt dependency completion. The subtree now reports
 **46 pass / 0 fail / 553 skip / 599 total**. `Vm::run_module_file` resolves
 relative canonical paths, links indirect environment bindings, evaluates each
 dependency once per Realm, validates named and star re-exports, and preserves
-cached module environments through GC. Cyclic graphs currently produce an
-explicit SyntaxError rather than running with partial instantiation. The
+cached module environments through GC. A subsequent cycle slice separates
+declaration instantiation from evaluation, admits 22 additional binding and
+cycle files, and brings the subtree to **68 pass / 0 fail / 531 skip / 599
+total**. Cycles expose hoisted functions, preserve lexical TDZ, and cache one
+abrupt evaluation result across each strongly connected component. The
 Test262 runner stages module entries and relative fixtures in an isolated
-temporary graph, leaving the pinned upstream checkout untouched. The supported
+temporary graph, leaving the pinned upstream checkout untouched. Negative
+parse, resolution, and runtime metadata selects distinct CLI phases; parse
+checks compile static semantics without evaluating the test. The supported
 subset remains **11589 pass / 0 fail / 8850 skip / 20439 total**. Feature
 commit `f0d5525` is confirmed by CI `29174854010` and `test262-full`
 `29174854002`. Downloaded artifacts aggregate to **27207 pass / 6750 fail /
