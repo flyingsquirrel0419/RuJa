@@ -101,6 +101,14 @@
   commit `14341e0`; artifacts move only expressions by **+30 pass / -30 skip**
   to **27853 pass / 6720 fail / 12 timeout / 0 error / 13732 skip / 48317 total
   / 34573 pass-or-fail executed**.
+- Dynamic import now admits all 32 generated missing-module and abrupt
+  specifier-coercion rejection cases. Nested arrow, async-function,
+  async-generator, block, branch, and loop contexts preserve asynchronous host
+  rejection and the original coercion throw value. Exact coverage is
+  **137/137** and the supported subset is **11748/11748**. CI `29198663249` and
+  `test262-full` `29198663253` pass for commit `eb27527`; artifacts move only
+  expressions by **+30 pass / -30 skip** to **27883 pass / 6720 fail / 12
+  timeout / 0 error / 13702 skip / 48317 total / 34603 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
