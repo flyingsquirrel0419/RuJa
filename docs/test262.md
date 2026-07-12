@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.4% of all matrix files; 80.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.7% of all matrix files; 80.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -993,7 +993,12 @@ identity, and evaluation cases in a shared 125-file runner/analyzer manifest.
 One upstream file that imports another non-fixture test and executes its
 unprovided `assert` remains excluded. The authoritative supported subset stays
 **11589 pass / 0 fail / 8850 skip / 20439 total**; full-matrix evidence is
-recorded after the feature commit.
+confirmed by feature commit `1143291`, CI `29180581547`, and `test262-full`
+`29180581587`. Downloaded artifacts aggregate to **27484 pass / 6720 fail / 12
+timeout / 0 error / 14251 skip / 48467 total / 34204 pass-or-fail executed**,
+or **80.4%** of pass-or-fail files and **56.7%** of the matrix. The module
+shard accounts for exactly **+125 pass / -125 skip**; fail, timeout, error, and
+every other shard are unchanged.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
