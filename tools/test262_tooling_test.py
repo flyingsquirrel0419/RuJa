@@ -554,7 +554,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 180)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 282)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
@@ -585,6 +585,14 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         root_namespace_admitted = (
             "language/expressions/dynamic-import/reuse-namespace-object.js"
         )
+        usage_live_binding_admitted = (
+            "language/expressions/dynamic-import/usage/"
+            "nested-async-gen-return-await-eval-gtbndng-indirect-update.js"
+        )
+        usage_host_resolution_admitted = (
+            "language/expressions/dynamic-import/usage/"
+            "nested-while-import-then-eval-script-code-host-resolves-module-code.js"
+        )
         root_tla_cycle_admitted = (
             "language/expressions/dynamic-import/"
             "import-fulfilled-member-of-errored-cycle.js"
@@ -601,6 +609,8 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
         self.assertIn(assignment_expression_admitted, DYNAMIC_IMPORT_FILES)
         self.assertIn(root_once_admitted, DYNAMIC_IMPORT_FILES)
         self.assertIn(root_namespace_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(usage_live_binding_admitted, DYNAMIC_IMPORT_FILES)
+        self.assertIn(usage_host_resolution_admitted, DYNAMIC_IMPORT_FILES)
         self.assertNotIn(outside, DYNAMIC_IMPORT_FILES)
         meta = {"flags": ["generated", "async"], "features": ["dynamic-import"]}
         with tempfile.TemporaryDirectory() as temp_dir:
