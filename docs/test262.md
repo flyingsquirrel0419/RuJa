@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.7% of all matrix files; 80.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.8% of all matrix files; 80.6% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -1131,6 +1131,18 @@ boundaries. Exact dynamic-import coverage is **137 pass / 0 fail / 868 skip /
 skip**, producing **27883 pass / 6720 fail / 12 timeout / 0 error / 13702 skip
 / 48317 total / 34603 pass-or-fail executed**, or **80.6%** of executed files
 and **57.7%** of the matrix.
+
+Dynamic import now admits the complete 28-file assignment-expression subtree.
+The 27 newly admitted files verify full AssignmentExpression parsing and
+evaluation for references, calls, members, assignments, short-circuiting,
+observable object/function coercion, `await`, `yield`, `new.target`, and cover
+grammar before host loading. Exact dynamic-import coverage is **164 pass / 0
+fail / 841 skip / 1005 total**; the supported subset is **11775 pass / 0 fail /
+8664 skip / 20439 total**. CI `29200204814` and `test262-full` `29200204823`
+pass for commit `5a781d3`. Downloaded artifacts change only expressions by
+**+27 pass / -27 skip**, producing **27910 pass / 6720 fail / 12 timeout / 0
+error / 13675 skip / 48317 total / 34630 pass-or-fail executed**, or **80.6%**
+of executed files and **57.8%** of the matrix.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 

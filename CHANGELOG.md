@@ -109,6 +109,14 @@
   `test262-full` `29198663253` pass for commit `eb27527`; artifacts move only
   expressions by **+30 pass / -30 skip** to **27883 pass / 6720 fail / 12
   timeout / 0 error / 13702 skip / 48317 total / 34603 pass-or-fail executed**.
+- Dynamic import now admits the complete 28-file assignment-expression
+  subtree. References, calls, members, assignments, short-circuiting,
+  observable coercion, `await`, `yield`, `new.target`, and cover grammar are
+  evaluated before host loading. Exact coverage is **164/164** and the
+  supported subset is **11775/11775**. CI `29200204814` and `test262-full`
+  `29200204823` pass for commit `5a781d3`; artifacts move only expressions by
+  **+27 pass / -27 skip** to **27910 pass / 6720 fail / 12 timeout / 0 error /
+  13675 skip / 48317 total / 34630 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
