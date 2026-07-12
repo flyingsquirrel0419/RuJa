@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- The `in` operator now preserves Symbol property keys instead of stringifying
+  them, so well-known and user-created Symbol properties participate in
+  `[[HasProperty]]` correctly across ordinary and exotic objects.
 - File-backed ES Module graphs now parse and link side-effect and named
   imports, local/named/star exports, dependency-first evaluation, immutable
   live import bindings, abrupt dependency completion, and a canonical-path

@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.3% of all matrix files; 80.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 56.4% of all matrix files; 80.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11589 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -972,8 +972,14 @@ follow Module Namespace Exotic Object semantics. Imported bindings re-exported
 with `export { name }` are normalized to indirect export entries so duplicate
 paths to the same namespace resolve to the same module and binding. The
 authoritative supported subset remains **11589 pass / 0 fail / 8850 skip /
-20439 total**; CI and full-matrix artifact totals are recorded after the
-feature commit is pushed.
+20439 total**. Feature commit `c3683cb` is confirmed by CI `29178992161` and
+`test262-full` `29178992137`. Downloaded artifacts aggregate to **27359 pass /
+6720 fail / 12 timeout / 0 error / 14376 skip / 48467 total / 34079
+pass-or-fail executed**, or **80.3%** of pass-or-fail files and **56.4%** of
+the matrix. The module shard moved exactly **+53 pass / -53 skip**. The same
+change made the `in` operator preserve Symbol PropertyKeys, independently
+moving 30 built-ins files from fail to pass; the aggregate delta is therefore
+**+83 pass / -30 fail / -53 skip** with timeout and error counts unchanged.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
