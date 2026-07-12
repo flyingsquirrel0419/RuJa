@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- `JSON.parse` now performs the specification's holder-based
+  `InternalizeJSONProperty` walk in place. Reviver calls observe forward
+  mutations, inherited properties, array-length snapshots, the root wrapper,
+  deletion and create-data-property failures, callable and revoked Proxies,
+  and the original primitive token through `context.source`. Proxy-aware
+  `Array.isArray` and `[[DefineOwnProperty]]` invariant checks support the same
+  path without weakening non-extensible or non-configurable targets. The
+  frozen `built-ins/JSON/parse` admission is **77/77**. CI `29211878288` and
+  `test262-full` `29211878312` pass for commit `caa689c`; downloaded artifacts
+  aggregate to **28424 pass / 6675 fail / 13206 skip / 12 timeout / 0 error /
+  48317 total / 35099 pass-or-fail executed**, a matrix movement of **+26 pass
+  / -14 fail / -12 skip**.
 - The `in` operator now preserves Symbol property keys instead of stringifying
   them, so well-known and user-created Symbol properties participate in
   `[[HasProperty]]` correctly across ordinary and exotic objects.

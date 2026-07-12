@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.8% of all matrix files; 80.9% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.8% of all matrix files; 81.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -112,6 +112,27 @@ python3 tools/test262_analyze.py
 The focused analyzer mirrors the runner's `raw`, `onlyStrict` directive
 prologue, and `negative:` metadata handling, so strict-mode and parse-negative
 tests are not reported as false failure buckets.
+
+## JSON.parse reviver admission
+
+`tools/test262_json_parse_admission.txt` freezes all **77** files under
+`built-ins/JSON/parse`. The runner and analyzer lift otherwise broad Proxy,
+Reflect, Symbol, and `json-parse-with-source` feature gates only for those exact
+paths. The corresponding implementation uses the root holder and ordinary
+property operations for `InternalizeJSONProperty`, preserves reviver mutations
+and abrupt completions, and supplies `context.source` only when a primitive
+still has the parsed value associated with its original source record.
+
+At commit `caa689c`, local verification on test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1` reports **77 pass / 0 fail / 0
+skip** for the frozen JSON.parse set. The supported subset remains **12232 pass
+/ 0 fail / 8207 skip / 20439 total**, and the Python tooling suite is **61/61**.
+CI `29211878288` and `test262-full` `29211878312` both pass. The 30 downloaded
+artifacts aggregate to **28424 pass / 6675 fail / 13206 skip / 12 timeout / 0
+error / 48317 total / 35099 pass-or-fail executed**, or **58.8%** of all matrix
+files and **81.0%** of executed files. Relative to the preceding confirmed
+matrix this is **+26 pass / -14 fail / -12 skip**; the extra pass beyond the 25
+newly admitted JSON.parse files comes from the shared property-invariant fixes.
 
 ## Full-suite baseline
 
