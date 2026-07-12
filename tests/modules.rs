@@ -118,6 +118,73 @@ fn module_graph_preserves_named_import_live_bindings_and_aliases() {
 }
 
 #[test]
+fn module_graph_supports_default_bindings_and_reexports() {
+    let dir = module_fixture_dir("default-bindings");
+    fs::write(
+        dir.join("dependency.js"),
+        r#"
+        export let value = 1;
+        export default function named() { return value; }
+        globalThis.updateDefaultValue = function() { value = 2; };
+        "#,
+    )
+    .expect("default dependency should be written");
+    fs::write(
+        dir.join("bridge.js"),
+        "export { default, value } from './dependency.js';",
+    )
+    .expect("default bridge should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        import read, { value } from './bridge.js';
+        var before = read();
+        globalThis.updateDefaultValue();
+        [before, read(), value, read.name].join('|');
+        "#,
+    )
+    .expect("default entry should be written");
+    fs::write(
+        dir.join("anonymous.js"),
+        "export default function() { return 7; }",
+    )
+    .expect("anonymous default function should be written");
+    fs::write(
+        dir.join("anonymous-entry.js"),
+        "import fn from './anonymous.js'; [fn(), fn.name].join('|');",
+    )
+    .expect("anonymous default entry should be written");
+    fs::write(
+        dir.join("expression.js"),
+        "export default class { valueOf() { return 9; } }",
+    )
+    .expect("default class should be written");
+    fs::write(
+        dir.join("expression-entry.js"),
+        "import C from './expression.js'; [new C().valueOf(), C.name].join('|');",
+    )
+    .expect("default class entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run_module_file(dir.join("entry.js"))
+            .expect("default graph should evaluate"),
+        Value::String(Arc::from("1|2|2|named"))
+    );
+    assert_eq!(
+        vm.run_module_file(dir.join("anonymous-entry.js"))
+            .expect("anonymous default function should evaluate"),
+        Value::String(Arc::from("7|default"))
+    );
+    assert_eq!(
+        vm.run_module_file(dir.join("expression-entry.js"))
+            .expect("default class should evaluate"),
+        Value::String(Arc::from("9|default"))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
 fn module_graph_evaluates_each_dependency_once_and_supports_named_reexports() {
     let dir = module_fixture_dir("once-reexport");
     fs::write(

@@ -773,13 +773,32 @@ impl Parser {
             module_requests.push(request);
             return Ok(());
         }
-        if !self.eat(&TokenKind::LBrace) {
-            return Err(error::Error::syntax(
-                "Only named imports are supported".to_string(),
-            ));
-        }
 
         let mut entries = Vec::new();
+        if !self.check(&TokenKind::LBrace) {
+            let local_name = self.parse_module_binding_name()?;
+            entries.push((Arc::from("default"), local_name));
+            if !self.eat(&TokenKind::Comma) {
+                self.expect_contextual("from")?;
+                let request = self.parse_module_specifier()?;
+                self.expect_semi()?;
+                for (import_name, local_name) in entries {
+                    import_entries.push(ImportEntry {
+                        module_request: request.clone(),
+                        import_name,
+                        local_name,
+                    });
+                }
+                module_requests.push(request);
+                return Ok(());
+            }
+            if !self.check(&TokenKind::LBrace) {
+                return Err(error::Error::syntax(
+                    "Namespace imports are not supported".to_string(),
+                ));
+            }
+        }
+        self.expect(&TokenKind::LBrace, "{")?;
         while !self.check(&TokenKind::RBrace) {
             let import_name = self.parse_module_identifier_name()?;
             let local_name = if self.eat_contextual("as") {
@@ -833,6 +852,30 @@ impl Parser {
         Ok(specifiers)
     }
 
+    fn parse_default_function_declaration(
+        &mut self,
+        is_async: bool,
+    ) -> error::Result<(Stmt, Arc<str>)> {
+        if is_async {
+            self.advance(); // async
+        }
+        let Expr::Function(mut function) = self.parse_function_expr_with_async(is_async)? else {
+            unreachable!("function parser must return a function expression")
+        };
+        let local_name = function
+            .name
+            .clone()
+            .unwrap_or_else(|| Arc::from("default"));
+        if function.name.is_some() {
+            self.check_binding_name(&local_name)?;
+        }
+        if function.name.is_none() {
+            function.name = Some(Arc::from("default"));
+        }
+        function.has_name_binding = false;
+        Ok((self.stmt(StmtNode::FunctionDecl(function)), local_name))
+    }
+
     fn parse_export_declaration(
         &mut self,
         module_requests: &mut Vec<ModuleRequest>,
@@ -840,10 +883,44 @@ impl Parser {
     ) -> error::Result<Option<Stmt>> {
         self.stmt_start_line = self.current_line();
         self.advance(); // export
-        if self.check(&TokenKind::Default) {
-            return Err(error::Error::syntax(
-                "Export default declarations are not supported".to_string(),
-            ));
+        if self.eat(&TokenKind::Default) {
+            let (stmt, local_name) = match self.peek() {
+                TokenKind::Function => self.parse_default_function_declaration(false)?,
+                TokenKind::Async
+                    if matches!(self.peek_at_tok(1).kind, TokenKind::Function)
+                        && !self.peek_at_tok(1).preceded_by_newline =>
+                {
+                    self.parse_default_function_declaration(true)?
+                }
+                TokenKind::Class => {
+                    let mut class = self.parse_class_body(true)?;
+                    let local_name = class.name.clone().unwrap_or_else(|| Arc::from("default"));
+                    if class.name.is_none() {
+                        class.name = Some(Arc::from("default"));
+                    }
+                    (
+                        self.stmt(StmtNode::ExprStmt(Expr::Class(class))),
+                        local_name,
+                    )
+                }
+                _ => {
+                    let mut expression = self.parse_assign()?;
+                    Self::name_function_from_ident(&mut expression, &Arc::from("default"));
+                    self.expect_semi()?;
+                    (
+                        self.stmt(StmtNode::VarDecl {
+                            kind: VarKind::Const,
+                            decls: vec![(Arc::from("default"), Some(expression))],
+                        }),
+                        Arc::from("default"),
+                    )
+                }
+            };
+            export_entries.push(ExportEntry::Local {
+                local_name,
+                export_name: Arc::from("default"),
+            });
+            return Ok(Some(stmt));
         }
         if self.eat(&TokenKind::Star) {
             if self.eat_contextual("as") {
@@ -876,6 +953,11 @@ impl Parser {
             } else {
                 self.expect_semi()?;
                 for (local_name, export_name) in specifiers {
+                    if local_name.as_ref() == "default" {
+                        return Err(error::Error::syntax(
+                            "'default' is not a local binding name".to_string(),
+                        ));
+                    }
                     export_entries.push(ExportEntry::Local {
                         local_name,
                         export_name,
@@ -6827,6 +6909,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_module_default_import_export_metadata() {
+        let program = Parser::parse_module(
+            r#"
+            import primary, { value as alias } from './dep.js';
+            export default function() {}
+            export { default as forwarded } from './other.js';
+            "#,
+        )
+        .expect("default module forms should parse");
+        assert_eq!(program.import_entries.len(), 2);
+        assert_eq!(program.import_entries[0].import_name.as_ref(), "default");
+        assert_eq!(program.import_entries[0].local_name.as_ref(), "primary");
+        assert!(program.export_entries.iter().any(|entry| matches!(
+            entry,
+            ExportEntry::Local {
+                local_name,
+                export_name,
+            } if local_name.as_ref() == "default" && export_name.as_ref() == "default"
+        )));
+        assert!(program.export_entries.iter().any(|entry| matches!(
+            entry,
+            ExportEntry::ReExport {
+                import_name,
+                export_name,
+                ..
+            } if import_name.as_ref() == "default" && export_name.as_ref() == "forwarded"
+        )));
+
+        assert!(Parser::parse_module("export default 1; export default 2;").is_err());
+        assert!(Parser::parse_module("export default 1; export { default };").is_err());
+        assert!(Parser::parse_module("import value, * as ns from './dep.js';").is_err());
+        assert!(Parser::parse_module("export default function await() {}").is_err());
+        assert!(Parser::parse_module("export default function* await() {}").is_err());
+    }
+
+    #[test]
     fn parse_module_import_export_early_errors_and_escapes() {
         for src in [
             "import { x } from 'dep'; let x;",
@@ -6838,8 +6956,6 @@ mod tests {
             "export { x \\u0061s y };",
             "\\u0069mport 'dep';",
             "\\u0065xport var x;",
-            "export default 1;",
-            "import defaultName from 'dep';",
             "import * as ns from 'dep';",
             "export * as ns from 'dep';",
         ] {

@@ -942,6 +942,16 @@ of the matrix. The admitted module slice accounts for exactly **+22 pass / -22
 skip**; one pre-existing built-ins timeout also passed in this run and is
 recorded as timing variance rather than part of the module conformance claim.
 
+The next default-binding slice adds 47 exact files and brings
+`language/module-code/` to **115 pass / 0 fail / 484 skip / 599 total**.
+Default imports, mixed default-plus-named imports, default function/class
+declarations (including generator and async forms), default expressions,
+anonymous name inference, live bindings, default re-exports, abrupt completion,
+and early errors all use the existing named-binding resolver with export name
+`default`. Namespace imports and namespace objects remain gated as a separate
+feature boundary. The authoritative supported subset remains **11589 pass / 0
+fail / 8850 skip / 20439 total**.
+
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every
 file admitted by RuJa's runner under `built-ins/TypedArray/prototype` now runs

@@ -10,7 +10,9 @@
   Realm cache. Module declaration instantiation is now separated from
   evaluation, so cyclic graphs expose hoisted functions, preserve lexical TDZ,
   and cache one abrupt evaluation result across every member of the cycle.
-  Default and namespace forms remain follow-up work.
+  Default imports, default function/class declarations and expressions, mixed
+  default-plus-named imports, and default re-exports share the same live-binding
+  linker path. Namespace forms remain follow-up work.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.
@@ -261,6 +263,11 @@
 
 ### Test tooling
 
+- The default Module binding slice adds 47 exact `language/module-code/` files,
+  bringing that subtree to **115 pass / 0 fail / 484 skip**. It covers ordinary,
+  generator, async, and async-generator default declarations, default
+  expressions and name inference, mixed imports, live bindings, re-exports,
+  abrupt completion, and early errors. Namespace-dependent files remain gated.
 - The cyclic Module slice adds 22 exact `language/module-code/` files, bringing
   that subtree to **68 pass / 0 fail / 531 skip**. Negative parse, resolution,
   and runtime tests use phase-specific CLI paths, and parse checks include
