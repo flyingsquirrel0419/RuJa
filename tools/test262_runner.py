@@ -1875,7 +1875,7 @@ def should_skip(meta, path=None):
     if path is not None and dynamic_import_path(path):
         feats.difference_update({
             "dynamic-import", "generators", "async-iteration",
-            "export-star-as-namespace-from-module",
+            "export-star-as-namespace-from-module", "top-level-await",
         })
     if path is not None and import_meta_path(path):
         feats.difference_update({
