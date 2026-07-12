@@ -12,7 +12,10 @@
   and cache one abrupt evaluation result across every member of the cycle.
   Default imports, default function/class declarations and expressions, mixed
   default-plus-named imports, and default re-exports share the same live-binding
-  linker path. Namespace forms remain follow-up work.
+  linker path. Namespace imports and `export * as` now produce canonical,
+  null-prototype Module Namespace Exotic Objects with sorted keys, live export
+  descriptors, TDZ behavior, immutable assignment semantics, and correct
+  cyclic/ambiguous-star identity.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

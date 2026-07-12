@@ -65,9 +65,10 @@ views, `TypedArray.prototype.at`, async/await, generators, for-of, optional
 chaining, nullish coalescing, logical assignment. TypedArray `fill`, `values`,
 `join`, `set`, `subarray`, and default iteration are also included.
 
-**Intentionally unsupported**: ES Module import/export syntax, module graphs
-and linking (the isolated Module source goal is supported), Intl, a public
-multi-agent embedder API, and tail-call optimization.
+**Intentionally unsupported**: bare-specifier ES Module host resolution,
+import attributes, dynamic import, Intl, a public multi-agent embedder API,
+and tail-call optimization. File-backed relative module graphs, including
+namespace objects, are supported in the frozen module slice.
 Explicit resource management syntax (`using` / `await using`) is not yet
 supported beyond the two well-known Symbol intrinsics.
 
@@ -959,6 +960,20 @@ or **80.2%** of pass-or-fail files and **56.3%** of the matrix. The module job
 moved exactly **+47 pass / -47 skip**. One unrelated built-ins test moved from
 the preceding run's pass result back to timeout, so the aggregate delta is
 **+46 pass / -47 skip / +1 timeout**.
+
+The namespace slice adds 53 exact files and brings `language/module-code/` to
+**168 pass / 0 fail / 431 skip / 599 total**. Namespace imports and
+`export * as` share one cached namespace object per module record. The object
+has a null prototype, is non-extensible, exposes sorted unambiguous export
+names followed by `Symbol.toStringTag`, and reads live binding values through
+its data descriptors. Set, delete, define-property, prototype mutation, TDZ,
+cycle identity, default-through-star exclusion, and ambiguous-star omission
+follow Module Namespace Exotic Object semantics. Imported bindings re-exported
+with `export { name }` are normalized to indirect export entries so duplicate
+paths to the same namespace resolve to the same module and binding. The
+authoritative supported subset remains **11589 pass / 0 fail / 8850 skip /
+20439 total**; CI and full-matrix artifact totals are recorded after the
+feature commit is pushed.
 
 Focused TypedArray prototype completion check:
 Against pinned test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, every

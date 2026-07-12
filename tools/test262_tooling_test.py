@@ -395,6 +395,47 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
             "parse-err-export-dflt-expr.js", "parse-err-export-dflt-let.js",
             "parse-err-export-dflt-var.js", "parse-err-semi-dflt-expr.js",
         }
+        expected_names.update({
+            "ambiguous-export-bindings/namespace-unambiguous-if-export-star-as-from.js",
+            "ambiguous-export-bindings/namespace-unambiguous-if-import-star-as-and-export.js",
+            "ambiguous-export-bindings/omitted-from-namespace.js",
+            "eval-rqstd-once.js", "eval-rqstd-order.js", "eval-self-once.js",
+            "export-star-as-dflt.js", "instn-named-bndng-dflt-star.js", "instn-once.js",
+            "instn-star-as-props-dflt-skip.js", "instn-star-props-circular.js",
+            "instn-star-props-dflt-keep-indirect.js", "instn-star-props-dflt-keep-local.js",
+            "instn-star-props-dflt-skip.js", "instn-star-props-nrml.js",
+            "namespace/Symbol.iterator.js", "namespace/Symbol.toStringTag.js",
+            "namespace/internals/define-own-property.js",
+            "namespace/internals/delete-exported-init.js",
+            "namespace/internals/delete-exported-uninit.js",
+            "namespace/internals/delete-non-exported.js",
+            "namespace/internals/enumerate-binding-uninit.js",
+            "namespace/internals/get-nested-namespace-dflt-skip.js",
+            "namespace/internals/get-nested-namespace-props-nrml.js",
+            "namespace/internals/get-own-property-str-found-init.js",
+            "namespace/internals/get-own-property-str-found-uninit.js",
+            "namespace/internals/get-own-property-str-not-found.js",
+            "namespace/internals/get-own-property-sym.js", "namespace/internals/get-prototype-of.js",
+            "namespace/internals/get-str-found-init.js",
+            "namespace/internals/get-str-found-uninit.js",
+            "namespace/internals/get-str-initialize.js", "namespace/internals/get-str-not-found.js",
+            "namespace/internals/get-str-update.js", "namespace/internals/get-sym-found.js",
+            "namespace/internals/get-sym-not-found.js",
+            "namespace/internals/has-property-str-found-init.js",
+            "namespace/internals/has-property-str-found-uninit.js",
+            "namespace/internals/has-property-str-not-found.js",
+            "namespace/internals/has-property-sym-found.js",
+            "namespace/internals/has-property-sym-not-found.js", "namespace/internals/is-extensible.js",
+            "namespace/internals/object-hasOwnProperty-binding-uninit.js",
+            "namespace/internals/object-keys-binding-uninit.js",
+            "namespace/internals/object-propertyIsEnumerable-binding-uninit.js",
+            "namespace/internals/own-property-keys-binding-types.js",
+            "namespace/internals/own-property-keys-sort.js",
+            "namespace/internals/prevent-extensions.js",
+            "namespace/internals/set-prototype-of-null.js", "namespace/internals/set-prototype-of.js",
+            "namespace/internals/set.js", "namespace/internals/super-access-to-tdz-binding.js",
+            "namespace/internals/super-set-to-tdz-binding-with-accessor.js",
+        })
         expected = {f"language/module-code/{name}" for name in expected_names}
         meta = {"flags": ["module"], "features": []}
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -408,6 +449,15 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                 try:
                     for relative in expected:
                         self.assertFalse(tool.should_skip(meta, root / "test" / relative))
+                    namespace_meta = {
+                        "flags": ["module"],
+                        "features": [
+                            "Symbol", "Symbol.iterator", "Symbol.toStringTag", "Reflect",
+                            "export-star-as-namespace-from-module",
+                        ],
+                    }
+                    namespace = root / "test/language/module-code/namespace/Symbol.iterator.js"
+                    self.assertFalse(tool.should_skip(namespace_meta, namespace))
                     self.assertTrue(tool.should_skip(meta, future))
                     self.assertTrue(tool.should_skip(meta, outside))
                 finally:

@@ -3,6 +3,8 @@ use crate::bytecode::Chunk;
 use crate::error::{self, Error};
 use crate::value::{GcIdx, Value};
 use crate::{Compiler, Parser, Vm};
+use indexmap::IndexMap;
+use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,6 +26,8 @@ pub(crate) struct ModuleRecord {
     pub(crate) dependencies: Vec<PathBuf>,
     chunk: Option<Arc<Chunk>>,
     scc_id: usize,
+    namespace: Option<GcIdx>,
+    namespace_initializing: bool,
     status: ModuleStatus,
     pub(crate) error: Option<Arc<Error>>,
 }
@@ -82,6 +86,8 @@ fn load_graph(
             dependencies: Vec::new(),
             chunk: None,
             scc_id: usize::MAX,
+            namespace: None,
+            namespace_initializing: false,
             status: ModuleStatus::Linked,
             error: None,
         },
@@ -146,6 +152,16 @@ fn resolve_export_optional(
                 let dependency = resolve_specifier(module, &module_request.specifier)?;
                 return resolve_export_optional(graph, &dependency, import_name, seen);
             }
+            ExportEntry::NamespaceReExport {
+                module_request,
+                export_name: candidate,
+            } if candidate.as_ref() == export_name => {
+                let dependency = resolve_specifier(module, &module_request.specifier)?;
+                let target = graph
+                    .get(&dependency)
+                    .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
+                return Ok(Some((target.env, Arc::from("*namespace*"))));
+            }
             _ => {}
         }
     }
@@ -175,25 +191,186 @@ fn resolve_export_optional(
     Ok(star_resolution)
 }
 
-fn link_imports_with_vm(vm: &Vm, graph: &HashMap<PathBuf, ModuleRecord>) -> error::Result<()> {
-    for (path, record) in graph {
+fn exported_names(
+    graph: &HashMap<PathBuf, ModuleRecord>,
+    module: &Path,
+    seen: &mut HashSet<PathBuf>,
+) -> error::Result<Vec<Arc<str>>> {
+    if !seen.insert(module.to_path_buf()) {
+        return Ok(Vec::new());
+    }
+    let record = graph
+        .get(module)
+        .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
+    let mut names = Vec::new();
+    for entry in &record.program.export_entries {
+        match entry {
+            ExportEntry::Local { export_name, .. }
+            | ExportEntry::ReExport { export_name, .. }
+            | ExportEntry::NamespaceReExport { export_name, .. } => {
+                names.push(export_name.clone());
+            }
+            ExportEntry::Star { module_request } => {
+                let dependency = resolve_specifier(module, &module_request.specifier)?;
+                for name in exported_names(graph, &dependency, seen)? {
+                    if name.as_ref() != "default" {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+    }
+    names.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    names.dedup();
+    Ok(names)
+}
+
+fn get_module_namespace(
+    vm: &mut Vm,
+    path: &Path,
+    graph: &mut HashMap<PathBuf, ModuleRecord>,
+) -> error::Result<GcIdx> {
+    if let Some(record) = graph.get(path) {
+        if let Some(namespace) = record.namespace {
+            return Ok(namespace);
+        }
+    }
+    let mut tag = crate::value::PropertyDescriptor::data(Value::String(Arc::from("Module")));
+    tag.writable = false;
+    tag.enumerable = false;
+    tag.configurable = false;
+    let mut props = IndexMap::new();
+    props.insert(
+        crate::value::PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        tag,
+    );
+    let namespace = GcIdx(vm.heap.allocate(crate::value::HeapObj::ModuleNamespace(
+        crate::value::ModuleNamespaceData {
+            exports: Mutex::new(IndexMap::new()),
+            props: Mutex::new(props),
+            proto: Mutex::new(None),
+        },
+    ))?);
+    {
+        let record = graph
+            .get_mut(path)
+            .ok_or_else(|| Error::syntax("Module graph is incomplete"))?;
+        record.namespace = Some(namespace);
+        record.namespace_initializing = true;
+        crate::environment::declare(
+            &vm.heap,
+            record.env,
+            "*namespace*",
+            Value::Object(namespace),
+            crate::value::BindingKind::Const,
+        );
+    }
+
+    let namespace_exports: Vec<(Arc<str>, PathBuf)> = graph
+        .get(path)
+        .expect("module exists")
+        .program
+        .export_entries
+        .iter()
+        .filter_map(|entry| {
+            if let ExportEntry::NamespaceReExport {
+                module_request,
+                export_name,
+            } = entry
+            {
+                Some((
+                    export_name.clone(),
+                    resolve_specifier(path, &module_request.specifier),
+                ))
+            } else {
+                None
+            }
+        })
+        .map(|(name, dependency)| dependency.map(|dependency| (name, dependency)))
+        .collect::<error::Result<_>>()?;
+    for (_, dependency) in namespace_exports {
+        get_module_namespace(vm, &dependency, graph)?;
+    }
+
+    let names = exported_names(graph, path, &mut HashSet::new())?;
+    let mut resolved = IndexMap::new();
+    for name in names {
+        if let Ok(Some(binding)) = resolve_export_optional(graph, path, &name, &mut HashSet::new())
+        {
+            resolved.insert(name, binding);
+        }
+    }
+    vm.heap.with_obj(namespace.0, |object| {
+        if let crate::value::HeapObj::ModuleNamespace(data) = object {
+            *data.exports.lock() = resolved;
+        }
+    });
+    graph
+        .get_mut(path)
+        .expect("module exists")
+        .namespace_initializing = false;
+    Ok(namespace)
+}
+
+fn link_imports_with_vm(
+    vm: &mut Vm,
+    graph: &mut HashMap<PathBuf, ModuleRecord>,
+) -> error::Result<()> {
+    for (path, record) in graph.iter() {
         for export in &record.program.export_entries {
             if let ExportEntry::ReExport { export_name, .. } = export {
                 resolve_export(graph, path, export_name, &mut HashSet::new())?;
             }
         }
-        for import in &record.program.import_entries {
-            let dependency = resolve_specifier(path, &import.module_request.specifier)?;
-            let (target_env, target_name) =
-                resolve_export(graph, &dependency, &import.import_name, &mut HashSet::new())?;
-            crate::environment::declare_import(
+    }
+    let namespace_reexporters: Vec<PathBuf> = graph
+        .iter()
+        .filter(|(_, record)| {
+            record
+                .program
+                .export_entries
+                .iter()
+                .any(|entry| matches!(entry, ExportEntry::NamespaceReExport { .. }))
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in namespace_reexporters {
+        get_module_namespace(vm, &path, graph)?;
+    }
+    let imports: Vec<(PathBuf, GcIdx, crate::ast::ImportEntry)> = graph
+        .iter()
+        .flat_map(|(path, record)| {
+            record
+                .program
+                .import_entries
+                .iter()
+                .cloned()
+                .map(|import| (path.clone(), record.env, import))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    for (path, env, import) in imports {
+        let dependency = resolve_specifier(&path, &import.module_request.specifier)?;
+        if import.import_name.as_ref() == "*" {
+            let namespace = get_module_namespace(vm, &dependency, graph)?;
+            crate::environment::declare(
                 &vm.heap,
-                record.env,
+                env,
                 &import.local_name,
-                target_env,
-                target_name,
+                Value::Object(namespace),
+                crate::value::BindingKind::Const,
             );
+            continue;
         }
+        let (target_env, target_name) =
+            resolve_export(graph, &dependency, &import.import_name, &mut HashSet::new())?;
+        crate::environment::declare_import(
+            &vm.heap,
+            env,
+            &import.local_name,
+            target_env,
+            target_name,
+        );
     }
     Ok(())
 }
@@ -400,7 +577,7 @@ impl Vm {
         let mut graph = HashMap::new();
         load_graph(self, root.clone(), &mut graph)?;
         assign_scc_ids(&mut graph);
-        link_imports_with_vm(self, &graph)?;
+        link_imports_with_vm(self, &mut graph)?;
         let pin_count = graph.len();
         for record in graph.values() {
             self.gc_pins.push(record.env.0);
@@ -428,7 +605,7 @@ impl Vm {
         let mut graph = HashMap::new();
         load_graph(self, root.clone(), &mut graph)?;
         assign_scc_ids(&mut graph);
-        link_imports_with_vm(self, &graph)?;
+        link_imports_with_vm(self, &mut graph)?;
 
         let pin_count = graph.len();
         for record in graph.values() {

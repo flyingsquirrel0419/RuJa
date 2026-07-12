@@ -536,6 +536,16 @@ pub struct ProxyData {
     pub proto: Mutex<Option<Value>>,
 }
 
+/// ECMAScript Module Namespace Exotic Object.
+pub type ModuleBinding = (GcIdx, Arc<str>);
+
+pub struct ModuleNamespaceData {
+    /// Sorted exported names mapped to their resolved live environment binding.
+    pub exports: Mutex<IndexMap<Arc<str>, ModuleBinding>>,
+    pub props: Mutex<IndexMap<PropertyKey, PropertyDescriptor>>,
+    pub proto: Mutex<Option<Value>>,
+}
+
 /// A heap-allocated JS object. All heap-resident data is one of these.
 pub enum HeapObj {
     Object(ObjectData),
@@ -555,6 +565,7 @@ pub enum HeapObj {
     Iterator(IteratorData),
     LazyGenerator(LazyGeneratorData),
     Proxy(ProxyData),
+    ModuleNamespace(ModuleNamespaceData),
     TypedArray(TypedArrayData),
     ArrayBuffer(ArrayBufferData),
     DataView(DataViewData),
@@ -1050,6 +1061,7 @@ impl HeapObj {
             HeapObj::Generator(g) => &g.props,
             HeapObj::LazyGenerator(g) => &g.props,
             HeapObj::Proxy(p) => &p.props,
+            HeapObj::ModuleNamespace(n) => &n.props,
             HeapObj::TypedArray(t) => &t.props,
             HeapObj::ArrayBuffer(a) => &a.props,
             HeapObj::DataView(d) => &d.props,
@@ -1076,6 +1088,7 @@ impl HeapObj {
             HeapObj::Generator(g) => &g.proto,
             HeapObj::LazyGenerator(g) => &g.proto,
             HeapObj::Proxy(p) => &p.proto,
+            HeapObj::ModuleNamespace(n) => &n.proto,
             HeapObj::TypedArray(t) => &t.proto,
             HeapObj::ArrayBuffer(a) => &a.proto,
             HeapObj::DataView(d) => &d.proto,
@@ -1132,6 +1145,7 @@ impl HeapObj {
             HeapObj::Iterator(_) => "Iterator",
             HeapObj::Environment(_) => "Environment",
             HeapObj::Proxy(_) => "Object",
+            HeapObj::ModuleNamespace(_) => "Module",
             HeapObj::TypedArray(t) => t.kind.name(),
             HeapObj::ArrayBuffer(_) => "ArrayBuffer",
             HeapObj::DataView(_) => "DataView",
@@ -1149,6 +1163,7 @@ impl HeapObj {
             HeapObj::TypedArray(t) => t.extensible.load(Ordering::Relaxed),
             HeapObj::WeakRef(wr) => wr.extensible.load(Ordering::Relaxed),
             HeapObj::FinalizationRegistry(registry) => registry.extensible.load(Ordering::Relaxed),
+            HeapObj::ModuleNamespace(_) => false,
             _ => true,
         }
     }

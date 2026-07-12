@@ -1695,6 +1695,28 @@ impl Vm {
         let mut visited: Vec<Arc<str>> = Vec::new();
         let mut cur = obj.clone();
         while let Value::Object(idx) = &cur {
+            let namespace_exports = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::ModuleNamespace(namespace) = o {
+                    return Some(namespace.exports.lock().clone());
+                }
+                None
+            });
+            if let Some(exports) = namespace_exports {
+                for (key, (env, name)) in exports {
+                    match crate::environment::get_checked(&self.heap, env, &name) {
+                        Ok(_) => keys.push((key.clone(), cur.clone())),
+                        Err(true) => {
+                            return Err(Error::reference(format!(
+                                "Cannot access '{}' before initialization",
+                                name
+                            )))
+                        }
+                        Err(false) => {}
+                    }
+                    visited.push(key);
+                }
+                break;
+            }
             let (own, proto) = self.heap.with_obj(idx.0, |o| {
                 let mut index_keys: Vec<(usize, Arc<str>, bool)> = Vec::new();
                 let mut string_keys: Vec<(Arc<str>, bool)> = Vec::new();

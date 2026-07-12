@@ -1459,12 +1459,12 @@ impl Vm {
                             "Right-hand side of 'in' is not an object".to_string(),
                         ));
                     }
-                    let key_str = self.to_property_key(&key)?;
-                    // Use has_property (existence check) instead of get_property
-                    // to avoid triggering poisoned accessors (e.g. strict-mode
-                    // function's 'caller'/'arguments' throw on [[Get]] but
-                    // 'in' should return true).
-                    let has = self.has_property(&obj, &key_str)?;
+                    let property_key = match self.to_property_key_value(&key)? {
+                        Value::String(name) => crate::value::PropertyKey::from(name),
+                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(id),
+                        _ => unreachable!("ToPropertyKey returns string or symbol"),
+                    };
+                    let has = self.has_property_key(&obj, &property_key)?;
                     self.stack.push(Value::Bool(has));
                 }
                 Op::InstanceOf => {

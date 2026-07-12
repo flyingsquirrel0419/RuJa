@@ -677,6 +677,7 @@ impl Parser {
             StatementListScope::Script,
         )?;
         Self::check_module_early_errors(&body, &import_entries, &export_entries)?;
+        Self::normalize_import_reexports(&import_entries, &mut export_entries);
         Self::validate_private_names_statement_list(&body, inherited_private_names)?;
         Ok(Program {
             body,
@@ -775,47 +776,41 @@ impl Parser {
         }
 
         let mut entries = Vec::new();
-        if !self.check(&TokenKind::LBrace) {
+        let mut parse_named = false;
+        if self.eat(&TokenKind::Star) {
+            self.expect_contextual("as")?;
+            entries.push((Arc::from("*"), self.parse_module_binding_name()?));
+        } else if self.check(&TokenKind::LBrace) {
+            parse_named = true;
+        } else {
             let local_name = self.parse_module_binding_name()?;
             entries.push((Arc::from("default"), local_name));
-            if !self.eat(&TokenKind::Comma) {
-                self.expect_contextual("from")?;
-                let request = self.parse_module_specifier()?;
-                self.expect_semi()?;
-                for (import_name, local_name) in entries {
-                    import_entries.push(ImportEntry {
-                        module_request: request.clone(),
-                        import_name,
-                        local_name,
-                    });
+            if self.eat(&TokenKind::Comma) {
+                if self.eat(&TokenKind::Star) {
+                    self.expect_contextual("as")?;
+                    entries.push((Arc::from("*"), self.parse_module_binding_name()?));
+                } else {
+                    parse_named = true;
                 }
-                module_requests.push(request);
-                return Ok(());
-            }
-            if !self.check(&TokenKind::LBrace) {
-                return Err(error::Error::syntax(
-                    "Namespace imports are not supported".to_string(),
-                ));
             }
         }
-        self.expect(&TokenKind::LBrace, "{")?;
-        while !self.check(&TokenKind::RBrace) {
-            let import_name = self.parse_module_identifier_name()?;
-            let local_name = if self.eat_contextual("as") {
-                self.parse_module_binding_name()?
-            } else {
-                self.check_binding_name(&import_name)?;
-                import_name.clone()
-            };
-            entries.push((import_name, local_name));
-            if !self.eat(&TokenKind::Comma) {
-                break;
+        if parse_named {
+            self.expect(&TokenKind::LBrace, "{")?;
+            while !self.check(&TokenKind::RBrace) {
+                let import_name = self.parse_module_identifier_name()?;
+                let local_name = if self.eat_contextual("as") {
+                    self.parse_module_binding_name()?
+                } else {
+                    self.check_binding_name(&import_name)?;
+                    import_name.clone()
+                };
+                entries.push((import_name, local_name));
+                if !self.eat(&TokenKind::Comma) || self.check(&TokenKind::RBrace) {
+                    break;
+                }
             }
-            if self.check(&TokenKind::RBrace) {
-                break;
-            }
+            self.expect(&TokenKind::RBrace, "}")?;
         }
-        self.expect(&TokenKind::RBrace, "}")?;
         self.expect_contextual("from")?;
         let request = self.parse_module_specifier()?;
         self.expect_semi()?;
@@ -924,9 +919,16 @@ impl Parser {
         }
         if self.eat(&TokenKind::Star) {
             if self.eat_contextual("as") {
-                return Err(error::Error::syntax(
-                    "Namespace exports are not supported".to_string(),
-                ));
+                let export_name = self.parse_module_identifier_name()?;
+                self.expect_contextual("from")?;
+                let request = self.parse_module_specifier()?;
+                self.expect_semi()?;
+                export_entries.push(ExportEntry::NamespaceReExport {
+                    module_request: request.clone(),
+                    export_name,
+                });
+                module_requests.push(request);
+                return Ok(None);
             }
             self.expect_contextual("from")?;
             let request = self.parse_module_specifier()?;
@@ -1079,9 +1081,51 @@ impl Parser {
                     exported_names.push(export_name.clone());
                 }
                 ExportEntry::Star { .. } => {}
+                ExportEntry::NamespaceReExport { export_name, .. } => {
+                    if exported_names.contains(export_name) {
+                        return Err(error::Error::syntax(format!(
+                            "Duplicate export name '{}'",
+                            export_name
+                        )));
+                    }
+                    exported_names.push(export_name.clone());
+                }
             }
         }
         Ok(())
+    }
+
+    fn normalize_import_reexports(
+        import_entries: &[ImportEntry],
+        export_entries: &mut [ExportEntry],
+    ) {
+        for export in export_entries {
+            let ExportEntry::Local {
+                local_name,
+                export_name,
+            } = export
+            else {
+                continue;
+            };
+            let Some(import) = import_entries
+                .iter()
+                .find(|import| import.local_name == *local_name)
+            else {
+                continue;
+            };
+            *export = if import.import_name.as_ref() == "*" {
+                ExportEntry::NamespaceReExport {
+                    module_request: import.module_request.clone(),
+                    export_name: export_name.clone(),
+                }
+            } else {
+                ExportEntry::ReExport {
+                    module_request: import.module_request.clone(),
+                    import_name: import.import_name.clone(),
+                    export_name: export_name.clone(),
+                }
+            };
+        }
     }
 
     /// Peek the token stream for a leading `"use strict"` string-literal
@@ -6888,8 +6932,11 @@ mod tests {
                     local_name: Arc::from("a"),
                     export_name: Arc::from("renamed"),
                 },
-                ExportEntry::Local {
-                    local_name: Arc::from("y"),
+                ExportEntry::ReExport {
+                    module_request: ModuleRequest {
+                        specifier: Arc::from("dep"),
+                    },
+                    import_name: Arc::from("x"),
                     export_name: Arc::from("y"),
                 },
                 ExportEntry::ReExport {
@@ -6939,7 +6986,46 @@ mod tests {
 
         assert!(Parser::parse_module("export default 1; export default 2;").is_err());
         assert!(Parser::parse_module("export default 1; export { default };").is_err());
-        assert!(Parser::parse_module("import value, * as ns from './dep.js';").is_err());
+        let namespace = Parser::parse_module(
+            "import value, * as ns from './dep.js'; export * as nested from './dep.js';",
+        )
+        .expect("namespace module forms should parse");
+        assert!(namespace.import_entries.iter().any(|entry| {
+            entry.import_name.as_ref() == "*" && entry.local_name.as_ref() == "ns"
+        }));
+        assert!(namespace.export_entries.iter().any(|entry| matches!(
+            entry,
+            ExportEntry::NamespaceReExport { export_name, .. }
+                if export_name.as_ref() == "nested"
+        )));
+
+        let imported_reexports = Parser::parse_module(
+            "import * as ns from './dep.js'; import { value as local } from './other.js'; export { ns, local as renamed };",
+        )
+        .expect("imported bindings should be normalized as indirect exports");
+        assert!(imported_reexports
+            .export_entries
+            .iter()
+            .any(|entry| matches!(
+                entry,
+                ExportEntry::NamespaceReExport {
+                    module_request,
+                    export_name,
+                } if module_request.specifier.as_ref() == "./dep.js" && export_name.as_ref() == "ns"
+            )));
+        assert!(imported_reexports
+            .export_entries
+            .iter()
+            .any(|entry| matches!(
+                entry,
+                ExportEntry::ReExport {
+                    module_request,
+                    import_name,
+                    export_name,
+                } if module_request.specifier.as_ref() == "./other.js"
+                    && import_name.as_ref() == "value"
+                    && export_name.as_ref() == "renamed"
+            )));
         assert!(Parser::parse_module("export default function await() {}").is_err());
         assert!(Parser::parse_module("export default function* await() {}").is_err());
     }
@@ -6956,8 +7042,6 @@ mod tests {
             "export { x \\u0061s y };",
             "\\u0069mport 'dep';",
             "\\u0065xport var x;",
-            "import * as ns from 'dep';",
-            "export * as ns from 'dep';",
         ] {
             assert!(Parser::parse_module(src).is_err(), "{src}");
         }
@@ -6967,8 +7051,11 @@ mod tests {
         assert_eq!(p.import_entries[0].local_name.as_ref(), "as");
         assert_eq!(
             p.export_entries[0],
-            ExportEntry::Local {
-                local_name: Arc::from("as"),
+            ExportEntry::ReExport {
+                module_request: ModuleRequest {
+                    specifier: Arc::from("dep"),
+                },
+                import_name: Arc::from("x"),
                 export_name: Arc::from("as"),
             }
         );

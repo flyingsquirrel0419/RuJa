@@ -113,6 +113,11 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         }
         return;
     }
+    if let HeapObj::ModuleNamespace(namespace) = obj {
+        for (_, (env, _)) in namespace.exports.lock().iter() {
+            worklist.push(env.0);
+        }
+    }
     let props = obj.props();
     for (_, desc) in props.lock().iter() {
         if !desc.is_accessor {

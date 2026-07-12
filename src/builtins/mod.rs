@@ -3177,7 +3177,7 @@ fn object_to_locale_string(
     vm.call_function(&to_string, &[], Some(this))
 }
 
-fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
+fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<bool> {
     if let Value::Object(idx) = obj {
         if let Some(target) = vm.heap.with_obj(idx.0, |heap_obj| {
             if let HeapObj::Proxy(proxy) = heap_obj {
@@ -3194,47 +3194,76 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> bool {
         }
 
         if let Some(desc) = vm.typed_array_integer_index_own_property_descriptor(obj, key) {
-            return desc.is_some();
+            return Ok(desc.is_some());
         }
     }
 
     match obj {
-        Value::Object(idx) => vm.heap.with_obj(idx.0, |heap_obj| {
-            if heap_obj.props().lock().contains_key(key) {
-                return true;
-            }
-            if let HeapObj::Array(a) = heap_obj {
-                if key.as_str() == Some("length") {
-                    return !a.is_arguments.load(Ordering::Relaxed);
-                }
-                if let Some(name) = key.as_str() {
-                    if let Some(i) = crate::value::parse_array_index(name) {
-                        return a.is_dense_present(i);
-                    }
-                }
-            }
-            if let HeapObj::Object(od) = heap_obj {
-                if let Some(Value::String(s)) = od.primitive.lock().clone() {
-                    if key.as_str() == Some("length") {
-                        return true;
-                    }
+        Value::Object(idx) => {
+            let namespace_binding = vm.heap.with_obj(idx.0, |heap_obj| {
+                if let HeapObj::ModuleNamespace(namespace) = heap_obj {
                     return key
                         .as_str()
-                        .and_then(|name| name.parse::<usize>().ok())
-                        .is_some_and(|i| i < crate::value::utf16_len(&s));
+                        .and_then(|name| namespace.exports.lock().get(name).cloned());
                 }
+                None
+            });
+            if let Some((env, name)) = namespace_binding {
+                return match crate::environment::get_checked(&vm.heap, env, &name) {
+                    Ok(_) => Ok(true),
+                    Err(true) => Err(Error::reference(format!(
+                        "Cannot access '{}' before initialization",
+                        name
+                    ))),
+                    Err(false) => Ok(false),
+                };
             }
-            false
-        }),
+            Ok(vm.heap.with_obj(idx.0, |heap_obj| {
+                if let HeapObj::ModuleNamespace(namespace) = heap_obj {
+                    if key
+                        .as_str()
+                        .is_some_and(|name| namespace.exports.lock().contains_key(name))
+                    {
+                        return true;
+                    }
+                }
+                if heap_obj.props().lock().contains_key(key) {
+                    return true;
+                }
+                if let HeapObj::Array(a) = heap_obj {
+                    if key.as_str() == Some("length") {
+                        return !a.is_arguments.load(Ordering::Relaxed);
+                    }
+                    if let Some(name) = key.as_str() {
+                        if let Some(i) = crate::value::parse_array_index(name) {
+                            return a.is_dense_present(i);
+                        }
+                    }
+                }
+                if let HeapObj::Object(od) = heap_obj {
+                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
+                        if key.as_str() == Some("length") {
+                            return true;
+                        }
+                        return key
+                            .as_str()
+                            .and_then(|name| name.parse::<usize>().ok())
+                            .is_some_and(|i| i < crate::value::utf16_len(&s));
+                    }
+                }
+                false
+            }))
+        }
         Value::String(s) => {
             if key.as_str() == Some("length") {
-                return true;
+                return Ok(true);
             }
-            key.as_str()
+            Ok(key
+                .as_str()
                 .and_then(|name| name.parse::<usize>().ok())
-                .is_some_and(|i| i < crate::value::utf16_len(s))
+                .is_some_and(|i| i < crate::value::utf16_len(s)))
         }
-        _ => false,
+        _ => Ok(false),
     }
 }
 
@@ -3265,7 +3294,7 @@ fn object_has_own_property(
             "Cannot convert undefined or null to object",
         ));
     }
-    Ok(Value::Bool(object_has_own_key(vm, &this, &key)))
+    Ok(Value::Bool(object_has_own_key(vm, &this, &key)?))
 }
 
 fn object_has_own(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
@@ -3277,7 +3306,7 @@ fn object_has_own(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Resul
     }
     let obj = vm.to_object(object)?;
     let key = to_property_key_descriptor(vm, args.get(1).unwrap_or(&Value::Undefined))?;
-    Ok(Value::Bool(object_has_own_key(vm, &obj, &key)))
+    Ok(Value::Bool(object_has_own_key(vm, &obj, &key)?))
 }
 
 fn object_property_is_enumerable(
@@ -3296,44 +3325,11 @@ fn object_property_is_enumerable(
         Some(v) => PropertyKey::from(vm.to_property_key(v)?),
         None => PropertyKey::from(""),
     };
-    match &this {
-        Value::Object(idx) => {
-            let enumerable = vm.heap.with_obj(idx.0, |obj| {
-                if let HeapObj::Array(a) = obj {
-                    if key.as_str() == Some("length") {
-                        return false;
-                    }
-                    if let Some(name) = key.as_str() {
-                        if let Some(i) = crate::value::parse_array_index(name) {
-                            return a.is_dense_present(i);
-                        }
-                    }
-                }
-                if let HeapObj::Object(od) = obj {
-                    if let Some(Value::String(s)) = od.primitive.lock().clone() {
-                        if let Some(name) = key.as_str() {
-                            if let Ok(i) = name.parse::<usize>() {
-                                return i.to_string() == name && i < crate::value::utf16_len(&s);
-                            }
-                        }
-                    }
-                }
-                obj.props()
-                    .lock()
-                    .get(&key)
-                    .is_some_and(|desc| desc.enumerable)
-            });
-            Ok(Value::Bool(enumerable))
-        }
-        Value::String(s) => {
-            let enumerable = key
-                .as_str()
-                .and_then(|name| name.parse::<usize>().ok().filter(|i| i.to_string() == name))
-                .is_some_and(|i| i < crate::value::utf16_len(s));
-            Ok(Value::Bool(enumerable))
-        }
-        _ => Ok(Value::Bool(false)),
-    }
+    let object = vm.to_object(&this)?;
+    Ok(Value::Bool(
+        own_property_descriptor_for_key_or_throw(vm, &object, &key)?
+            .is_some_and(|descriptor| descriptor.enumerable),
+    ))
 }
 
 fn object_value_of(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
@@ -3945,6 +3941,14 @@ pub(crate) fn own_property_keys(
                 }
             }
 
+            if let HeapObj::ModuleNamespace(namespace) = o {
+                if include_strings {
+                    for name in namespace.exports.lock().keys() {
+                        string_keys.push(PropertyKey::from(name.clone()));
+                    }
+                }
+            }
+
             for (k, desc) in o.props().lock().iter() {
                 if enumerable_only && !desc.enumerable {
                     continue;
@@ -4034,8 +4038,18 @@ fn object_keys(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Resu
         ));
     }
     let obj = vm.to_object(object)?;
-    let keys = own_string_keys(vm, &obj);
-    make_str_array(vm, keys)
+    let keys = own_property_keys_or_throw(vm, &obj, false, true, false)?;
+    let mut strings = Vec::new();
+    for key in keys {
+        if own_property_descriptor_for_key_or_throw(vm, &obj, &key)?
+            .is_some_and(|desc| desc.enumerable)
+        {
+            if let PropertyKey::Str(name) = key {
+                strings.push(name);
+            }
+        }
+    }
+    make_str_array(vm, strings)
 }
 
 fn object_values(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Result<Value> {
@@ -4819,6 +4833,7 @@ fn object_is_frozen(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Res
                 !f.extensible.load(Ordering::Relaxed)
                     && f.props.lock().values().all(descriptor_is_frozen)
             }
+            HeapObj::ModuleNamespace(namespace) => namespace.exports.lock().is_empty(),
             _ => !o.is_extensible(),
         });
         return Ok(Value::Bool(frozen));
@@ -4966,6 +4981,25 @@ fn own_property_descriptor_for_key(
         if let Some(desc) = array_descriptor {
             return Some(desc);
         }
+        let namespace_binding = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ModuleNamespace(namespace) = o {
+                return key
+                    .as_str()
+                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+            }
+            None
+        });
+        if let Some((env, name)) = namespace_binding {
+            let value = crate::environment::get_checked(&vm.heap, env, &name)
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Undefined);
+            let mut desc = PropertyDescriptor::data(value);
+            desc.writable = true;
+            desc.enumerable = true;
+            desc.configurable = false;
+            return Some(desc);
+        }
         let is_array = vm.heap.with_obj(idx.0, |o| matches!(o, HeapObj::Array(_)));
         if is_array {
             if let Some(i) = canonical_string_index(key) {
@@ -5088,6 +5122,31 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
     key: &PropertyKey,
 ) -> error::Result<Option<PropertyDescriptor>> {
     if let Value::Object(idx) = obj {
+        let namespace_binding = vm.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ModuleNamespace(namespace) = o {
+                return key
+                    .as_str()
+                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+            }
+            None
+        });
+        if let Some((env, name)) = namespace_binding {
+            let value = match crate::environment::get_checked(&vm.heap, env, &name) {
+                Ok(Some(value)) => value,
+                Ok(None) | Err(false) => Value::Undefined,
+                Err(true) => {
+                    return Err(Error::reference(format!(
+                        "Cannot access '{}' before initialization",
+                        name
+                    )))
+                }
+            };
+            let mut desc = PropertyDescriptor::data(value);
+            desc.writable = true;
+            desc.enumerable = true;
+            desc.configurable = false;
+            return Ok(Some(desc));
+        }
         if let Some(proxy_result) = vm.heap.with_obj(idx.0, |o| {
             if let HeapObj::Proxy(proxy) = o {
                 if *proxy.revoked.lock() {
@@ -5192,6 +5251,16 @@ fn object_freeze(vm: &mut Vm, args: &[Value], _this: Option<Value>) -> error::Re
         return Err(Error::type_err(
             "Object.freeze failed to prevent extensions",
         ));
+    }
+    if let Value::Object(idx) = &target {
+        let has_namespace_exports = vm.heap.with_obj(idx.0, |object| {
+            matches!(object, HeapObj::ModuleNamespace(namespace) if !namespace.exports.lock().is_empty())
+        });
+        if has_namespace_exports {
+            return Err(Error::type_err(
+                "Cannot freeze a module namespace with writable exports",
+            ));
+        }
     }
     if let Value::Object(idx) = &target {
         vm.heap.with_obj(idx.0, |obj| match obj {
@@ -5360,6 +5429,23 @@ pub(crate) fn object_define_property_result(
             return Err(Error::type_err(
                 "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute",
             ));
+        }
+        let is_namespace = vm.heap.with_obj(idx.0, |object| {
+            matches!(object, HeapObj::ModuleNamespace(_))
+        });
+        if is_namespace {
+            let current = own_property_descriptor_for_key_or_throw(vm, &target, &key)?;
+            let success = current.is_some_and(|current| {
+                !is_accessor
+                    && (!has_value || value == current.value)
+                    && (!has_writable || writable == current.writable)
+                    && (!has_enumerable || enumerable == current.enumerable)
+                    && (!has_configurable || configurable == current.configurable)
+            });
+            if !success && throw_on_failure {
+                return Err(Error::type_err("Cannot redefine module namespace property"));
+            }
+            return Ok(success);
         }
         if let Some(success) = vm.define_typed_array_integer_index_property(
             &target,

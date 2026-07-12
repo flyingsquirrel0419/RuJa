@@ -185,6 +185,69 @@ fn module_graph_supports_default_bindings_and_reexports() {
 }
 
 #[test]
+fn module_graph_exposes_live_namespace_exotic_objects() {
+    let dir = module_fixture_dir("namespace");
+    fs::write(
+        dir.join("dependency.js"),
+        r#"
+        export let zebra = 1;
+        export const alpha = 2;
+        export default 3;
+        const deseret = 5;
+        const fullwidth = 6;
+        export { deseret as \u{10400}, fullwidth as \uFF21 };
+        globalThis.updateNamespaceValue = function() { zebra = 4; };
+        "#,
+    )
+    .expect("namespace dependency should be written");
+    fs::write(
+        dir.join("bridge.js"),
+        "export * as nested from './dependency.js'; export * from './dependency.js';",
+    )
+    .expect("namespace bridge should be written");
+    fs::write(
+        dir.join("entry.js"),
+        r#"
+        import * as direct from './dependency.js';
+        import * as bridge from './bridge.js';
+        var before = direct.zebra;
+        globalThis.updateNamespaceValue();
+        var desc = Object.getOwnPropertyDescriptor(direct, 'zebra');
+        var setFailed = false;
+        try { direct.zebra = 9; } catch (error) { setFailed = error instanceof TypeError; }
+        [
+          before,
+          direct.zebra,
+          desc.value,
+          desc.writable,
+          desc.enumerable,
+          desc.configurable,
+          Object.getPrototypeOf(direct) === null,
+          Object.isExtensible(direct),
+          Object.keys(direct).join(','),
+          Object.keys(direct)[3] === '\u{10400}',
+          Object.keys(direct)[4] === '\uFF21',
+          Reflect.deleteProperty(direct, 'zebra'),
+          setFailed,
+          bridge.nested === direct,
+          bridge.default
+        ].join('|');
+        "#,
+    )
+    .expect("namespace entry should be written");
+
+    let mut vm = Vm::new().expect("VM should initialize");
+    assert_eq!(
+        vm.run_module_file(dir.join("entry.js"))
+            .expect("namespace graph should evaluate"),
+        Value::String(Arc::from(
+            "1|4|4|true|true|false|true|false|alpha,default,zebra,\u{10400},Ａ|true|true|false|true|true|"
+        ))
+    );
+    fs::remove_dir_all(dir).expect("module fixtures should be removed");
+}
+
+#[test]
 fn module_graph_evaluates_each_dependency_once_and_supports_named_reexports() {
     let dir = module_fixture_dir("once-reexport");
     fs::write(

@@ -443,4 +443,8 @@ pub enum ExportEntry {
     Star {
         module_request: ModuleRequest,
     },
+    NamespaceReExport {
+        module_request: ModuleRequest,
+        export_name: Arc<str>,
+    },
 }

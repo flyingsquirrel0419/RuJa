@@ -86,6 +86,57 @@ MODULE_CORE_FILES = {
     )
 }
 
+MODULE_NAMESPACE_FILES = {
+    f"language/module-code/{name}"
+    for name in (
+        "ambiguous-export-bindings/namespace-unambiguous-if-export-star-as-from.js",
+        "ambiguous-export-bindings/namespace-unambiguous-if-import-star-as-and-export.js",
+        "ambiguous-export-bindings/omitted-from-namespace.js",
+        "eval-rqstd-once.js", "eval-rqstd-order.js", "eval-self-once.js",
+        "export-star-as-dflt.js", "instn-named-bndng-dflt-star.js", "instn-once.js",
+        "instn-star-as-props-dflt-skip.js", "instn-star-props-circular.js",
+        "instn-star-props-dflt-keep-indirect.js", "instn-star-props-dflt-keep-local.js",
+        "instn-star-props-dflt-skip.js", "instn-star-props-nrml.js",
+        "namespace/Symbol.iterator.js", "namespace/Symbol.toStringTag.js",
+        "namespace/internals/define-own-property.js",
+        "namespace/internals/delete-exported-init.js",
+        "namespace/internals/delete-exported-uninit.js",
+        "namespace/internals/delete-non-exported.js",
+        "namespace/internals/enumerate-binding-uninit.js",
+        "namespace/internals/get-nested-namespace-dflt-skip.js",
+        "namespace/internals/get-nested-namespace-props-nrml.js",
+        "namespace/internals/get-own-property-str-found-init.js",
+        "namespace/internals/get-own-property-str-found-uninit.js",
+        "namespace/internals/get-own-property-str-not-found.js",
+        "namespace/internals/get-own-property-sym.js", "namespace/internals/get-prototype-of.js",
+        "namespace/internals/get-str-found-init.js",
+        "namespace/internals/get-str-found-uninit.js",
+        "namespace/internals/get-str-initialize.js", "namespace/internals/get-str-not-found.js",
+        "namespace/internals/get-str-update.js", "namespace/internals/get-sym-found.js",
+        "namespace/internals/get-sym-not-found.js",
+        "namespace/internals/has-property-str-found-init.js",
+        "namespace/internals/has-property-str-found-uninit.js",
+        "namespace/internals/has-property-str-not-found.js",
+        "namespace/internals/has-property-sym-found.js",
+        "namespace/internals/has-property-sym-not-found.js", "namespace/internals/is-extensible.js",
+        "namespace/internals/object-hasOwnProperty-binding-uninit.js",
+        "namespace/internals/object-keys-binding-uninit.js",
+        "namespace/internals/object-propertyIsEnumerable-binding-uninit.js",
+        "namespace/internals/own-property-keys-binding-types.js",
+        "namespace/internals/own-property-keys-sort.js",
+        "namespace/internals/prevent-extensions.js",
+        "namespace/internals/set-prototype-of-null.js", "namespace/internals/set-prototype-of.js",
+        "namespace/internals/set.js", "namespace/internals/super-access-to-tdz-binding.js",
+        "namespace/internals/super-set-to-tdz-binding-with-accessor.js",
+    )
+}
+MODULE_CORE_FILES.update(MODULE_NAMESPACE_FILES)
+
+MODULE_NAMESPACE_FEATURES = {
+    "Symbol", "Symbol.iterator", "Symbol.toStringTag", "Reflect",
+    "export-star-as-namespace-from-module",
+}
+
 SKIP_FEATURES = {
     "AggregateError", "ArrayBuffer", "Atomics", "Atomics.pause", "Atomics.waitAsync", "DataView",
     "Float16Array", "Float32Array", "Float64Array", "Int8Array", "Int16Array",
@@ -1753,10 +1804,21 @@ def module_core_path(path):
         return False
     return rel.as_posix() in MODULE_CORE_FILES
 
+def module_namespace_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in MODULE_NAMESPACE_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
         feats.discard("generators")
+    if path is not None and module_namespace_path(path):
+        feats.difference_update(MODULE_NAMESPACE_FEATURES)
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):

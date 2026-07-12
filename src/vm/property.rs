@@ -172,6 +172,23 @@ impl Vm {
         let key_str = key.as_str();
         match obj {
             Value::Object(idx) => {
+                let namespace_binding = self.heap.with_obj(idx.0, |o| {
+                    if let HeapObj::ModuleNamespace(namespace) = o {
+                        return key_str
+                            .and_then(|name| namespace.exports.lock().get(name).cloned());
+                    }
+                    None
+                });
+                if let Some((env, name)) = namespace_binding {
+                    return match crate::environment::get_checked(&self.heap, env, &name) {
+                        Ok(Some(value)) => Ok(value),
+                        Ok(None) | Err(false) => Ok(Value::Undefined),
+                        Err(true) => Err(Error::reference(format!(
+                            "Cannot access '{}' before initialization",
+                            name
+                        ))),
+                    };
+                }
                 if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, key)
                 {
                     return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
@@ -335,6 +352,12 @@ impl Vm {
             }
 
             if let Some(name) = key.as_str() {
+                let namespace_export = self.heap.with_obj(idx.0, |o| {
+                    matches!(o, HeapObj::ModuleNamespace(namespace) if namespace.exports.lock().contains_key(name))
+                });
+                if namespace_export {
+                    return Ok(false);
+                }
                 if let Some(slots) = self.typed_array_numeric_slots(*idx, name) {
                     return Ok(!self.is_valid_typed_array_numeric_index(&slots));
                 }
@@ -497,6 +520,24 @@ impl Vm {
                     return Err(Error::type_err("Proxy defineProperty trap returned false"));
                 }
                 return Ok(());
+            }
+            let is_namespace = self
+                .heap
+                .with_obj(idx.0, |o| matches!(o, HeapObj::ModuleNamespace(_)));
+            if is_namespace {
+                let current = self.own_property_descriptor_for_proxy_invariant(obj, &key);
+                let compatible = current.is_some_and(|current| {
+                    !desc.configurable
+                        && desc.enumerable == current.enumerable
+                        && !desc.is_accessor
+                        && (!desc.writable || current.writable)
+                        && desc.value == current.value
+                });
+                return if compatible {
+                    Ok(())
+                } else {
+                    Err(Error::type_err("Cannot redefine module namespace property"))
+                };
             }
             let current = self
                 .heap
@@ -770,6 +811,18 @@ impl Vm {
                             );
                         }
                     }
+                }
+                let is_namespace = self
+                    .heap
+                    .with_obj(idx.0, |o| matches!(o, HeapObj::ModuleNamespace(_)));
+                if is_namespace {
+                    if strict {
+                        return Err(Error::type_err(format!(
+                            "Cannot assign to read only module namespace property '{}'",
+                            key
+                        )));
+                    }
+                    return Ok(());
                 }
                 if self
                     .set_typed_array_numeric_property(*idx, key, &value)?
@@ -1715,6 +1768,26 @@ impl Vm {
             },
         )? {
             return Ok(success);
+        }
+        let namespace_binding = self.heap.with_obj(receiver_idx.0, |object| {
+            if let HeapObj::ModuleNamespace(namespace) = object {
+                return pkey
+                    .as_str()
+                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+            }
+            None
+        });
+        if let Some((env, name)) = namespace_binding {
+            match crate::environment::get_checked(&self.heap, env, &name) {
+                Ok(_) => return Ok(false),
+                Err(true) => {
+                    return Err(Error::reference(format!(
+                        "Cannot access '{}' before initialization",
+                        name
+                    )))
+                }
+                Err(false) => return Ok(false),
+            }
         }
         let existing = self
             .heap

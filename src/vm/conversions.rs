@@ -540,6 +540,24 @@ impl Vm {
                 break;
             }
             depth += 1;
+            let namespace_binding = self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::ModuleNamespace(namespace) = o {
+                    return key
+                        .as_str()
+                        .and_then(|name| namespace.exports.lock().get(name).cloned());
+                }
+                None
+            });
+            if let Some((env, name)) = namespace_binding {
+                return match crate::environment::get_checked(&self.heap, env, &name) {
+                    Ok(Some(value)) => Ok(value),
+                    Ok(None) | Err(false) => Ok(Value::Undefined),
+                    Err(true) => Err(Error::reference(format!(
+                        "Cannot access '{}' before initialization",
+                        name
+                    ))),
+                };
+            }
             if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(&cur, key) {
                 return Ok(desc.map_or(Value::Undefined, |desc| desc.value));
             }
@@ -639,6 +657,14 @@ impl Vm {
             return desc.is_some();
         }
         self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ModuleNamespace(namespace) = o {
+                if key
+                    .as_str()
+                    .is_some_and(|name| namespace.exports.lock().contains_key(name))
+                {
+                    return true;
+                }
+            }
             if o.props().lock().contains_key(key) {
                 return true;
             }
@@ -679,6 +705,25 @@ impl Vm {
             .with_obj(idx.0, |o| o.props().lock().get(key).cloned());
         if ordinary.is_some() {
             return ordinary;
+        }
+        let namespace_binding = self.heap.with_obj(idx.0, |o| {
+            if let HeapObj::ModuleNamespace(namespace) = o {
+                return key
+                    .as_str()
+                    .and_then(|name| namespace.exports.lock().get(name).cloned());
+            }
+            None
+        });
+        if let Some((env, name)) = namespace_binding {
+            let value = crate::environment::get_checked(&self.heap, env, &name)
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Undefined);
+            let mut desc = crate::value::PropertyDescriptor::data(value);
+            desc.writable = true;
+            desc.enumerable = true;
+            desc.configurable = false;
+            return Some(desc);
         }
         if key.as_str().is_some_and(|s| s == "length") {
             let is_array_length = self.heap.with_obj(idx.0, |o| {
@@ -817,8 +862,14 @@ impl Vm {
             if let Some(desc) = self.typed_array_integer_index_own_property_descriptor(obj, &pkey) {
                 return desc.is_some();
             }
-            self.heap
-                .with_obj(idx.0, |o| o.props().lock().contains_key(&pkey))
+            self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::ModuleNamespace(namespace) = o {
+                    if namespace.exports.lock().contains_key(name) {
+                        return true;
+                    }
+                }
+                o.props().lock().contains_key(&pkey)
+            })
         } else {
             false
         }
@@ -908,6 +959,11 @@ impl Vm {
         }
         match obj {
             Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
+                if let HeapObj::ModuleNamespace(namespace) = o {
+                    if namespace.exports.lock().contains_key(name) {
+                        return true;
+                    }
+                }
                 if let HeapObj::Array(a) = o {
                     if name == "length" {
                         if a.is_arguments.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1175,6 +1231,22 @@ impl Vm {
                             return self.get_property(&target, key);
                         }
                     }
+                }
+                let namespace_binding = self.heap.with_obj(idx.0, |o| {
+                    if let crate::value::HeapObj::ModuleNamespace(namespace) = o {
+                        return namespace.exports.lock().get(key).cloned();
+                    }
+                    None
+                });
+                if let Some((env, name)) = namespace_binding {
+                    return match crate::environment::get_checked(&self.heap, env, &name) {
+                        Ok(Some(value)) => Ok(value),
+                        Ok(None) | Err(false) => Ok(Value::Undefined),
+                        Err(true) => Err(Error::reference(format!(
+                            "Cannot access '{}' before initialization",
+                            name
+                        ))),
+                    };
                 }
                 // Honor an accessor getter on this object (own property).
                 // Inherited accessors are handled by the recursive proto-chain
