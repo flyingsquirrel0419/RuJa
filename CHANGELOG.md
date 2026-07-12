@@ -74,6 +74,16 @@
   the expressions shard by **+32 pass / -32 skip** to **27768 pass / 6720 fail
   / 12 timeout / 0 error / 13817 skip / 48317 total / 34488 pass-or-fail
   executed**.
+- `import.meta` now parses as a dedicated module-only expression, evaluates to
+  one mutable null-prototype object per module, rejects `import(import.meta)`
+  asynchronously through normal specifier coercion, and remains distinct
+  across file-backed and inline module evaluations. Nested inline functions
+  retain their originating meta object and GC root. Frozen Test262 admission is
+  **23/23**, dynamic import is **45/45**, and the supported subset is **11656
+  pass / 0 fail**. CI `29193198575` and `test262-full` `29193198576` pass for
+  commit `408ed9f`; artifacts move expressions by **+23 pass / -23 skip** to
+  **27791 pass / 6720 fail / 12 timeout / 0 error / 13794 skip / 48317 total /
+  34511 pass-or-fail executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

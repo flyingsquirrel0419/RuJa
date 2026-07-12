@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.5% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11633 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -1080,6 +1080,19 @@ GC tracing. The exact dynamic-import admission is **44 pass / 0 fail / 961 skip
 / -32 skip**, producing **27768 pass / 6720 fail / 12 timeout / 0 error / 13817
 skip / 48317 total / 34488 pass-or-fail executed**, or **80.5%** of executed
 files and **57.5%** of the matrix.
+
+`import.meta` now has a dedicated AST and bytecode operation, module-only
+grammar and assignment-target checks, and a canonical null-prototype extensible
+object per file-backed or inline module evaluation. Inline nested functions
+retain their originating module's object and GC root rather than consulting a
+VM-global slot. The frozen import-meta admission is **23/23** across runtime,
+source-goal, constructor-goal, and assignment-target tests; dynamic import is
+**45/45**, and the supported subset is **11656 pass / 0 fail / 8783 skip /
+20439 total**. CI `29193198575` and `test262-full` `29193198576` pass for commit
+`408ed9f`. Artifact comparison changes only expressions by **+23 pass / -23
+skip**, producing **27791 pass / 6720 fail / 12 timeout / 0 error / 13794 skip
+/ 48317 total / 34511 pass-or-fail executed**, or **80.5%** of executed files
+and **57.5%** of the matrix.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 
