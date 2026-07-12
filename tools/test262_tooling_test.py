@@ -554,7 +554,7 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     tool.TEST262 = original_root
 
     def test_dynamic_import_manifest_is_exact_and_shared(self):
-        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 45)
+        self.assertEqual(len(DYNAMIC_IMPORT_FILES), 77)
         admitted = (
             "language/expressions/dynamic-import/usage/"
             "top-level-import-then-returns-thenable.js"
