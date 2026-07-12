@@ -84,6 +84,15 @@
   commit `408ed9f`; artifacts move expressions by **+23 pass / -23 skip** to
   **27791 pass / 6720 fail / 12 timeout / 0 error / 13794 skip / 48317 total /
   34511 pass-or-fail executed**.
+- Dynamic import now admits all 32 generated ambiguous-export and circular
+  re-export instantiation-rejection variants. Promise rejection is verified as
+  `SyntaxError` across top-level and nested arrow, async-function,
+  async-generator, block, and loop contexts. Exact dynamic-import coverage is
+  **77/77** and the supported subset is **11688/11688**. CI `29195024392` and
+  `test262-full` `29195024404` pass for commit `26482ef`; downloaded artifacts
+  move only expressions by **+32 pass / -32 skip** to **27823 pass / 6720 fail
+  / 12 timeout / 0 error / 13762 skip / 48317 total / 34543 pass-or-fail
+  executed**.
 - Test262 negative parse, resolution, and runtime tests now use distinct
   non-evaluating CLI paths. Parse validation includes compiler-hosted static
   semantics, so early errors are checked without accidentally executing code.

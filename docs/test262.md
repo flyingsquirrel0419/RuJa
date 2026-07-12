@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.5% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 57.6% of all matrix files; 80.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (11656 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -1093,6 +1093,19 @@ source-goal, constructor-goal, and assignment-target tests; dynamic import is
 skip**, producing **27791 pass / 6720 fail / 12 timeout / 0 error / 13794 skip
 / 48317 total / 34511 pass-or-fail executed**, or **80.5%** of executed files
 and **57.5%** of the matrix.
+
+Dynamic-import admission now also covers all 32 generated catch variants for
+ambiguous indirect exports and circular indirect re-exports. These tests assert
+that module declaration instantiation rejects the import Promise with a
+`SyntaxError` across top-level, nested function, arrow, async-function,
+async-generator, block, and loop contexts. The exact dynamic-import subtree is
+**77 pass / 0 fail / 928 skip / 1005 total**; the supported subset is **11688
+pass / 0 fail / 8751 skip / 20439 total**. CI `29195024392` and
+`test262-full` `29195024404` pass for commit `26482ef`. Downloaded artifacts
+change only expressions by **+32 pass / -32 skip**, producing **27823 pass /
+6720 fail / 12 timeout / 0 error / 13762 skip / 48317 total / 34543
+pass-or-fail executed**, or **80.5%** of executed files and **57.6%** of the
+matrix.
 The expressions shard accounts for exactly **+6 pass / -6 skip**; every other
 outcome and shard are unchanged.
 
