@@ -12,6 +12,7 @@ import test262_runner
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
+from test262_json_raw_admission import JSON_RAW_FILES
 from test262_json_stringify_admission import JSON_STRINGIFY_FILES
 from test262_module_admission import (
     MODULE_STATIC_SEMANTICS_FILES,
@@ -800,6 +801,35 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                     )
                     self.assertTrue(tool.should_skip({"features": ["Proxy"]}, outside_path))
                     self.assertTrue(tool.json_stringify_path(admitted_path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_json_raw_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(JSON_RAW_FILES), 17)
+        admitted = "built-ins/JSON/rawJSON/basic.js"
+        tag = "built-ins/JSON/Symbol.toStringTag.js"
+        outside = "built-ins/Array/isArray/proxy.js"
+        self.assertIn(admitted, JSON_RAW_FILES)
+        self.assertIn(tag, JSON_RAW_FILES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_path = root / "test" / admitted
+            tag_path = root / "test" / tag
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["json-parse-with-source"]}, admitted_path
+                    ))
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["Symbol.toStringTag"]}, tag_path
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"features": ["Proxy"]}, outside_path
+                    ))
+                    self.assertTrue(tool.json_raw_path(admitted_path))
                 finally:
                     tool.TEST262 = original_root
 

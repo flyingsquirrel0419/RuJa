@@ -10,6 +10,7 @@ try:
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from test262_import_meta_admission import IMPORT_META_FILES
     from test262_json_parse_admission import JSON_PARSE_FILES
+    from test262_json_raw_admission import JSON_RAW_FILES
     from test262_json_stringify_admission import JSON_STRINGIFY_FILES
     from test262_module_admission import (
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
@@ -19,6 +20,7 @@ except ModuleNotFoundError:
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from tools.test262_import_meta_admission import IMPORT_META_FILES
     from tools.test262_json_parse_admission import JSON_PARSE_FILES
+    from tools.test262_json_raw_admission import JSON_RAW_FILES
     from tools.test262_json_stringify_admission import JSON_STRINGIFY_FILES
     from tools.test262_module_admission import (
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
@@ -1876,6 +1878,15 @@ def json_stringify_path(path):
         return False
     return rel.as_posix() in JSON_STRINGIFY_FILES
 
+def json_raw_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in JSON_RAW_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -1905,6 +1916,10 @@ def should_skip(meta, path=None):
         })
     if path is not None and json_stringify_path(path):
         feats.difference_update({"Proxy", "Reflect.construct", "Symbol", "cross-realm"})
+    if path is not None and json_raw_path(path):
+        feats.difference_update({
+            "Reflect.construct", "Symbol.toStringTag", "json-parse-with-source",
+        })
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):

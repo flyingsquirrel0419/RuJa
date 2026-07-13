@@ -5977,6 +5977,55 @@ fn json_stringify_uses_serialize_json_property_semantics() {
 }
 
 #[test]
+fn json_raw_json_is_branded_frozen_and_stringifies_verbatim() {
+    assert_eq!(
+        run(r#"
+            var raw = JSON.rawJSON('9007199254740993');
+            var descriptor = Object.getOwnPropertyDescriptor(raw, 'rawJSON');
+            [
+              JSON.isRawJSON(raw),
+              JSON.isRawJSON({ rawJSON: '1' }),
+              Object.getPrototypeOf(raw) === null,
+              Object.isFrozen(raw),
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable,
+              JSON.stringify({ value: raw }),
+              Object.prototype.toString.call(JSON)
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "true|false|true|true|false|true|false|{\"value\":9007199254740993}|[object JSON]"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            JSON.stringify(1n, function(key, value) {
+              return typeof value === 'bigint' ? JSON.rawJSON(value) : value;
+            });
+        "#),
+        Value::String(Arc::from("1"))
+    );
+    for source in ["''", "' 1'", "'1 '", "'{}'", "'[]'", "undefined"] {
+        assert!(run_err(&format!("JSON.rawJSON({source});")).contains("SyntaxError"));
+    }
+    assert!(run_err("JSON.rawJSON(Symbol('x'));").contains("TypeError"));
+    assert_eq!(
+        run(r#"
+            [
+              JSON.stringify(JSON.rawJSON('"\\ud800"')),
+              JSON.stringify(JSON.rawJSON('"\\udc00"')),
+              JSON.stringify(JSON.rawJSON('"\\ud834\\udf06"')),
+              JSON.stringify(JSON.rawJSON('"\\\\ud800"'))
+            ].join('|');
+        "#),
+        Value::String(Arc::from(
+            "\"\\ud800\"|\"\\udc00\"|\"\\ud834\\udf06\"|\"\\\\ud800\""
+        ))
+    );
+}
+
+#[test]
 fn json_stringify_nested_object() {
     assert_eq!(
         run(r#"JSON.stringify({a:1, b:"hi", c:[1,2], d:{e:true}});"#),

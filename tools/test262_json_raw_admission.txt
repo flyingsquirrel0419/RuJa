@@ -1,0 +1,18 @@
+# Frozen Test262 JSON raw-text and branding files.
+built-ins/JSON/isRawJSON/basic.js
+built-ins/JSON/isRawJSON/builtin.js
+built-ins/JSON/isRawJSON/length.js
+built-ins/JSON/isRawJSON/name.js
+built-ins/JSON/isRawJSON/not-a-constructor.js
+built-ins/JSON/isRawJSON/prop-desc.js
+built-ins/JSON/rawJSON/basic.js
+built-ins/JSON/rawJSON/bigint-raw-json-can-be-stringified.js
+built-ins/JSON/rawJSON/builtin.js
+built-ins/JSON/rawJSON/illegal-empty-and-start-end-chars.js
+built-ins/JSON/rawJSON/invalid-JSON-text.js
+built-ins/JSON/rawJSON/length.js
+built-ins/JSON/rawJSON/name.js
+built-ins/JSON/rawJSON/not-a-constructor.js
+built-ins/JSON/rawJSON/prop-desc.js
+built-ins/JSON/rawJSON/returns-expected-object.js
+built-ins/JSON/Symbol.toStringTag.js

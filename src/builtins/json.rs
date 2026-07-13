@@ -35,6 +35,113 @@ pub(crate) fn json_stringify(
     }
 }
 
+fn raw_json_text(vm: &Vm, value: &Value) -> Option<Arc<str>> {
+    let Value::Object(index) = value else {
+        return None;
+    };
+    vm.heap.with_obj(index.0, |object| {
+        let HeapObj::Object(data) = object else {
+            return None;
+        };
+        if data.class_name.as_deref() != Some("RawJSON") {
+            return None;
+        }
+        data.props
+            .lock()
+            .get(&PropertyKey::from("rawJSON"))
+            .and_then(|descriptor| match &descriptor.value {
+                Value::String(text) => Some(text.clone()),
+                _ => None,
+            })
+    })
+}
+
+fn normalize_raw_json_for_validation(text: &str) -> String {
+    let mut bytes = text.as_bytes().to_vec();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'\\' {
+            index += 1;
+            continue;
+        }
+        let run_start = index;
+        while bytes.get(index) == Some(&b'\\') {
+            index += 1;
+        }
+        if (index - run_start) % 2 == 1
+            && bytes.get(index) == Some(&b'u')
+            && index + 4 < bytes.len()
+        {
+            let digits = &bytes[index + 1..index + 5];
+            if digits.iter().all(|byte| byte.is_ascii_hexdigit()) {
+                let value = digits.iter().fold(0u16, |value, byte| {
+                    value * 16
+                        + match byte {
+                            b'0'..=b'9' => (byte - b'0') as u16,
+                            b'a'..=b'f' => (byte - b'a' + 10) as u16,
+                            b'A'..=b'F' => (byte - b'A' + 10) as u16,
+                            _ => unreachable!(),
+                        }
+                });
+                if (0xd800..=0xdfff).contains(&value) {
+                    bytes[index + 1..index + 5].copy_from_slice(b"0000");
+                }
+            }
+        }
+    }
+    String::from_utf8(bytes).expect("raw JSON validation preserves UTF-8")
+}
+
+fn json_raw_json(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    let text = vm.to_string_pub(args.first().unwrap_or(&Value::Undefined))?;
+    if text.is_empty()
+        || text
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| matches!(byte, b'\t' | b'\n' | b'\r' | b' '))
+        || text
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| matches!(byte, b'\t' | b'\n' | b'\r' | b' '))
+    {
+        return Err(Error::syntax("Invalid raw JSON text"));
+    }
+    let validation_text = normalize_raw_json_for_validation(&text);
+    let parsed: serde_json::Value = serde_json::from_str(&validation_text)
+        .map_err(|error| Error::syntax(format!("Invalid raw JSON text: {error}")))?;
+    if matches!(
+        parsed,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+    ) {
+        return Err(Error::syntax(
+            "Raw JSON text must contain a primitive value",
+        ));
+    }
+
+    let mut descriptor = PropertyDescriptor::data(Value::String(Arc::from(text)));
+    descriptor.writable = false;
+    descriptor.enumerable = true;
+    descriptor.configurable = false;
+    let mut props = IndexMap::new();
+    props.insert(PropertyKey::from("rawJSON"), descriptor);
+    let object = HeapObj::Object(ObjectData {
+        props: Mutex::new(props),
+        proto: Mutex::new(None),
+        extensible: AtomicBool::new(false),
+        class_name: Some(Arc::from("RawJSON")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    });
+    Ok(Value::Object(GcIdx(vm.heap.allocate(object)?)))
+}
+
+fn json_is_raw_json(vm: &mut Vm, args: &[Value], _: Option<Value>) -> error::Result<Value> {
+    Ok(Value::Bool(
+        args.first()
+            .is_some_and(|value| raw_json_text(vm, value).is_some()),
+    ))
+}
+
 fn json_stringify_gap(vm: &mut Vm, mut space: Value) -> error::Result<String> {
     if let Value::Object(index) = &space {
         let primitive = vm.heap.with_obj(index.0, |object| match object {
@@ -196,6 +303,9 @@ fn serialize_json_value(
     ctx: &mut StringifyCtx,
     depth: usize,
 ) -> error::Result<Option<String>> {
+    if let Some(text) = raw_json_text(vm, &value) {
+        return Ok(Some(text.to_string()));
+    }
     match value {
         Value::Undefined => Ok(None),
         Value::Null => Ok(Some("null".into())),
@@ -1958,8 +2068,23 @@ pub(crate) fn build_json(vm: &mut Vm) -> error::Result<Value> {
     let mut props: IndexMap<PropertyKey, PropertyDescriptor> = IndexMap::new();
     let pi = vm.new_native_function("parse", json_parse, 2)?;
     let si = vm.new_native_function("stringify", json_stringify, 3)?;
+    let raw = vm.new_native_function("rawJSON", json_raw_json, 1)?;
+    let is_raw = vm.new_native_function("isRawJSON", json_is_raw_json, 1)?;
     props.insert(PropertyKey::from("parse"), data_prop(Value::Object(pi)));
     props.insert(PropertyKey::from("stringify"), data_prop(Value::Object(si)));
+    props.insert(PropertyKey::from("rawJSON"), data_prop(Value::Object(raw)));
+    props.insert(
+        PropertyKey::from("isRawJSON"),
+        data_prop(Value::Object(is_raw)),
+    );
+    let mut tag = data_prop(Value::String(Arc::from("JSON")));
+    tag.writable = false;
+    tag.enumerable = false;
+    tag.configurable = true;
+    props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        tag,
+    );
     let obj = HeapObj::Object(ObjectData {
         props: Mutex::new(props),
         proto: Mutex::new(Some(vm.object_proto.clone())),
