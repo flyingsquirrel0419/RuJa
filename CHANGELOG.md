@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Direct and optional-chain property delete now retain a raw Reference and use
+  a specification-ordered `DeleteValue`: box/check the base before coercing the
+  referenced name, invoke `[[Delete]]`, and apply the Reference's strict flag.
+  This fixes non-configurable String wrapper indices, roots temporary bases and
+  keys across coercion and Proxy traps, and removes the legacy `DeleteProp`
+  opcode. String exotic reads/has/delete now reject non-canonical index names
+  such as `"01"` and `"+0"`. Proxy delete invariants now invoke nested target
+  `[[GetOwnProperty]]` and `[[IsExtensible]]` operations. Focused Test262 is
+  **107 pass / 0 fail / 0 skip**, and the supported subset remains **12232 pass
+  / 0 fail / 8207 skip** at commit `cba970d`. CI `29263990433` and full matrix
+  `29263989422` succeeded; after retrying one transient literals timeout, all
+  30 result artifacts are byte-for-byte identical to the preceding matrix.
 - Ordinary member targets in simple assignment, destructuring assignment, and
   `for-in`/`for-of` assignment now retain one raw property Reference through
   the value or source evaluation. `ToPropertyKey` remains deferred until

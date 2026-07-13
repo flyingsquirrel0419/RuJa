@@ -518,6 +518,46 @@ preceding confirmed matrix, so the normalized aggregate remains **28536 pass /
 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
 pass-or-fail executed** with no shard movement.
 
+## Ordinary property delete References
+
+Direct and optional-chain property delete now compile their evaluated base and
+referenced name into `MakeRawPropertyRef`, followed by `DeleteValue`. The VM
+performs `ToObject(base)` before `ToPropertyKey(name)`, calls the resulting
+object's `[[Delete]]`, and converts a false result to `TypeError` from the
+Reference's stored strict flag. Nullish optional-chain exits still skip the key
+and produce `true`; ordinary nullish bases evaluate the key expression but
+reject before key coercion.
+
+The retained Reference and boxed/object base stay pinned through key coercion,
+Proxy traps, and error paths. Primitive String indices and `length` now use the
+String wrapper's non-configurable properties, so sloppy delete returns `false`
+and strict delete throws. String exotic read, has, own-property, and delete
+paths share canonical index recognition: `"01"`, `"00"`, `"+0"`, `"1e0"`, and
+`"-0"` remain ordinary property names rather than aliases for character
+indices. The legacy `DeleteProp` bytecode and VM handler are removed.
+
+Proxy `deleteProperty` invariants now query a Proxy target through its actual
+`[[GetOwnProperty]]` and `[[IsExtensible]]` operations. Nested target traps are
+therefore observable, and an outer trap cannot report successful deletion of a
+non-configurable property or a present property on a non-extensible target.
+Regressions cover both invariants, strict optional delete trap failure,
+temporary Proxy/key forced GC, primitive and boxed Strings, canonical and
+non-canonical names, Symbols through the focused suite, and nullish ordering.
+
+At commit `cba970d`, Rust all-targets, clippy with denied warnings, fmt/diff,
+and operators **118/118** pass. Latest Test262 delete and optional-chaining paths
+are **107 pass / 0 fail / 0 skip / 107 total**, and the pinned supported subset
+remains **12232 pass / 0 fail / 8207 skip / 20439 total**. Independent review's
+two functional findings, nested Proxy invariants and non-canonical String
+indices, are fixed and covered before commit. CI `29263990433` and full matrix
+`29263989422` succeeded. The first literals job attempt had one transient
+timeout while local file-by-file and full literals reruns remained **474 pass /
+60 skip / 0 timeout**; rerunning that job in the same workflow restored the
+baseline. The final 30 artifacts are byte-for-byte identical to the preceding
+confirmed matrix, so the normalized aggregate remains **28536 pass / 6614 fail
+/ 13155 skip / 12 timeout / 0 error / 48317 total / 35150 pass-or-fail
+executed** with no shard movement.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
