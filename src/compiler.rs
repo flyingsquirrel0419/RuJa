@@ -3531,8 +3531,8 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                self.chunk
-                    .emit(Op::LoadEnvName(name_idx), self.current_line);
+                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
             }
             Expr::OptionalChain(inner) => {
                 let mut exits = Vec::new();
