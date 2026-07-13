@@ -595,6 +595,137 @@ fn delete_global_builtin_uses_global_property_configurable() {
 }
 
 #[test]
+fn delete_identifier_uses_the_resolved_reference() {
+    assert_eq!(run("delete missingDeleteTarget;"), Value::Bool(true));
+    assert!(run_err(r#""use strict"; delete (((strictDeleteTarget)));"#).contains("SyntaxError"));
+
+    assert_eq!(
+        run(r#"
+            Object.defineProperty(globalThis, "shadowedDelete", {
+              value: 1,
+              configurable: true
+            });
+            let shadowedDelete = 2;
+            var deleted = delete shadowedDelete;
+            [deleted, shadowedDelete, globalThis.shadowedDelete].join("|");
+            "#),
+        Value::String(Arc::from("false|2|1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            globalThis.realmDeleteTarget = "main";
+            other.realmDeleteTarget = "foreign";
+            var foreignDelete = other.eval(
+              "(function() { return delete realmDeleteTarget; })"
+            );
+            var deleted = foreignDelete();
+            [
+              deleted,
+              "realmDeleteTarget" in other,
+              globalThis.realmDeleteTarget
+            ].join("|");
+            "#),
+        Value::String(Arc::from("true|false|main"))
+    );
+
+    assert_eq!(
+        run(r#"
+            eval("var evalDeleteVar = 1; function evalDeleteFunction() {}");
+            [
+              delete evalDeleteVar,
+              typeof evalDeleteVar,
+              delete evalDeleteFunction,
+              typeof evalDeleteFunction
+            ].join("|");
+            "#),
+        Value::String(Arc::from("true|undefined|true|undefined"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            other.eval(`
+              var evalDeleteVar = 1;
+              function evalDeleteFunction() {}
+              Object.defineProperty(globalThis, "shadowedDelete", {
+                value: 1,
+                configurable: true
+              });
+              let shadowedDelete = 2;
+            `);
+            var foreignDelete = other.eval(`(function() {
+              return [
+                delete evalDeleteVar,
+                typeof evalDeleteVar,
+                delete evalDeleteFunction,
+                typeof evalDeleteFunction,
+                delete shadowedDelete,
+                shadowedDelete,
+                globalThis.shadowedDelete
+              ].join("|");
+            })`);
+            foreignDelete();
+            "#),
+        Value::String(Arc::from("true|undefined|true|undefined|false|2|1"))
+    );
+}
+
+#[test]
+fn delete_identifier_object_environment_proxy_survives_gc() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var target = { blocked: 1, thrown: 2, collected: 3 };
+            var log = [];
+            var blockedResult, thrownResult, collectedResult;
+            var scope = new Proxy(target, {
+              has: function(target, key) {
+                return Reflect.has(target, key);
+              },
+              deleteProperty: function(target, key) {
+                log.push(key);
+                if (key === "blocked") return false;
+                if (key === "thrown") throw new Error("delete trap");
+                forceGc();
+                return Reflect.deleteProperty(target, key);
+              }
+            });
+            with (scope) {
+              blockedResult = delete blocked;
+              try { delete thrown; }
+              catch (error) { thrownResult = error.message; }
+              collectedResult = delete collected;
+            }
+            [
+              blockedResult,
+              thrownResult,
+              collectedResult,
+              "collected" in target,
+              log.join(",")
+            ].join("|");
+            "#,
+        )
+        .expect("object environment Reference should survive Proxy deletion GC"),
+        Value::String(Arc::from(
+            "false|delete trap|true|false|blocked,thrown,collected"
+        ))
+    );
+}
+
+#[test]
 fn delete_function_parameter_returns_false() {
     assert_eq!(
         run(r#"

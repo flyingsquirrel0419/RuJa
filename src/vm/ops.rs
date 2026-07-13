@@ -9,13 +9,6 @@ enum CompareOp {
     Gte,
 }
 
-enum DeleteBindingStatus {
-    None,
-    Deleted,
-    NonDeletable,
-    GlobalNonDeletable,
-}
-
 impl Vm {
     fn private_name_binding_name(name: &str) -> String {
         format!("#private_name:{}", name)
@@ -1958,104 +1951,6 @@ impl Vm {
                     let reference = self.stack.pop().unwrap_or(Value::Undefined);
                     let deleted = self.delete_value(&reference)?;
                     self.stack.push(Value::Bool(deleted));
-                }
-                Op::DeleteVar(name_idx) => {
-                    // `delete x` (identifier, non-strict mode): check if the
-                    // binding is deletable. var/function = false, unbound = true.
-                    let name = {
-                        let frame = self.current_frame()?;
-                        let v = frame
-                            .chunk
-                            .constants
-                            .get(name_idx)
-                            .cloned()
-                            .unwrap_or(Value::Undefined);
-                        match v {
-                            Value::String(s) => s.to_string(),
-                            _ => String::new(),
-                        }
-                    };
-                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    let mut env = Some(cur_env);
-                    let mut completed = false;
-                    while let Some(e_idx) = env {
-                        let (binding_status, with_obj, parent) =
-                            self.heap.with_obj(e_idx.0, |obj| {
-                                if let HeapObj::Environment(e) = obj {
-                                    let mut vars = e.vars.lock();
-                                    if let Some(binding) = vars.get(name.as_str()) {
-                                        if binding.deletable {
-                                            vars.shift_remove(name.as_str());
-                                            return (DeleteBindingStatus::Deleted, None, None);
-                                        }
-                                        if e_idx == self.global {
-                                            return (
-                                                DeleteBindingStatus::GlobalNonDeletable,
-                                                None,
-                                                None,
-                                            );
-                                        }
-                                        return (DeleteBindingStatus::NonDeletable, None, None);
-                                    }
-                                    let with_obj = e.with_object.lock().clone();
-                                    return (DeleteBindingStatus::None, with_obj, *e.parent.lock());
-                                }
-                                (DeleteBindingStatus::None, None, None)
-                            });
-
-                        match binding_status {
-                            DeleteBindingStatus::Deleted => {
-                                self.stack.push(Value::Bool(true));
-                                completed = true;
-                                break;
-                            }
-                            DeleteBindingStatus::NonDeletable => {
-                                self.stack.push(Value::Bool(false));
-                                completed = true;
-                                break;
-                            }
-                            DeleteBindingStatus::GlobalNonDeletable => {
-                                let global_this = self.global_this.clone();
-                                if self.has_own_property(&global_this, &name) {
-                                    let deleted = self.delete_property(&global_this, &name)?;
-                                    if deleted {
-                                        crate::environment::delete_var_binding(
-                                            &self.heap,
-                                            self.global,
-                                            &name,
-                                        );
-                                    }
-                                    self.stack.push(Value::Bool(deleted));
-                                } else {
-                                    self.stack.push(Value::Bool(false));
-                                }
-                                completed = true;
-                                break;
-                            }
-                            DeleteBindingStatus::None => {}
-                        }
-
-                        if let Some(obj) = with_obj {
-                            if self.with_object_has_binding(&obj, &name)? {
-                                let deleted = self.delete_property(&obj, &name)?;
-                                self.stack.push(Value::Bool(deleted));
-                                completed = true;
-                                break;
-                            }
-                        }
-                        env = parent;
-                    }
-
-                    if !completed {
-                        let global_this = self.global_this.clone();
-                        if self.has_own_property(&global_this, &name) {
-                            let deleted = self.delete_property(&global_this, &name)?;
-                            self.stack.push(Value::Bool(deleted));
-                        } else {
-                            // Unresolvable reference: delete returns true.
-                            self.stack.push(Value::Bool(true));
-                        }
-                    }
                 }
                 Op::ValidateExtends => {
                     // Pop the superclass value and validate it. `extends null`

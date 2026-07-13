@@ -343,7 +343,6 @@ pub enum Op {
     TypeCoerce, // ToNumber for unary +
     ToNumeric,  // ToNumeric for update expressions
     Void,
-    DeleteVar(usize),
     TypeofVar(usize),
 
     // Environment

@@ -3722,7 +3722,8 @@ impl Compiler {
                                 }
                                 let name_idx =
                                     self.chunk.add_constant(Value::String(Arc::from(&**name)));
-                                self.chunk.emit(Op::DeleteVar(name_idx), self.current_line);
+                                self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                                self.chunk.emit(Op::DeleteValue, self.current_line);
                             }
                             Expr::Member {
                                 object,

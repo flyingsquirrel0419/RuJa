@@ -2448,8 +2448,47 @@ impl Vm {
         Ok(value)
     }
 
-    /// Delete a property through its evaluated Reference. The base is boxed
-    /// before a raw referenced name is coerced, matching DeleteExpression.
+    fn delete_environment_reference(&mut self, env_idx: GcIdx, name: &str) -> error::Result<bool> {
+        let global_env = crate::environment::global_env_root(&self.heap, env_idx);
+        let is_global = env_idx == global_env;
+        let binding = self.heap.with_obj(env_idx.0, |obj| {
+            if let HeapObj::Environment(env) = obj {
+                env.vars
+                    .lock()
+                    .get(name)
+                    .map(|binding| (binding.kind, binding.deletable))
+            } else {
+                None
+            }
+        });
+
+        if let Some((kind, deletable)) = binding {
+            if !is_global || kind != crate::value::BindingKind::Var {
+                if deletable {
+                    crate::environment::delete_var_binding(&self.heap, env_idx, name);
+                    return Ok(true);
+                }
+                return Ok(false);
+            }
+
+            let global_this = self.realm_global_for_env(global_env);
+            let deleted =
+                self.delete_property_key(&global_this, &crate::value::PropertyKey::from(name))?;
+            if deleted {
+                crate::environment::delete_var_binding(&self.heap, env_idx, name);
+            }
+            return Ok(deleted);
+        }
+
+        if is_global {
+            let global_this = self.realm_global_for_env(global_env);
+            return self.delete_property_key(&global_this, &crate::value::PropertyKey::from(name));
+        }
+        Ok(true)
+    }
+
+    /// Delete through an evaluated Reference. Property bases are boxed before
+    /// a raw referenced name is coerced, matching DeleteExpression.
     pub(crate) fn delete_value(&mut self, v: &Value) -> error::Result<bool> {
         let Value::Reference(reference) = v else {
             return Ok(true);
@@ -2458,8 +2497,33 @@ impl Vm {
         if reference.this_value.is_some() {
             return Err(Error::reference("Cannot delete super property"));
         }
-        let crate::value::ReferenceBase::Value(base) = &reference.base else {
-            return Err(Error::internal("expected property reference for delete"));
+        let base = match &reference.base {
+            crate::value::ReferenceBase::Unresolvable => return Ok(true),
+            crate::value::ReferenceBase::Environment(env_idx) => {
+                let name = reference
+                    .name
+                    .as_str()
+                    .ok_or_else(|| Error::internal("invalid environment reference name"))?;
+                return self.delete_environment_reference(*env_idx, name);
+            }
+            crate::value::ReferenceBase::ObjectEnvironment(base) => {
+                let key = match &reference.name {
+                    crate::value::ReferencedName::Property(key) => key.clone(),
+                    crate::value::ReferencedName::UncoercedProperty(_)
+                    | crate::value::ReferencedName::Private(_) => {
+                        return Err(Error::internal("invalid object environment reference name"));
+                    }
+                };
+                let pin_count = self.pin(v);
+                let result = self.delete_property_key(base, &key);
+                self.unpin_many(pin_count);
+                let deleted = result?;
+                if !deleted && reference.strict {
+                    return Err(Error::type_err("Cannot delete non-configurable property"));
+                }
+                return Ok(deleted);
+            }
+            crate::value::ReferenceBase::Value(base) => base,
         };
         if base.is_nullish() {
             return Err(Error::type_err(
