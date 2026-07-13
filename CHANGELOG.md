@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Direct `super` assignment targets in `for-in` and `for-of` now create a
+  super property Reference with distinct base and actual-this components
+  instead of an ordinary property Reference rooted at the home prototype.
+  Setters and Proxy traps therefore receive the loop method's object,
+  primitive, or constructor receiver. Regressions cover computed keys,
+  iteration counts, dynamic super-base changes, static methods, IteratorClose
+  error priority, and key/coercion/Proxy GC. Focused Test262 is **684 pass / 0
+  fail / 190 skip**, and the supported subset remains **12238 pass / 0 fail /
+  8201 skip** at commit `b395956`. CI `29292458497` and full matrix
+  `29292458431` succeeded; all 30 artifacts exactly match the preceding matrix.
 - Parenthesized optional-chain tagged templates now preserve the final member
   or private Reference and call through `CallRef`; optional-chain call results
   remain unbound through an explicit `undefined` receiver. This restores the

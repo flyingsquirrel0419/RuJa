@@ -745,6 +745,32 @@ result artifacts are byte-for-byte identical to matrix `29286826876`, retaining
 the normalized **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error /
 48317 total / 35156 pass-or-fail executed** aggregate.
 
+## Super loop-target References
+
+A direct member target in a `for-in` or `for-of` head is evaluated after each
+iteration value is obtained. When that target is `super.name` or
+`super[expression]`, the compiler now uses `MakeSuperPropertyRef` rather than
+an ordinary raw property Reference. The retained record keeps the dynamic
+super base separate from the method's actual `this`, so setters and Proxy
+`set` traps observe an instance, constructor, or borrowed primitive receiver
+instead of the home prototype.
+
+Regressions cover direct and computed `for-in`/`for-of` targets, zero and
+multiple iterations, key evaluation per iteration, key-side home-prototype
+mutation before the super-base lookup, instance/static/primitive receivers,
+setter failure with IteratorClose and close-error priority, and forced GC in
+the key expression, `ToPropertyKey`, and Proxy trap. Independent review found
+no correctness defect after these cases were added.
+
+At commit `b395956`, Rust all-targets, release build, clippy with denied
+warnings, and fmt/diff pass. Pinned class-super, for-in, and for-of Test262 is
+**684 pass / 0 fail / 190 skip / 874 total**, and the supported subset remains
+**12238 pass / 0 fail / 8201 skip / 20439 total**. CI `29292458497` and full
+matrix `29292458431` succeeded. All 30 downloaded result artifacts are
+byte-for-byte identical to matrix `29290696382`, retaining the normalized
+**28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317 total /
+35156 pass-or-fail executed** aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
