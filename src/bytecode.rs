@@ -182,14 +182,12 @@ pub enum Op {
     DefineAccessor(u8),      // pop [fn, key, obj]; define getter(0)/setter(1)
     DefineClassAccessor(u8), // same but enumerable=false (for class methods)
     GetProp,
-    SetProp,
     DefineDataProperty, // define enumerable own data property: stack [obj, key, value]
     DefineMethod,       // define non-enumerable method property: stack [obj, key, value]
     GetElem,            // computed member
-    SetElem,
-    DeleteValue,     // pop a property Reference, push its [[Delete]] result
-    SetProto,        // pop [proto, obj]; set obj's [[Prototype]] to proto
-    GetProto,        // pop [obj]; push obj.[[Prototype]] or null
+    DeleteValue,        // pop a property Reference, push its [[Delete]] result
+    SetProto,           // pop [proto, obj]; set obj's [[Prototype]] to proto
+    GetProto,           // pop [obj]; push obj.[[Prototype]] or null
     ValidateExtends, // pop [parentCtor]; throw TypeError if not a constructor or prototype is invalid
     Inc,             // pop [val]; push val+1 (Number or BigInt)
     Dec,             // pop [val]; push val-1 (Number or BigInt)

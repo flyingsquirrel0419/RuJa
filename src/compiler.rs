@@ -3949,7 +3949,7 @@ impl Compiler {
                         }
                         PropertyKey::Spread(_) => unreachable!("spread handled above"),
                     }
-                    // SetProp/SetElem leaves the assigned value on top; pop it so obj remains
+                    // DefineDataProperty leaves the value on top; pop it so obj remains.
                     self.chunk.emit(Op::Pop, self.current_line);
                 }
             }
@@ -5222,29 +5222,6 @@ impl Compiler {
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
                 self.chunk.emit(Op::PutValue, self.current_line);
-            }
-            Expr::Member {
-                object,
-                property,
-                computed,
-                ..
-            } => {
-                self.compile_expr(object)?;
-                if *computed {
-                    self.compile_expr(property)?;
-                    self.chunk.emit(Op::SetElem, self.current_line);
-                } else {
-                    let key = if let Expr::String(s) = property.as_ref() {
-                        s.to_string()
-                    } else {
-                        String::new()
-                    };
-                    let key_idx = self
-                        .chunk
-                        .add_constant(Value::String(Arc::from(key.as_str())));
-                    self.chunk.emit(Op::Const(key_idx), self.current_line);
-                    self.chunk.emit(Op::SetProp, self.current_line);
-                }
             }
             _ => {
                 self.chunk.emit(Op::Pop, self.current_line);

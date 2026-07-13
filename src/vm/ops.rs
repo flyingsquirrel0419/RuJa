@@ -1909,20 +1909,6 @@ impl Vm {
                     let v = self.get_property_key(&obj, &key)?;
                     self.stack.push(v);
                 }
-                Op::SetProp => {
-                    // stack (bottom->top): [obj, key, value]
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key_str = self.to_property_key(&key)?;
-                    self.set_property(&obj, &key_str, value.clone())?;
-                    // Invalidate IC entry for this object+key so stale
-                    // cached values are not returned on next GetProp.
-                    if let Value::Object(idx) = &obj {
-                        self.ic_invalidate(idx.0, &key_str);
-                    }
-                    self.stack.push(value);
-                }
                 Op::DefineDataProperty => {
                     // stack (bottom->top): [obj, key, value]
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1965,20 +1951,6 @@ impl Vm {
                         if let crate::value::PropertyKey::Str(key_str) = &pkey {
                             self.ic_invalidate(idx.0, key_str.as_ref());
                         }
-                    }
-                    self.stack.push(value);
-                }
-                Op::SetElem => {
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    self.set_property_key(&obj, &key, value.clone())?;
-                    // Invalidate IC entry for this object+key so that
-                    // subsequent GetProp does not return a stale value.
-                    // Symbol keys are not cached by the IC, so skip them.
-                    if let (Value::Object(idx), Value::String(_)) = (&obj, &key) {
-                        let key_str = self.to_property_key(&key)?;
-                        self.ic_invalidate(idx.0, &key_str);
                     }
                     self.stack.push(value);
                 }

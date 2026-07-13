@@ -948,6 +948,41 @@ fn update_member_uses_property_reference() {
 }
 
 #[test]
+fn parenthesized_member_read_modify_write_uses_one_reference() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            var target = { x: 1 };
+            var proxy = new Proxy(target, {
+              get: function(t, k, receiver) {
+                log.push("get:" + t[k]);
+                return Reflect.get(t, k, receiver);
+              },
+              set: function(t, k, value, receiver) {
+                log.push("set:" + value);
+                return Reflect.set(t, k, value, receiver);
+              }
+            });
+
+            var compound = (proxy[key]) += 2;
+            var logical = (proxy[key]) &&= 5;
+            var post = (proxy[key])++;
+            var pre = ++(proxy[key]);
+            [compound, logical, post, pre, target.x, log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "3;5;5;7;7;key|get:1|set:3|key|get:3|set:5|key|get:5|set:6|key|get:6|set:7"
+        ))
+    );
+}
+
+#[test]
 fn update_preserves_bigint_numeric_type() {
     assert_eq!(
         run(r#"
