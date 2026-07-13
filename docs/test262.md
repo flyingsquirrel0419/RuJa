@@ -230,6 +230,44 @@ Compiler-internal completion slots still use `LoadEnvName`, and direct member
 get/set and delete retain separate VM paths that will be migrated in bounded
 follow-up units.
 
+## Primitive Reference Realm admission
+
+`tools/test262_reference_primitive_admission.txt` freezes the three
+`language/types/reference` tests for primitive-base property `GetValue` and
+`PutValue`, including their cross-Realm forms. The VM records each Realm's
+global object and intrinsic primitive prototypes as GC roots. Property reads,
+boxing, and writes select the current execution or native callee Realm;
+primitive writes run ordinary `[[Set]]` with the original primitive receiver,
+so inherited setters and Proxy `set` traps remain observable.
+
+Child test262 Realms now expose realm-bound Object constructors and independent
+BigInt and Symbol constructors/prototypes. BigInt and Symbol mutations no longer
+leak into the main Realm, and the BigInt `Symbol.toStringTag` descriptor is
+preserved. String and `PropertyKey` setter paths share one traversal state:
+cycles are detected across Proxy targets and ordinary prototypes, Proxy
+recursion is bounded independently, and ordinary chains retain the prior
+1024-hop budget.
+
+At follow-up commit `5f78f18`, `language/types/reference` is **28 pass / 0 fail
+/ 1 skip / 29 total**, and the combined Reference/with/compound diagnostic is
+**663 pass / 0 fail / 1 skip / 664 total**. The supported subset remains
+**12232 pass / 0 fail / 8207 skip / 20439 total**, and tooling is **65/65**.
+CI `29224760629` and `test262-full` `29224760619` both pass. The 30 downloaded
+artifacts aggregate to **28506 pass / 6614 fail / 13185 skip / 12 timeout / 0
+error / 48317 total / 35120 pass-or-fail executed**, or **59.0%** of all matrix
+files and **81.2%** of executed files. The three admitted files account for
+**+3 pass / -3 skip**; realm-bound Object boxing also converts one existing
+built-ins failure to a pass, making the total movement **+4 pass / -1 fail / -3
+skip**.
+
+Independent review found and the implementation fixed unbounded Proxy setter
+recursion, Symbol/BigInt prototype aliasing, missing BigInt tagging, the
+parallel `Reflect.set` string-key recursion path, and an accidental reduction
+of the ordinary prototype depth budget. The first feature full run also exposed
+a cross-Realm JSON BigInt wrapper regression caused by a shared Object
+constructor; commit `5f78f18` binds Object boxing to the callee Realm and
+restores that test.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

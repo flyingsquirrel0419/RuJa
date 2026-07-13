@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Primitive-base property References now select the current execution Realm's
+  global object and String, Number, Boolean, BigInt, and Symbol prototypes for
+  `GetValue`, `PutValue`, and `ToObject`. Primitive writes invoke inherited
+  setters and Proxy `set` traps with the original primitive receiver, including
+  cross-Realm eval. Child Realms now have independent Object, BigInt, and Symbol
+  intrinsics, and Proxy/ordinary `[[Set]]` traversal shares cycle detection
+  while retaining separate safe depth budgets. Frozen primitive Reference
+  admission is **3/3** and the combined Reference/with/compound gate is **663
+  pass / 0 fail / 1 skip**. CI `29224760629` and `test262-full` `29224760619`
+  pass for follow-up commit `5f78f18`; downloaded artifacts aggregate to
+  **28506 pass / 6614 fail / 13185 skip / 12 timeout / 0 error / 48317 total /
+  35120 pass-or-fail executed**, a movement of **+4 pass / -1 fail / -3 skip**.
 - Ordinary identifier reads now compile to `LoadRef` followed by `GetValue`,
   routing lexical, import, global-object, TDZ, and `with` object-environment
   resolution through the same specification Reference-record path used by
