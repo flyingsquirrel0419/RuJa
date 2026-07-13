@@ -22,6 +22,15 @@ use std::sync::Arc;
 
 pub type NativeFn = fn(&mut Vm, &[Value], Option<Value>) -> error::Result<Value>;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum PrimitivePrototypeKind {
+    String,
+    Number,
+    BigInt,
+    Boolean,
+    Symbol,
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentBroadcast {
     pub bytes: Arc<Mutex<Vec<u8>>>,
@@ -118,6 +127,11 @@ pub struct Vm {
     pub(crate) well_known_symbols: WellKnownSymbols,
     pub(crate) global_names: HashMap<Arc<str>, usize>,
     pub(crate) global_constants: Vec<Value>,
+    /// Realm global environment index -> that Realm's global object.
+    pub(crate) realm_globals: HashMap<usize, Value>,
+    /// Realm global environment index + primitive kind -> that Realm's
+    /// intrinsic wrapper prototype used by ToObject and primitive references.
+    pub(crate) realm_primitive_prototypes: HashMap<(usize, PrimitivePrototypeKind), Value>,
     /// Realm global environment index -> that Realm's original intrinsic
     /// `%eval%` function object. Direct eval detection must not consult the
     /// mutable global `eval` property because scripts may replace it.
@@ -539,6 +553,8 @@ impl Vm {
             },
             global_names: HashMap::new(),
             global_constants: Vec::new(),
+            realm_globals: HashMap::new(),
+            realm_primitive_prototypes: HashMap::new(),
             realm_eval_functions: HashMap::new(),
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
@@ -1963,6 +1979,49 @@ impl Vm {
         Ok(self.to_string(v)?.to_string())
     }
 
+    pub(crate) fn current_realm_global_env(&self) -> GcIdx {
+        let env = self
+            .frames
+            .last()
+            .map(|frame| frame.env)
+            .unwrap_or(self.global);
+        crate::environment::global_env_root(&self.heap, env)
+    }
+
+    pub(crate) fn realm_global_for_env(&self, env: GcIdx) -> Value {
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_globals
+            .get(&realm.0)
+            .cloned()
+            .unwrap_or_else(|| self.global_this.clone())
+    }
+
+    pub(crate) fn primitive_prototype_for_env(&self, value: &Value, env: GcIdx) -> Value {
+        let kind = match value {
+            Value::String(_) => PrimitivePrototypeKind::String,
+            Value::Number(_) => PrimitivePrototypeKind::Number,
+            Value::BigInt(_) => PrimitivePrototypeKind::BigInt,
+            Value::Bool(_) => PrimitivePrototypeKind::Boolean,
+            Value::Symbol(_) => PrimitivePrototypeKind::Symbol,
+            _ => return Value::Undefined,
+        };
+        let realm = crate::environment::global_env_root(&self.heap, env);
+        self.realm_primitive_prototypes
+            .get(&(realm.0, kind))
+            .cloned()
+            .unwrap_or_else(|| match kind {
+                PrimitivePrototypeKind::String => self.string_proto.clone(),
+                PrimitivePrototypeKind::Number => self.number_proto.clone(),
+                PrimitivePrototypeKind::BigInt => self.bigint_proto.clone(),
+                PrimitivePrototypeKind::Boolean => self.boolean_proto.clone(),
+                PrimitivePrototypeKind::Symbol => self.symbol_proto.clone(),
+            })
+    }
+
+    pub(crate) fn current_realm_primitive_prototype(&self, value: &Value) -> Value {
+        self.primitive_prototype_for_env(value, self.current_realm_global_env())
+    }
+
     /// Resolve an identifier to a spec Reference record, using the same
     /// environment/with/global search order for reads, writes, calls, and
     /// `typeof`. This is the Reference-creation half of IdentifierReference
@@ -2005,9 +2064,10 @@ impl Vm {
             cur_env = parent;
         }
         if cur_env.is_none() {
-            let global_this = self.global_this.clone();
+            let realm = crate::environment::global_env_root(&self.heap, env);
+            let global_this = self.realm_global_for_env(realm);
             if self.has_property(&global_this, &name_str)? {
-                base = crate::value::ReferenceBase::Environment(self.global);
+                base = crate::value::ReferenceBase::Environment(realm);
             }
         }
         Ok(crate::value::ReferenceRecord {
@@ -2249,7 +2309,7 @@ impl Vm {
                             cur_env = parent;
                         }
                         // Last resort: check global (this).
-                        let global_this = self.global_this.clone();
+                        let global_this = self.realm_global_for_env(*env_idx);
                         let has = self.has_property(&global_this, &name)?;
                         if has {
                             self.get_property(&global_this, &name)
@@ -2307,7 +2367,8 @@ impl Vm {
                         if r.strict {
                             return Err(Error::reference(format!("{} is not defined", name)));
                         }
-                        let global_this = self.global_this.clone();
+                        let global_this =
+                            self.realm_global_for_env(self.current_realm_global_env());
                         self.set_property(&global_this, &name, value)?;
                     }
                     crate::value::ReferenceBase::Environment(env_idx) => {
@@ -2502,7 +2563,7 @@ impl Vm {
                             cur_env = parent;
                         }
                         // Not found in env chain: check global, or declare.
-                        let global_this = self.global_this.clone();
+                        let global_this = self.realm_global_for_env(*env_idx);
                         let has_global = self.has_property(&global_this, &name)?;
                         if has_global {
                             self.set_property(&global_this, &name, value)?;
@@ -2513,7 +2574,7 @@ impl Vm {
                         }
                         // Non-strict: create a configurable property on the
                         // global object (spec implicit global).
-                        let global_this = self.global_this.clone();
+                        let global_this = self.realm_global_for_env(*env_idx);
                         self.set_property(&global_this, &name, value)?;
                     }
                     crate::value::ReferenceBase::Value(base) => {
@@ -2525,12 +2586,13 @@ impl Vm {
                         };
                         let success = if matches!(base.as_ref(), Value::Object(_)) {
                             self.try_set_property_key_with_receiver(base, name, value, base)?
-                        } else if base.is_nullish() || r.strict {
+                        } else if base.is_nullish() {
                             return Err(Error::type_err(
                                 "Cannot set property of primitive".to_string(),
                             ));
                         } else {
-                            true
+                            let boxed = self.to_object(base)?;
+                            self.try_set_property_key_with_receiver(&boxed, name, value, base)?
                         };
                         if success {
                             if let (Value::Object(idx), crate::value::PropertyKey::Str(s)) =

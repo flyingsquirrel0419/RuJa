@@ -930,15 +930,8 @@ impl Vm {
                 let idx = self.new_object()?;
                 let obj = Value::Object(idx);
                 self.set_primitive(&obj, value.clone());
-                let proto = match value {
-                    Value::String(_) => Some(self.string_proto.clone()),
-                    Value::Number(_) => Some(self.number_proto.clone()),
-                    Value::Bool(_) => Some(self.boolean_proto.clone()),
-                    Value::BigInt(_) => Some(self.bigint_proto.clone()),
-                    Value::Symbol(_) => Some(self.symbol_proto.clone()),
-                    _ => None,
-                };
-                if let Some(proto) = proto {
+                let proto = self.current_realm_primitive_prototype(value);
+                if !proto.is_undefined() {
                     self.heap.with_obj(idx.0, |o| {
                         if let HeapObj::Object(od) = o {
                             *od.proto.lock() = Some(proto);

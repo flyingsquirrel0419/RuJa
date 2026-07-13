@@ -363,6 +363,78 @@ fn test262_create_realm_exposes_primitive_wrapper_constructors() {
 }
 
 #[test]
+fn primitive_references_use_the_current_execution_realms_prototypes() {
+    let src = r#"
+        var other = $262.createRealm().global;
+        var values = [1, "", true, Symbol()];
+        var constructors = [other.Number, other.String, other.Boolean, other.Symbol];
+        var names = ["number", "string", "boolean", "symbol"];
+        var result = [];
+        for (var i = 0; i < values.length; i++) {
+            constructors[i].prototype.test262 = names[i];
+            other.value = values[i];
+            result.push(other.eval("value.test262"));
+            var count = 0;
+            var spy = new Proxy({}, { set: function() { count++; return true; } });
+            Object.setPrototypeOf(constructors[i].prototype, spy);
+            other.eval(i === 0 ? "0..written = 1" :
+                       i === 1 ? "''.written = 1" :
+                       i === 2 ? "true.written = 1" : "Symbol().written = 1");
+            result.push(count);
+        }
+        result.push(other.Symbol.prototype !== Symbol.prototype);
+        result.push(other.BigInt.prototype !== BigInt.prototype);
+        result.push(other.eval("Object.prototype.toString.call(0n)"));
+        other.Symbol.prototype.realmOnly = "symbol";
+        other.BigInt.prototype.realmOnly = "bigint";
+        result.push(Symbol().realmOnly === undefined);
+        result.push(0n.realmOnly === undefined);
+        result.join(",");
+    "#;
+    assert_eq!(
+        run(src),
+        Value::String(Arc::from(
+            "number,1,string,1,boolean,1,symbol,1,true,true,[object BigInt],true,true"
+        ))
+    );
+}
+
+#[test]
+fn proxy_prototype_cycles_do_not_overflow_the_rust_stack_on_set() {
+    assert_eq!(
+        run(r#"
+            var seen = 0;
+            var root = { set value(v) { seen = v; } };
+            var leaf = root;
+            for (var i = 0; i < 129; i++) leaf = Object.create(leaf);
+            leaf.value = 7;
+            seen;
+        "#),
+        Value::Number(7.0)
+    );
+
+    let error = run_err(
+        r#"
+            var target = {};
+            var proxy = new Proxy(target, {});
+            Object.setPrototypeOf(target, proxy);
+            var object = Object.create(proxy);
+            object.value = 1;
+        "#,
+    );
+    assert!(error.contains("Prototype chain cycle"));
+
+    let error = run_err(
+        r#"
+            var target = {};
+            for (var i = 0; i < 10000; i++) target = new Proxy(target, {});
+            Reflect.set(target, "value", 1);
+        "#,
+    );
+    assert!(error.contains("Prototype chain too deep"));
+}
+
+#[test]
 fn test262_create_realm_exposes_typed_array_constructors() {
     let src = r#"
         var other = $262.createRealm().global;

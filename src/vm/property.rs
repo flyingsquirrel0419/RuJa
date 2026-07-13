@@ -2,6 +2,9 @@
 //! setters split from vm/mod.rs for readability.
 
 use super::*;
+
+const MAX_PROXY_SET_DEPTH: usize = 128;
+const MAX_ORDINARY_SET_DEPTH: usize = 1024;
 use crate::error::{self, Error};
 use crate::value::HeapObj;
 use crate::value::{GcIdx, PromiseStatus, TypedArrayKind, Value};
@@ -14,6 +17,13 @@ struct TypedArrayNumericSlots {
     byte_length: usize,
     length_tracking: bool,
     numeric_index: f64,
+}
+
+#[derive(Default)]
+struct SetTraversal {
+    visited: std::collections::HashSet<usize>,
+    proxy_depth: usize,
+    ordinary_depth: usize,
 }
 
 pub(crate) struct TypedArrayDefineDescriptor<'a> {
@@ -312,14 +322,7 @@ impl Vm {
     }
 
     pub(crate) fn get_proto_property(&mut self, obj: &Value, key: &str) -> error::Result<Value> {
-        let proto = match obj {
-            Value::String(_) => self.string_proto.clone(),
-            Value::Number(_) => self.number_proto.clone(),
-            Value::BigInt(_) => self.bigint_proto.clone(),
-            Value::Bool(_) => self.boolean_proto.clone(),
-            Value::Symbol(_) => self.symbol_proto.clone(),
-            _ => return Ok(Value::Undefined),
-        };
+        let proto = self.current_realm_primitive_prototype(obj);
         if !proto.is_undefined() {
             return self.get_property_rx(&proto, key, obj.clone(), 0);
         }
@@ -886,8 +889,7 @@ impl Vm {
                 if let Some(is_arguments) = array_length_kind {
                     if is_arguments {
                         let pkey = crate::value::PropertyKey::from(key);
-                        let success =
-                            self.ordinary_set_with_receiver(*idx, &pkey, key, value, &obj)?;
+                        let success = self.ordinary_set_with_receiver(*idx, &pkey, value, &obj)?;
                         if !success && strict {
                             return Err(Error::type_err(format!(
                                 "Cannot assign to read only property '{}' of object",
@@ -1237,42 +1239,8 @@ impl Vm {
         value: Value,
         receiver: &Value,
     ) -> error::Result<bool> {
-        let Value::Object(base_idx) = base else {
-            return Err(Error::type_err(
-                "Cannot set property of primitive".to_string(),
-            ));
-        };
-        if let Some(proxy_result) = self.heap.with_obj(base_idx.0, |o| {
-            if let HeapObj::Proxy(proxy) = o {
-                if *proxy.revoked.lock() {
-                    return Some(Err(Error::type_err(
-                        "Cannot perform 'set' on a proxy that has been revoked",
-                    )));
-                }
-                Some(Ok((proxy.target.clone(), proxy.handler.clone())))
-            } else {
-                None
-            }
-        }) {
-            let (target, handler) = proxy_result?;
-            let trap = self.get_property(&handler, "set")?;
-            if !trap.is_undefined() {
-                let trap_result = self.call_function(
-                    &trap,
-                    &[
-                        target,
-                        Value::String(Arc::from(key)),
-                        value,
-                        receiver.clone(),
-                    ],
-                    Some(handler),
-                )?;
-                return Ok(self.to_boolean(&trap_result));
-            }
-            return self.try_set_property_with_receiver(&target, key, value, receiver);
-        }
         let pkey = crate::value::PropertyKey::from(key);
-        self.ordinary_set_with_receiver(*base_idx, &pkey, key, value, receiver)
+        self.try_set_property_key_with_receiver(base, &pkey, value, receiver)
     }
 
     pub(crate) fn try_set_property_key_with_receiver(
@@ -1281,6 +1249,18 @@ impl Vm {
         key: &crate::value::PropertyKey,
         value: Value,
         receiver: &Value,
+    ) -> error::Result<bool> {
+        let mut traversal = SetTraversal::default();
+        self.try_set_property_key_with_receiver_tracked(base, key, value, receiver, &mut traversal)
+    }
+
+    fn try_set_property_key_with_receiver_tracked(
+        &mut self,
+        base: &Value,
+        key: &crate::value::PropertyKey,
+        value: Value,
+        receiver: &Value,
+        traversal: &mut SetTraversal,
     ) -> error::Result<bool> {
         let Value::Object(base_idx) = base else {
             return Err(Error::type_err(
@@ -1299,6 +1279,13 @@ impl Vm {
                 None
             }
         }) {
+            if !traversal.visited.insert(base_idx.0) {
+                return Err(Error::type_err("Prototype chain cycle".to_string()));
+            }
+            traversal.proxy_depth += 1;
+            if traversal.proxy_depth > MAX_PROXY_SET_DEPTH {
+                return Err(Error::type_err("Prototype chain too deep".to_string()));
+            }
             let (target, handler) = proxy_result?;
             let trap = self.get_property(&handler, "set")?;
             if !trap.is_undefined() {
@@ -1314,20 +1301,41 @@ impl Vm {
                 )?;
                 return Ok(self.to_boolean(&trap_result));
             }
-            return self.try_set_property_key_with_receiver(&target, key, value, receiver);
+            return self.try_set_property_key_with_receiver_tracked(
+                &target, key, value, receiver, traversal,
+            );
         }
-        self.ordinary_set_with_receiver(*base_idx, key, key.as_str().unwrap_or(""), value, receiver)
+        self.ordinary_set_with_receiver_tracked(*base_idx, key, value, receiver, traversal)
     }
 
     fn ordinary_set_with_receiver(
         &mut self,
-        mut base_idx: GcIdx,
+        base_idx: GcIdx,
         pkey: &crate::value::PropertyKey,
-        key: &str,
         value: Value,
         receiver: &Value,
     ) -> error::Result<bool> {
-        for _ in 0..1024 {
+        let mut traversal = SetTraversal::default();
+        self.ordinary_set_with_receiver_tracked(base_idx, pkey, value, receiver, &mut traversal)
+    }
+
+    fn ordinary_set_with_receiver_tracked(
+        &mut self,
+        mut base_idx: GcIdx,
+        pkey: &crate::value::PropertyKey,
+        value: Value,
+        receiver: &Value,
+        traversal: &mut SetTraversal,
+    ) -> error::Result<bool> {
+        let key = pkey.as_str().unwrap_or("");
+        loop {
+            traversal.ordinary_depth += 1;
+            if traversal.ordinary_depth > MAX_ORDINARY_SET_DEPTH {
+                return Err(Error::type_err("Prototype chain too deep".to_string()));
+            }
+            if !traversal.visited.insert(base_idx.0) {
+                return Err(Error::type_err("Prototype chain cycle".to_string()));
+            }
             let receiver_is_base =
                 matches!(receiver, Value::Object(receiver_idx) if *receiver_idx == base_idx);
             if let Some(slots) = self.typed_array_numeric_slots(base_idx, key) {
@@ -1393,11 +1401,24 @@ impl Vm {
                 return self.set_receiver_data_property(receiver, pkey.clone(), value);
             }
             match proto {
-                Some(Value::Object(proto_idx)) => base_idx = proto_idx,
+                Some(Value::Object(proto_idx)) => {
+                    let is_proxy = self
+                        .heap
+                        .with_obj(proto_idx.0, |o| matches!(o, HeapObj::Proxy(_)));
+                    if is_proxy {
+                        return self.try_set_property_key_with_receiver_tracked(
+                            &Value::Object(proto_idx),
+                            pkey,
+                            value,
+                            receiver,
+                            traversal,
+                        );
+                    }
+                    base_idx = proto_idx;
+                }
                 _ => return self.set_receiver_data_property(receiver, pkey.clone(), value),
             }
         }
-        Err(Error::type_err("Prototype chain too deep".to_string()))
     }
 
     fn set_typed_array_numeric_property_in_proto(
@@ -2708,6 +2729,12 @@ impl Vm {
         }
         // Global constants are reachable for the program lifetime.
         for v in &self.global_constants {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_globals.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_primitive_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_eval_functions.values() {

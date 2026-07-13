@@ -345,14 +345,7 @@ impl Vm {
                     | Value::BigInt(_)
                     | Value::Bool(_)
                     | Value::Symbol(_) => {
-                        let proto = match obj {
-                            Value::String(_) => self.string_proto.clone(),
-                            Value::Number(_) => self.number_proto.clone(),
-                            Value::BigInt(_) => self.bigint_proto.clone(),
-                            Value::Bool(_) => self.boolean_proto.clone(),
-                            Value::Symbol(_) => self.symbol_proto.clone(),
-                            _ => Value::Undefined,
-                        };
+                        let proto = self.current_realm_primitive_prototype(obj);
                         if proto.is_undefined() {
                             Ok(Value::Undefined)
                         } else {
@@ -515,11 +508,11 @@ impl Vm {
             _ if key.as_str().is_some() => {
                 return self.get_property(obj, key.as_str().unwrap_or_default())
             }
-            Value::String(_) => self.string_proto.clone(),
-            Value::Number(_) => self.number_proto.clone(),
-            Value::BigInt(_) => self.bigint_proto.clone(),
-            Value::Bool(_) => self.boolean_proto.clone(),
-            Value::Symbol(_) => self.symbol_proto.clone(),
+            Value::String(_)
+            | Value::Number(_)
+            | Value::BigInt(_)
+            | Value::Bool(_)
+            | Value::Symbol(_) => self.current_realm_primitive_prototype(obj),
             _ => Value::Undefined,
         };
         let mut depth = 0;

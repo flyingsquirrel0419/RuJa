@@ -2631,6 +2631,7 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         primitive: Mutex::new(None),
     }))?;
     let global = Value::Object(GcIdx(global_idx));
+    vm.realm_globals.insert(realm_env.0, global.clone());
 
     crate::environment::declare(
         &vm.heap,
@@ -2831,12 +2832,138 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     vm.set_primitive(&Value::Object(bool_proto), Value::Bool(false));
     define_realm_global(vm, realm_env, &global, "Boolean", Value::Object(bool_ctor));
 
+    let bigint_idx = vm.new_native_function_in_env("BigInt", global_bigint, 1, realm_env)?;
+    let bigint_as_int_n = vm.new_native_function_in_env("asIntN", bigint_as_int_n, 2, realm_env)?;
+    let bigint_as_uint_n =
+        vm.new_native_function_in_env("asUintN", bigint_as_uint_n, 2, realm_env)?;
+    let bigint_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("BigInt")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let realm_bigint_proto = Value::Object(GcIdx(bigint_proto_idx));
+    let bigint_to_string =
+        vm.new_native_function_in_env("toString", bigint_to_string, 0, realm_env)?;
+    let bigint_to_locale_string = vm.new_native_function_in_env(
+        "toLocaleString",
+        bigint_proto_to_locale_string,
+        0,
+        realm_env,
+    )?;
+    let bigint_value_of =
+        vm.new_native_function_in_env("valueOf", bigint_value_of, 0, realm_env)?;
+    vm.heap.with_obj(bigint_idx.0, |obj| {
+        if let HeapObj::Function(function) = obj {
+            *function.prototype.lock() = Some(realm_bigint_proto.clone());
+        }
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("prototype"),
+            const_prop(realm_bigint_proto.clone()),
+        );
+        props.insert(
+            PropertyKey::from("asIntN"),
+            data_prop(Value::Object(bigint_as_int_n)),
+        );
+        props.insert(
+            PropertyKey::from("asUintN"),
+            data_prop(Value::Object(bigint_as_uint_n)),
+        );
+    });
+    vm.heap.with_obj(bigint_proto_idx, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(
+            PropertyKey::from("constructor"),
+            data_prop(Value::Object(bigint_idx)),
+        );
+        props.insert(
+            PropertyKey::from("toString"),
+            data_prop(Value::Object(bigint_to_string)),
+        );
+        props.insert(
+            PropertyKey::from("toLocaleString"),
+            data_prop(Value::Object(bigint_to_locale_string)),
+        );
+        let mut tag = data_prop(Value::String(Arc::from("BigInt")));
+        tag.writable = false;
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            tag,
+        );
+        props.insert(
+            PropertyKey::from("valueOf"),
+            data_prop(Value::Object(bigint_value_of)),
+        );
+    });
+    define_realm_global(vm, realm_env, &global, "BigInt", Value::Object(bigint_idx));
+
     let (regexp_ctor, _) = make_regexp_constructor_in_env(vm, realm_env)?;
     define_realm_global(vm, realm_env, &global, "RegExp", Value::Object(regexp_ctor));
     let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
     let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
     let symbol_key_for_idx =
         vm.new_native_function_in_env("keyFor", symbol_key_for, 1, realm_env)?;
+    let symbol_to_string_idx =
+        vm.new_native_function_in_env("toString", symbol_to_string, 0, realm_env)?;
+    let symbol_value_of_idx =
+        vm.new_native_function_in_env("valueOf", symbol_value_of, 0, realm_env)?;
+    let symbol_to_primitive_idx =
+        vm.new_native_function_in_env("[Symbol.toPrimitive]", symbol_to_primitive, 1, realm_env)?;
+    let symbol_description_idx =
+        vm.new_native_function_in_env("get description", symbol_description_get, 0, realm_env)?;
+    let mut symbol_proto_props = IndexMap::new();
+    symbol_proto_props.insert(
+        PropertyKey::from("toString"),
+        data_prop(Value::Object(symbol_to_string_idx)),
+    );
+    symbol_proto_props.insert(
+        PropertyKey::from("valueOf"),
+        data_prop(Value::Object(symbol_value_of_idx)),
+    );
+    symbol_proto_props.insert(
+        PropertyKey::from("description"),
+        accessor_get_prop(Value::Object(symbol_description_idx)),
+    );
+    symbol_proto_props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+        PropertyDescriptor {
+            value: Value::Object(symbol_to_primitive_idx),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: None,
+            set: None,
+            is_accessor: false,
+        },
+    );
+    symbol_proto_props.insert(
+        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+        PropertyDescriptor {
+            value: Value::String(Arc::from("Symbol")),
+            writable: false,
+            enumerable: false,
+            configurable: true,
+            get: None,
+            set: None,
+            is_accessor: false,
+        },
+    );
+    symbol_proto_props.insert(
+        PropertyKey::from("constructor"),
+        data_prop(Value::Object(symbol_idx)),
+    );
+    let symbol_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(symbol_proto_props),
+        proto: Mutex::new(Some(vm.object_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Symbol")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    let realm_symbol_proto = Value::Object(GcIdx(symbol_proto_idx));
     vm.heap.with_obj(symbol_idx.0, |obj| {
         let mut props = obj.props().lock();
         props.insert(
@@ -2850,14 +2977,39 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         install_symbol_static_properties(vm, &mut props);
         props.insert(
             PropertyKey::from("prototype"),
-            const_prop(vm.symbol_proto.clone()),
+            const_prop(realm_symbol_proto.clone()),
         );
         drop(props);
         if let HeapObj::Function(function) = obj {
-            *function.prototype.lock() = Some(vm.symbol_proto.clone());
+            *function.prototype.lock() = Some(realm_symbol_proto.clone());
         }
     });
     define_realm_global(vm, realm_env, &global, "Symbol", Value::Object(symbol_idx));
+    for (kind, prototype) in [
+        (
+            crate::vm::PrimitivePrototypeKind::String,
+            Value::Object(str_proto),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::Number,
+            Value::Object(num_proto),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::Boolean,
+            Value::Object(bool_proto),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::BigInt,
+            realm_bigint_proto,
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::Symbol,
+            realm_symbol_proto,
+        ),
+    ] {
+        vm.realm_primitive_prototypes
+            .insert((realm_env.0, kind), prototype);
+    }
 
     install_array_buffer_constructor_in_env(vm, realm_env, Some(&global), false)?;
     install_shared_array_buffer_constructor_in_env(vm, realm_env, Some(&global))?;
@@ -6817,6 +6969,32 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     install_weak_ref_constructor_in_env(vm, vm.global, None)?;
     install_finalization_registry_constructor_in_env(vm, vm.global, None)?;
     install_test262_host(vm)?;
+    vm.realm_globals.insert(vm.global.0, vm.global_this.clone());
+    for (kind, prototype) in [
+        (
+            crate::vm::PrimitivePrototypeKind::String,
+            vm.string_proto.clone(),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::Number,
+            vm.number_proto.clone(),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::BigInt,
+            vm.bigint_proto.clone(),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::Boolean,
+            vm.boolean_proto.clone(),
+        ),
+        (
+            crate::vm::PrimitivePrototypeKind::Symbol,
+            vm.symbol_proto.clone(),
+        ),
+    ] {
+        vm.realm_primitive_prototypes
+            .insert((vm.global.0, kind), prototype);
+    }
     Ok(())
 }
 
