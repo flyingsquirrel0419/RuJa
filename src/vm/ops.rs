@@ -2186,19 +2186,6 @@ impl Vm {
                     let result = self.call_function(&func, &args, Some(this))?;
                     self.stack.push(result);
                 }
-                Op::GetPrivate(name_idx) => {
-                    let name = match self.private_slot_key_from_name(name_idx)? {
-                        crate::value::PrivateSlotKey::Private(name) => name,
-                        crate::value::PrivateSlotKey::Internal(_) => {
-                            return Err(Error::internal(
-                                "class private get resolved to an internal slot",
-                            ));
-                        }
-                    };
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let v = self.get_private_value(&obj, &name)?;
-                    self.stack.push(v);
-                }
                 Op::CreatePrivateName(name_idx) => {
                     let description = {
                         let frame = self.current_frame()?;
@@ -2237,20 +2224,6 @@ impl Vm {
                         crate::value::PrivateSlot::Method(value.clone()),
                         "Cannot initialize private method twice",
                     )?;
-                    self.stack.push(value);
-                }
-                Op::SetPrivate(name_idx) => {
-                    let name = match self.private_slot_key_from_name(name_idx)? {
-                        crate::value::PrivateSlotKey::Private(name) => name,
-                        crate::value::PrivateSlotKey::Internal(_) => {
-                            return Err(Error::internal(
-                                "class private set resolved to an internal slot",
-                            ));
-                        }
-                    };
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    self.set_private_value(&obj, &name, value.clone())?;
                     self.stack.push(value);
                 }
                 Op::DefinePrivateAccessor(name_idx) => {

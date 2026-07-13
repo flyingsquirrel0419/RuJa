@@ -255,8 +255,6 @@ pub enum Op {
     },
     /// Push the canonical import.meta object for the current module.
     ImportMeta,
-    /// Push a private field value from `this`. arg = name constant idx.
-    GetPrivate(usize),
     /// Create a fresh class private-name identity. arg = description constant idx.
     CreatePrivateName(usize),
     /// Initialize a private field/method slot. arg = name constant idx.
@@ -265,8 +263,6 @@ pub enum Op {
     /// Initialize a private method slot. arg = name constant idx.
     /// Stack: [obj, method].
     InitPrivateMethod(usize),
-    /// Set a private field on `this`. arg = name constant idx. Pops value.
-    SetPrivate(usize),
     /// Define/merge a private accessor slot: stack [obj, get, set].
     DefinePrivateAccessor(usize),
     // Closures

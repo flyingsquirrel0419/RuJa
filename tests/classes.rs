@@ -1162,6 +1162,121 @@ fn private_field_update_evaluates_object_once() {
 }
 
 #[test]
+fn private_field_updates_use_retained_references() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+              #value = 1;
+              #big = 1n;
+              #accessorValue = 0;
+              base() { log.push("base"); return this; }
+              get #accessor() {
+                log.push("get");
+                return { valueOf() { log.push("coerce"); return 4; } };
+              }
+              set #accessor(value) {
+                log.push("set:" + value);
+                this.#accessorValue = value;
+              }
+              updates() {
+                var post = this.base().#value++;
+                var pre = ++this.base().#value;
+                var bigPost = this.#big++;
+                var bigPre = --this.#big;
+                var accessorPost = this.#accessor++;
+                return [
+                  post, pre, this.#value,
+                  bigPost, bigPre, this.#big,
+                  accessorPost, this.#accessorValue,
+                  log.join("|")
+                ].join(";");
+              }
+              static wrongBrand(value) { return value.#value++; }
+            }
+            var result = new C().updates();
+            var wrongBrand;
+            try { C.wrongBrand({}); }
+            catch (error) { wrongBrand = error.name; }
+            result + ";" + wrongBrand;
+            "#),
+        Value::String(Arc::from(
+            "1;3;3;1;1;1;4;5;base|base|get|coerce|set:5;TypeError"
+        ))
+    );
+}
+
+#[test]
+fn private_field_update_number_and_bigint_matrix() {
+    assert_eq!(
+        run(r#"
+            class C {
+              #number = 10;
+              #bigint = 10n;
+              matrix() {
+                var values = [
+                  this.#number++, ++this.#number,
+                  this.#number--, --this.#number, this.#number,
+                  this.#bigint++, ++this.#bigint,
+                  this.#bigint--, --this.#bigint, this.#bigint
+                ];
+                return values.join(",");
+              }
+            }
+            new C().matrix();
+            "#),
+        Value::String(Arc::from("10,12,12,10,10,10,12,12,10,10"))
+    );
+}
+
+#[test]
+fn private_field_update_coercion_errors_preserve_order() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+              #value;
+              constructor() {
+                this.#value = {
+                  valueOf: () => {
+                    log.push("coerce-mutate");
+                    this.#value = 99;
+                    return 4;
+                  }
+                };
+              }
+              mutate() {
+                var old = this.#value++;
+                return old + ":" + this.#value;
+              }
+              resetThrowing() {
+                this.#value = {
+                  valueOf() { log.push("coerce-throw"); throw "boom"; }
+                };
+              }
+              throwing() { return ++this.#value; }
+              get #readonly() { log.push("get-readonly"); return 1; }
+              readonly() { return this.#readonly++; }
+              static wrongBrand(value) { return ++value.#value; }
+            }
+            var instance = new C();
+            var mutated = instance.mutate();
+            instance.resetThrowing();
+            var throwing;
+            var readonly;
+            var wrongBrand;
+            try { instance.throwing(); } catch (error) { throwing = error; }
+            try { instance.readonly(); } catch (error) { readonly = error.name; }
+            try { C.wrongBrand({}); } catch (error) { wrongBrand = error.name; }
+            [mutated, throwing, readonly, wrongBrand, log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "4:5;boom;TypeError;TypeError;coerce-mutate|coerce-throw|get-readonly"
+        ))
+    );
+}
+
+#[test]
 fn private_field_compound_assignment_updates_field() {
     assert_eq!(
         run("class C{#c=1;m(){this.#c+=2;return this.#c;}} new C().m();"),
@@ -1174,6 +1289,82 @@ fn private_field_compound_assignment_updates_field() {
     assert_eq!(
         run("class C{#v=1;get #c(){return this.#v;}set #c(v){this.#v=v;}m(){this.#c+=2;return this.#v;}} new C().m();"),
         Value::Number(3.0)
+    );
+}
+
+#[test]
+fn private_compound_assignments_preserve_reference_and_order() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+              #backing = 0;
+              #value = 2;
+              get #accessor() {
+                log.push("get");
+                return { valueOf() { log.push("left"); return 2; } };
+              }
+              set #accessor(value) {
+                log.push("set:" + value);
+                this.#backing = value;
+              }
+              #method() {}
+              ordered() {
+                var result = this.#accessor += (
+                  log.push("rhs"),
+                  { valueOf() { log.push("right"); return 3; } }
+                );
+                return result + ":" + this.#backing;
+              }
+              mutated() {
+                var result = this.#value += (this.#value = 100, 3);
+                return result + ":" + this.#value;
+              }
+              readonly() {
+                try { this.#method += (log.push("method-rhs"), 1); }
+                catch (error) { return error.name; }
+              }
+              static wrongBrand(value) {
+                return value.#value += log.push("wrong-brand-rhs");
+              }
+            }
+            var instance = new C();
+            var wrongBrand;
+            try { C.wrongBrand({}); }
+            catch (error) { wrongBrand = error.name; }
+            [
+              instance.ordered(), instance.mutated(), instance.readonly(),
+              wrongBrand, log.join("|")
+            ].join(";");
+            "#),
+        Value::String(Arc::from(
+            "5:5;5:5;TypeError;TypeError;get|rhs|left|right|set:5|method-rhs"
+        ))
+    );
+}
+
+#[test]
+fn private_compound_assignment_errors_skip_setters() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+              get #numeric() { log.push("get-numeric"); return 2n; }
+              set #numeric(value) { log.push("set-numeric"); }
+              get #power() { log.push("get-power"); return 2n; }
+              set #power(value) { log.push("set-power"); }
+              mixed() { return this.#numeric += 1; }
+              negativeExponent() { return this.#power **= -1n; }
+            }
+            var instance = new C();
+            var mixed;
+            var exponent;
+            try { instance.mixed(); } catch (error) { mixed = error.name; }
+            try { instance.negativeExponent(); }
+            catch (error) { exponent = error.name; }
+            [mixed, exponent, log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from("TypeError;RangeError;get-numeric|get-power"))
     );
 }
 
@@ -1210,6 +1401,127 @@ fn private_field_logical_assignment_updates_and_short_circuits() {
     assert_eq!(
         run("var calls=0; class C{#c=1;m(){function f(){calls++;return this;} f.call(this).#c &&= 9; return calls + ':' + this.#c;}} new C().m();"),
         Value::String(Arc::from("1:9"))
+    );
+}
+
+#[test]
+fn private_logical_assignments_preserve_reference_and_short_circuit() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            function rhs(name, value) { log.push("rhs:" + name); return value; }
+            class C {
+              #backing = 0;
+              #value = 0;
+              get #accessor() { log.push("get:" + this.#backing); return this.#backing; }
+              set #accessor(value) { log.push("set:" + value); this.#backing = value; }
+              assignments() {
+                var andSkip = this.#accessor &&= rhs("and", 1);
+                var orAssign = this.#accessor ||= rhs("or", 2);
+                var nullishSkip = this.#accessor ??= rhs("nullish-skip", 3);
+                this.#backing = null;
+                var nullishAssign = this.#accessor ??= rhs("nullish", 4);
+                var mutated = this.#value ||= (this.#value = 99, 5);
+                return [
+                  andSkip, orAssign, nullishSkip, nullishAssign,
+                  mutated, this.#value
+                ].join(":");
+              }
+              static wrongBrand(value) {
+                return value.#value ||= log.push("wrong-brand-rhs");
+              }
+              static wrongBrandAnd(value) {
+                return value.#value &&= log.push("wrong-brand-and-rhs");
+              }
+              static wrongBrandNullish(value) {
+                return value.#value ??= log.push("wrong-brand-nullish-rhs");
+              }
+            }
+            var instance = new C();
+            var wrongBrand = [];
+            try { C.wrongBrand({}); }
+            catch (error) { wrongBrand.push(error.name); }
+            try { C.wrongBrandAnd({}); }
+            catch (error) { wrongBrand.push(error.name); }
+            try { C.wrongBrandNullish({}); }
+            catch (error) { wrongBrand.push(error.name); }
+            [instance.assignments(), wrongBrand.join(","), log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "0:2:2:4:5:5;TypeError,TypeError,TypeError;get:0|get:0|rhs:or|set:2|get:2|get:null|rhs:nullish|set:4"
+        ))
+    );
+}
+
+#[test]
+fn private_read_modify_write_errors_use_the_callee_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var ForeignClass = other.eval(`(class {
+              #value = 1;
+              #method() {}
+              update(object) { return object.#value++; }
+              compound(object) { return object.#value += 1; }
+              logical(object) { return object.#value ||= 1; }
+              readonly() { return this.#method += 1; }
+            })`);
+            var instance = new ForeignClass();
+            [
+              function() { instance.update({}); },
+              function() { instance.compound({}); },
+              function() { instance.logical({}); },
+              function() { instance.readonly(); }
+            ].every(function(check) {
+              try { check(); return false; }
+              catch (error) {
+                return error instanceof other.TypeError &&
+                  !(error instanceof TypeError);
+              }
+            });
+            "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn private_read_modify_write_references_survive_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            class C {
+              #xValue = 1;
+              #yValue = 2;
+              #zValue = 0;
+              get #x() {
+                return { valueOf() { forceGc(); return 1; } };
+              }
+              set #x(value) { forceGc(); this.#xValue = value; }
+              get #y() { forceGc(); return this.#yValue; }
+              set #y(value) { forceGc(); this.#yValue = value; }
+              get #z() { forceGc(); return this.#zValue; }
+              set #z(value) { forceGc(); this.#zValue = value; }
+              static update(make) { return make().#x++; }
+              static compound(make) { return make().#y += (forceGc(), 3); }
+              static logical(make) { return make().#z ||= (forceGc(), 4); }
+            }
+            function make() { return new C(); }
+            [C.update(make), C.compound(make), C.logical(make)].join(",");
+            "#,
+        )
+        .expect("private read-modify-write References should survive GC"),
+        Value::String(Arc::from("1,5,4"))
     );
 }
 
