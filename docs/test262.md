@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.0% of all matrix files; 81.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.1% of all matrix files; 81.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -267,6 +267,44 @@ of the ordinary prototype depth budget. The first feature full run also exposed
 a cross-Realm JSON BigInt wrapper regression caused by a shared Object
 constructor; commit `5f78f18` binds Object boxing to the callee Realm and
 restores that test.
+
+## Member-read Reference routing and Proxy Get admission
+
+Ordinary computed and non-computed member reads now compile to
+`MakePropertyRef` plus `GetValue`; optional-chain member reads use the same
+property Reference path after their nullish short circuit. Reference creation
+checks a nullish base before property-key coercion and pins the base, key, and
+result across observable conversion. Receiver-sensitive calls and tagged
+templates intentionally retain their dedicated path until property References
+can provide their `this` value directly; `super` also remains separate because
+its base and `thisValue` differ.
+
+The shared `[[Get]]` implementation forwards string and Symbol keys with the
+original receiver through nested Proxies and `Reflect.get`, treats null and
+undefined traps as absent, and validates non-configurable data and accessor
+invariants against Proxy-aware target descriptors. Proxy
+`[[GetOwnProperty]]` compatibility, configurability, and extensibility checks
+support that validation. String exotic descriptors expose their actual length
+and UTF-16 code-unit values, and targets, handlers, receivers, traps, results,
+and descriptor fields remain rooted across observable calls.
+
+`tools/test262_proxy_get_admission.txt` freezes **30** exact files under
+`built-ins/Proxy/get` and `built-ins/Reflect/get`; all are **30 pass / 0 fail**
+against test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`. The first full run exposed
+two unrelated mapped-arguments regressions: the new Reference read cache held
+the initial `arguments[0]` value instead of consulting its live parameter map.
+Follow-up commit `50b84f8` excludes arguments exotic objects from that cache
+and restores `language/arguments-object` to **126 pass / 0 fail / 137 skip**.
+
+Local gates pass: Rust all-targets, clippy with denied warnings, fmt/diff,
+tooling **66/66**, the combined arguments/Proxy/Reflect gate **156 pass / 0
+fail / 137 skip / 293 total**, and the supported subset **12232 pass / 0 fail /
+8207 skip / 20439 total**. CI `29236604702` and `test262-full` `29236604723`
+both pass for the follow-up. All 30 downloaded artifacts aggregate to **28536
+pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
+pass-or-fail executed**, or **59.1%** of all matrix files and **81.2%** of
+executed files. Relative to the preceding confirmed matrix this is exactly
+**+30 pass / -30 skip**.
 
 ## Full-suite baseline
 

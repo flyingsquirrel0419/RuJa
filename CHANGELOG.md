@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- Ordinary string- and Symbol-keyed member reads, including optional-chain
+  reads, now create property Reference records and resolve them through
+  `GetValue`. Proxy `[[Get]]` forwarding preserves the receiver through nested
+  proxies and `Reflect.get`, validates fixed data/accessor invariants, treats a
+  null trap as absent, and observes Proxy-aware target descriptors. String
+  exotic values and all values held across observable trap/descriptor work are
+  preserved correctly. The frozen Proxy/Reflect `[[Get]]` admission is
+  **30/30**. A follow-up excludes mapped arguments exotic objects from the
+  own-data read cache so parameter-map values remain live after failed deletes.
+  CI `29236604702` and `test262-full` `29236604723` pass for follow-up commit
+  `50b84f8`; downloaded artifacts aggregate to **28536 pass / 6614 fail /
+  13155 skip / 12 timeout / 0 error / 48317 total / 35150 pass-or-fail
+  executed**, a movement of **+30 pass / -30 skip**.
 - Primitive-base property References now select the current execution Realm's
   global object and String, Number, Boolean, BigInt, and Symbol prototypes for
   `GetValue`, `PutValue`, and `ToObject`. Primitive writes invoke inherited
