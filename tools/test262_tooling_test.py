@@ -10,6 +10,7 @@ from unittest.mock import patch
 import test262_analyze
 import test262_runner
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
@@ -879,6 +880,53 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         {"features": ["Proxy"]}, outside_path
                     ))
                     self.assertTrue(tool.reference_primitive_path(admitted_path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_proxy_get_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(PROXY_GET_FILES), 30)
+        admitted = "built-ins/Proxy/get/trap-is-undefined-receiver.js"
+        realm = "built-ins/Proxy/get/trap-is-not-callable-realm.js"
+        symbolic = "built-ins/Proxy/get/trap-is-null-target-is-proxy.js"
+        reflected = "built-ins/Reflect/get/return-value-from-symbol-key.js"
+        outside = "built-ins/Array/isArray/proxy.js"
+        self.assertIn(admitted, PROXY_GET_FILES)
+        self.assertIn(reflected, PROXY_GET_FILES)
+        self.assertEqual(PROXY_GET_FEATURES[admitted], {"Proxy"})
+        self.assertEqual(PROXY_GET_FEATURES[realm], {"Proxy", "cross-realm"})
+        self.assertEqual(PROXY_GET_FEATURES[symbolic], {"Proxy", "Symbol"})
+        self.assertEqual(PROXY_GET_FEATURES[reflected], {"Reflect", "Symbol"})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_path = root / "test" / admitted
+            realm_path = root / "test" / realm
+            symbolic_path = root / "test" / symbolic
+            reflected_path = root / "test" / reflected
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["Proxy"]}, admitted_path
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"features": ["Proxy", "Symbol"]}, admitted_path
+                    ))
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["Proxy", "cross-realm"]}, realm_path
+                    ))
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["Proxy", "Symbol"]}, symbolic_path
+                    ))
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["Reflect", "Symbol"]}, reflected_path
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"features": ["Proxy"]}, outside_path
+                    ))
+                    self.assertTrue(tool.proxy_get_path(admitted_path))
+                    self.assertTrue(tool.proxy_get_path(reflected_path))
                 finally:
                     tool.TEST262 = original_root
 

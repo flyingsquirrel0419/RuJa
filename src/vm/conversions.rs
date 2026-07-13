@@ -493,13 +493,7 @@ impl Vm {
             });
             if let Some(result) = proxy_info {
                 let (target, handler) = result?;
-                let trap = self.get_property(&handler, "get")?;
-                if !trap.is_undefined() {
-                    let receiver = obj.clone();
-                    let key_val = Self::property_key_to_value(key);
-                    return self.call_function(&trap, &[target, key_val, receiver], Some(handler));
-                }
-                return self.get_property_by_key(&target, key);
+                return self.proxy_get(target, handler, key, obj.clone(), 0);
             }
         }
 
@@ -723,12 +717,19 @@ impl Vm {
             None
         });
         if let Some(Value::String(s)) = string_exotic {
-            if key.as_str().is_some_and(|name| {
-                let len = crate::value::utf16_len(&s);
-                name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
-            }) {
-                let mut desc = crate::value::PropertyDescriptor::data(Value::Undefined);
+            let value = if key.as_str() == Some("length") {
+                Some(Value::Number(crate::value::utf16_len(&s) as f64))
+            } else {
+                crate::builtins::canonical_string_index(key)
+                    .and_then(|index| crate::value::utf16_get(&s, index))
+                    .map(|unit| {
+                        Value::String(Arc::from(crate::value::utf16_to_string(&[unit]).as_str()))
+                    })
+            };
+            if let Some(value) = value {
+                let mut desc = crate::value::PropertyDescriptor::data(value);
                 desc.writable = false;
+                desc.enumerable = key.as_str() != Some("length");
                 desc.configurable = false;
                 return Some(desc);
             }
@@ -1198,18 +1199,8 @@ impl Vm {
                     match result {
                         Err(e) => return Err(e),
                         Ok((target, handler)) => {
-                            let key_val = Value::String(Arc::from(key));
-                            let trap = self.get_property(&handler, "get")?;
-                            if !trap.is_undefined() {
-                                let receiver = obj.clone();
-                                return self.call_function(
-                                    &trap,
-                                    &[target, key_val, receiver],
-                                    Some(handler),
-                                );
-                            }
-                            // No trap: forward to target.
-                            return self.get_property(&target, key);
+                            let property_key = crate::value::PropertyKey::from(key);
+                            return self.proxy_get(target, handler, &property_key, obj.clone(), 0);
                         }
                     }
                 }

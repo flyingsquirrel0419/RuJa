@@ -5129,7 +5129,7 @@ fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
     Ok(obj)
 }
 
-fn canonical_string_index(key: &PropertyKey) -> Option<usize> {
+pub(crate) fn canonical_string_index(key: &PropertyKey) -> Option<usize> {
     let name = key.as_str()?;
     let index = name.parse::<usize>().ok()?;
     if index.to_string() == name {
@@ -5384,16 +5384,81 @@ pub(crate) fn own_property_descriptor_for_key_or_throw(
             }
         }) {
             let (target, handler) = proxy_result?;
-            let key_value = property_key_to_value(key);
-            let trap = vm.get_property(&handler, "getOwnPropertyDescriptor")?;
-            if trap.is_undefined() {
-                return own_property_descriptor_for_key_or_throw(vm, &target, key);
-            }
-            let result = vm.call_function(&trap, &[target, key_value], Some(handler))?;
-            if result.is_undefined() {
-                return Ok(None);
-            }
-            return property_descriptor_from_object(vm, &result).map(Some);
+            let proxy_pins = vm.pin_many(&[target.clone(), handler.clone()]);
+            let descriptor_result = (|| {
+                let key_value = property_key_to_value(key);
+                let trap = vm.get_property(&handler, "getOwnPropertyDescriptor")?;
+                if trap.is_nullish() {
+                    return own_property_descriptor_for_key_or_throw(vm, &target, key);
+                }
+                let trap_pin = vm.pin(&trap);
+                let result = vm.call_function(
+                    &trap,
+                    &[target.clone(), key_value],
+                    Some(handler),
+                );
+                vm.unpin(trap_pin);
+                let result = result?;
+                let result_pin = vm.pin(&result);
+                let validation = (|| {
+                    let target_desc =
+                        own_property_descriptor_for_key_or_throw(vm, &target, key)?;
+                    let mut descriptor_roots = Vec::new();
+                    if let Some(target_desc) = target_desc.as_ref() {
+                        descriptor_roots.push(target_desc.value.clone());
+                        descriptor_roots.extend(target_desc.get.iter().cloned());
+                        descriptor_roots.extend(target_desc.set.iter().cloned());
+                    }
+                    let descriptor_pins = vm.pin_many(&descriptor_roots);
+                    let invariant_result = (|| {
+                        let extensible_target = vm.is_extensible(&target)?;
+                        if result.is_undefined() {
+                            if let Some(target_desc) = target_desc.as_ref() {
+                                if !target_desc.configurable || !extensible_target {
+                                    return Err(Error::type_err(
+                                        "Proxy getOwnPropertyDescriptor trap cannot hide the target property",
+                                    ));
+                                }
+                            }
+                            return Ok(None);
+                        }
+                        let result_desc = property_descriptor_from_object(vm, &result)?;
+                        if !vm.is_compatible_property_descriptor(
+                            target_desc.as_ref(),
+                            &result_desc,
+                            extensible_target,
+                        ) {
+                            return Err(Error::type_err(
+                                "Proxy getOwnPropertyDescriptor trap returned an incompatible descriptor",
+                            ));
+                        }
+                        if !result_desc.configurable {
+                            let Some(target_desc) = target_desc.as_ref() else {
+                                return Err(Error::type_err(
+                                    "Proxy getOwnPropertyDescriptor trap cannot report a new non-configurable property",
+                                ));
+                            };
+                            if target_desc.configurable
+                                || (!result_desc.is_accessor
+                                    && !result_desc.writable
+                                    && !target_desc.is_accessor
+                                    && target_desc.writable)
+                            {
+                                return Err(Error::type_err(
+                                    "Proxy getOwnPropertyDescriptor trap cannot tighten the target descriptor",
+                                ));
+                            }
+                        }
+                        Ok(Some(result_desc))
+                    })();
+                    vm.unpin_many(descriptor_pins);
+                    invariant_result
+                })();
+                vm.unpin(result_pin);
+                validation
+            })();
+            vm.unpin_many(proxy_pins);
+            return descriptor_result;
         }
     }
     Ok(own_property_descriptor_for_key(vm, obj, key))

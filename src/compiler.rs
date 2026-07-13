@@ -3369,7 +3369,8 @@ impl Compiler {
                     self.emit_optional_chain_nullish_exit(1, exit_values, exits);
                 }
                 self.compile_optional_chain_member_key(property, *computed)?;
-                self.chunk.emit(Op::GetElem, self.current_line);
+                self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
             }
             Expr::PrivateGet {
                 object,
@@ -4415,7 +4416,6 @@ impl Compiler {
                 }
                 if *computed {
                     self.compile_expr(property)?;
-                    self.chunk.emit(Op::GetElem, self.current_line);
                 } else {
                     let key = if let Expr::String(s) = property.as_ref() {
                         s.to_string()
@@ -4426,8 +4426,9 @@ impl Compiler {
                         .chunk
                         .add_constant(Value::String(Arc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
-                    self.chunk.emit(Op::GetProp, self.current_line);
                 }
+                self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
                 if *optional {
                     let end = self.chunk.code.len();
                     self.chunk.patch_jump(jend, end);

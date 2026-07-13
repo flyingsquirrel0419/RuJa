@@ -71,6 +71,15 @@ fn compatible_complete_descriptor(
 }
 
 impl Vm {
+    pub(crate) fn is_compatible_property_descriptor(
+        &self,
+        current: Option<&crate::value::PropertyDescriptor>,
+        desc: &crate::value::PropertyDescriptor,
+        extensible: bool,
+    ) -> bool {
+        compatible_complete_descriptor(current, desc, extensible)
+    }
+
     pub(crate) fn function_caller_value(&self, callee_idx: GcIdx) -> error::Result<Value> {
         let Some(frame_index) = self
             .frames
@@ -215,6 +224,21 @@ impl Vm {
         let key_str = key.as_str();
         match obj {
             Value::Object(idx) => {
+                let proxy_info = self.heap.with_obj(idx.0, |object| {
+                    if let HeapObj::Proxy(proxy) = object {
+                        if *proxy.revoked.lock() {
+                            return Some(Err(Error::type_err(
+                                "Cannot perform 'get' on a proxy that has been revoked",
+                            )));
+                        }
+                        return Some(Ok((proxy.target.clone(), proxy.handler.clone())));
+                    }
+                    None
+                });
+                if let Some(result) = proxy_info {
+                    let (target, handler) = result?;
+                    return self.proxy_get(target, handler, key, receiver, depth);
+                }
                 let namespace_binding = self.heap.with_obj(idx.0, |o| {
                     if let HeapObj::ModuleNamespace(namespace) = o {
                         return key_str
@@ -299,6 +323,22 @@ impl Vm {
                             }
                         }
                     }
+                    if let HeapObj::Object(object) = o {
+                        if let Some(Value::String(string)) = object.primitive.lock().clone() {
+                            if key_str == Some("length") {
+                                return Some(
+                                    Value::Number(crate::value::utf16_len(&string) as f64),
+                                );
+                            }
+                            if let Some(index) = crate::builtins::canonical_string_index(key) {
+                                return crate::value::utf16_get(&string, index).map(|unit| {
+                                    Value::String(Arc::from(
+                                        crate::value::utf16_to_string(&[unit]).as_str(),
+                                    ))
+                                });
+                            }
+                        }
+                    }
                     let r = o.props().lock().get(key).map(|d| d.value.clone());
                     r
                 });
@@ -319,6 +359,67 @@ impl Vm {
                 None => Ok(Value::Undefined),
             },
         }
+    }
+
+    pub(crate) fn proxy_get(
+        &mut self,
+        target: Value,
+        handler: Value,
+        key: &crate::value::PropertyKey,
+        receiver: Value,
+        depth: usize,
+    ) -> error::Result<Value> {
+        let pin_count = self.pin_many(&[target.clone(), handler.clone(), receiver.clone()]);
+        let result = (|| {
+            let trap = self.get_property(&handler, "get")?;
+            if trap.is_nullish() {
+                return self.get_property_key_rx(&target, key, receiver, depth + 1);
+            }
+            let key_value = Self::property_key_to_value(key);
+            let trap_pin = self.pin(&trap);
+            let trap_result =
+                self.call_function(&trap, &[target.clone(), key_value, receiver], Some(handler));
+            self.unpin(trap_pin);
+            let trap_result = trap_result?;
+            let result_pin = self.pin(&trap_result);
+            let validation = self.validate_proxy_get_result(&target, key, &trap_result);
+            self.unpin(result_pin);
+            validation?;
+            Ok(trap_result)
+        })();
+        self.unpin_many(pin_count);
+        result
+    }
+
+    fn validate_proxy_get_result(
+        &mut self,
+        target: &Value,
+        key: &crate::value::PropertyKey,
+        trap_result: &Value,
+    ) -> error::Result<()> {
+        let Some(target_desc) =
+            crate::builtins::own_property_descriptor_for_key_or_throw(self, target, key)?
+        else {
+            return Ok(());
+        };
+        if target_desc.configurable {
+            return Ok(());
+        }
+        if !target_desc.is_accessor {
+            if !target_desc.writable && !descriptor_same_value(trap_result, &target_desc.value) {
+                return Err(Error::type_err(
+                    "Proxy get trap must return the value of a non-writable, non-configurable property",
+                ));
+            }
+            return Ok(());
+        }
+        let getter_is_undefined = target_desc.get.as_ref().is_none_or(Value::is_undefined);
+        if getter_is_undefined && !trap_result.is_undefined() {
+            return Err(Error::type_err(
+                "Proxy get trap must return undefined for a non-configurable accessor without a getter",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn get_proto_property(&mut self, obj: &Value, key: &str) -> error::Result<Value> {

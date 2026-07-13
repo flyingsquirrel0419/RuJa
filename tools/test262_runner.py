@@ -11,6 +11,7 @@ from pathlib import Path
 
 try:
     from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+    from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
     from test262_support import append_async_harness, execute_source
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
@@ -23,6 +24,7 @@ try:
     )
 except ModuleNotFoundError:
     from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
+    from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
     from tools.test262_support import append_async_harness, execute_source
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
@@ -1908,6 +1910,24 @@ def date_to_primitive_path(path):
         return False
     return rel.as_posix() in DATE_TO_PRIMITIVE_FILES
 
+def proxy_get_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in PROXY_GET_FILES
+
+def proxy_get_features(path):
+    if path is None:
+        return frozenset()
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return frozenset()
+    return PROXY_GET_FEATURES.get(rel.as_posix(), frozenset())
+
 def reference_primitive_path(path):
     if path is None:
         return False
@@ -1952,6 +1972,8 @@ def should_skip(meta, path=None):
         })
     if path is not None and date_to_primitive_path(path):
         feats.discard("Symbol")
+    if path is not None and proxy_get_path(path):
+        feats.difference_update(proxy_get_features(path))
     if path is not None and reference_primitive_path(path):
         feats.difference_update({"cross-realm", "Symbol", "Proxy"})
     if path is not None and explicit_resource_management_symbols_path(path):

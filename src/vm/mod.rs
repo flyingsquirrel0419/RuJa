@@ -109,7 +109,7 @@ pub struct Vm {
     pub(crate) date_proto: Value,
     pub(crate) microtask_queue: std::collections::VecDeque<Microtask>,
     /// Monomorphic inline cache: (heap_idx, property_name) -> cached Value.
-    /// Caches the result of the last GetProp on that object for that key.
+    /// Caches own data-property reads on that object for that key.
     pub(crate) ic: std::collections::HashMap<(usize, String), Value>,
     /// Temporary GC roots pinned across operations that hold heap values in
     /// Rust locals (e.g. a Promise handler while `call_function` runs, which
@@ -2320,8 +2320,7 @@ impl Vm {
                     }
                     crate::value::ReferenceBase::Value(base) => match &r.name {
                         crate::value::ReferencedName::Property(name) => {
-                            let key = Self::property_key_to_value(name);
-                            self.get_property_key(base, &key)
+                            self.get_property_reference_value(base, name)
                         }
                         crate::value::ReferencedName::Private(name) => {
                             self.get_private_value(base, name)
@@ -2350,6 +2349,37 @@ impl Vm {
             }
             _ => Ok(v.clone()),
         }
+    }
+
+    fn get_property_reference_value(
+        &mut self,
+        base: &Value,
+        name: &crate::value::PropertyKey,
+    ) -> error::Result<Value> {
+        let crate::value::PropertyKey::Str(key) = name else {
+            let key = Self::property_key_to_value(name);
+            return self.get_property_key(base, &key);
+        };
+
+        let Value::Object(idx) = base else {
+            return self.get_property(base, key);
+        };
+        let cacheable_own_data = self.heap.with_obj(idx.0, |object| {
+            object
+                .props()
+                .lock()
+                .get(name)
+                .is_some_and(|desc| !desc.is_accessor)
+        });
+        if !cacheable_own_data {
+            return self.get_property(base, key);
+        }
+        if let Some(cached) = self.ic_get(idx.0, key) {
+            return Ok(cached);
+        }
+        let value = self.get_property(base, key)?;
+        self.ic_put(idx.0, key.to_string(), value.clone());
+        Ok(value)
     }
 
     /// Spec PutValue (6.2.4.3): if `v` is a Reference, store `value` into

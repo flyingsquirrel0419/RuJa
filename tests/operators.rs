@@ -41,6 +41,129 @@ fn nullish_member_assignment_throws_in_sloppy_mode() {
     );
 }
 
+#[test]
+fn member_read_uses_property_reference() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var symbol = Symbol("member-read");
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "x";
+              }
+            };
+            var target = { x: 3 };
+            target[symbol] = 7;
+            var proxy = new Proxy(target, {
+              get: function(t, k, r) {
+                log.push("get:" + (k === symbol ? "symbol" : k) + ":" + (r === proxy));
+                return Reflect.get(t, k, r);
+              }
+            });
+            [proxy.x, proxy[key], proxy[symbol], proxy?.x, log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from(
+            "3;3;7;3;get:x:true|key|get:x:true|get:symbol:true|get:x:true"
+        ))
+    );
+}
+
+#[test]
+fn member_read_null_base_precedes_property_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = {
+              toString: function() {
+                log.push("coerce");
+                return "x";
+              }
+            };
+            try {
+              null[(log.push("evaluate"), key)];
+            } catch (e) {
+              log.push(e.name);
+            }
+            null?.[(log.push("optional"), key)];
+            log.join("|");
+            "#),
+        Value::String(Arc::from("evaluate|TypeError"))
+    );
+}
+
+#[test]
+fn proxy_get_without_trap_preserves_receiver() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("proxy-get");
+            var target = {
+              get value() { return this; },
+              get [symbol]() { return this; }
+            };
+            var inner = new Proxy(target, {});
+            var outer = new Proxy(inner, {});
+            var receiver = {};
+            [
+              inner.value === inner,
+              inner[symbol] === inner,
+              outer.value === outer,
+              outer[symbol] === outer,
+              Reflect.get(outer, "value", receiver) === receiver,
+              Reflect.get(outer, symbol, receiver) === receiver
+            ].join(":");
+            "#),
+        Value::String(Arc::from("true:true:true:true:true:true"))
+    );
+}
+
+#[test]
+fn proxy_get_validates_nested_and_string_exotic_invariants() {
+    assert_eq!(
+        run(r#"
+            var fixed = {};
+            Object.defineProperty(fixed, "x", {
+              value: 1,
+              writable: false,
+              configurable: false
+            });
+            var nestedError;
+            try {
+              new Proxy(new Proxy(fixed, {}), { get: function() { return 2; } }).x;
+            } catch (e) {
+              nestedError = e.name;
+            }
+            var hiddenError;
+            try {
+              var hiding = new Proxy(fixed, {
+                getOwnPropertyDescriptor: function() { return undefined; }
+              });
+              new Proxy(hiding, { get: function() { return 2; } }).x;
+            } catch (e) {
+              hiddenError = e.name;
+            }
+
+            var valid = new Proxy(new String("abc"), {
+              get: function(target, key, receiver) {
+                if (key === "0") return "a";
+                return Reflect.get(target, key, receiver);
+              }
+            });
+            var stringError;
+            try {
+              new Proxy(new String("abc"), {
+                get: function() { return undefined; }
+              })[0];
+            } catch (e) {
+              stringError = e.name;
+            }
+            var forwarded = new Proxy(new String("abc"), {});
+            [nestedError, hiddenError, valid[0], stringError, forwarded["01"]].join(":");
+            "#),
+        Value::String(Arc::from("TypeError:TypeError:a:TypeError:"))
+    );
+}
+
 // --- || short-circuit ---
 
 #[test]

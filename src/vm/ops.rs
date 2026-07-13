@@ -1159,7 +1159,16 @@ impl Vm {
                 Op::MakePropertyRef => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = self.coerce_property_key_record(&key)?;
+                    if base.is_nullish() {
+                        return Err(Error::type_err(format!(
+                            "Cannot read properties of {}",
+                            base.type_of()
+                        )));
+                    }
+                    let pin_count = self.pin_many(&[base.clone(), key.clone()]);
+                    let name_result = self.coerce_property_key_record(&key);
+                    self.unpin_many(pin_count);
+                    let name = name_result?;
                     let strict = self.current_strict();
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
@@ -1175,7 +1184,10 @@ impl Vm {
                     if base.is_nullish() {
                         return Err(Error::type_err("Cannot set property of primitive"));
                     }
-                    let name = self.coerce_property_key_record(&key)?;
+                    let pin_count = self.pin_many(&[base.clone(), key.clone(), value.clone()]);
+                    let name_result = self.coerce_property_key_record(&key);
+                    self.unpin_many(pin_count);
+                    let name = name_result?;
                     let strict = self.current_strict();
                     self.stack.push(value);
                     self.stack
