@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- Every `super` property write path now uses the same specification Reference
+  machinery as reads and calls: simple and destructuring assignment,
+  compound/logical assignment, prefix/postfix update, and delete. Computed
+  super References retain an uncoerced referenced name so simple assignment
+  evaluates its RHS before `ToPropertyKey`, null bases reject before coercion,
+  and delete throws `ReferenceError` without coercion. Read-modify-write forms
+  use `ResolvePropertyRef` to coerce exactly once before one `GetValue` and one
+  `PutValue`; writes use the Reference's distinct actual-this receiver.
+  Deferred names are traced through stack, environment, and temporary pin
+  roots. The obsolete `GetSuperProp` and `SetSuperProp` opcodes are removed.
+  Focused Test262 is **1299 pass / 0 fail / 23 skip**, and the supported subset
+  remains **12232 pass / 0 fail / 8207 skip** at commit `e0bd2a4`. CI
+  `29257232329` and full matrix `29257232453` succeeded; all 30 result artifacts
+  are byte-for-byte identical to the preceding confirmed matrix.
 - `super` property reads, direct/spread/optional calls, and tagged templates
   now create specification Reference records with distinct `[[Base]]` and
   `[[ThisValue]]` components. Computed keys run before the dynamic super-base

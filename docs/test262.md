@@ -450,6 +450,44 @@ total / 35150 pass-or-fail executed** aggregate with no shard movement. The
 remaining super stores, compound/logical assignments, updates, and delete stay
 on their bounded legacy paths; they are the next Reference migration unit.
 
+## Super write Reference routing
+
+Simple and destructuring assignment, numeric compound assignment, logical
+assignment, prefix/postfix update, and delete now all evaluate a super property
+as a Reference with distinct base and actual-this components. `PutValue` uses
+the latter as the `[[Set]]` receiver, so inherited data properties create or
+update the borrowed/inherited receiver rather than the method's HomeObject.
+Primitive actual-this values remain unboxed when invoking inherited setters.
+
+Computed super References initially keep an `UncoercedProperty` referenced
+name. This matches the current specification ordering: the key expression runs,
+the super base is captured, and simple assignment evaluates its RHS before
+`PutValue` performs `ToObject(base)` and then `ToPropertyKey(name)`. A null base
+therefore evaluates the RHS but rejects before key coercion. Delete evaluates
+the raw Reference and throws `ReferenceError` without coercion. Compound,
+logical, and update forms insert `ResolvePropertyRef` before duplicating the
+Reference, ensuring key coercion happens exactly once before `GetValue` and the
+same resolved Reference reaches `PutValue`.
+
+Deferred names participate in ordinary heap tracing, VM stack rooting, explicit
+pinning, and environment tracing for destructuring temporaries. Regressions
+cover captured-base/RHS/coercion order, null bases, computed and Symbol keys,
+simple/compound/logical/prefix/postfix/destructuring forms, short circuiting,
+primitive and inherited receivers, and forced GC during RHS and source getter
+evaluation. `GetSuperProp` and `SetSuperProp` no longer exist in bytecode,
+compiler, or VM code.
+
+At commit `e0bd2a4`, Rust all-targets, clippy with denied warnings, fmt/diff,
+ES2015 **124/124**, classes **60/60**, operators **114/114**, focused Test262
+**1299 pass / 0 fail / 23 skip / 1322 total**, and the supported subset **12232
+pass / 0 fail / 8207 skip / 20439 total** pass. Independent review found no
+remaining super write/update/delete correctness issue; the next Reference
+boundary is the remaining ordinary non-super member fallback paths. CI
+`29257232329` and full matrix `29257232453` succeeded. All 30 full-matrix
+artifacts are byte-for-byte identical to the preceding confirmed matrix, so the
+normalized aggregate remains **28536 pass / 6614 fail / 13155 skip / 12 timeout
+/ 0 error / 48317 total / 35150 pass-or-fail executed** with no shard movement.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
