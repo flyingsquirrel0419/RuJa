@@ -1416,6 +1416,38 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_private_brand_realm_admission_is_exact(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_names = (
+                "private-getter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
+                "private-getter-brand-check-multiple-evaluations-of-class-realm.js",
+                "private-method-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
+                "private-method-brand-check-multiple-evaluations-of-class-realm.js",
+                "private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
+                "private-setter-brand-check-multiple-evaluations-of-class-realm.js",
+            )
+            static_case = root / (
+                "test/language/expressions/class/"
+                "private-static-method-brand-check-multiple-evaluations-of-class-realm.js"
+            )
+            unrelated = root / "test/language/expressions/class/private-method.js"
+            meta = {"flags": [], "features": ["class-methods-private", "cross-realm"]}
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for admitted_name in admitted_names:
+                        admitted = root / "test/language/expressions/class" / admitted_name
+                        self.assertTrue(tool.class_private_brand_realm_path(admitted))
+                        self.assertFalse(tool.should_skip(meta, admitted))
+                    self.assertFalse(tool.class_private_brand_realm_path(static_case))
+                    self.assertTrue(tool.should_skip(meta, static_case))
+                    self.assertFalse(tool.class_private_brand_realm_path(unrelated))
+                    self.assertTrue(tool.should_skip(meta, unrelated))
+                finally:
+                    tool.TEST262 = original_root
+
     def test_slice_features_are_admitted_only_on_its_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

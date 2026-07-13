@@ -52,6 +52,15 @@ impl Error {
             line: new_line,
         })
     }
+    pub fn with_thrown_value(&self, thrown_value: Value) -> Arc<Error> {
+        Arc::new(Error {
+            kind: self.kind.clone(),
+            message: self.message.clone(),
+            stack: self.stack.clone(),
+            thrown_value: Some(thrown_value),
+            line: self.line,
+        })
+    }
     pub fn syntax(msg: impl Into<String>) -> Arc<Error> {
         Arc::new(Error {
             kind: ErrorKind::Syntax,

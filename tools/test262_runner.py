@@ -1081,6 +1081,19 @@ REFERENCE_PRIVATE_EXPRESSION_FEATURES = {
     "class-fields-private",
 }
 
+CLASS_PRIVATE_BRAND_REALM_FILES = {
+    "language/expressions/class/private-getter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
+    "language/expressions/class/private-getter-brand-check-multiple-evaluations-of-class-realm.js",
+    "language/expressions/class/private-method-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
+    "language/expressions/class/private-method-brand-check-multiple-evaluations-of-class-realm.js",
+    "language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js",
+    "language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm.js",
+}
+
+CLASS_PRIVATE_BRAND_REALM_FEATURES = {
+    "class-methods-private",
+}
+
 CLASS_ELEMENTS_PREFIXES = (
     "language/expressions/class/elements/",
     "language/statements/class/elements/",
@@ -1737,6 +1750,13 @@ def reference_private_expression_path(path):
     rel_text = rel.as_posix()
     return rel_text.startswith(REFERENCE_PRIVATE_EXPRESSION_PREFIXES)
 
+def class_private_brand_realm_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in CLASS_PRIVATE_BRAND_REALM_FILES
+
 def class_elements_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2111,6 +2131,8 @@ def should_skip(meta, path=None):
         feats.difference_update(ASSIGNMENT_EXPRESSION_FEATURES)
     if path is not None and reference_private_expression_path(path):
         feats.difference_update(REFERENCE_PRIVATE_EXPRESSION_FEATURES)
+    if path is not None and class_private_brand_realm_path(path):
+        feats.difference_update(CLASS_PRIVATE_BRAND_REALM_FEATURES)
     if path is not None and class_elements_path(path):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
     if path is not None and optional_chaining_path(path):

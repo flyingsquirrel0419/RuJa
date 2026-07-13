@@ -41,7 +41,9 @@ impl Vm {
         frame.module_evaluation = true;
         self.frames.push(frame);
         let target_depth = self.frames.len() - 1;
-        let result = self.interpret_to_depth(target_depth);
+        let result = self
+            .interpret_to_depth(target_depth)
+            .map_err(|error| self.materialize_current_interpreted_error(error));
         let suspended = self
             .frames
             .get(target_depth)
@@ -304,7 +306,9 @@ impl Vm {
         ]);
         let target_depth =
             self.push_async_function_frame(callee, fdef, env, this_val, args, new_target);
-        let result = self.interpret_to_depth(target_depth);
+        let result = self
+            .interpret_to_depth(target_depth)
+            .map_err(|error| self.materialize_current_interpreted_error(error));
         let suspended = self
             .frames
             .get(target_depth)
@@ -402,7 +406,9 @@ impl Vm {
         }
         self.frames.push(frame);
         let target_depth = self.frames.len() - 1;
-        let run_result = self.interpret_to_depth(target_depth);
+        let run_result = self
+            .interpret_to_depth(target_depth)
+            .map_err(|error| self.materialize_current_interpreted_error(error));
         let suspended = self
             .frames
             .get(target_depth)

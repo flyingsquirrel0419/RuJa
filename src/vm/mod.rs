@@ -1335,7 +1335,9 @@ impl Vm {
         }
         // Run only this function's frame. interpret returns when its frame pops.
         let target_depth = self.frames.len() - 1;
-        let result = self.interpret_to_depth(target_depth);
+        let result = self
+            .interpret_to_depth(target_depth)
+            .map_err(|error| self.materialize_current_interpreted_error(error));
         // On error, the function frame is still on the stack; pop it so the
         // caller's catch handler can be found by the enclosing interpret_catch.
         if result.is_err() {
@@ -1392,7 +1394,9 @@ impl Vm {
         }
 
         let target_depth = self.frames.len() - 1;
-        let result = self.interpret_to_depth_until_ip(target_depth, fdef.chunk.body_start_ip);
+        let result = self
+            .interpret_to_depth_until_ip(target_depth, fdef.chunk.body_start_ip)
+            .map_err(|error| self.materialize_current_interpreted_error(error));
         if let Err(err) = result {
             if self.frames.len() > target_depth {
                 self.frames.truncate(target_depth);
@@ -1672,7 +1676,9 @@ impl Vm {
             }
         }
 
-        let result = self.interpret_to_depth(target_depth);
+        let result = self
+            .interpret_to_depth(target_depth)
+            .map_err(|error| self.materialize_current_interpreted_error(error));
 
         // Clear the resume value on the frame so a subsequent resume (or a
         // GC pass between resumes) does not observe a stale value.
@@ -1791,6 +1797,11 @@ impl Vm {
     /// Build a catchable `Error` object for a native (non-thrown) error, so
     /// `try/catch` receives a real object with `message` and `name`.
     pub(crate) fn make_error_value(&mut self, e: &Error) -> error::Result<Value> {
+        let error_env = self.current_realm_global_env();
+        self.make_error_value_in_realm(e, error_env)
+    }
+
+    fn make_error_value_in_realm(&mut self, e: &Error, error_env: GcIdx) -> error::Result<Value> {
         use crate::value::{ObjectData, PropertyDescriptor};
         let ctor_name = match e.kind {
             crate::error::ErrorKind::Type => "TypeError",
@@ -1801,8 +1812,6 @@ impl Vm {
             crate::error::ErrorKind::Uri => "URIError",
             _ => "Error",
         };
-        // Native errors come from the active function's realm.
-        let error_env = self.native_callee_closure().unwrap_or(self.global);
         let proto = self
             .realm_error_prototypes
             .get(&(error_env.0, Arc::from(ctor_name)))
@@ -1878,8 +1887,8 @@ impl Vm {
                     let thrown = match e.thrown_value.clone() {
                         Some(v) => v,
                         None => {
-                            // Synthesize an Error object for native errors.
-                            self.make_error_value(&e)?
+                            let error_env = self.current_interpreted_realm_global_env();
+                            self.make_error_value_in_realm(&e, error_env)?
                         }
                     };
 
@@ -1988,6 +1997,26 @@ impl Vm {
                 .unwrap_or(self.global)
         });
         crate::environment::global_env_root(&self.heap, env)
+    }
+
+    fn current_interpreted_realm_global_env(&self) -> GcIdx {
+        let env = self
+            .frames
+            .last()
+            .map(|frame| frame.env)
+            .unwrap_or(self.global);
+        crate::environment::global_env_root(&self.heap, env)
+    }
+
+    fn materialize_current_interpreted_error(&mut self, error: Arc<Error>) -> Arc<Error> {
+        if !error.catchable() || error.thrown_value.is_some() {
+            return error;
+        }
+        let error_env = self.current_interpreted_realm_global_env();
+        match self.make_error_value_in_realm(&error, error_env) {
+            Ok(thrown) => error.with_thrown_value(thrown),
+            Err(materialization_error) => materialization_error,
+        }
     }
 
     pub(crate) fn realm_global_for_env(&self, env: GcIdx) -> Value {

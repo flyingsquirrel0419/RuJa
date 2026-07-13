@@ -1130,6 +1130,167 @@ fn private_brand_checks_reject_missing_slots() {
 }
 
 #[test]
+fn interpreted_runtime_errors_use_the_callee_realm() {
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var classBody = `class {
+              #m() { return 1; }
+              get #g() { return 2; }
+              set #s(value) {}
+              method(object) { return object.#m(); }
+              getter(object) { return object.#g; }
+              setter(object) { object.#s = 3; }
+            }`;
+            var EvalClass = other.eval("(" + classBody + ")");
+            var FunctionClass = (new other.Function("return " + classBody))();
+
+            function hasForeignBrandErrors(Class) {
+              var instance = new Class();
+              var checks = [
+                function() { instance.method({}); },
+                function() { instance.getter({}); },
+                function() { instance.setter({}); }
+              ];
+              return checks.every(function(check) {
+                try {
+                  check();
+                  return false;
+                } catch (error) {
+                  return error instanceof other.TypeError &&
+                    !(error instanceof TypeError);
+                }
+              });
+            }
+
+            var readNull = other.eval("(function(object) { return object.x; })");
+            var ordinaryRealm = false;
+            try { readNull(null); }
+            catch (error) {
+              ordinaryRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            var marker = other.eval("({ marker: true })");
+            var throwMarker = other.eval("(function(value) { throw value; })");
+            var explicitThrow = false;
+            try { throwMarker(marker); }
+            catch (error) { explicitThrow = error === marker; }
+
+            var catchInsideNativeCallback = other.eval(`(function(MainTypeError) {
+              try { null.x; }
+              catch (error) {
+                return error instanceof TypeError &&
+                  !(error instanceof MainTypeError);
+              }
+            })`);
+            var nestedNativeCallback = [0].every(function() {
+              return catchInsideNativeCallback(TypeError);
+            });
+
+            var foreignGenerator = other.eval("(function*() { null.x; })")();
+            var mainGeneratorNext = Object.getPrototypeOf(function*() {}()).next;
+            var generatorRealm = false;
+            try { mainGeneratorNext.call(foreignGenerator); }
+            catch (error) {
+              generatorRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            var ForeignGenerator = other.eval(
+              "(function*(value = null.x) {})"
+            );
+            var generatorParameterRealm = false;
+            try { ForeignGenerator(); }
+            catch (error) {
+              generatorParameterRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            }
+
+            hasForeignBrandErrors(EvalClass) &&
+              hasForeignBrandErrors(FunctionClass) &&
+              ordinaryRealm && explicitThrow && nestedNativeCallback &&
+              generatorRealm && generatorParameterRealm;
+            "#),
+        Value::Bool(true)
+    );
+
+    let mut async_vm = Vm::new().expect("failed to initialize async Realm VM");
+    async_vm
+        .run(
+            r#"
+            var other = $262.createRealm().global;
+            var asyncFail = other.eval("(async function() { null.x; })");
+            var asyncAfterAwait = other.eval(
+              "(async function() { await 0; null.x; })"
+            );
+            var asyncGenerator = other.eval(
+              "(async function*() { await 0; null.x; })"
+            )();
+            var mainAsyncGeneratorNext = Object.getPrototypeOf(
+              (async function*() {})()
+            ).next;
+            var asyncRealm = false;
+            var asyncAfterAwaitRealm = false;
+            var asyncGeneratorRealm = false;
+            asyncFail().catch(function(error) {
+              asyncRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            });
+            asyncAfterAwait().catch(function(error) {
+              asyncAfterAwaitRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            });
+            mainAsyncGeneratorNext.call(asyncGenerator).catch(function(error) {
+              asyncGeneratorRealm = error instanceof other.TypeError &&
+                !(error instanceof TypeError);
+            });
+            "#,
+        )
+        .expect("foreign async rejection should run");
+    assert_eq!(
+        async_vm
+            .run("asyncRealm && asyncAfterAwaitRealm && asyncGeneratorRealm;")
+            .expect("foreign async rejection handler should settle"),
+        Value::Bool(true)
+    );
+
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            var Class = other.eval(`(class {
+              #x = 1;
+              read(object, collect) {
+                collect();
+                return object.#x;
+              }
+            })`);
+            var instance = new Class();
+            try {
+              instance.read({}, forceGc);
+              false;
+            } catch (error) {
+              error instanceof other.TypeError && !(error instanceof TypeError);
+            }
+            "#
+        )
+        .expect("foreign Realm error should survive frame-boundary GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn private_names_are_unique_per_class_evaluation() {
     assert_eq!(
         run(r#"
