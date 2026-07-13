@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.8% of all matrix files; 81.0% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.9% of all matrix files; 81.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -133,6 +133,28 @@ error / 48317 total / 35099 pass-or-fail executed**, or **58.8%** of all matrix
 files and **81.0%** of executed files. Relative to the preceding confirmed
 matrix this is **+26 pass / -14 fail / -12 skip**; the extra pass beyond the 25
 newly admitted JSON.parse files comes from the shared property-invariant fixes.
+
+## JSON.stringify serialization admission
+
+`tools/test262_json_stringify_admission.txt` freezes all **66** files under
+`built-ins/JSON/stringify`. Exact-path admission lifts Proxy, Reflect, Symbol,
+and cross-Realm metadata only for this audited directory. The implementation
+uses the specification's holder-based `SerializeJSONProperty` order, ordinary
+Get and own-key operations, post-transformation active-stack cycle checks, and
+fallible user callbacks. Replacer arrays are deduplicated in observed order;
+boxed values and indentation use normal coercion; JSON string quoting operates
+on UTF-16 code units and escapes lone surrogates.
+
+At commit `ac708fd`, local verification on test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1` reports **66 pass / 0 fail / 0
+skip** for the frozen stringify set. The supported subset remains **12232 pass
+/ 0 fail / 8207 skip / 20439 total**, and the Python tooling suite is **62/62**.
+CI `29213833296` and `test262-full` `29213833314` both pass. The 30 downloaded
+artifacts aggregate to **28468 pass / 6646 fail / 13191 skip / 12 timeout / 0
+error / 48317 total / 35114 pass-or-fail executed**, or **58.9%** of all matrix
+files and **81.1%** of executed files. The exact stringify slice contributes
+**+45 pass / -30 fail / -15 skip**; one unrelated built-ins result varied from
+the preceding run, so the observed aggregate delta is **+44 / -29 / -15**.
 
 ## Full-suite baseline
 

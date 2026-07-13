@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- `JSON.stringify` now follows a holder-based, fallible
+  `SerializeJSONProperty` pipeline. Ordinary property access, `toJSON(key)`,
+  replacer `this`, abrupt completion, transformed-value circularity, callable
+  Proxies, wrapper coercion, replacer PropertyList ordering, `space` coercion,
+  and UTF-16 JSON quoting are observable in specification order. Callback
+  replacements remain GC-rooted throughout recursive serialization. The
+  frozen `built-ins/JSON/stringify` admission is **66/66**. CI `29213833296`
+  and `test262-full` `29213833314` pass for commit `ac708fd`; downloaded
+  artifacts aggregate to **28468 pass / 6646 fail / 13191 skip / 12 timeout /
+  0 error / 48317 total / 35114 pass-or-fail executed**. The exact stringify
+  slice moves **+45 pass / -30 fail / -15 skip**; one unrelated built-ins result
+  varied between full runs, making the aggregate delta **+44 / -29 / -15**.
 - `JSON.parse` now performs the specification's holder-based
   `InternalizeJSONProperty` walk in place. Reviver calls observe forward
   mutations, inherited properties, array-length snapshots, the root wrapper,
