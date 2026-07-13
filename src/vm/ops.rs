@@ -3048,8 +3048,11 @@ impl Vm {
 
     fn this_value_from_reference(&self, r#ref: &Value) -> Value {
         if let Value::Reference(record) = r#ref {
-            if let crate::value::ReferenceBase::ObjectEnvironment(base) = &record.base {
-                return *base.clone();
+            match &record.base {
+                crate::value::ReferenceBase::ObjectEnvironment(base)
+                | crate::value::ReferenceBase::Value(base) => return *base.clone(),
+                crate::value::ReferenceBase::Unresolvable
+                | crate::value::ReferenceBase::Environment(_) => {}
             }
         }
         Value::Undefined
@@ -3201,9 +3204,9 @@ impl Vm {
         Ok(())
     }
 
-    /// `Op::CallRef(arg_count)`: direct IdentifierReference call. The callee
-    /// value has already been resolved once; the retained Reference is used
-    /// only to derive the spec this-value for object environment records.
+    /// `Op::CallRef(arg_count)`: call a previously resolved Reference. The
+    /// retained Reference supplies the spec this-value without reading the
+    /// callee a second time.
     fn op_call_ref(&mut self, arg_count: usize) -> error::Result<()> {
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
@@ -3376,7 +3379,7 @@ impl Vm {
         Ok(())
     }
 
-    /// `Op::CallRefSpread`: spread form of direct IdentifierReference call.
+    /// `Op::CallRefSpread`: spread form of a Reference call.
     fn op_call_ref_spread(&mut self) -> error::Result<()> {
         let args_arr = self.stack.pop().unwrap_or(Value::Undefined);
         let callee = self.stack.pop().unwrap_or(Value::Undefined);

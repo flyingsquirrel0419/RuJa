@@ -200,10 +200,10 @@ pub enum Op {
     // Functions
     MakeFunction(usize), // function index in a function table
     Call(usize),         // arg count
-    CallRef(usize),      // arg count; stack [ref, callee, args...]
+    CallRef(usize),      // Reference call; stack [ref, callee, args...]
     CallMethod(usize),   // arg count (method call: this is on stack)
     CallSpread,          // callee + args-array on stack; spread array into call args
-    CallRefSpread,       // ref + callee + args-array on stack
+    CallRefSpread,       // Reference call; stack [ref, callee, args-array]
     /// Unqualified `eval(...)`: call directly only if the resolved callee is
     /// the current Realm's intrinsic eval function; otherwise call normally.
     /// Stack: [callee, args...].

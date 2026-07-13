@@ -116,6 +116,79 @@ fn member_read_keeps_mapped_arguments_live_after_failed_delete() {
 }
 
 #[test]
+fn non_optional_member_calls_use_property_references() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var symbol = Symbol("call");
+            var method = function(value) {
+              "use strict";
+              log.push(this === proxy ? "this" : "bad-this");
+              return value + 1;
+            };
+            var target = { run: method };
+            target[symbol] = method;
+            var proxy = new Proxy(target, {
+              get: function(t, key, receiver) {
+                log.push("get:" + (key === symbol ? "symbol" : key));
+                return Reflect.get(t, key, receiver);
+              }
+            });
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "run";
+              }
+            };
+            var direct = proxy[key](2);
+            var spread = proxy[symbol](...[3]);
+            [direct, spread, log.join("|")].join(";");
+            "#),
+        Value::String(Arc::from("3;4;key|get:run|this|get:symbol|this"))
+    );
+
+    assert_eq!(
+        run(r#"
+            String.prototype.capture = function(value) {
+              "use strict";
+              return typeof this + ":" + this + ":" + value;
+            };
+            "base".capture(...[7]);
+            "#),
+        Value::String(Arc::from("string:base:7"))
+    );
+}
+
+#[test]
+fn member_call_reference_roots_temporary_base_during_arguments() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            function makeBase() {
+              return {
+                marker: 9,
+                method: function() { return this.marker; }
+              };
+            }
+            makeBase().method(forceGc());
+            "#
+        )
+        .expect("member call should keep its temporary base alive"),
+        Value::Number(9.0)
+    );
+}
+
+#[test]
 fn proxy_get_without_trap_preserves_receiver() {
     assert_eq!(
         run(r#"

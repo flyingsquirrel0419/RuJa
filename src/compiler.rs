@@ -4234,7 +4234,14 @@ impl Compiler {
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
-                        self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                        let reference_call = !*m_opt && !*call_opt;
+                        if reference_call {
+                            self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk.emit(Op::GetValue, self.current_line);
+                        } else {
+                            self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                        }
                         let mut call_jend = 0usize;
                         if *call_opt {
                             // `a.b?.(args)` resolves the method before
@@ -4264,12 +4271,26 @@ impl Compiler {
                                     }
                                 }
                             }
-                            self.chunk.emit(Op::CallThisSpread, self.current_line);
+                            self.chunk.emit(
+                                if reference_call {
+                                    Op::CallRefSpread
+                                } else {
+                                    Op::CallThisSpread
+                                },
+                                self.current_line,
+                            );
                         } else {
                             for a in args {
                                 self.compile_expr(a)?;
                             }
-                            self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                            self.chunk.emit(
+                                if reference_call {
+                                    Op::CallRef(args.len())
+                                } else {
+                                    Op::CallThis(args.len())
+                                },
+                                self.current_line,
+                            );
                         }
                         if *call_opt {
                             let end = self.chunk.code.len();
