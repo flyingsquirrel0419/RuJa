@@ -7390,8 +7390,26 @@ mod tests {
 
     #[test]
     fn parse_optional_chain_rejects_tagged_template_tail() {
-        for src in ["a?.b`template`;", "a?.b\n`template`;", "a?.`template`;"] {
+        for src in [
+            "a?.b`template`;",
+            "a?.b\n`template`;",
+            "a?.[b]`template`;",
+            "a?.()`template`;",
+            "a?.b.c`template`;",
+            "a?.`template`;",
+            "class C { #tag() {} m() { this?.#tag`template`; } }",
+        ] {
             assert!(Parser::parse(src).is_err(), "{src}");
+        }
+
+        for src in [
+            "(a?.b)`template`;",
+            "(a?.[b])`template`;",
+            "(a?.())`template`;",
+            "(a?.b.c)`template`;",
+            "class C { #tag() {} m() { (this?.#tag)`template`; } }",
+        ] {
+            assert!(Parser::parse(src).is_ok(), "{src}");
         }
     }
 

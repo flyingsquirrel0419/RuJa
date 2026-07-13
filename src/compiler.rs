@@ -88,6 +88,7 @@ enum AssignmentIteratorCloseMode {
 #[derive(Clone, Copy)]
 enum TaggedCallKind {
     Reference,
+    ExplicitThis,
     Unbound,
 }
 
@@ -4435,6 +4436,13 @@ impl Compiler {
                         self.chunk.emit(Op::GetValue, self.current_line);
                         TaggedCallKind::Reference
                     }
+                    Expr::OptionalChain(inner) => {
+                        if self.compile_optional_chain_call_target(inner)? {
+                            TaggedCallKind::Reference
+                        } else {
+                            TaggedCallKind::ExplicitThis
+                        }
+                    }
                     _ => {
                         self.compile_expr(tag)?;
                         TaggedCallKind::Unbound
@@ -4461,6 +4469,9 @@ impl Compiler {
                     TaggedCallKind::Reference => self
                         .chunk
                         .emit(Op::CallRef(1 + exprs.len()), self.current_line),
+                    TaggedCallKind::ExplicitThis => self
+                        .chunk
+                        .emit(Op::CallThis(1 + exprs.len()), self.current_line),
                     TaggedCallKind::Unbound => self
                         .chunk
                         .emit(Op::Call(1 + exprs.len()), self.current_line),

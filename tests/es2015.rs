@@ -767,6 +767,9 @@ fn tagged_template_reference_roots_temporary_base_during_interpolation() {
             function makeBase() {
               return {
                 marker: 17,
+                make() {
+                  return function() { "use strict"; return this === undefined; };
+                },
                 get tag() {
                   order.push("get");
                   return function() {
@@ -776,12 +779,97 @@ fn tagged_template_reference_roots_temporary_base_during_interpolation() {
                 }
               };
             }
-            var result = makeBase().tag`value:${(order.push("expression"), forceGc())}`;
-            result + ":" + order.join("|");
+            class PrivateBase {
+              constructor() { this.marker = 23; }
+              #tag() { return this.marker; }
+              static call(make) {
+                return (make()?.#tag)`private:${(order.push("private-expression"), forceGc())}`;
+              }
+            }
+            var computed = (makeBase()?.["tag"])
+              `value:${(order.push("computed-expression"), forceGc())}`;
+            var privateResult = PrivateBase.call(function() { return new PrivateBase(); });
+            var callResult = (makeBase()?.make())
+              `call:${(order.push("call-expression"), forceGc())}`;
+            [computed, privateResult, callResult, order.join("|")].join(":");
             "#
         )
         .expect("tagged template should keep its temporary base alive"),
-        Value::String(Arc::from("17:get|expression|call"))
+        Value::String(Arc::from(
+            "17:23:true:get|computed-expression|call|private-expression|call-expression"
+        ))
+    );
+}
+
+#[test]
+fn parenthesized_optional_chain_tagged_templates_preserve_references() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var holder = {
+              tag: function() { "use strict"; return this === holder; },
+              nested: {
+                tag: function() { "use strict"; return this === holder.nested; }
+              },
+              make: function() {
+                return function() { "use strict"; return this === undefined; };
+              }
+            };
+            var key = "tag";
+            class C {
+              #tag() { return this; }
+              call() { return (this?.#tag)`private` === this; }
+            }
+            var nullishError;
+            try { (null?.tag)`nullish:${log.push("interpolation")}`; }
+            catch (error) { nullishError = error.name; }
+            var oldTag = holder.tag;
+            var snapshot = (holder?.tag)
+              `snapshot:${(holder.tag = function() { return false; }, 0)}`;
+            holder.tag = oldTag;
+            [
+              (holder?.tag)`member`,
+              (holder?.[key])`computed`,
+              (holder?.nested.tag)`nested`,
+              (holder?.make())`value`,
+              new C().call(),
+              snapshot,
+              nullishError,
+              log.join("|")
+            ].join(";");
+            "#),
+        Value::String(Arc::from(
+            "true;true;true;true;true;true;TypeError;interpolation"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var throwing = {
+              get tag() { log.push("getter"); throw "getter-error"; }
+            };
+            var nonCallable = { tag: 1 };
+            var called = false;
+            var holder = { tag() { called = true; } };
+            function boom() { log.push("interpolation-throw"); throw "boom"; }
+            var getterError;
+            var callableError;
+            var interpolationError;
+            try { (throwing?.tag)`x:${log.push("getter-interpolation")}`; }
+            catch (error) { getterError = error; }
+            try { (nonCallable?.tag)`x:${log.push("noncallable-interpolation")}`; }
+            catch (error) { callableError = error.name; }
+            try { (holder?.tag)`x:${boom()}`; }
+            catch (error) { interpolationError = error; }
+            [
+              getterError, callableError, interpolationError, called,
+              log.join("|")
+            ].join(";");
+            "#),
+        Value::String(Arc::from(
+            "getter-error;TypeError;boom;false;getter|noncallable-interpolation|interpolation-throw"
+        ))
     );
 }
 
