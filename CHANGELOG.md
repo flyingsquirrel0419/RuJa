@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- Private prefix/postfix updates and compound/logical assignments now retain a
+  single private Reference through `GetValue`, coercion or RHS evaluation, and
+  `PutValue`. This unifies their base, brand, accessor, mutation, error-Realm,
+  and GC semantics with other assignment targets and removes the duplicate
+  `GetPrivate`/`SetPrivate` bytecodes. Regressions cover all eight Number/BigInt
+  update forms, coercion and RHS mutation, short-circuiting, readonly and
+  arithmetic errors, wrong brands, foreign Realms, and forced GC. Related
+  Test262 is **532/532**, class Test262 is **1672 pass / 0 fail / 2387 skip**,
+  and the supported subset remains **12238 pass / 0 fail / 8201 skip** at
+  commit `17de0d9`. CI `29285326599` and full matrix `29285326527` succeeded;
+  all 30 result artifacts exactly match the preceding matrix.
 - Ordinary, optional, grouped, and spread private calls now retain one private
   Reference through `GetValue`, argument evaluation, and `CallRef`. Private
   brand checks and accessor getters therefore run before arguments, the callee

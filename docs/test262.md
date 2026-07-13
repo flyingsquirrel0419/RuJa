@@ -690,6 +690,35 @@ matrix `29278945569`, retaining the normalized **28542 pass / 6614 fail / 13149
 skip / 12 timeout / 0 error / 48317 total / 35156 pass-or-fail executed**
 aggregate.
 
+## Private read-modify-write Reference routing
+
+Private prefix/postfix updates and compound and logical assignments now create
+one private Reference, resolve its current value with `GetValue`, retain that
+same Reference across numeric coercion or RHS evaluation, and store with
+`PutValue`. The previous `GetPrivate` and `SetPrivate` compiler emissions,
+bytecodes, and VM handlers are removed. Private base evaluation, name identity,
+brand checks, accessors, assignment results, and rooting now use the same
+Reference machinery as ordinary identifier, member, and `super` targets.
+
+Local regressions cover all prefix/postfix increment/decrement combinations for
+Number and BigInt; accessor getter, coercion, RHS, and setter ordering; coercion
+and RHS mutation of the same field; throwing conversions; readonly accessors
+and methods; mixed numeric and negative-BigInt-exponent errors; all logical
+assignment and short-circuit branches; wrong brands before RHS; foreign-Realm
+errors; and forced GC during update, compound, logical, getter, RHS, coercion,
+and setter work. Independent review found no correctness defect, and each of
+its prioritized test gaps was added before final validation.
+
+At commit `17de0d9`, Rust all-targets, release build, clippy with denied
+warnings, fmt/diff, and all **72** class regressions pass. Pinned compound and
+logical assignment Test262 is **532/532**, class Test262 is **1672 pass / 0
+fail / 2387 skip / 4059 total**, and the supported subset remains **12238 pass
+/ 0 fail / 8201 skip / 20439 total**. CI `29285326599` and full matrix
+`29285326527` succeeded. All 30 downloaded result artifacts are byte-for-byte
+identical to matrix `29282907778`, retaining the normalized **28542 pass / 6614
+fail / 13149 skip / 12 timeout / 0 error / 48317 total / 35156 pass-or-fail
+executed** aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
