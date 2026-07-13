@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.1% of all matrix files; 81.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12238 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -606,6 +606,33 @@ fail / 60 skip / 0 timeout / 534 total**. CI `29269378405` and full matrix
 byte-for-byte identical to the preceding confirmed matrix, so the normalized
 aggregate remains **28536 pass / 6614 fail / 13155 skip / 12 timeout / 0 error
 / 48317 total / 35150 pass-or-fail executed** with no shard movement.
+
+## Interpreted runtime Error Realms
+
+Catchable Rust runtime errors raised by interpreted code are now converted to
+JavaScript Error objects while the responsible frame is still active. The VM
+uses that frame's global environment for the Error prototype, independently of
+any enclosing native callee. Native functions continue to use their own Realm,
+and errors that already carry an explicit thrown value are never recreated.
+
+The same frame-boundary materialization is applied to ordinary functions,
+generator parameter prologues and resumes, async functions before and after
+`await`, async generators, and async module evaluation. Regressions cover a
+foreign interpreted callback catching inside `Array.prototype.every`, borrowed
+main-Realm generator methods, generator parameter initialization, async and
+async-generator rejection after `await`, explicit throw identity, and forced
+GC. Independent review also reproduced the module top-level-await path and
+found no medium-or-higher correctness issue.
+
+Runner and analyzer admit exactly six cross-Realm private method/getter/setter
+brand-check files. At commit `c66fc1e`, tooling is **68/68**, classes are
+**61/61**, the pinned class path is **1672 pass / 0 fail / 2387 skip / 4059
+total**, and the pinned supported subset is **12238 pass / 0 fail / 8201 skip /
+20439 total**. CI `29273287748` and full matrix `29273287842` succeeded. Of 30
+downloaded result artifacts, only `language/expressions` changed, from
+**7585/0/3517** to **7591/0/3511**. The normalized aggregate is therefore
+**28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317 total /
+35156 pass-or-fail executed**.
 
 ## Full-suite baseline
 

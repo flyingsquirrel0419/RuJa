@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- Interpreted runtime errors are now materialized in the Realm of the frame
+  that raised them before that frame is caught, suspended, or removed. This
+  preserves foreign `Error` prototypes through nested native callbacks,
+  generator parameter/body execution, async and async-generator resumes,
+  module evaluation, and frame-boundary GC without changing native-function
+  Realm selection or explicit thrown-value identity. Six private method,
+  getter, and setter brand-check Realm tests are newly admitted. The pinned
+  supported subset is **12238 pass / 0 fail / 8201 skip** at commit `c66fc1e`.
+  CI `29273287748` and full matrix `29273287842` succeeded; exactly the
+  expressions shard moved by **+6 pass / -6 skip**, producing **28542 pass /
+  6614 fail / 13149 skip / 12 timeout / 0 error** overall.
 - Test262 runner and analyzer now give four known slow legacy RegExp literal
   stress files a bounded 20-second timeout instead of the ordinary 8 seconds.
   They take **3.8-6.3 seconds** locally and repeatedly timed out only under
