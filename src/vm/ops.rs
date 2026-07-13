@@ -1204,18 +1204,32 @@ impl Vm {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
                     let this_value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let pin_count = self.pin_many(&[this_value.clone(), base.clone(), key.clone()]);
-                    let name_result = self.coerce_property_key_record(&key);
-                    self.unpin_many(pin_count);
-                    let name = name_result?;
                     let strict = self.current_strict();
                     self.stack
                         .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),
-                            name: name.into(),
+                            name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
                             strict,
                             this_value: Some(Box::new(this_value)),
                         })));
+                }
+                Op::ResolvePropertyRef => {
+                    let reference = self.stack.pop().unwrap_or(Value::Undefined);
+                    let Value::Reference(mut record) = reference else {
+                        return Err(Error::internal("expected property reference"));
+                    };
+                    if matches!(&record.base, crate::value::ReferenceBase::Value(base) if base.is_nullish())
+                    {
+                        return Err(Error::type_err("Cannot access null super base"));
+                    }
+                    if let crate::value::ReferencedName::UncoercedProperty(name) = &record.name {
+                        let rooted = Value::Reference(record.clone());
+                        let pin_count = self.pin(&rooted);
+                        let name_result = self.coerce_property_key_record(name);
+                        self.unpin_many(pin_count);
+                        record.name = name_result?.into();
+                    }
+                    self.stack.push(Value::Reference(record));
                 }
                 Op::MakePropertyRefForSet => {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1898,18 +1912,6 @@ impl Vm {
                     };
                     self.stack.push(v);
                 }
-                Op::GetSuperProp => {
-                    // stack (bottom->top): [receiver, super_base, key]
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let super_base = self.stack.pop().unwrap_or(Value::Undefined);
-                    let receiver = self.stack.pop().unwrap_or(Value::Undefined);
-                    let pkey = match &key {
-                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
-                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
-                    };
-                    let value = self.get_property_key_rx(&super_base, &pkey, receiver, 0)?;
-                    self.stack.push(value);
-                }
                 Op::GetElem => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1927,38 +1929,6 @@ impl Vm {
                     // cached values are not returned on next GetProp.
                     if let Value::Object(idx) = &obj {
                         self.ic_invalidate(idx.0, &key_str);
-                    }
-                    self.stack.push(value);
-                }
-                Op::SetSuperProp => {
-                    // stack (bottom->top): [receiver, super_base, key, value]
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let super_base = self.stack.pop().unwrap_or(Value::Undefined);
-                    let receiver = self.stack.pop().unwrap_or(Value::Undefined);
-                    let (pkey, cache_key) = match &key {
-                        Value::Symbol(id) => (crate::value::PropertyKey::Symbol(*id), None),
-                        _ => {
-                            let key_str = self.to_property_key(&key)?;
-                            (
-                                crate::value::PropertyKey::from(key_str.as_str()),
-                                Some(key_str),
-                            )
-                        }
-                    };
-                    let success = self.try_set_property_key_with_receiver(
-                        &super_base,
-                        &pkey,
-                        value.clone(),
-                        &receiver,
-                    )?;
-                    if !success && self.current_strict() {
-                        return Err(Error::type_err("Cannot assign to super property"));
-                    }
-                    if let Value::Object(idx) = &receiver {
-                        if let Some(key_str) = cache_key {
-                            self.ic_invalidate(idx.0, &key_str);
-                        }
                     }
                     self.stack.push(value);
                 }

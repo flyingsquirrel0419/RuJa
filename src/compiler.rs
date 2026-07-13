@@ -101,6 +101,7 @@ enum RestExcludeKey {
 enum AssignTargetTemp {
     IdentRef(usize),
     PrivateRef(usize),
+    SuperRef(usize),
     Member {
         obj_idx: usize,
         key_idx: usize,
@@ -2502,7 +2503,7 @@ impl Compiler {
                 self.chunk.emit(Op::Pop, self.current_line);
             }
             Expr::Member { .. } => {
-                if let Some(member_target) = self.compile_assign_member_target_temps(target)? {
+                if let Some(member_target) = self.compile_assign_member_target_temp(target)? {
                     self.load_path(temp_idx, path);
                     self.store_current_value_to_member_target(member_target);
                 }
@@ -2589,13 +2590,10 @@ impl Compiler {
             }
             Expr::Member { .. } => {
                 let target = match target_temp {
-                    Some(AssignTargetTemp::Member {
-                        obj_idx,
-                        key_idx,
-                        computed,
-                    }) => (obj_idx, key_idx, computed),
+                    Some(target @ AssignTargetTemp::Member { .. })
+                    | Some(target @ AssignTargetTemp::SuperRef(_)) => target,
                     None => self
-                        .compile_assign_member_target_temps(target)?
+                        .compile_assign_member_target_temp(target)?
                         .ok_or_else(|| error::Error::internal("expected member target"))?,
                     Some(AssignTargetTemp::IdentRef(_) | AssignTargetTemp::PrivateRef(_)) => {
                         return Err(error::Error::internal("expected member target"));
@@ -2615,10 +2613,10 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_assign_member_target_temps(
+    fn compile_assign_member_target_temp(
         &mut self,
         target: &Expr,
-    ) -> error::Result<Option<(usize, usize, bool)>> {
+    ) -> error::Result<Option<AssignTargetTemp>> {
         let Expr::Member {
             object,
             property,
@@ -2628,6 +2626,12 @@ impl Compiler {
         else {
             return Ok(None);
         };
+        if matches!(object.as_ref(), Expr::Super) {
+            self.compile_super_property_reference(property, *computed)?;
+            let ref_idx = self.intern("#dtarget_super_ref");
+            self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
+            return Ok(Some(AssignTargetTemp::SuperRef(ref_idx)));
+        }
         self.compile_expr(object)?;
         let obj_idx = self.intern("#dtarget_obj");
         self.chunk.emit(Op::DeclareEnv(obj_idx), self.current_line);
@@ -2646,7 +2650,11 @@ impl Compiler {
         }
         let key_idx = self.intern("#dtarget_key");
         self.chunk.emit(Op::DeclareEnv(key_idx), self.current_line);
-        Ok(Some((obj_idx, key_idx, *computed)))
+        Ok(Some(AssignTargetTemp::Member {
+            obj_idx,
+            key_idx,
+            computed: *computed,
+        }))
     }
 
     fn compile_assign_target_temp(
@@ -2661,18 +2669,7 @@ impl Compiler {
                 self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
                 Ok(Some(AssignTargetTemp::IdentRef(ref_idx)))
             }
-            Expr::Member { .. } => {
-                let Some((obj_idx, key_idx, computed)) =
-                    self.compile_assign_member_target_temps(target)?
-                else {
-                    return Ok(None);
-                };
-                Ok(Some(AssignTargetTemp::Member {
-                    obj_idx,
-                    key_idx,
-                    computed,
-                }))
-            }
+            Expr::Member { .. } => self.compile_assign_member_target_temp(target),
             Expr::PrivateGet { object, name, .. } => {
                 self.compile_expr(object)?;
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
@@ -2686,67 +2683,32 @@ impl Compiler {
         }
     }
 
-    fn store_current_value_to_member_target(&mut self, target: (usize, usize, bool)) {
-        let (obj_idx, key_idx, _computed) = target;
-        self.chunk.emit(Op::LoadEnv(obj_idx), self.current_line);
-        self.chunk.emit(Op::Swap, self.current_line);
-        self.chunk.emit(Op::LoadEnv(key_idx), self.current_line);
-        self.chunk.emit(Op::Swap, self.current_line);
-        self.chunk
-            .emit(Op::MakePropertyRefForSet, self.current_line);
-        self.chunk.emit(Op::PutValue, self.current_line);
-        self.chunk.emit(Op::Pop, self.current_line);
+    fn store_current_value_to_member_target(&mut self, target: AssignTargetTemp) {
+        match target {
+            AssignTargetTemp::SuperRef(ref_idx) => {
+                self.chunk.emit(Op::LoadEnv(ref_idx), self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+            AssignTargetTemp::Member {
+                obj_idx, key_idx, ..
+            } => {
+                self.chunk.emit(Op::LoadEnv(obj_idx), self.current_line);
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk.emit(Op::LoadEnv(key_idx), self.current_line);
+                self.chunk.emit(Op::Swap, self.current_line);
+                self.chunk
+                    .emit(Op::MakePropertyRefForSet, self.current_line);
+                self.chunk.emit(Op::PutValue, self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
+            }
+            AssignTargetTemp::IdentRef(_) | AssignTargetTemp::PrivateRef(_) => unreachable!(),
+        }
     }
 
     fn store_current_value_to_identifier_target(&mut self, ref_idx: usize) {
         self.chunk.emit(Op::LoadEnv(ref_idx), self.current_line);
         self.chunk.emit(Op::PutValue, self.current_line);
-    }
-
-    fn compile_super_member_target_temps(
-        &mut self,
-        property: &Expr,
-        computed: bool,
-    ) -> error::Result<(usize, usize, usize)> {
-        let this_name = self.intern("this");
-        self.chunk.emit(Op::LoadEnv(this_name), self.current_line);
-        let receiver_idx = self.intern("#super_target_receiver");
-        self.chunk
-            .emit(Op::DeclareEnv(receiver_idx), self.current_line);
-
-        let super_name = self.intern("#super");
-        self.chunk.emit(Op::LoadEnv(super_name), self.current_line);
-        self.chunk.emit(Op::GetProto, self.current_line);
-        let super_idx = self.intern("#super_target_base");
-        self.chunk
-            .emit(Op::DeclareEnv(super_idx), self.current_line);
-
-        if computed {
-            self.compile_expr(property)?;
-            self.chunk.emit(Op::ToPropertyKey, self.current_line);
-        } else {
-            let key = if let Expr::String(s) = property {
-                s.to_string()
-            } else {
-                String::new()
-            };
-            let key_idx = self
-                .chunk
-                .add_constant(Value::String(Arc::from(key.as_str())));
-            self.chunk.emit(Op::Const(key_idx), self.current_line);
-        }
-        let key_idx = self.intern("#super_target_key");
-        self.chunk.emit(Op::DeclareEnv(key_idx), self.current_line);
-
-        Ok((receiver_idx, super_idx, key_idx))
-    }
-
-    fn load_super_member_target_temps(&mut self, target: (usize, usize, usize)) {
-        let (receiver_idx, super_idx, key_idx) = target;
-        self.chunk
-            .emit(Op::LoadEnv(receiver_idx), self.current_line);
-        self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
-        self.chunk.emit(Op::LoadEnv(key_idx), self.current_line);
     }
 
     fn emit_make_closure_capturing_super_from_stack(&mut self, func_idx: usize) {
@@ -3625,46 +3587,28 @@ impl Compiler {
                         ..
                     } => {
                         if matches!(object.as_ref(), Expr::Super) {
-                            let target =
-                                self.compile_super_member_target_temps(property, *computed)?;
-                            self.load_super_member_target_temps(target);
-                            self.chunk.emit(Op::GetSuperProp, self.current_line);
-                            self.chunk.emit(Op::ToNumeric, self.current_line);
-
-                            let old_idx = self.intern("#super_update_old");
-                            self.chunk.emit(Op::Dup, self.current_line);
-                            self.chunk.emit(Op::DeclareEnv(old_idx), self.current_line);
-                            self.chunk.emit(inc_op(), self.current_line);
-
-                            let new_idx = self.intern("#super_update_new");
-                            self.chunk.emit(Op::DeclareEnv(new_idx), self.current_line);
-                            self.load_super_member_target_temps(target);
-                            self.chunk.emit(Op::LoadEnv(new_idx), self.current_line);
-                            self.chunk.emit(Op::SetSuperProp, self.current_line);
-                            if !*prefix {
-                                self.chunk.emit(Op::Pop, self.current_line);
-                                self.chunk.emit(Op::LoadEnv(old_idx), self.current_line);
-                            }
-                            return Ok(());
-                        }
-                        self.compile_expr(object)?;
-                        if *computed {
-                            self.compile_expr(property)?;
-                            self.chunk.emit(Op::CheckNullBase, self.current_line);
-                            self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                            self.compile_super_property_reference(property, *computed)?;
+                            self.chunk.emit(Op::ResolvePropertyRef, self.current_line);
                         } else {
-                            self.chunk.emit(Op::CheckNullBase, self.current_line);
-                            let key = if let Expr::String(s) = property.as_ref() {
-                                s.to_string()
+                            self.compile_expr(object)?;
+                            if *computed {
+                                self.compile_expr(property)?;
+                                self.chunk.emit(Op::CheckNullBase, self.current_line);
+                                self.chunk.emit(Op::ToPropertyKey, self.current_line);
                             } else {
-                                String::new()
-                            };
-                            let key_idx = self
-                                .chunk
-                                .add_constant(Value::String(Arc::from(key.as_str())));
-                            self.chunk.emit(Op::Const(key_idx), self.current_line);
+                                self.chunk.emit(Op::CheckNullBase, self.current_line);
+                                let key = if let Expr::String(s) = property.as_ref() {
+                                    s.to_string()
+                                } else {
+                                    String::new()
+                                };
+                                let key_idx = self
+                                    .chunk
+                                    .add_constant(Value::String(Arc::from(key.as_str())));
+                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                            }
+                            self.chunk.emit(Op::MakePropertyRef, self.current_line);
                         }
-                        self.chunk.emit(Op::MakePropertyRef, self.current_line);
                         self.chunk.emit(Op::Dup, self.current_line);
                         self.chunk.emit(Op::GetValue, self.current_line);
                         self.chunk.emit(Op::ToNumeric, self.current_line);
@@ -3815,13 +3759,8 @@ impl Compiler {
                                 ..
                             } => {
                                 if matches!(object.as_ref(), Expr::Super) {
-                                    let this_idx = self.intern("this");
-                                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                                    self.compile_super_property_reference(property, *computed)?;
                                     self.chunk.emit(Op::Pop, self.current_line);
-                                    if *computed {
-                                        self.compile_expr(property)?;
-                                        self.chunk.emit(Op::Pop, self.current_line);
-                                    }
                                     let msg_idx = self.chunk.add_constant(Value::String(
                                         Arc::from("Cannot delete super property"),
                                     ));
@@ -5263,26 +5202,10 @@ impl Compiler {
                 ..
             } => {
                 if matches!(object.as_ref(), Expr::Super) {
-                    let this_idx = self.intern("this");
-                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
-                    let super_idx = self.intern("#super");
-                    self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
-                    self.chunk.emit(Op::GetProto, self.current_line);
-                    if *computed {
-                        self.compile_expr(property)?;
-                    } else {
-                        let key = if let Expr::String(s) = &**property {
-                            s.to_string()
-                        } else {
-                            String::new()
-                        };
-                        let key_idx = self
-                            .chunk
-                            .add_constant(Value::String(Arc::from(key.as_str())));
-                        self.chunk.emit(Op::Const(key_idx), self.current_line);
-                    }
+                    self.compile_super_property_reference(property, *computed)?;
                     self.compile_expr(value)?;
-                    self.chunk.emit(Op::SetSuperProp, self.current_line);
+                    self.chunk.emit(Op::Swap, self.current_line);
+                    self.chunk.emit(Op::PutValue, self.current_line);
                     return Ok(());
                 }
                 self.compile_expr(object)?;
@@ -5393,49 +5316,28 @@ impl Compiler {
                 ..
             } => {
                 if matches!(object.as_ref(), Expr::Super) {
-                    let target = self.compile_super_member_target_temps(property, *computed)?;
-                    self.load_super_member_target_temps(target);
-                    self.chunk.emit(Op::GetSuperProp, self.current_line);
-                    self.compile_expr(value)?;
-                    self.chunk.emit(bin, 0);
-
-                    let result_idx = self.intern("#super_compound_result");
-                    self.chunk
-                        .emit(Op::DeclareEnv(result_idx), self.current_line);
-                    self.load_super_member_target_temps(target);
-                    self.chunk.emit(Op::LoadEnv(result_idx), self.current_line);
-                    self.chunk.emit(Op::SetSuperProp, self.current_line);
-                    return Ok(());
-                }
-                // Evaluate obj+key ONCE, then Dup2 so the same pair is
-                // available for both the load and the store. This matches
-                // the spec requirement that ToPropertyKey is called only
-                // once for compound assignment.
-                self.compile_expr(object)?;
-                if *computed {
-                    self.compile_expr(property)?;
-                    // Per spec: ToObject(base) is called AFTER key evaluation
-                    // but BEFORE ToPropertyKey. So: evaluate base, evaluate
-                    // key, check base for null/undefined (ToObject), then
-                    // ToPropertyKey.
-                    self.chunk.emit(Op::CheckNullBase, self.current_line);
-                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                    self.compile_super_property_reference(property, *computed)?;
+                    self.chunk.emit(Op::ResolvePropertyRef, self.current_line);
                 } else {
-                    // Non-computed: check base for null/undefined after
-                    // evaluating the key constant.
-                    self.chunk.emit(Op::CheckNullBase, self.current_line);
-                    let key = if let Expr::String(s) = property.as_ref() {
-                        s.to_string()
+                    self.compile_expr(object)?;
+                    if *computed {
+                        self.compile_expr(property)?;
+                        self.chunk.emit(Op::CheckNullBase, self.current_line);
+                        self.chunk.emit(Op::ToPropertyKey, self.current_line);
                     } else {
-                        String::new()
-                    };
-                    let key_idx = self
-                        .chunk
-                        .add_constant(Value::String(Arc::from(key.as_str())));
-                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                        self.chunk.emit(Op::CheckNullBase, self.current_line);
+                        let key = if let Expr::String(s) = property.as_ref() {
+                            s.to_string()
+                        } else {
+                            String::new()
+                        };
+                        let key_idx = self
+                            .chunk
+                            .add_constant(Value::String(Arc::from(key.as_str())));
+                        self.chunk.emit(Op::Const(key_idx), self.current_line);
+                    }
+                    self.chunk.emit(Op::MakePropertyRef, self.current_line);
                 }
-                // stack: [obj, key]
-                self.chunk.emit(Op::MakePropertyRef, self.current_line);
                 // stack: [ref]
                 self.chunk.emit(Op::Dup, self.current_line);
                 // stack: [ref, ref]
@@ -5527,29 +5429,28 @@ impl Compiler {
                 computed,
                 ..
             } => {
-                // Evaluate obj+key once, Dup2 for reuse in the store.
-                self.compile_expr(object)?;
-                if *computed {
-                    self.compile_expr(property)?;
-                    // ToObject(base) happens after evaluating the property
-                    // expression but before ToPropertyKey.
-                    self.chunk.emit(Op::CheckNullBase, self.current_line);
-                    // Convert the key to a property key ONCE, preserving
-                    // Symbol keys. Both GetElem and SetElem use this key.
-                    self.chunk.emit(Op::ToPropertyKey, self.current_line);
+                if matches!(object.as_ref(), Expr::Super) {
+                    self.compile_super_property_reference(property, *computed)?;
+                    self.chunk.emit(Op::ResolvePropertyRef, self.current_line);
                 } else {
-                    let key = if let Expr::String(s) = property.as_ref() {
-                        s.to_string()
+                    self.compile_expr(object)?;
+                    if *computed {
+                        self.compile_expr(property)?;
+                        self.chunk.emit(Op::CheckNullBase, self.current_line);
+                        self.chunk.emit(Op::ToPropertyKey, self.current_line);
                     } else {
-                        String::new()
-                    };
-                    let key_idx = self
-                        .chunk
-                        .add_constant(Value::String(Arc::from(key.as_str())));
-                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                        let key = if let Expr::String(s) = property.as_ref() {
+                            s.to_string()
+                        } else {
+                            String::new()
+                        };
+                        let key_idx = self
+                            .chunk
+                            .add_constant(Value::String(Arc::from(key.as_str())));
+                        self.chunk.emit(Op::Const(key_idx), self.current_line);
+                    }
+                    self.chunk.emit(Op::MakePropertyRef, self.current_line);
                 }
-                // stack: [obj, key]
-                self.chunk.emit(Op::MakePropertyRef, self.current_line);
                 // stack: [ref]
                 self.chunk.emit(Op::Dup, self.current_line);
                 // stack: [ref, ref]

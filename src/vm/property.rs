@@ -201,6 +201,9 @@ impl Vm {
                 if let Some(this_value) = &r.this_value {
                     Self::push_value_roots(roots, this_value);
                 }
+                if let crate::value::ReferencedName::UncoercedProperty(name) = &r.name {
+                    Self::push_value_roots(roots, name);
+                }
             }
             _ => {}
         }

@@ -60,6 +60,9 @@ fn push_value(value: &crate::value::Value, worklist: &mut Vec<usize>) {
             if let Some(this_value) = &reference.this_value {
                 push_value(this_value, worklist);
             }
+            if let crate::value::ReferencedName::UncoercedProperty(name) = &reference.name {
+                push_value(name, worklist);
+            }
         }
         _ => {}
     }

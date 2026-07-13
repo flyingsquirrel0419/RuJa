@@ -182,9 +182,7 @@ pub enum Op {
     DefineAccessor(u8),      // pop [fn, key, obj]; define getter(0)/setter(1)
     DefineClassAccessor(u8), // same but enumerable=false (for class methods)
     GetProp,
-    GetSuperProp, // stack [receiver, super_base, key]
     SetProp,
-    SetSuperProp,       // stack [receiver, super_base, key, value]
     DefineDataProperty, // define enumerable own data property: stack [obj, key, value]
     DefineMethod,       // define non-enumerable method property: stack [obj, key, value]
     GetElem,            // computed member
@@ -406,7 +404,8 @@ pub enum Op {
     StoreEnvName(usize), // push name const then store to env
     LoadRef(usize),   // push a Reference record for the named binding
     MakePropertyRef,  // pop [base, propertyKey], push a property Reference
-    MakeSuperPropertyRef, // pop [thisValue, base, propertyKey], push a super Reference
+    MakeSuperPropertyRef, // pop [thisValue, base, name], defer ToPropertyKey
+    ResolvePropertyRef, // resolve a retained raw property Reference exactly once
     MakePropertyRefForSet, // pop [base, propertyKey, value], push [value, property Reference]
     MakePrivateRef(usize), // pop base, push private Reference; arg = name constant idx
     GetValue,         // pop a Reference, push its resolved value

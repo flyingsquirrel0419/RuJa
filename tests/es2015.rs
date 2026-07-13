@@ -177,7 +177,7 @@ fn super_reference_observes_key_then_base_then_property_key_coercion() {
 }
 
 #[test]
-fn super_reference_rejects_null_base_after_property_key_coercion() {
+fn super_reference_rejects_null_base_before_property_key_coercion() {
     assert_eq!(
         run(r#"
             var log = [];
@@ -195,7 +195,7 @@ fn super_reference_rejects_null_base_after_property_key_coercion() {
             }
             log.join("|");
             "#),
-        Value::String(Arc::from("key|TypeError|TypeError|TypeError"))
+        Value::String(Arc::from("TypeError|TypeError|TypeError"))
     );
 }
 
@@ -316,6 +316,191 @@ fn super_reference_roots_base_and_this_across_observable_calls() {
         )
         .expect("super References should root base and thisValue"),
         Value::String(Arc::from("10:12:13:14:10:true"))
+    );
+}
+
+#[test]
+fn super_reference_writes_use_actual_this_across_assignment_forms() {
+    assert_eq!(
+        run(r#"
+            var symbol = Symbol("value");
+            var parent = { x: 1, y: 0, z: 0, w: 1 };
+            parent[symbol] = 2;
+            var home = {
+              simple(value) { return super.x = value; },
+              compound() { return super.x += 2; },
+              logical() { return super.y ||= 4; },
+              shortCircuit() { return super.x ||= 99; },
+              postfix() { return super.w++; },
+              prefix() { return ++super[symbol]; },
+              destructure(source) {
+                ({ value: super.z } = source);
+                return this.z;
+              }
+            };
+            Object.setPrototypeOf(home, parent);
+            var receiver = Object.create(home);
+            [
+              receiver.simple(7), receiver.x,
+              receiver.compound(), receiver.x,
+              receiver.logical(), receiver.y,
+              receiver.shortCircuit(), receiver.x,
+              receiver.postfix(), receiver.w,
+              receiver.prefix(), receiver[symbol],
+              receiver.destructure({ value: 8 }),
+              Object.prototype.hasOwnProperty.call(home, "x")
+            ].join(":");
+            "#),
+        Value::String(Arc::from("7:7:3:3:4:4:1:3:1:2:3:3:8:false"))
+    );
+}
+
+#[test]
+fn super_simple_assignment_captures_base_before_rhs_and_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var receiver;
+            var duringKey = {
+              set value(value) {
+                log.push("setter:" + (this === receiver) + ":" + value);
+              }
+            };
+            var duringRhs = {};
+            var duringCoercion = {};
+            var key = {
+              toString: function() {
+                log.push("coerce");
+                Object.setPrototypeOf(home, duringCoercion);
+                return "value";
+              }
+            };
+            var home = {
+              write() {
+                return super[(log.push("key"), Object.setPrototypeOf(home, duringKey), key)] =
+                  (log.push("rhs"), Object.setPrototypeOf(home, duringRhs), 7);
+              }
+            };
+            receiver = Object.create(home);
+            var result = receiver.write();
+            log.push("result:" + result);
+            log.join("|");
+            "#),
+        Value::String(Arc::from("key|rhs|coerce|setter:true:7|result:7"))
+    );
+}
+
+#[test]
+fn super_simple_assignment_checks_null_base_after_rhs_before_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = {
+              toString: function() { log.push("coerce"); return "value"; }
+            };
+            var home = {
+              write() {
+                try {
+                  super[key] = (log.push("rhs"), 1);
+                } catch (error) {
+                  log.push(error.name);
+                }
+              }
+            };
+            Object.setPrototypeOf(home, null);
+            home.write();
+            log.join("|");
+            "#),
+        Value::String(Arc::from("rhs|TypeError"))
+    );
+}
+
+#[test]
+fn computed_super_read_modify_write_coerces_each_key_once() {
+    assert_eq!(
+        run(r#"
+            var coercions = 0;
+            var key = {
+              toString: function() { coercions++; return "value"; }
+            };
+            var parent = { value: 1 };
+            var home = {
+              compound() { return super[key] += 2; },
+              logical() { return super[key] ||= 9; },
+              update() { return super[key]++; }
+            };
+            Object.setPrototypeOf(home, parent);
+            var receiver = Object.create(home);
+            [
+              receiver.compound(), receiver.value, coercions,
+              receiver.logical(), receiver.value, coercions,
+              receiver.update(), receiver.value, coercions
+            ].join(":");
+            "#),
+        Value::String(Arc::from("3:3:1:1:3:2:1:2:3"))
+    );
+}
+
+#[test]
+fn super_reference_write_preserves_primitive_receiver() {
+    assert_eq!(
+        run(r#"
+            var observed;
+            var parent = {
+              set value(value) {
+                "use strict";
+                observed = typeof this + ":" + this + ":" + value;
+              }
+            };
+            var home = {
+              write() { "use strict"; super.value = 9; }
+            };
+            Object.setPrototypeOf(home, parent);
+            home.write.call("base");
+            observed;
+            "#),
+        Value::String(Arc::from("string:base:9"))
+    );
+}
+
+#[test]
+fn deferred_super_reference_names_survive_gc() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var receiver;
+            var values = [];
+            var parent = {
+              set value(value) { values.push((this === receiver) + ":" + value); }
+            };
+            var home = {
+              simple() {
+                super[{ toString: function() { forceGc(); return "value"; } }] =
+                  (forceGc(), 11);
+              },
+              destructure(source) {
+                ({ item: super[{ toString: function() { forceGc(); return "value"; } }] } = source);
+              }
+            };
+            Object.setPrototypeOf(home, parent);
+            receiver = Object.create(home);
+            receiver.simple();
+            receiver.destructure({ get item() { forceGc(); return 12; } });
+            values.join("|");
+            "#,
+        )
+        .expect("super reference GC regression should run"),
+        Value::String(Arc::from("true:11|true:12"))
     );
 }
 

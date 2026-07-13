@@ -220,6 +220,9 @@ pub struct ReferenceRecord {
 #[derive(Clone, Debug)]
 pub enum ReferencedName {
     Property(PropertyKey),
+    /// A computed property name whose ToPropertyKey operation is deferred
+    /// until GetValue/PutValue. Assignment and delete can observe that delay.
+    UncoercedProperty(Box<Value>),
     Private(PrivateNameKey),
 }
 
@@ -227,7 +230,7 @@ impl ReferencedName {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             ReferencedName::Property(key) => key.as_str(),
-            ReferencedName::Private(_) => None,
+            ReferencedName::UncoercedProperty(_) | ReferencedName::Private(_) => None,
         }
     }
 }
