@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- `JSON.rawJSON` and `JSON.isRawJSON` now create and recognize unforgeably
+  branded, frozen, null-prototype raw-value objects. Primitive JSON text is
+  validated after `ToString` while preserving the original spelling, including
+  large integers and escaped lone surrogates, and `JSON.stringify` emits branded
+  values verbatim after normal `toJSON` and replacer processing. The JSON
+  intrinsic also exposes the specified `Symbol.toStringTag`. Frozen Test262
+  admission for raw values and branding is **17/17**, and the complete
+  `built-ins/JSON` directory is **165/165**. CI `29215737017` and
+  `test262-full` `29215737023` pass for commit `196e8fd`; downloaded artifacts
+  aggregate to **28487 pass / 6629 fail / 13189 skip / 12 timeout / 0 error /
+  48317 total / 35116 pass-or-fail executed**, a movement of **+19 pass / -17
+  fail / -2 skip**.
 - `JSON.stringify` now follows a holder-based, fallible
   `SerializeJSONProperty` pipeline. Ordinary property access, `toJSON(key)`,
   replacer `this`, abrupt completion, transformed-value circularity, callable

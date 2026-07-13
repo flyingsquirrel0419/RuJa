@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 58.9% of all matrix files; 81.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.0% of all matrix files; 81.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -155,6 +155,30 @@ error / 48317 total / 35114 pass-or-fail executed**, or **58.9%** of all matrix
 files and **81.1%** of executed files. The exact stringify slice contributes
 **+45 pass / -30 fail / -15 skip**; one unrelated built-ins result varied from
 the preceding run, so the observed aggregate delta is **+44 / -29 / -15**.
+
+## Raw JSON admission
+
+`tools/test262_json_raw_admission.txt` freezes **17** files covering
+`JSON.rawJSON`, `JSON.isRawJSON`, and `JSON[Symbol.toStringTag]`. Exact-path
+admission lifts `json-parse-with-source`, Reflect construction, and Symbol tag
+metadata only for those audited files. Raw values use an internal brand that
+cannot be forged with a `rawJSON` property, expose a frozen enumerable data
+property on a null-prototype object, and preserve the validated primitive JSON
+text verbatim through stringify.
+
+At commit `196e8fd`, local verification on test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1` reports **17 pass / 0 fail / 0
+skip**. Validation handles large numeric spellings and escaped lone UTF-16
+surrogates without normalizing the stored source. The supported subset remains
+**12232 pass / 0 fail / 8207 skip / 20439 total**, and the Python tooling suite
+is **63/63**.
+The complete `built-ins/JSON` directory is now **165/165**. CI `29215737017`
+and `test262-full` `29215737023` both pass. The 30 downloaded artifacts
+aggregate to **28487 pass / 6629 fail / 13189 skip / 12 timeout / 0 error /
+48317 total / 35116 pass-or-fail executed**, or **59.0%** of all matrix files
+and **81.1%** of executed files. This is **+19 pass / -17 fail / -2 skip** from
+the preceding confirmed matrix; the JSON tag also fixes shared behavior outside
+the 17-file frozen admission.
 
 ## Full-suite baseline
 
