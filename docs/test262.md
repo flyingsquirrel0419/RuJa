@@ -306,6 +306,41 @@ pass-or-fail executed**, or **59.1%** of all matrix files and **81.2%** of
 executed files. Relative to the preceding confirmed matrix this is exactly
 **+30 pass / -30 skip**.
 
+## Non-optional member-call Reference routing
+
+Ordinary direct and spread member calls now create one property Reference,
+duplicate it for `GetValue`, and retain the original until
+`CallRef`/`CallRefSpread` derives the call's `this` value. The VM's
+`GetThisValue` equivalent returns the original `ReferenceBase::Value`, including
+primitive bases, while preserving the existing object-environment behavior for
+identifier calls inside `with`. Environment and unresolvable identifier
+References continue to call with `undefined`.
+
+This preserves base and computed-key evaluation order, performs exactly one
+property read before argument evaluation, and delays callability checking until
+after arguments have been evaluated. The Reference remains on the VM stack, so
+its nested base participates in GC tracing across getters, Proxy traps, spread
+iteration, and argument evaluation. A forced-GC regression uses a temporary
+object expression with no other owner and verifies that the method still
+receives the live object as `this` after an argument callback collects garbage.
+
+The unit intentionally excludes optional calls, private calls, tagged
+templates, and `super`. Optional calls still need their two distinct nullish
+stack exits migrated together. A `super` Reference needs separate `[[Base]]`
+and `[[ThisValue]]` fields, which the current Reference representation does not
+yet encode.
+
+At commit `9686f03`, the combined `language/expressions/call`, frozen
+Proxy/Reflect `[[Get]]`, `language/types/reference`, and
+`language/statements/with` gate is **307 pass / 0 fail / 25 skip / 332 total**.
+Rust all-targets, clippy with denied warnings, fmt/diff, tooling **66/66**, and
+the supported subset **12232 pass / 0 fail / 8207 skip / 20439 total** all
+pass. Independent review found no correctness, stack-shape, receiver, rooting,
+or scope-boundary issue. CI `29240428689` and `test262-full` `29240428617`
+both succeed; all 30 downloaded artifacts exactly reproduce **28536 pass /
+6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
+pass-or-fail executed**, with no changed shard.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

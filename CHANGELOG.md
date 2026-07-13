@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Ordinary non-optional member calls, including spread calls, now retain the
+  property Reference used to resolve the callee and derive `this` through
+  `CallRef`/`CallRefSpread`. Object, primitive, Symbol-keyed, and Proxy-backed
+  bases therefore share the same Reference semantics as member value reads,
+  with one property lookup and a rooted base throughout observable argument
+  evaluation. Optional, private, tagged-template, and `super` calls remain on
+  their existing bounded paths. CI `29240428689` and `test262-full`
+  `29240428617` pass for commit `9686f03`; all 30 artifacts reproduce **28536
+  pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
+  pass-or-fail executed** with no shard movement.
 - Ordinary string- and Symbol-keyed member reads, including optional-chain
   reads, now create property Reference records and resolve them through
   `GetValue`. Proxy `[[Get]]` forwarding preserves the receiver through nested
