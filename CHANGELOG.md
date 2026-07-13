@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Removed the unreachable legacy member-assignment fallback and its
+  `SetProp`/`SetElem` bytecodes. All valid simple, compound, logical,
+  prefix/postfix, destructuring, and loop member targets now have only their
+  retained Reference paths; parenthesized computed targets are covered across
+  read-modify-write forms. Focused Test262 assignment/compound/logical coverage
+  is **1017 pass / 0 fail / 0 skip**, and the supported subset remains **12232
+  pass / 0 fail / 8207 skip** at commit `ea8e492`. CI `29266489197` and full
+  matrix `29266489031` succeeded; all 30 result artifacts are byte-for-byte
+  identical to the preceding confirmed matrix.
 - Direct and optional-chain property delete now retain a raw Reference and use
   a specification-ordered `DeleteValue`: box/check the base before coercing the
   referenced name, invoke `[[Delete]]`, and apply the Reference's strict flag.

@@ -558,6 +558,31 @@ confirmed matrix, so the normalized aggregate remains **28536 pass / 6614 fail
 / 13155 skip / 12 timeout / 0 error / 48317 total / 35150 pass-or-fail
 executed** with no shard movement.
 
+## Legacy property store removal
+
+The final compiler fallback that could emit direct `SetProp` or `SetElem`
+stores has been removed together with both bytecodes and VM handlers. Its stack
+shape expected `[base, key, value]` while its only compiler construction would
+have produced `[value, base, key]`; all valid member AST forms already bypassed
+it through dedicated Reference paths. Identifier and private fallback handling
+remain for their own valid bytecodes.
+
+Source-level simple assignment, destructuring, non-declaration `for-in` and
+`for-of`, compound/logical assignment, and prefix/postfix update therefore have
+no legacy direct-property store path. A regression covers parenthesized
+computed compound, logical, postfix, and prefix targets through Proxy get/set
+traps, proving one key evaluation and one retained receiver per operation.
+
+At commit `ea8e492`, Rust all-targets, clippy with denied warnings, fmt/diff,
+operators **119/119**, and a source search with zero `SetProp`/`SetElem`
+references pass. Latest Test262 assignment, compound-assignment, and
+logical-assignment paths are **1017 pass / 0 fail / 0 skip / 1017 total**; the
+pinned supported subset remains **12232 pass / 0 fail / 8207 skip / 20439
+total**. CI `29266489197` and full matrix `29266489031` succeeded. All 30
+artifacts are byte-for-byte identical to the preceding confirmed matrix, so the
+normalized aggregate remains **28536 pass / 6614 fail / 13155 skip / 12 timeout
+/ 0 error / 48317 total / 35150 pass-or-fail executed** with no shard movement.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
