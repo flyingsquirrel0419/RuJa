@@ -256,19 +256,7 @@ impl Vm {
                         return Ok(result);
                     }
                 }
-                let is_date_default = if hint == "default" {
-                    match v {
-                        Value::Object(idx) => self.heap.with_obj(idx.0, |o| {
-                            o.proto().lock().as_ref() == Some(&self.date_proto)
-                        }),
-                        _ => false,
-                    }
-                } else {
-                    false
-                };
-                let effective_string_hint = string_hint || is_date_default;
-
-                let methods: [&str; 2] = if effective_string_hint {
+                let methods: [&str; 2] = if string_hint {
                     ["toString", "valueOf"]
                 } else {
                     ["valueOf", "toString"]

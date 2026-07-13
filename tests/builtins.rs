@@ -1231,6 +1231,16 @@ fn typed_array_from_rejects_invalid_empty_constructor_results() {
     ] {
         assert!(run_err(source).contains("TypeError"));
     }
+    assert_eq!(
+        run(r#"
+            delete Date.prototype[Symbol.toPrimitive];
+            var date = new Date(0);
+            date.valueOf = function() { return 1; };
+            date.toString = function() { return 2; };
+            date + '';
+        "#),
+        Value::String(Arc::from("1"))
+    );
 }
 
 #[test]
@@ -10729,6 +10739,48 @@ fn date_to_temporal_instant_returns_epoch_nanoseconds() {
         run_err("Date.prototype.toTemporalInstant.call(Date.prototype);").contains("TypeError")
     );
     assert!(run_err("var d = new Date(0); new d.toTemporalInstant();").contains("TypeError"));
+}
+
+#[test]
+fn date_symbol_to_primitive_uses_hint_specific_ordinary_conversion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var object = {
+              get toString() { log.push('get toString'); return function() { log.push('call toString'); return 's'; }; },
+              get valueOf() { log.push('get valueOf'); return function() { log.push('call valueOf'); return 3; }; }
+            };
+            var method = Date.prototype[Symbol.toPrimitive];
+            var first = method.call(object, 'default');
+            var firstLog = log.join(',');
+            log = [];
+            var second = method.call(object, 'number');
+            [first, firstLog, second, log.join(',')].join('|');
+        "#),
+        Value::String(Arc::from(
+            "s|get toString,call toString|3|get valueOf,call valueOf"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            var descriptor = Object.getOwnPropertyDescriptor(Date.prototype, Symbol.toPrimitive);
+            [
+              Date.prototype[Symbol.toPrimitive].length,
+              Date.prototype[Symbol.toPrimitive].name,
+              descriptor.writable,
+              descriptor.enumerable,
+              descriptor.configurable
+            ].join('|');
+        "#),
+        Value::String(Arc::from("1|[Symbol.toPrimitive]|false|false|true"))
+    );
+    for source in [
+        "Date.prototype[Symbol.toPrimitive].call({}, 'invalid')",
+        "Date.prototype[Symbol.toPrimitive].call(1, 'number')",
+        "Date.prototype[Symbol.toPrimitive].call({toString:function(){return {}},valueOf:function(){return {}}}, 'default')",
+    ] {
+        assert!(run_err(source).contains("TypeError"));
+    }
 }
 
 #[test]

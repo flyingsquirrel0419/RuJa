@@ -30,7 +30,7 @@ pub(crate) use global::{
 pub(crate) use json::{
     build_json, build_reflect, date_constructor, date_get_component, date_get_time,
     date_get_timezone_offset, date_now, date_parse, date_set_component, date_to_iso_string,
-    date_to_json, date_to_string, date_to_temporal_instant, date_utc,
+    date_to_json, date_to_primitive, date_to_string, date_to_temporal_instant, date_utc,
 };
 pub(crate) use math::{build_console, build_math};
 pub(crate) use proxy::*;
@@ -6120,6 +6120,22 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
         ],
         None,
     )?;
+    let date_to_primitive_fn =
+        vm.new_native_function("[Symbol.toPrimitive]", date_to_primitive, 1)?;
+    vm.heap.with_obj(date_proto.0, |object| {
+        object.props().lock().insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_primitive),
+            PropertyDescriptor {
+                value: Value::Object(date_to_primitive_fn),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                get: None,
+                set: None,
+                is_accessor: false,
+            },
+        );
+    });
     vm.date_proto = Value::Object(date_proto);
     define_global(vm, "Date", Value::Object(date_ctor));
     let now_fn = vm.new_native_function("now", date_now, 0)?;

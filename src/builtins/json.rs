@@ -1691,6 +1691,41 @@ pub(crate) fn date_to_string(
     Ok(Value::String(Arc::from(result.as_str())))
 }
 
+pub(crate) fn date_to_primitive(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    let object = this.unwrap_or(Value::Undefined);
+    if !matches!(object, Value::Object(_)) {
+        return Err(Error::type_err(
+            "Date.prototype[Symbol.toPrimitive] requires an object receiver",
+        ));
+    }
+    let methods = match args.first().unwrap_or(&Value::Undefined) {
+        Value::String(hint) if hint.as_ref() == "default" || hint.as_ref() == "string" => {
+            ["toString", "valueOf"]
+        }
+        Value::String(hint) if hint.as_ref() == "number" => ["valueOf", "toString"],
+        _ => return Err(Error::type_err("Invalid Date toPrimitive hint")),
+    };
+    let object_pin = vm.pin(&object);
+    let result = (|| {
+        for name in methods {
+            let method = vm.get_property(&object, name)?;
+            if crate::builtins::is_callable(&method, &vm.heap) {
+                let value = vm.call_function(&method, &[], Some(object.clone()))?;
+                if !matches!(value, Value::Object(_)) {
+                    return Ok(value);
+                }
+            }
+        }
+        Err(Error::type_err("Cannot convert object to primitive value"))
+    })();
+    vm.unpin(object_pin);
+    result
+}
+
 pub(crate) fn date_to_iso_string(
     vm: &mut Vm,
     _args: &[Value],

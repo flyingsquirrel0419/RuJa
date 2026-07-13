@@ -1,0 +1,19 @@
+# Frozen Test262 Date @@toPrimitive files.
+built-ins/Date/prototype/Symbol.toPrimitive/called-as-function.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-default-first-invalid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-default-first-non-callable.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-default-first-valid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-default-no-callables.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-invalid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-number-first-invalid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-number-first-non-callable.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-number-first-valid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-number-no-callables.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-string-first-invalid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-string-first-non-callable.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-string-first-valid.js
+built-ins/Date/prototype/Symbol.toPrimitive/hint-string-no-callables.js
+built-ins/Date/prototype/Symbol.toPrimitive/length.js
+built-ins/Date/prototype/Symbol.toPrimitive/name.js
+built-ins/Date/prototype/Symbol.toPrimitive/prop-desc.js
+built-ins/Date/prototype/Symbol.toPrimitive/this-val-non-obj.js

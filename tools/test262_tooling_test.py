@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import test262_analyze
 import test262_runner
+from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
@@ -830,6 +831,29 @@ class ModuleCoreAdmissionTests(unittest.TestCase):
                         {"features": ["Proxy"]}, outside_path
                     ))
                     self.assertTrue(tool.json_raw_path(admitted_path))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_date_to_primitive_manifest_is_exact_and_shared(self):
+        self.assertEqual(len(DATE_TO_PRIMITIVE_FILES), 18)
+        admitted = "built-ins/Date/prototype/Symbol.toPrimitive/called-as-function.js"
+        outside = "built-ins/Array/isArray/proxy.js"
+        self.assertIn(admitted, DATE_TO_PRIMITIVE_FILES)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted_path = root / "test" / admitted
+            outside_path = root / "test" / outside
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertFalse(tool.should_skip(
+                        {"features": ["Symbol"]}, admitted_path
+                    ))
+                    self.assertTrue(tool.should_skip(
+                        {"features": ["Proxy"]}, outside_path
+                    ))
+                    self.assertTrue(tool.date_to_primitive_path(admitted_path))
                 finally:
                     tool.TEST262 = original_root
 

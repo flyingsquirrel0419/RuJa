@@ -6,6 +6,7 @@ from pathlib import Path
 from collections import Counter, defaultdict
 
 try:
+    from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
     from test262_support import append_async_harness, execute_source
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from test262_import_meta_admission import IMPORT_META_FILES
@@ -16,6 +17,7 @@ try:
         MODULE_STATIC_SEMANTICS_FILES, MODULE_TLA_RUNTIME_FILES, MODULE_TLA_SYNTAX_FILES,
     )
 except ModuleNotFoundError:
+    from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
     from tools.test262_support import append_async_harness, execute_source
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from tools.test262_import_meta_admission import IMPORT_META_FILES
@@ -1887,6 +1889,15 @@ def json_raw_path(path):
         return False
     return rel.as_posix() in JSON_RAW_FILES
 
+def date_to_primitive_path(path):
+    if path is None:
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(Path(TEST262).resolve() / "test")
+    except ValueError:
+        return False
+    return rel.as_posix() in DATE_TO_PRIMITIVE_FILES
+
 def should_skip(meta, path=None):
     feats = set(meta.get('features', []))
     if path is not None and module_core_path(path):
@@ -1920,6 +1931,8 @@ def should_skip(meta, path=None):
         feats.difference_update({
             "Reflect.construct", "Symbol.toStringTag", "json-parse-with-source",
         })
+    if path is not None and date_to_primitive_path(path):
+        feats.discard("Symbol")
     if path is not None and explicit_resource_management_symbols_path(path):
         feats.discard("explicit-resource-management")
     if path is not None and symbol_function_name_path(path):
