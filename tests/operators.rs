@@ -900,6 +900,63 @@ fn assign_member_uses_property_reference_for_set() {
 }
 
 #[test]
+fn deferred_member_assignment_references_survive_gc() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var log = [];
+            function makeBase(label) {
+              var target = {};
+              return new Proxy(target, {
+                set: function(t, key, value, receiver) {
+                  log.push("set:" + label + ":" + key + ":" + value);
+                  t[key] = value;
+                  return true;
+                }
+              });
+            }
+            function makeKey(label) {
+              return {
+                toString: function() {
+                  log.push("key:" + label);
+                  return label;
+                }
+              };
+            }
+
+            var simple = makeBase("simple")[makeKey("x")] = (forceGc(), 7);
+
+            var source = {
+              get value() {
+                log.push("source");
+                forceGc();
+                return 9;
+              }
+            };
+            ({ value: makeBase("destructure")[makeKey("y")] } = source);
+
+            [simple, log.join("|")].join(";");
+            "#,
+        )
+        .expect("raw member references should root their base and name"),
+        Value::String(Arc::from(
+            "7;key:x|set:simple:x:7|source|key:y|set:destructure:y:9"
+        ))
+    );
+}
+
+#[test]
 fn destructuring_member_assignment_uses_property_reference_for_set() {
     assert_eq!(
         run(r#"

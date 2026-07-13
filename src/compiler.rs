@@ -98,15 +98,11 @@ enum RestExcludeKey {
 }
 
 #[derive(Clone, Copy)]
-enum AssignTargetTemp {
-    IdentRef(usize),
-    PrivateRef(usize),
-    SuperRef(usize),
-    Member {
-        obj_idx: usize,
-        key_idx: usize,
-        computed: bool,
-    },
+enum AssignTargetRef {
+    Ident(usize),
+    Private(usize),
+    Super(usize),
+    Member(usize),
 }
 
 impl Default for Compiler {
@@ -1680,16 +1676,11 @@ impl Compiler {
                             computed,
                             ..
                         } => {
-                            // Stack: [value]. Build [obj, key, value] for
-                            // MakePropertyRefForSet. Evaluate obj, swap value
-                            // below it, then evaluate key, swap again.
+                            // Stack: [value]. Evaluate the assignment target
+                            // into a raw Reference, then store the loop value.
                             self.compile_expr(object)?;
-                            // [value, obj] -> [obj, value]
-                            self.chunk.emit(Op::Swap, self.current_line);
                             if *computed {
                                 self.compile_expr(property)?;
-                                // [obj, value, key] -> [obj, key, value]
-                                self.chunk.emit(Op::Swap, self.current_line);
                             } else {
                                 let key = if let Expr::String(s) = property.as_ref() {
                                     s.to_string()
@@ -1700,11 +1691,8 @@ impl Compiler {
                                     .chunk
                                     .add_constant(Value::String(Arc::from(key.as_str())));
                                 self.chunk.emit(Op::Const(key_idx), self.current_line);
-                                // [obj, value, key] -> [obj, key, value]
-                                self.chunk.emit(Op::Swap, self.current_line);
                             }
-                            self.chunk
-                                .emit(Op::MakePropertyRefForSet, self.current_line);
+                            self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
                             self.chunk.emit(Op::PutValue, self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line);
                         }
@@ -2529,7 +2517,7 @@ impl Compiler {
         &mut self,
         target: &Expr,
         value_idx: usize,
-        target_temp: Option<AssignTargetTemp>,
+        target_temp: Option<AssignTargetRef>,
     ) -> error::Result<()> {
         self.compile_assign_value_to_target_with_mode(
             target,
@@ -2543,7 +2531,7 @@ impl Compiler {
         &mut self,
         target: &Expr,
         value_idx: usize,
-        target_temp: Option<AssignTargetTemp>,
+        target_temp: Option<AssignTargetRef>,
         close_mode: AssignmentIteratorCloseMode,
     ) -> error::Result<()> {
         match target {
@@ -2571,7 +2559,7 @@ impl Compiler {
             }
             Expr::Ident(name) => {
                 self.load_path(value_idx, &[]);
-                if let Some(AssignTargetTemp::IdentRef(ref_idx)) = target_temp {
+                if let Some(AssignTargetRef::Ident(ref_idx)) = target_temp {
                     self.store_current_value_to_identifier_target(ref_idx);
                 } else {
                     self.store_identifier_target_value(name);
@@ -2579,7 +2567,7 @@ impl Compiler {
                 self.chunk.emit(Op::Pop, self.current_line);
             }
             Expr::PrivateGet { .. } => {
-                let Some(AssignTargetTemp::PrivateRef(ref_idx)) = target_temp else {
+                let Some(AssignTargetRef::Private(ref_idx)) = target_temp else {
                     return Err(error::Error::internal(
                         "expected pre-evaluated private assignment target",
                     ));
@@ -2590,12 +2578,12 @@ impl Compiler {
             }
             Expr::Member { .. } => {
                 let target = match target_temp {
-                    Some(target @ AssignTargetTemp::Member { .. })
-                    | Some(target @ AssignTargetTemp::SuperRef(_)) => target,
+                    Some(target @ AssignTargetRef::Member(_))
+                    | Some(target @ AssignTargetRef::Super(_)) => target,
                     None => self
                         .compile_assign_member_target_temp(target)?
                         .ok_or_else(|| error::Error::internal("expected member target"))?,
-                    Some(AssignTargetTemp::IdentRef(_) | AssignTargetTemp::PrivateRef(_)) => {
+                    Some(AssignTargetRef::Ident(_) | AssignTargetRef::Private(_)) => {
                         return Err(error::Error::internal("expected member target"));
                     }
                 };
@@ -2616,7 +2604,7 @@ impl Compiler {
     fn compile_assign_member_target_temp(
         &mut self,
         target: &Expr,
-    ) -> error::Result<Option<AssignTargetTemp>> {
+    ) -> error::Result<Option<AssignTargetRef>> {
         let Expr::Member {
             object,
             property,
@@ -2630,11 +2618,9 @@ impl Compiler {
             self.compile_super_property_reference(property, *computed)?;
             let ref_idx = self.intern("#dtarget_super_ref");
             self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
-            return Ok(Some(AssignTargetTemp::SuperRef(ref_idx)));
+            return Ok(Some(AssignTargetRef::Super(ref_idx)));
         }
         self.compile_expr(object)?;
-        let obj_idx = self.intern("#dtarget_obj");
-        self.chunk.emit(Op::DeclareEnv(obj_idx), self.current_line);
         if *computed {
             self.compile_expr(property)?;
         } else {
@@ -2648,26 +2634,23 @@ impl Compiler {
                 .add_constant(Value::String(Arc::from(key.as_str())));
             self.chunk.emit(Op::Const(key_idx), self.current_line);
         }
-        let key_idx = self.intern("#dtarget_key");
-        self.chunk.emit(Op::DeclareEnv(key_idx), self.current_line);
-        Ok(Some(AssignTargetTemp::Member {
-            obj_idx,
-            key_idx,
-            computed: *computed,
-        }))
+        self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
+        let ref_idx = self.intern("#dtarget_member_ref");
+        self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
+        Ok(Some(AssignTargetRef::Member(ref_idx)))
     }
 
     fn compile_assign_target_temp(
         &mut self,
         target: &Expr,
-    ) -> error::Result<Option<AssignTargetTemp>> {
+    ) -> error::Result<Option<AssignTargetRef>> {
         match target {
             Expr::Ident(name) => {
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
                 let ref_idx = self.intern("#dtarget_ref");
                 self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
-                Ok(Some(AssignTargetTemp::IdentRef(ref_idx)))
+                Ok(Some(AssignTargetRef::Ident(ref_idx)))
             }
             Expr::Member { .. } => self.compile_assign_member_target_temp(target),
             Expr::PrivateGet { object, name, .. } => {
@@ -2677,32 +2660,20 @@ impl Compiler {
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
                 let ref_idx = self.intern("#dtarget_private_ref");
                 self.chunk.emit(Op::DeclareEnv(ref_idx), self.current_line);
-                Ok(Some(AssignTargetTemp::PrivateRef(ref_idx)))
+                Ok(Some(AssignTargetRef::Private(ref_idx)))
             }
             _ => Ok(None),
         }
     }
 
-    fn store_current_value_to_member_target(&mut self, target: AssignTargetTemp) {
+    fn store_current_value_to_member_target(&mut self, target: AssignTargetRef) {
         match target {
-            AssignTargetTemp::SuperRef(ref_idx) => {
+            AssignTargetRef::Super(ref_idx) | AssignTargetRef::Member(ref_idx) => {
                 self.chunk.emit(Op::LoadEnv(ref_idx), self.current_line);
                 self.chunk.emit(Op::PutValue, self.current_line);
                 self.chunk.emit(Op::Pop, self.current_line);
             }
-            AssignTargetTemp::Member {
-                obj_idx, key_idx, ..
-            } => {
-                self.chunk.emit(Op::LoadEnv(obj_idx), self.current_line);
-                self.chunk.emit(Op::Swap, self.current_line);
-                self.chunk.emit(Op::LoadEnv(key_idx), self.current_line);
-                self.chunk.emit(Op::Swap, self.current_line);
-                self.chunk
-                    .emit(Op::MakePropertyRefForSet, self.current_line);
-                self.chunk.emit(Op::PutValue, self.current_line);
-                self.chunk.emit(Op::Pop, self.current_line);
-            }
-            AssignTargetTemp::IdentRef(_) | AssignTargetTemp::PrivateRef(_) => unreachable!(),
+            AssignTargetRef::Ident(_) | AssignTargetRef::Private(_) => unreachable!(),
         }
     }
 
@@ -5211,7 +5182,6 @@ impl Compiler {
                 self.compile_expr(object)?;
                 if *computed {
                     self.compile_expr(property)?;
-                    self.compile_expr(value)?;
                 } else {
                     let key = if let Expr::String(s) = &**property {
                         s.to_string()
@@ -5222,10 +5192,10 @@ impl Compiler {
                         .chunk
                         .add_constant(Value::String(Arc::from(key.as_str())));
                     self.chunk.emit(Op::Const(key_idx), self.current_line);
-                    self.compile_expr(value)?;
                 }
-                self.chunk
-                    .emit(Op::MakePropertyRefForSet, self.current_line);
+                self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
+                self.compile_expr(value)?;
+                self.chunk.emit(Op::Swap, self.current_line);
                 self.chunk.emit(Op::PutValue, self.current_line);
             }
             Expr::Ident(name) => {

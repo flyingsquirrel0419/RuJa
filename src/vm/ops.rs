@@ -1200,6 +1200,18 @@ impl Vm {
                             this_value: None,
                         })));
                 }
+                Op::MakeRawPropertyRef => {
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let base = self.stack.pop().unwrap_or(Value::Undefined);
+                    let strict = self.current_strict();
+                    self.stack
+                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
+                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            name: crate::value::ReferencedName::UncoercedProperty(Box::new(key)),
+                            strict,
+                            this_value: None,
+                        })));
+                }
                 Op::MakeSuperPropertyRef => {
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let base = self.stack.pop().unwrap_or(Value::Undefined);
@@ -1230,27 +1242,6 @@ impl Vm {
                         record.name = name_result?.into();
                     }
                     self.stack.push(Value::Reference(record));
-                }
-                Op::MakePropertyRefForSet => {
-                    let value = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let base = self.stack.pop().unwrap_or(Value::Undefined);
-                    if base.is_nullish() {
-                        return Err(Error::type_err("Cannot set property of primitive"));
-                    }
-                    let pin_count = self.pin_many(&[base.clone(), key.clone(), value.clone()]);
-                    let name_result = self.coerce_property_key_record(&key);
-                    self.unpin_many(pin_count);
-                    let name = name_result?;
-                    let strict = self.current_strict();
-                    self.stack.push(value);
-                    self.stack
-                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::Value(Box::new(base)),
-                            name: name.into(),
-                            strict,
-                            this_value: None,
-                        })));
                 }
                 Op::MakePrivateRef(name_idx) => {
                     let name = match self.private_slot_key_from_name(name_idx)? {

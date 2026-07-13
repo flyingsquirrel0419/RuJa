@@ -403,10 +403,10 @@ pub enum Op {
     LoadEnvName(usize), // push name const then load from env
     StoreEnvName(usize), // push name const then store to env
     LoadRef(usize),   // push a Reference record for the named binding
-    MakePropertyRef,  // pop [base, propertyKey], push a property Reference
+    MakePropertyRef,  // pop [base, propertyKey], push a resolved property Reference
+    MakeRawPropertyRef, // pop [base, referencedName], push a raw property Reference
     MakeSuperPropertyRef, // pop [thisValue, base, name], defer ToPropertyKey
     ResolvePropertyRef, // resolve a retained raw property Reference exactly once
-    MakePropertyRefForSet, // pop [base, propertyKey, value], push [value, property Reference]
     MakePrivateRef(usize), // pop base, push private Reference; arg = name constant idx
     GetValue,         // pop a Reference, push its resolved value
     PutValue,         // pop [Reference, value], store value into the Reference
