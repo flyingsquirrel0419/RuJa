@@ -93,6 +93,29 @@ fn member_read_null_base_precedes_property_key_coercion() {
 }
 
 #[test]
+fn member_read_keeps_mapped_arguments_live_after_failed_delete() {
+    assert_eq!(
+        run(r#"
+            function check(a) {
+              Object.defineProperty(arguments, "0", { configurable: false });
+              var firstDelete = delete arguments[0];
+              var strictDeleteThrew = false;
+              var args = arguments;
+              try {
+                (function() { "use strict"; delete args[0]; })();
+              } catch (error) {
+                strictDeleteThrew = error instanceof TypeError;
+              }
+              a = 2;
+              return [firstDelete, strictDeleteThrew, arguments[0]].join(":");
+            }
+            check(1);
+            "#),
+        Value::String(Arc::from("false:true:2"))
+    );
+}
+
+#[test]
 fn proxy_get_without_trap_preserves_receiver() {
     assert_eq!(
         run(r#"

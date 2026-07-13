@@ -2365,6 +2365,15 @@ impl Vm {
             return self.get_property(base, key);
         };
         let cacheable_own_data = self.heap.with_obj(idx.0, |object| {
+            if matches!(
+                object,
+                crate::value::HeapObj::Array(array)
+                    if array
+                        .is_arguments
+                        .load(std::sync::atomic::Ordering::Relaxed)
+            ) {
+                return false;
+            }
             object
                 .props()
                 .lock()
