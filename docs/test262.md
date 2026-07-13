@@ -662,6 +662,34 @@ artifacts are byte-for-byte identical to matrix `29274877594`, retaining the
 normalized **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317
 total / 35156 pass-or-fail executed** aggregate.
 
+## Private-call Reference routing
+
+Ordinary and optional private calls now compile the private access into one
+retained Reference, resolve its value before evaluating arguments, and invoke
+it through `CallRef` or `CallRefSpread`. This gives direct, receiver-optional,
+callee-optional, grouped, and spread forms the same receiver derivation and
+callee snapshot rules. Private brand errors and accessor getters occur before
+arguments, callable private accessors are accepted, and spread arguments no
+longer leave the VM stack in the shape expected only by the removed
+`CallPrivateMethod` opcode.
+
+Regressions cover argument-side callee mutation, wrong-brand ordering,
+accessor/getter ordering, nullish argument suppression, combined receiver and
+callee optionality, grouped chain boundaries, non-callable and throwing
+accessors, and ordinary/optional/grouped/spread calls whose temporary receiver
+must survive forced argument GC. Independent review found no correctness
+defect; its optional-chain and GC coverage gaps were added before the final
+validation.
+
+At commit `0dd6dfc`, Rust all-targets, release build, clippy with denied
+warnings, and fmt/diff pass. Class Test262 is **1672 pass / 0 fail / 2387 skip /
+4059 total**, and the pinned supported subset remains **12238 pass / 0 fail /
+8201 skip / 20439 total**. CI `29281286232` and full matrix `29281286160`
+succeeded. All 30 downloaded result artifacts are byte-for-byte identical to
+matrix `29278945569`, retaining the normalized **28542 pass / 6614 fail / 13149
+skip / 12 timeout / 0 error / 48317 total / 35156 pass-or-fail executed**
+aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

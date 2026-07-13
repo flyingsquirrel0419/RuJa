@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Ordinary, optional, grouped, and spread private calls now retain one private
+  Reference through `GetValue`, argument evaluation, and `CallRef`. Private
+  brand checks and accessor getters therefore run before arguments, the callee
+  is snapshotted before argument-side mutation, callable private accessors are
+  supported, and temporary receivers remain rooted through argument GC. This
+  also removes the duplicate `CallPrivateMethod` bytecode and its spread stack
+  corruption. Class Test262 is **1672 pass / 0 fail / 2387 skip**, and the
+  supported subset remains **12238 pass / 0 fail / 8201 skip** at commit
+  `0dd6dfc`. CI `29281286232` and full matrix `29281286160` succeeded; all 30
+  result artifacts are byte-for-byte identical to the preceding matrix.
 - Sloppy identifier deletion now evaluates one identifier Reference and routes
   it through the same `DeleteValue` operation as property deletion. This
   preserves declarative and eval binding deletion, targets the correct foreign
