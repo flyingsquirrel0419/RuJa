@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- Tagged templates now classify their tag call target explicitly: identifier,
+  member, and private tags retain a Reference and call through `CallRef`;
+  `super` tags retain the actual derived-instance receiver through
+  `CallThis`; non-Reference expression tags remain unbound. This fixes strict
+  identifier tags inside `with` receiving `undefined` instead of the with
+  object and fixes `super` tagged templates losing the derived receiver. Tag getters run
+  before template-object/interpolation evaluation, and temporary bases and
+  returned functions remain rooted across interpolation GC. The obsolete
+  `GetMethodForCall` opcode is removed. CI `29247565071` and `test262-full`
+  `29247565062` pass for commit `4f6975f`; all 30 artifacts reproduce **28536
+  pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
+  pass-or-fail executed** with no shard movement.
 - Optional member calls now retain property References across all four call
   shapes: `o?.m()`, `o.m?.()`, `(o?.m)()`, and `(o?.m)?.()`, including
   computed keys and spread arguments. Base-nullish and callee-nullish exits

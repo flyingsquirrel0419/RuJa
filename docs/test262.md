@@ -375,6 +375,43 @@ fmt/diff, tooling **66/66**, and the supported subset **12232 pass / 0 fail /
 35150 pass-or-fail executed**, with no changed shard. `GetMethodForCall` now
 remains only in the tagged-template compiler path.
 
+## Tagged-template Reference routing
+
+Tagged templates now preserve the specification Reference produced while
+evaluating identifier, ordinary member, and private tags. Identifier tags emit
+`LoadRef`, member/private tags construct the corresponding Reference, and each
+path duplicates it for one `GetValue` before `CallRef` derives `this`. This
+fixes strict identifier tags inside `with`, which previously received
+`undefined` instead of the with object, while ordinary lexical identifier tags
+continue to receive `undefined`.
+
+`super` remains an explicit-receiver path because the current Reference record
+cannot represent a `[[Base]]` distinct from `[[ThisValue]]`. The compiler keeps
+the derived instance below the result of `GetSuperProp` and invokes the tag via
+`CallThis`. This fixes `super` tagged templates with and without substitutions when
+the property is a method or getter. Non-Reference expression tags remain on the
+unbound `Call` path; parentheses preserve a member Reference while a comma
+expression intentionally discards it.
+
+Tag `GetValue` completes before `GetTemplateObject` and interpolation
+evaluation. The retained Reference and callee remain VM-stack GC roots, so a
+temporary member base and a getter-returned temporary function survive forced
+GC from an interpolation. Regressions cover identifier/`with`, computed and
+Symbol Proxy properties, primitive and private bases, `super` getters,
+parenthesized/unbound distinctions, strict receivers, evaluation order, and
+forced GC. Independent review found no functional issue; every identified
+low-risk test gap was added before commit.
+
+At commit `4f6975f`, the combined tagged-template, optional-chaining, call,
+frozen Proxy/Reflect `[[Get]]`, Reference, and `with` gate is **370 pass / 0
+fail / 27 skip / 397 total**. Rust all-targets, ES2015 **112/112**, clippy with
+denied warnings, fmt/diff, tooling **66/66**, and the supported subset **12232
+pass / 0 fail / 8207 skip / 20439 total** pass. CI `29247565071` and
+`test262-full` `29247565062` both succeed; all 30 downloaded artifacts exactly
+reproduce **28536 pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317
+total / 35150 pass-or-fail executed**, with no changed shard. No compiler or VM
+reference to the obsolete `GetMethodForCall` opcode remains.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
