@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- `super` property reads, direct/spread/optional calls, and tagged templates
+  now create specification Reference records with distinct `[[Base]]` and
+  `[[ThisValue]]` components. Computed keys run before the dynamic super-base
+  lookup and before property-key coercion, null super bases throw for string
+  and Symbol keys, and the retained Reference roots both base and receiver
+  across getters, Proxy traps, arguments, spread, interpolation, and forced
+  GC. Concise methods and accessors now retain an immutable `[[HomeObject]]`,
+  including borrowed primitive receivers and nested methods, without changing
+  it when the function is copied to another property. The obsolete
+  `CallSuper` opcode is removed. Local focused Test262 is **214 pass / 0 fail /
+  45 skip**, and the supported subset remains **12232 pass / 0 fail / 8207
+  skip**. CI `29252936209` and `test262-full` `29252935590` pass for commit
+  `aa83f7e`; all 30 artifacts are byte-for-byte identical to the preceding
+  baseline and retain the normalized **28536 pass / 6614 fail / 13155 skip / 12
+  timeout / 0 error / 48317 total / 35150 pass-or-fail executed** aggregate.
 - Tagged templates now classify their tag call target explicitly: identifier,
   member, and private tags retain a Reference and call through `CallRef`;
   `super` tags retain the actual derived-instance receiver through

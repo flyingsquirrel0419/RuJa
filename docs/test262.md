@@ -412,6 +412,44 @@ reproduce **28536 pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317
 total / 35150 pass-or-fail executed**, with no changed shard. No compiler or VM
 reference to the obsolete `GetMethodForCall` opcode remains.
 
+## Super Reference routing
+
+Super property reads, direct and spread calls, optional calls, and tagged
+templates now share a `MakeSuperPropertyRef` path. The Reference stores the
+dynamic super base in `[[Base]]` and the current method receiver in a distinct
+`[[ThisValue]]`; `GetValue` uses the latter as the `[[Get]]` receiver and
+`CallRef` uses it as the call receiver. The dedicated `CallSuper` opcode is no
+longer needed.
+
+For computed properties, the compiler first obtains the current `this`, then
+evaluates the key expression, obtains the HomeObject prototype, and finally
+coerces the key while constructing the Reference. This preserves the required
+ordering when the key expression or its coercion changes the HomeObject
+prototype. Null super bases throw before property lookup for both string and
+Symbol keys, while optional calls still skip their arguments only after a
+successful lookup produces a nullish callee.
+
+Interpreted concise methods and accessors now keep an immutable
+`[[HomeObject]]` slot. Calls bind `#super` from that slot rather than from the
+dynamic receiver, including borrowed methods with primitive `this` values and
+object methods nested inside class methods. Copying an existing method into a
+new ordinary property does not replace its HomeObject. Function HomeObjects
+and Reference bases/this-values participate in heap tracing and temporary
+pinning, so forced GC during key coercion, Proxy/getter work, arguments,
+spread, or template interpolation cannot collect them.
+
+At commit `aa83f7e`, Rust all-targets, clippy with denied warnings, fmt/diff,
+ES2015 **118/118**, classes **60/60**, operators **114/114**, focused Test262
+**214 pass / 0 fail / 45 skip / 259 total**, and the supported subset **12232
+pass / 0 fail / 8207 skip / 20439 total** pass. CI `29252936209` succeeds. The
+full matrix `29252935590` also succeeds after rerunning shards whose initial job
+setup hit a GitHub Actions internal-server error. All 30 downloaded result files
+are byte-for-byte identical to baseline run `29249047154`, retaining the
+normalized **28536 pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317
+total / 35150 pass-or-fail executed** aggregate with no shard movement. The
+remaining super stores, compound/logical assignments, updates, and delete stay
+on their bounded legacy paths; they are the next Reference migration unit.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
