@@ -583,6 +583,30 @@ artifacts are byte-for-byte identical to the preceding confirmed matrix, so the
 normalized aggregate remains **28536 pass / 6614 fail / 13155 skip / 12 timeout
 / 0 error / 48317 total / 35150 pass-or-fail executed** with no shard movement.
 
+## RegExp literal timeout boundary
+
+Four legacy RegExp literal stress files take **3.8-6.3 seconds** in repeated
+local file-by-file measurements and crossed the runner's 8-second timeout only
+under concurrent CI load:
+
+- `language/literals/regexp/S7.8.5_A1.1_T2.js`
+- `language/literals/regexp/S7.8.5_A1.4_T2.js`
+- `language/literals/regexp/S7.8.5_A2.1_T2.js`
+- `language/literals/regexp/S7.8.5_A2.4_T2.js`
+
+Runner and analyzer now select a 20-second timeout for exactly those files.
+Ordinary tests remain at 8 seconds, while the existing 600-second TypedArray
+copyWithin stress exception remains independent. Tooling regressions verify
+inside, ordinary same-directory, and outside-path boundaries in both tools.
+
+At commit `d6b142f`, tooling **67/67**, Rust all-targets, clippy with denied
+warnings, and fmt/diff pass. The latest complete literals run is **474 pass / 0
+fail / 60 skip / 0 timeout / 534 total**. CI `29269378405` and full matrix
+`29269378378` succeeded without a literals rerun. All 30 artifacts are
+byte-for-byte identical to the preceding confirmed matrix, so the normalized
+aggregate remains **28536 pass / 6614 fail / 13155 skip / 12 timeout / 0 error
+/ 48317 total / 35150 pass-or-fail executed** with no shard movement.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

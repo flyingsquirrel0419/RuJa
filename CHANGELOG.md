@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Test262 runner and analyzer now give four known slow legacy RegExp literal
+  stress files a bounded 20-second timeout instead of the ordinary 8 seconds.
+  They take **3.8-6.3 seconds** locally and repeatedly timed out only under
+  concurrent CI load. All other ordinary tests retain the 8-second limit, and
+  the existing TypedArray stress exception remains separate. Tooling is
+  **67/67** and the literals shard is **474 pass / 0 fail / 60 skip / 0
+  timeout** at commit `d6b142f`. CI `29269378405` and full matrix
+  `29269378378` succeeded without a literals retry; all 30 artifacts are
+  byte-for-byte identical to the preceding confirmed matrix.
 - Removed the unreachable legacy member-assignment fallback and its
   `SetProp`/`SetElem` bytecodes. All valid simple, compound, logical,
   prefix/postfix, destructuring, and loop member targets now have only their
