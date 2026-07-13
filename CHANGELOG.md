@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- Sloppy identifier deletion now evaluates one identifier Reference and routes
+  it through the same `DeleteValue` operation as property deletion. This
+  preserves declarative and eval binding deletion, targets the correct foreign
+  Realm global object, and keeps a global lexical binding from accidentally
+  deleting a configurable property it shadows. `with` object References remain
+  rooted through Proxy delete traps and GC. The duplicate `DeleteVar` bytecode
+  and manual environment walk are removed. Focused Test262 delete/with coverage
+  is **250/250**, and the supported subset remains **12238 pass / 0 fail / 8201
+  skip** at commit `0c2f783`. CI `29277397932` and full matrix `29277398192`
+  succeeded; all 30 artifacts are byte-for-byte identical to the preceding
+  matrix.
 - Interpreted runtime errors are now materialized in the Realm of the frame
   that raised them before that frame is caught, suspended, or removed. This
   preserves foreign `Error` prototypes through nested native callbacks,

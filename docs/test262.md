@@ -634,6 +634,34 @@ downloaded result artifacts, only `language/expressions` changed, from
 **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317 total /
 35156 pass-or-fail executed**.
 
+## Identifier delete References
+
+Sloppy `delete identifier` now compiles as `LoadRef` followed by
+`DeleteValue`. The resulting Reference distinguishes unresolvable names,
+declarative environment bindings, global object bindings, and `with` object
+environment properties. The standalone `DeleteVar` opcode and its second
+environment-chain traversal are removed.
+
+Global `var` and function deletion follows the selected Realm global object's
+property descriptor, while global lexical bindings return `false` without
+touching a configurable object property with the same name. Foreign Realm
+dynamic properties and eval-created bindings are deleted from that Realm, not
+the caller's global object. `with` Proxy false/throw outcomes propagate, and
+the retained object-environment Reference is pinned while a delete trap forces
+GC. Regressions also cover unresolvable names, strict parenthesized early
+errors, local/global eval bindings, inherited and unscopables-hidden `with`
+properties, parameters, and non-configurable script globals.
+
+At commit `0c2f783`, operators are **121/121**, Rust all-targets, release
+build, clippy with denied warnings, and fmt/diff pass. Pinned Test262 delete and
+with paths are **250 pass / 0 fail / 0 skip / 250 total**, and the supported
+subset remains **12238 pass / 0 fail / 8201 skip / 20439 total**. Independent
+review found no correctness or rooting defect after the added boundary tests.
+CI `29277397932` and full matrix `29277398192` succeeded; all 30 downloaded
+artifacts are byte-for-byte identical to matrix `29274877594`, retaining the
+normalized **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317
+total / 35156 pass-or-fail executed** aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,
