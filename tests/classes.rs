@@ -966,6 +966,176 @@ fn private_method_with_args() {
 }
 
 #[test]
+fn private_calls_use_retained_references() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var instance;
+            class C {
+              #callable = function() { return 1; };
+              #join(...values) {
+                return (this === instance ? "bound:" : "unbound:") +
+                  values.join(",");
+              }
+              get #accessor() {
+                log.push("get");
+                return function(value) {
+                  log.push("call:" + (this === instance));
+                  return value;
+                };
+              }
+              snapshot() {
+                return this.#callable(
+                  this.#callable = function() { return 2; }
+                );
+              }
+              rejectBeforeArguments(value) {
+                return value.#join(log.push("argument"));
+              }
+              callAccessor() {
+                return this.#accessor((log.push("argument"), "ok"));
+              }
+              directSpread() { return this.#join(0, ...[1, 2], 3); }
+              optionalSpread() { return this.#join?.(...[4, 5]); }
+              groupedOptionalSpread() { return (this?.#join)(...[6, 7]); }
+              static nullable(value) { return value?.#join(...[8]); }
+            }
+            instance = new C();
+            var snapshot = instance.snapshot();
+            try { instance.rejectBeforeArguments({}); }
+            catch (error) { log.push(error.name); }
+            [
+              snapshot,
+              instance.callAccessor(),
+              instance.directSpread(),
+              instance.optionalSpread(),
+              instance.groupedOptionalSpread(),
+              C.nullable(null),
+              C.nullable(instance),
+              log.join("|")
+            ].join(";");
+            "#),
+        Value::String(Arc::from(
+            "1;ok;bound:0,1,2,3;bound:4,5;bound:6,7;;bound:8;TypeError|get|argument|call:true"
+        ))
+    );
+}
+
+#[test]
+fn optional_private_calls_preserve_chain_boundaries_and_order() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            class C {
+              #nullable = null;
+              #nonCallable = 1;
+              #mutable = function() { return 1; };
+              #method() { return { value: 3 }; }
+              get #throwing() {
+                log.push("get:throwing");
+                throw "boom";
+              }
+              nullishCalls() {
+                return [
+                  this.#nullable?.(log.push("direct-argument")),
+                  this.#nullable?.(...[(log.push("spread-argument"), 1)])
+                ];
+              }
+              snapshot() {
+                return this.#mutable?.(...[
+                  (this.#mutable = function() { return 2; }, 0)
+                ]);
+              }
+              continuation() {
+                return [this.#method().value, this.#nullable?.().value];
+              }
+              nonCallable() {
+                try { this.#nonCallable?.(log.push("noncallable-argument")); }
+                catch (error) { log.push(error.name); }
+              }
+              throwing() {
+                try { this.#throwing?.(log.push("throwing-argument")); }
+                catch (error) { log.push(error); }
+              }
+              static combined(value) {
+                return value?.#nullable?.(log.push("combined-argument"));
+              }
+              static grouped(value) {
+                return (value?.#nullable)?.(log.push("grouped-argument"));
+              }
+              static continued(value) { return value?.#method().value; }
+              static groupedBreak(value) { return (value?.#method)().value; }
+              static wrongBrand(value) {
+                return value?.#nullable?.(log.push("wrong-brand-argument"));
+              }
+            }
+            var instance = new C();
+            var nullish = instance.nullishCalls();
+            var continuation = instance.continuation();
+            var groupedBreak;
+            var wrongBrand;
+            instance.nonCallable();
+            instance.throwing();
+            try { C.groupedBreak(null); }
+            catch (error) { groupedBreak = error.name; }
+            try { C.wrongBrand({}); }
+            catch (error) { wrongBrand = error.name; }
+            [
+              nullish[0], nullish[1],
+              C.combined(null), C.combined(instance),
+              C.grouped(null), C.grouped(instance),
+              C.continued(null), C.continued(instance),
+              continuation[0], continuation[1],
+              groupedBreak, wrongBrand, instance.snapshot(),
+              log.join("|")
+            ].join(";");
+            "#),
+        Value::String(Arc::from(
+            ";;;;;;;3;3;;TypeError;TypeError;1;noncallable-argument|TypeError|get:throwing|boom"
+        ))
+    );
+}
+
+#[test]
+fn private_call_references_survive_argument_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            class C {
+              #value = 9;
+              get #callable() {
+                return function(...values) { return this.#value + values.length; };
+              }
+              static calls(make) {
+                return [
+                  make().#callable(...[(forceGc(), 1)]),
+                  make().#callable?.(...[(forceGc(), 1), (forceGc(), 2)]),
+                  (make()?.#callable)(
+                    ...[(forceGc(), 1), (forceGc(), 2), (forceGc(), 3)]
+                  )
+                ];
+              }
+            }
+            C.calls(function() { return new C(); }).join(",");
+            "#,
+        )
+        .expect("private Reference and callee should survive argument GC"),
+        Value::String(Arc::from("10,11,12"))
+    );
+}
+
+#[test]
 fn private_method_calls_another_private() {
     assert_eq!(
         run(

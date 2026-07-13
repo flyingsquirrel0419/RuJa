@@ -3240,19 +3240,19 @@ impl Compiler {
                 if *optional {
                     self.emit_optional_chain_nullish_exit(1, exit_values, exits);
                 }
-                self.chunk.emit(Op::Dup, self.current_line);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
                 self.chunk.emit(Op::GetValue, self.current_line);
                 if call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
                 let has_spread = self.compile_optional_chain_args(args)?;
                 if has_spread {
-                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                    self.chunk.emit(Op::CallRefSpread, self.current_line);
                 } else {
-                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                    self.chunk.emit(Op::CallRef(args.len()), self.current_line);
                 }
             }
             Expr::Member {
@@ -3420,12 +3420,12 @@ impl Compiler {
                 if *optional {
                     self.emit_optional_chain_nullish_exit(1, 2, &mut exits);
                 }
-                self.chunk.emit(Op::Dup, self.current_line);
                 let name_idx = self.chunk.add_constant(Value::String(name.clone()));
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
                 self.chunk.emit(Op::GetValue, self.current_line);
-                false
+                true
             }
             _ => {
                 self.compile_optional_chain_component(expr, &mut exits, 2)?;
@@ -4118,20 +4118,21 @@ impl Compiler {
                             self.chunk.patch_jump(jend, end);
                         }
                     }
-                    // `obj.#method(args)`: call a private method with this=obj.
+                    // Resolve a private call before evaluating arguments and
+                    // retain its Reference to supply the call receiver.
                     Expr::PrivateGet { object, name, .. } => {
-                        self.compile_expr(object)?; // [obj]
-                        for a in args {
-                            if let Expr::Spread(_) = a {
-                            } else {
-                                self.compile_expr(a)?;
-                            }
-                        }
+                        self.compile_expr(object)?;
                         let name_idx = self.chunk.add_constant(Value::String(name.clone()));
-                        self.chunk.emit(
-                            Op::CallPrivateMethod(name_idx, args.len()),
-                            self.current_line,
-                        );
+                        self.chunk
+                            .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
+                        let has_spread = self.compile_optional_chain_args(args)?;
+                        if has_spread {
+                            self.chunk.emit(Op::CallRefSpread, self.current_line);
+                        } else {
+                            self.chunk.emit(Op::CallRef(args.len()), self.current_line);
+                        }
                         return Ok(());
                     }
                     Expr::Member {

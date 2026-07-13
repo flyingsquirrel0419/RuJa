@@ -2261,33 +2261,6 @@ impl Vm {
                     self.define_private_accessor_element(&obj, key, getter, setter)?;
                     self.stack.push(Value::Undefined);
                 }
-                Op::CallPrivateMethod(name_idx, arg_count) => {
-                    // stack: [..., obj, args...]
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let key = self.private_slot_key_from_name(name_idx)?;
-                    let method = if let Value::Object(idx) = &obj {
-                        self.heap
-                            .get_private_element(idx.0, &key)
-                            .and_then(|slot| match slot {
-                                crate::value::PrivateSlot::Value(value)
-                                | crate::value::PrivateSlot::Method(value) => Some(value),
-                                crate::value::PrivateSlot::Accessor { .. } => None,
-                            })
-                            .unwrap_or(Value::Undefined)
-                    } else {
-                        return Err(Error::type_err("Private receiver is not an object"));
-                    };
-                    if method.is_undefined() {
-                        return Err(Error::type_err("Private method is not present"));
-                    };
-                    let result = self.call_function(&method, &args, Some(obj))?;
-                    self.stack.push(result);
-                }
                 Op::PopFinallyRethrow => {
                     // The finally body has run. Re-raise the pending
                     // completion (return/break/continue/throw) that diverted

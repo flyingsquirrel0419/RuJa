@@ -269,10 +269,6 @@ pub enum Op {
     SetPrivate(usize),
     /// Define/merge a private accessor slot: stack [obj, get, set].
     DefinePrivateAccessor(usize),
-    /// Call a private method: stack [..., obj, args...], args = (name idx, arg count).
-    /// Resolves `obj.#name` as a function and calls it with this=obj.
-    CallPrivateMethod(usize, usize),
-
     // Closures
     MakeClosure(usize), // function index, captures current env
     NewTarget,          // push the current frame's new.target (ctor or undefined)
