@@ -3456,7 +3456,8 @@ impl Compiler {
                 self.emit_optional_chain_nullish_exit(1, 0, &mut exits);
             }
             self.compile_optional_chain_member_key(property, *computed)?;
-            self.chunk.emit(Op::DeleteProp, self.current_line);
+            self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
+            self.chunk.emit(Op::DeleteValue, self.current_line);
             let success_jump = self.chunk.code.len();
             self.chunk.emit(Op::Jump(0), self.current_line);
 
@@ -3742,7 +3743,6 @@ impl Compiler {
                                 self.compile_expr(object)?;
                                 if *computed {
                                     self.compile_expr(property)?;
-                                    self.chunk.emit(Op::DeleteProp, self.current_line);
                                 } else {
                                     let key = if let Expr::String(s) = property.as_ref() {
                                         s.to_string()
@@ -3753,8 +3753,9 @@ impl Compiler {
                                         .chunk
                                         .add_constant(Value::String(Arc::from(key.as_str())));
                                     self.chunk.emit(Op::Const(key_idx), self.current_line);
-                                    self.chunk.emit(Op::DeleteProp, self.current_line);
                                 }
+                                self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
+                                self.chunk.emit(Op::DeleteValue, self.current_line);
                             }
                             Expr::OptionalChain(inner) => {
                                 self.compile_optional_chain_delete(inner)?;

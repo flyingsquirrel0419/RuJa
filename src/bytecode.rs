@@ -187,7 +187,7 @@ pub enum Op {
     DefineMethod,       // define non-enumerable method property: stack [obj, key, value]
     GetElem,            // computed member
     SetElem,
-    DeleteProp,
+    DeleteValue,     // pop a property Reference, push its [[Delete]] result
     SetProto,        // pop [proto, obj]; set obj's [[Prototype]] to proto
     GetProto,        // pop [obj]; push obj.[[Prototype]] or null
     ValidateExtends, // pop [parentCtor]; throw TypeError if not a constructor or prototype is invalid

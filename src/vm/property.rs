@@ -477,18 +477,15 @@ impl Vm {
                 if !boolean_trap_result {
                     return Ok(false);
                 }
-                if let Some(desc) = self.own_property_descriptor_for_proxy_invariant(&target, key) {
+                if let Some(desc) =
+                    crate::builtins::own_property_descriptor_for_key_or_throw(self, &target, key)?
+                {
                     if !desc.configurable {
                         return Err(Error::type_err(
                             "Proxy deleteProperty trap cannot delete non-configurable property",
                         ));
                     }
-                    let target_extensible = match &target {
-                        Value::Object(target_idx) => {
-                            self.heap.with_obj(target_idx.0, |o| o.is_extensible())
-                        }
-                        _ => true,
-                    };
+                    let target_extensible = self.is_extensible(&target)?;
                     if !target_extensible {
                         return Err(Error::type_err(
                             "Proxy deleteProperty trap cannot delete non-extensible target property",
@@ -569,7 +566,9 @@ impl Vm {
                     if let Some(Value::String(s)) = od.primitive.lock().clone() {
                         return key.as_str().is_some_and(|name| {
                             let len = crate::value::utf16_len(&s);
-                            name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+                            name == "length"
+                                || crate::builtins::canonical_string_index(key)
+                                    .is_some_and(|i| i < len)
                         });
                     }
                 }

@@ -3451,9 +3451,7 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
                         if key.as_str() == Some("length") {
                             return true;
                         }
-                        return key
-                            .as_str()
-                            .and_then(|name| name.parse::<usize>().ok())
+                        return canonical_string_index(key)
                             .is_some_and(|i| i < crate::value::utf16_len(&s));
                     }
                 }
@@ -3464,10 +3462,7 @@ fn object_has_own_key(vm: &Vm, obj: &Value, key: &PropertyKey) -> error::Result<
             if key.as_str() == Some("length") {
                 return Ok(true);
             }
-            Ok(key
-                .as_str()
-                .and_then(|name| name.parse::<usize>().ok())
-                .is_some_and(|i| i < crate::value::utf16_len(s)))
+            Ok(canonical_string_index(key).is_some_and(|i| i < crate::value::utf16_len(s)))
         }
         _ => Ok(false),
     }
@@ -5132,7 +5127,10 @@ fn object_define_properties(vm: &mut Vm, args: &[Value], _: Option<Value>) -> er
 }
 
 pub(crate) fn canonical_string_index(key: &PropertyKey) -> Option<usize> {
-    let name = key.as_str()?;
+    canonical_string_index_name(key.as_str()?)
+}
+
+pub(crate) fn canonical_string_index_name(name: &str) -> Option<usize> {
     let index = name.parse::<usize>().ok()?;
     if index.to_string() == name {
         Some(index)

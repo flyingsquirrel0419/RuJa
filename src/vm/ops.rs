@@ -1982,32 +1982,10 @@ impl Vm {
                     }
                     self.stack.push(value);
                 }
-                Op::DeleteProp => {
-                    // stack: [obj, key]; remove the own property, push boolean.
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    if matches!(obj, Value::Null | Value::Undefined) {
-                        return Err(Error::type_err(
-                            "Cannot convert undefined or null to object",
-                        ));
-                    }
-                    let pkey = match &key {
-                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
-                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
-                    };
-                    let result = if let Value::Object(idx) = &obj {
-                        let deleted = self.delete_property_key(&obj, &pkey)?;
-                        if !deleted && self.current_strict() {
-                            return Err(Error::type_err("Cannot delete non-configurable property"));
-                        }
-                        Value::Bool(deleted)
-                    } else {
-                        // Other primitives (number, string, boolean): delete is
-                        // a no-op that returns true (ToObject wraps in a wrapper
-                        // object, which has no own configurable properties).
-                        Value::Bool(true)
-                    };
-                    self.stack.push(result);
+                Op::DeleteValue => {
+                    let reference = self.stack.pop().unwrap_or(Value::Undefined);
+                    let deleted = self.delete_value(&reference)?;
+                    self.stack.push(Value::Bool(deleted));
                 }
                 Op::DeleteVar(name_idx) => {
                     // `delete x` (identifier, non-strict mode): check if the

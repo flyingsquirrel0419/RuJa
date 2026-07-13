@@ -2419,6 +2419,57 @@ impl Vm {
         Ok(value)
     }
 
+    /// Delete a property through its evaluated Reference. The base is boxed
+    /// before a raw referenced name is coerced, matching DeleteExpression.
+    pub(crate) fn delete_value(&mut self, v: &Value) -> error::Result<bool> {
+        let Value::Reference(reference) = v else {
+            return Ok(true);
+        };
+        let reference = reference.clone();
+        if reference.this_value.is_some() {
+            return Err(Error::reference("Cannot delete super property"));
+        }
+        let crate::value::ReferenceBase::Value(base) = &reference.base else {
+            return Err(Error::internal("expected property reference for delete"));
+        };
+        if base.is_nullish() {
+            return Err(Error::type_err(
+                "Cannot convert undefined or null to object",
+            ));
+        }
+        if matches!(reference.name, crate::value::ReferencedName::Private(_)) {
+            return Err(Error::internal("cannot delete a private reference"));
+        }
+
+        let mut pin_count = self.pin(v);
+        let object = match self.to_object(base) {
+            Ok(object) => object,
+            Err(error) => {
+                self.unpin_many(pin_count);
+                return Err(error);
+            }
+        };
+        pin_count += self.pin(&object);
+        let key_result = match &reference.name {
+            crate::value::ReferencedName::Property(key) => Ok(key.clone()),
+            crate::value::ReferencedName::UncoercedProperty(name) => {
+                self.coerce_property_key_record(name)
+            }
+            crate::value::ReferencedName::Private(_) => unreachable!(),
+        };
+        let result = match key_result {
+            Ok(key) => self.delete_property_key(&object, &key),
+            Err(error) => Err(error),
+        };
+        self.unpin_many(pin_count);
+
+        let deleted = result?;
+        if !deleted && reference.strict {
+            return Err(Error::type_err("Cannot delete non-configurable property"));
+        }
+        Ok(deleted)
+    }
+
     /// Spec PutValue (6.2.4.3): if `v` is a Reference, store `value` into
     /// the referenced binding/property. For environment-record-based
     /// references, this uses SetMutableBinding on the reference's env (not

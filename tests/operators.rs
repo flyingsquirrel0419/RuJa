@@ -667,6 +667,177 @@ fn delete_nullish_computed_property_skips_key_coercion() {
 }
 
 #[test]
+fn delete_primitive_string_properties_uses_wrapper_delete_semantics() {
+    assert_eq!(
+        run(r#"
+            [
+              delete "abc"[0],
+              delete "abc".length,
+              delete "abc"[3],
+              delete "abc"["01"],
+              delete "abc"["00"],
+              delete "abc"["+0"],
+              delete "abc"["1e0"],
+              delete "abc"["-0"],
+              delete (1).missing
+            ].join(":");
+            "#),
+        Value::String(Arc::from("false:false:true:true:true:true:true:true:true"))
+    );
+    assert_eq!(
+        run(r#"
+            var boxed = new String("abc");
+            Object.defineProperty(boxed, "01", {
+              value: 1,
+              configurable: true
+            });
+            var before = boxed["01"];
+            var deleted = delete boxed["01"];
+            [
+              typeof "abc"["01"],
+              before,
+              deleted,
+              "01" in boxed,
+              typeof boxed["01"]
+            ].join(":");
+            "#),
+        Value::String(Arc::from("undefined:1:true:false:undefined"))
+    );
+    assert!(
+        run_err(r#"(function() { "use strict"; delete "abc"[0]; })();"#).contains("TypeError"),
+        "strict deletion of a non-configurable string index must throw"
+    );
+}
+
+#[test]
+fn delete_references_root_temporary_base_and_key_during_coercion() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var log = [];
+            function makeBase(label) {
+              return new Proxy({ x: 1 }, {
+                deleteProperty: function(target, key) {
+                  log.push("delete:" + label + ":" + key);
+                  return Reflect.deleteProperty(target, key);
+                }
+              });
+            }
+            function makeKey(label) {
+              return {
+                toString: function() {
+                  log.push("key:" + label);
+                  forceGc();
+                  return "x";
+                }
+              };
+            }
+
+            var direct = delete makeBase("direct")[makeKey("direct")];
+            var optional = delete makeBase("optional")?.[makeKey("optional")];
+            [direct, optional, log.join("|")].join(";");
+            "#,
+        )
+        .expect("delete References should root temporary bases and names"),
+        Value::String(Arc::from(
+            "true;true;key:direct|delete:direct:x|key:optional|delete:optional:x"
+        ))
+    );
+}
+
+#[test]
+fn delete_proxy_enforces_nested_target_invariants() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = {};
+            Object.defineProperty(target, "fixed", {
+              value: 1,
+              configurable: false
+            });
+            var inner = new Proxy(target, {
+              getOwnPropertyDescriptor: function(t, key) {
+                log.push("gopd:" + key);
+                return Reflect.getOwnPropertyDescriptor(t, key);
+              }
+            });
+            var outer = new Proxy(inner, {
+              deleteProperty: function() {
+                log.push("delete");
+                return true;
+              }
+            });
+            try {
+              delete outer.fixed;
+            } catch (error) {
+              log.push(error.name);
+            }
+            log.join("|");
+            "#),
+        Value::String(Arc::from("delete|gopd:fixed|TypeError"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var target = { present: 1 };
+            Object.preventExtensions(target);
+            var inner = new Proxy(target, {
+              getOwnPropertyDescriptor: function(t, key) {
+                log.push("gopd:" + key);
+                return Reflect.getOwnPropertyDescriptor(t, key);
+              },
+              isExtensible: function(t) {
+                log.push("extensible");
+                return Reflect.isExtensible(t);
+              }
+            });
+            var outer = new Proxy(inner, {
+              deleteProperty: function() {
+                log.push("delete");
+                return true;
+              }
+            });
+            try {
+              delete outer.present;
+            } catch (error) {
+              log.push(error.name);
+            }
+            log.push("present" in target);
+            log.join("|");
+            "#),
+        Value::String(Arc::from("delete|gopd:present|extensible|TypeError|true"))
+    );
+
+    assert!(
+        run_err(
+            r#"
+            (function() {
+              "use strict";
+              var proxy = new Proxy({ x: 1 }, {
+                deleteProperty: function() { return false; }
+              });
+              delete proxy?.x;
+            })();
+            "#
+        )
+        .contains("TypeError"),
+        "strict optional delete must reject a false Proxy trap result"
+    );
+}
+
+#[test]
 fn update_identifier_preserves_with_reference_after_getter_delete() {
     assert_eq!(
         run(r#"

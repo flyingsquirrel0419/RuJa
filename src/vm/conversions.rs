@@ -581,9 +581,7 @@ impl Vm {
                                         proto,
                                     );
                                 }
-                                if let Some(index) =
-                                    key.as_str().and_then(|name| name.parse::<usize>().ok())
-                                {
+                                if let Some(index) = crate::builtins::canonical_string_index(key) {
                                     if let Some(unit) = crate::value::utf16_get(&s, index) {
                                         return (
                                             Some(Value::String(Arc::from(
@@ -656,7 +654,8 @@ impl Vm {
                 if let Some(Value::String(s)) = od.primitive.lock().clone() {
                     return key.as_str().is_some_and(|name| {
                         let len = crate::value::utf16_len(&s);
-                        name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+                        name == "length"
+                            || crate::builtins::canonical_string_index(key).is_some_and(|i| i < len)
                     });
                 }
             }
@@ -889,7 +888,8 @@ impl Vm {
                             if let Some(Value::String(s)) = od.primitive.lock().clone() {
                                 let len = crate::value::utf16_len(&s);
                                 let has = name == "length"
-                                    || name.parse::<usize>().is_ok_and(|i| i < len);
+                                    || crate::builtins::canonical_string_index_name(name)
+                                        .is_some_and(|i| i < len);
                                 return (false, false, has);
                             }
                         }
@@ -905,7 +905,8 @@ impl Vm {
             }
             Value::String(st) => {
                 let len = crate::value::utf16_len(st);
-                Ok(name == "length" || name.parse::<usize>().is_ok_and(|i| i < len))
+                Ok(name == "length"
+                    || crate::builtins::canonical_string_index_name(name).is_some_and(|i| i < len))
             }
             _ => Ok(false),
         }
@@ -962,7 +963,8 @@ impl Vm {
             }),
             Value::String(st) => {
                 let len = crate::value::utf16_len(st);
-                name == "length" || name.parse::<usize>().is_ok_and(|i| i < len)
+                name == "length"
+                    || crate::builtins::canonical_string_index_name(name).is_some_and(|i| i < len)
             }
             _ => false,
         }
@@ -1049,7 +1051,7 @@ impl Vm {
                 if key == "length" {
                     return Ok(Value::Number(crate::value::utf16_len(s) as f64));
                 }
-                if let Ok(idx) = key.parse::<usize>() {
+                if let Some(idx) = crate::builtins::canonical_string_index_name(key) {
                     if let Some(unit) = crate::value::utf16_get(s, idx) {
                         return Ok(Value::String(Arc::from(
                             crate::value::utf16_to_string(&[unit]).as_str(),
@@ -1342,7 +1344,7 @@ impl Vm {
                             if key == "length" {
                                 return Ok(Value::Number(crate::value::utf16_len(&s) as f64));
                             }
-                            if let Ok(i) = key.parse::<usize>() {
+                            if let Some(i) = crate::builtins::canonical_string_index_name(key) {
                                 if let Some(unit) = crate::value::utf16_get(&s, i) {
                                     return Ok(Value::String(Arc::from(
                                         crate::value::utf16_to_string(&[unit]).as_str(),
