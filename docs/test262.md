@@ -488,6 +488,36 @@ artifacts are byte-for-byte identical to the preceding confirmed matrix, so the
 normalized aggregate remains **28536 pass / 6614 fail / 13155 skip / 12 timeout
 / 0 error / 48317 total / 35150 pass-or-fail executed** with no shard movement.
 
+## Ordinary member assignment References
+
+Simple assignment, destructuring assignment targets, and non-declaration
+`for-in`/`for-of` member targets now create a raw property Reference as soon as
+their base and referenced name have been evaluated. That Reference remains live
+through RHS evaluation, destructuring source access, or loop-value storage and
+is passed directly to `PutValue`. This preserves the specification's delayed
+`ToPropertyKey` for `a[b] = c` while rooting temporary base and key objects
+through observable calls and forced collection.
+
+Destructuring now stores one Reference temporary instead of separate base and
+key temporaries. The assignment-only `MakePropertyRefForSet` bytecode and VM
+handler are removed; ordinary read/call paths retain their resolved
+`MakePropertyRef` behavior, keeping this migration bounded to assignment.
+Regressions force GC while temporary base and key objects are retained only by
+simple and destructuring assignment References.
+
+At commit `345e3f3`, Rust all-targets, clippy with denied warnings, fmt/diff,
+operators **115/115**, ES2015 **124/124**, destructuring **45/45**, and control
+flow **55/55** pass. Latest Test262 assignment/destructuring/for-in/for-of paths
+are **1169 pass / 0 fail / 190 skip / 1359 total**, and the pinned supported
+subset remains **12232 pass / 0 fail / 8207 skip / 20439 total**. Independent
+review found the next bounded correctness issue in ordinary delete: primitive
+string index deletion bypasses non-configurable wrapper properties, and key
+coercion can unroot a temporary base. CI `29260495441` and full matrix
+`29260497188` succeeded. All 30 artifacts are byte-for-byte identical to the
+preceding confirmed matrix, so the normalized aggregate remains **28536 pass /
+6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
+pass-or-fail executed** with no shard movement.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Ordinary member targets in simple assignment, destructuring assignment, and
+  `for-in`/`for-of` assignment now retain one raw property Reference through
+  the value or source evaluation. `ToPropertyKey` remains deferred until
+  `PutValue`, while the Reference roots temporary base and key values across
+  observable calls and GC. The assignment-only `MakePropertyRefForSet` opcode
+  and separate destructuring base/key temporaries are removed. Focused Test262
+  is **1169 pass / 0 fail / 190 skip**, and the supported subset remains
+  **12232 pass / 0 fail / 8207 skip** at commit `345e3f3`. CI `29260495441`
+  and full matrix `29260497188` succeeded; all 30 result artifacts are
+  byte-for-byte identical to the preceding confirmed matrix.
 - Every `super` property write path now uses the same specification Reference
   machinery as reads and calls: simple and destructuring assignment,
   compound/logical assignment, prefix/postfix update, and delete. Computed
