@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.0% of all matrix files; 81.1% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.0% of all matrix files; 81.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12232 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -179,6 +179,28 @@ aggregate to **28487 pass / 6629 fail / 13189 skip / 12 timeout / 0 error /
 and **81.1%** of executed files. This is **+19 pass / -17 fail / -2 skip** from
 the preceding confirmed matrix; the JSON tag also fixes shared behavior outside
 the 17-file frozen admission.
+
+## Date Symbol.toPrimitive admission
+
+`tools/test262_date_to_primitive_admission.txt` freezes all **18** tests under
+`built-ins/Date/prototype/Symbol.toPrimitive`. The intrinsic is installed with
+the specified name, length, and descriptor, validates the three exact hint
+strings, and performs generic ordinary conversion in string-first order for
+`"default"` and `"string"` and number-first order for `"number"`. Property
+access, callable Proxy methods, calls, primitive-result selection, and abrupt
+completion remain observable in specification order. Deleting the configurable
+intrinsic now correctly falls back to ordinary number-first default conversion
+instead of retaining a Date-specific VM shortcut.
+
+At commit `8939b5e`, local verification on test262
+`d1d583db95a521218f3eb8341a887fd63eda8ff1` reports **18 pass / 0 fail / 0
+skip**. The supported subset remains **12232 pass / 0 fail / 8207 skip / 20439
+total**, and the Python tooling suite is **64/64**. CI `29218430070` and
+`test262-full` `29218430199` both pass. The 30 downloaded artifacts aggregate
+to **28502 pass / 6615 fail / 13188 skip / 12 timeout / 0 error / 48317 total /
+35117 pass-or-fail executed**, or **59.0%** of all matrix files and **81.2%** of
+executed files. This is **+15 pass / -14 fail / -1 skip** from the preceding
+confirmed matrix.
 
 ## Full-suite baseline
 

@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- `Date.prototype[Symbol.toPrimitive]` now implements the generic ordinary
+  conversion algorithm with string-first `"default"`/`"string"` hints and a
+  number-first `"number"` hint, including observable property access, callable
+  Proxies, abrupt completion, exact intrinsic metadata, and primitive-result
+  validation. Removing the configurable intrinsic now exposes ordinary
+  number-first default conversion instead of a stale Date-specific VM path.
+  Frozen Test262 admission is **18/18**. CI `29218430070` and `test262-full`
+  `29218430199` pass for commit `8939b5e`; downloaded artifacts aggregate to
+  **28502 pass / 6615 fail / 13188 skip / 12 timeout / 0 error / 48317 total /
+  35117 pass-or-fail executed**, a movement of **+15 pass / -14 fail / -1
+  skip**.
 - `JSON.rawJSON` and `JSON.isRawJSON` now create and recognize unforgeably
   branded, frozen, null-prototype raw-value objects. Primitive JSON text is
   validated after `ToString` while preserving the original spelling, including
