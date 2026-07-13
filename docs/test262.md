@@ -719,6 +719,32 @@ identical to matrix `29282907778`, retaining the normalized **28542 pass / 6614
 fail / 13149 skip / 12 timeout / 0 error / 48317 total / 35156 pass-or-fail
 executed** aggregate.
 
+## Parenthesized optional-chain tag References
+
+A parenthesized optional chain may be used as a tagged-template head even
+though an unparenthesized optional-chain tag is an early error. When the chain
+ends in an ordinary, computed, nested, or private member, the compiler now
+retains its Reference and invokes the snapshotted tag through `CallRef`. When
+the chain ends in a call result, it emits an explicit `undefined` receiver and
+uses `CallThis`, preserving an unbound strict `this` without pretending the
+result is a Reference.
+
+Regressions cover member, computed, nested, private, and call-result tags;
+nullish and non-callable errors after interpolation; getter errors before
+interpolation; interpolation errors before invocation; interpolation-side
+callee mutation; direct-versus-parenthesized parser boundaries; and forced GC
+while computed, private, and call-result forms retain their inputs. Independent
+review found no correctness defect after these boundary tests were added.
+
+At commit `e9faed5`, Rust all-targets, release build, clippy with denied
+warnings, fmt/diff, and tagged-template regressions pass. Pinned tagged-template
+and optional-chaining Test262 is **63 pass / 0 fail / 2 skip / 65 total**, and
+the supported subset remains **12238 pass / 0 fail / 8201 skip / 20439 total**.
+CI `29289456680` and full matrix `29289456698` succeeded. All 30 downloaded
+result artifacts are byte-for-byte identical to matrix `29286826876`, retaining
+the normalized **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error /
+48317 total / 35156 pass-or-fail executed** aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

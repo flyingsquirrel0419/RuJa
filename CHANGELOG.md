@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Parenthesized optional-chain tagged templates now preserve the final member
+  or private Reference and call through `CallRef`; optional-chain call results
+  remain unbound through an explicit `undefined` receiver. This restores the
+  tag receiver, callee snapshot, nullish/error ordering, and GC rooting for
+  member, computed, private, nested, and call-result forms while direct
+  optional-chain tags remain syntax errors. Focused Test262 is **63 pass / 0
+  fail / 2 skip**, and the supported subset remains **12238 pass / 0 fail /
+  8201 skip** at commit `e9faed5`. CI `29289456680` and full matrix
+  `29289456698` succeeded; all 30 artifacts exactly match the preceding matrix.
 - Private prefix/postfix updates and compound/logical assignments now retain a
   single private Reference through `GetValue`, coercion or RHS evaluation, and
   `PutValue`. This unifies their base, brand, accessor, mutation, error-Realm,
