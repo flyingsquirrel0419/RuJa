@@ -1397,6 +1397,25 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 finally:
                     tool.TEST262 = original_root
 
+    def test_regexp_literal_extended_timeout_is_limited_to_known_slow_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            slow = root / "test/language/literals/regexp/S7.8.5_A1.1_T2.js"
+            ordinary = root / "test/language/literals/regexp/7.8.5-1.js"
+            outside = root / "test/language/expressions/regexp/case.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.regexp_literal_extended_timeout_path(slow))
+                    self.assertEqual(tool.test_timeout_seconds(slow), 20)
+                    self.assertFalse(tool.regexp_literal_extended_timeout_path(ordinary))
+                    self.assertEqual(tool.test_timeout_seconds(ordinary), 8)
+                    self.assertFalse(tool.regexp_literal_extended_timeout_path(outside))
+                    self.assertEqual(tool.test_timeout_seconds(outside), 8)
+                finally:
+                    tool.TEST262 = original_root
+
     def test_slice_features_are_admitted_only_on_its_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

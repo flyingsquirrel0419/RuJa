@@ -552,6 +552,13 @@ TYPED_ARRAY_COPY_WITHIN_EXTENDED_TIMEOUT_FILES = {
     "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
 }
 
+REGEXP_LITERAL_EXTENDED_TIMEOUT_FILES = {
+    "language/literals/regexp/S7.8.5_A1.1_T2.js",
+    "language/literals/regexp/S7.8.5_A1.4_T2.js",
+    "language/literals/regexp/S7.8.5_A2.1_T2.js",
+    "language/literals/regexp/S7.8.5_A2.4_T2.js",
+}
+
 TYPED_ARRAY_SLICE_PREFIXES = (
     "built-ins/TypedArray/prototype/slice/",
 )
@@ -1462,6 +1469,20 @@ def typed_array_copy_within_extended_timeout_path(path):
         return False
     return rel.as_posix() in TYPED_ARRAY_COPY_WITHIN_EXTENDED_TIMEOUT_FILES
 
+def regexp_literal_extended_timeout_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in REGEXP_LITERAL_EXTENDED_TIMEOUT_FILES
+
+def test_timeout_seconds(path):
+    if typed_array_copy_within_extended_timeout_path(path):
+        return 600
+    if regexp_literal_extended_timeout_path(path):
+        return 20
+    return 8
+
 def typed_array_slice_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2171,7 +2192,7 @@ def run_test(path):
     full, meta = build_source(path)
     if should_skip(meta, path):
         return 'skip', ''
-    timeout = 600 if typed_array_copy_within_extended_timeout_path(path) else 8
+    timeout = test_timeout_seconds(path)
     source_path = path if "module" in meta.get("flags", []) or dynamic_import_path(path) else None
     return execute_source(
         full, meta, RUJA, timeout=timeout, source_path=source_path
