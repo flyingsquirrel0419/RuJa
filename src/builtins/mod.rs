@@ -2782,6 +2782,31 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         "Function",
         Value::Object(function_ctor_idx),
     );
+    if let Some(Value::Object(main_object_idx)) =
+        crate::environment::get(&vm.heap, vm.global, "Object")
+    {
+        let main_props = vm
+            .heap
+            .with_obj(main_object_idx.0, |obj| obj.props().lock().clone());
+        let realm_object_idx =
+            vm.new_native_function_in_env("Object", object_constructor, 1, realm_env)?;
+        let object_prototype = main_props
+            .get(&PropertyKey::from("prototype"))
+            .map(|desc| desc.value.clone());
+        vm.heap.with_obj(realm_object_idx.0, |obj| {
+            *obj.props().lock() = main_props;
+            if let (HeapObj::Function(function), Some(prototype)) = (obj, object_prototype) {
+                *function.prototype.lock() = Some(prototype);
+            }
+        });
+        define_realm_global(
+            vm,
+            realm_env,
+            &global,
+            "Object",
+            Value::Object(realm_object_idx),
+        );
+    }
     install_async_function_intrinsic(vm, realm_env, &realm_function_proto, function_ctor_idx)?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,

@@ -1980,11 +1980,12 @@ impl Vm {
     }
 
     pub(crate) fn current_realm_global_env(&self) -> GcIdx {
-        let env = self
-            .frames
-            .last()
-            .map(|frame| frame.env)
-            .unwrap_or(self.global);
+        let env = self.native_callee_closure().unwrap_or_else(|| {
+            self.frames
+                .last()
+                .map(|frame| frame.env)
+                .unwrap_or(self.global)
+        });
         crate::environment::global_env_root(&self.heap, env)
     }
 
