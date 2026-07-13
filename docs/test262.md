@@ -341,6 +341,40 @@ both succeed; all 30 downloaded artifacts exactly reproduce **28536 pass /
 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
 pass-or-fail executed**, with no changed shard.
 
+## Optional member-call Reference routing
+
+Optional member calls now use the same retained property Reference as ordinary
+member calls. The compiler emits `MakePropertyRef`, duplicates the Reference
+for one `GetValue`, then selects `CallRef` or `CallRefSpread` after optional
+nullish checks. This covers `o?.m()`, `o.m?.()`, `(o?.m)()`, and
+`(o?.m)?.()` without changing private or `super` call paths.
+
+The base-nullish exit consumes the single unevaluated base and skips computed
+key and argument evaluation. Once a Reference and callee exist, the
+callee-nullish exit consumes both stack values and skips arguments. A grouped
+non-optional call such as `(null?.m)(argument())` intentionally continues,
+evaluates its arguments, and then throws for the undefined callee; the optional
+grouped form skips them. `compile_optional_chain_call_target` reports whether
+its pair is `[reference, callee]` or `[explicitThis, callee]`, so member targets
+use `CallRef` while private and non-Reference targets retain `CallThis`.
+
+Regressions cover computed keys, Proxy getters, strict receivers, primitive
+bases, direct and spread arguments, all four grouped/un-grouped forms, both
+nullish exits, and forced GC while an optional spread argument is evaluated.
+Independent review found no stack-shape, short-circuit, receiver, rooting, or
+scope-boundary issue; grouped optional `super` calls also retain their existing
+explicit receiver path.
+
+At commit `81b50cf`, the combined optional-chaining, call, frozen Proxy/Reflect
+`[[Get]]`, Reference, and `with` gate is **345 pass / 0 fail / 25 skip / 370
+total**. Rust all-targets, operators **114/114**, clippy with denied warnings,
+fmt/diff, tooling **66/66**, and the supported subset **12232 pass / 0 fail /
+8207 skip / 20439 total** pass. CI `29244031712` and `test262-full`
+`29244032070` both succeed; all 30 downloaded artifacts exactly reproduce
+**28536 pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total /
+35150 pass-or-fail executed**, with no changed shard. `GetMethodForCall` now
+remains only in the tagged-template compiler path.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

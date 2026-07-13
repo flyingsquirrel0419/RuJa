@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Optional member calls now retain property References across all four call
+  shapes: `o?.m()`, `o.m?.()`, `(o?.m)()`, and `(o?.m)?.()`, including
+  computed keys and spread arguments. Base-nullish and callee-nullish exits
+  discard the exact live stack values before skipping key or argument
+  evaluation, while grouped non-optional calls still evaluate arguments before
+  throwing for an undefined callee. Proxy, primitive, and temporary GC-only
+  bases preserve the original receiver. CI `29244031712` and `test262-full`
+  `29244032070` pass for commit `81b50cf`; all 30 artifacts reproduce **28536
+  pass / 6614 fail / 13155 skip / 12 timeout / 0 error / 48317 total / 35150
+  pass-or-fail executed** with no shard movement.
 - Ordinary non-optional member calls, including spread calls, now retain the
   property Reference used to resolve the callee and derive `this` through
   `CallRef`/`CallRefSpread`. Object, primitive, Symbol-keyed, and Proxy-backed
