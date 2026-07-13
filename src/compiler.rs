@@ -3236,15 +3236,29 @@ impl Compiler {
     ) -> error::Result<()> {
         match callee {
             Expr::OptionalChain(inner) => {
-                self.compile_optional_chain_call_target(inner)?;
+                let reference_call = self.compile_optional_chain_call_target(inner)?;
                 if call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
                 let has_spread = self.compile_optional_chain_args(args)?;
                 if has_spread {
-                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                    self.chunk.emit(
+                        if reference_call {
+                            Op::CallRefSpread
+                        } else {
+                            Op::CallThisSpread
+                        },
+                        self.current_line,
+                    );
                 } else {
-                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                    self.chunk.emit(
+                        if reference_call {
+                            Op::CallRef(args.len())
+                        } else {
+                            Op::CallThis(args.len())
+                        },
+                        self.current_line,
+                    );
                 }
             }
             Expr::Ident(name) => {
@@ -3323,15 +3337,17 @@ impl Compiler {
                     self.emit_optional_chain_nullish_exit(1, exit_values, exits);
                 }
                 self.compile_optional_chain_member_key(property, *computed)?;
-                self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
                 if call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
                 let has_spread = self.compile_optional_chain_args(args)?;
                 if has_spread {
-                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                    self.chunk.emit(Op::CallRefSpread, self.current_line);
                 } else {
-                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                    self.chunk.emit(Op::CallRef(args.len()), self.current_line);
                 }
             }
             _ => {
@@ -3397,9 +3413,9 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_optional_chain_call_target(&mut self, expr: &Expr) -> error::Result<()> {
+    fn compile_optional_chain_call_target(&mut self, expr: &Expr) -> error::Result<bool> {
         let mut exits = Vec::new();
-        match expr {
+        let reference_call = match expr {
             Expr::Member {
                 object,
                 property,
@@ -3412,7 +3428,10 @@ impl Compiler {
                     self.emit_optional_chain_nullish_exit(1, 2, &mut exits);
                 }
                 self.compile_optional_chain_member_key(property, *computed)?;
-                self.chunk.emit(Op::GetMethodForCall, self.current_line);
+                self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+                true
             }
             Expr::PrivateGet {
                 object,
@@ -3428,18 +3447,20 @@ impl Compiler {
                 self.chunk
                     .emit(Op::MakePrivateRef(name_idx), self.current_line);
                 self.chunk.emit(Op::GetValue, self.current_line);
+                false
             }
             _ => {
                 self.compile_optional_chain_component(expr, &mut exits, 2)?;
                 self.chunk.emit(Op::Undefined, self.current_line);
                 self.chunk.emit(Op::Swap, self.current_line);
+                false
             }
-        }
+        };
         let end = self.chunk.code.len();
         for jump in exits {
             self.chunk.patch_jump(jump, end);
         }
-        Ok(())
+        Ok(reference_call)
     }
 
     fn compile_optional_chain_delete(&mut self, expr: &Expr) -> error::Result<()> {
@@ -4050,16 +4071,30 @@ impl Compiler {
                 }
                 match callee.as_ref() {
                     Expr::OptionalChain(inner) => {
-                        self.compile_optional_chain_call_target(inner)?;
+                        let reference_call = self.compile_optional_chain_call_target(inner)?;
                         let mut exits = Vec::new();
                         if *call_opt {
                             self.emit_optional_chain_nullish_exit(2, 1, &mut exits);
                         }
                         let has_spread = self.compile_optional_chain_args(args)?;
                         if has_spread {
-                            self.chunk.emit(Op::CallThisSpread, self.current_line);
+                            self.chunk.emit(
+                                if reference_call {
+                                    Op::CallRefSpread
+                                } else {
+                                    Op::CallThisSpread
+                                },
+                                self.current_line,
+                            );
                         } else {
-                            self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                            self.chunk.emit(
+                                if reference_call {
+                                    Op::CallRef(args.len())
+                                } else {
+                                    Op::CallThis(args.len())
+                                },
+                                self.current_line,
+                            );
                         }
                         let end = self.chunk.code.len();
                         for jump in exits {
@@ -4234,14 +4269,9 @@ impl Compiler {
                             self.chunk.emit(Op::Const(key_idx), self.current_line);
                         }
                         let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
-                        let reference_call = !*m_opt && !*call_opt;
-                        if reference_call {
-                            self.chunk.emit(Op::MakePropertyRef, self.current_line);
-                            self.chunk.emit(Op::Dup, self.current_line);
-                            self.chunk.emit(Op::GetValue, self.current_line);
-                        } else {
-                            self.chunk.emit(Op::GetMethodForCall, self.current_line);
-                        }
+                        self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
                         let mut call_jend = 0usize;
                         if *call_opt {
                             // `a.b?.(args)` resolves the method before
@@ -4271,26 +4301,12 @@ impl Compiler {
                                     }
                                 }
                             }
-                            self.chunk.emit(
-                                if reference_call {
-                                    Op::CallRefSpread
-                                } else {
-                                    Op::CallThisSpread
-                                },
-                                self.current_line,
-                            );
+                            self.chunk.emit(Op::CallRefSpread, self.current_line);
                         } else {
                             for a in args {
                                 self.compile_expr(a)?;
                             }
-                            self.chunk.emit(
-                                if reference_call {
-                                    Op::CallRef(args.len())
-                                } else {
-                                    Op::CallThis(args.len())
-                                },
-                                self.current_line,
-                            );
+                            self.chunk.emit(Op::CallRef(args.len()), self.current_line);
                         }
                         if *call_opt {
                             let end = self.chunk.code.len();

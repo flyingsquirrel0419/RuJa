@@ -186,6 +186,21 @@ fn member_call_reference_roots_temporary_base_during_arguments() {
         .expect("member call should keep its temporary base alive"),
         Value::Number(9.0)
     );
+    assert_eq!(
+        vm.run(
+            r#"
+            function makeOptionalBase() {
+              return {
+                marker: 11,
+                method: function() { return this.marker; }
+              };
+            }
+            makeOptionalBase().method?.(...(forceGc(), []));
+            "#
+        )
+        .expect("optional member call should keep its temporary base alive"),
+        Value::Number(11.0)
+    );
 }
 
 #[test]
@@ -1579,6 +1594,68 @@ fn optional_method_call_preserves_receiver_when_present() {
     assert_eq!(
         run("var o = {x: 3, m: function(a){ return this.x + a; }}; (o?.m)?.(4);"),
         Value::Number(7.0)
+    );
+}
+
+#[test]
+fn optional_member_calls_use_property_references() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var method = function(value) {
+              "use strict";
+              log.push(this === proxy ? "this" : "bad-this");
+              return value + 1;
+            };
+            var proxy = new Proxy({ method: method }, {
+              get: function(target, property, receiver) {
+                log.push("get:" + property);
+                return Reflect.get(target, property, receiver);
+              }
+            });
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "method";
+              }
+            };
+            var results = [
+              proxy?.[key](1),
+              proxy[key]?.(...[2]),
+              (proxy?.[key])(3),
+              (proxy?.[key])?.(...[4])
+            ];
+            results.join(":") + ";" + log.join("|");
+            "#),
+        Value::String(Arc::from(
+            "2:3:4:5;key|get:method|this|key|get:method|this|key|get:method|this|key|get:method|this"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = { toString: function() { log.push("key"); return "method"; } };
+            function argument() { log.push("argument"); return 1; }
+            var missing = null;
+            missing?.[key](argument());
+            ({})[key]?.(argument());
+            try { (missing?.method)(argument()); } catch (error) { log.push(error.name); }
+            (missing?.method)?.(argument());
+            log.join("|");
+            "#),
+        Value::String(Arc::from("key|argument|TypeError"))
+    );
+
+    assert_eq!(
+        run(r#"
+            String.prototype.capture = function(value) {
+              "use strict";
+              return typeof this + ":" + this + ":" + value;
+            };
+            "base".capture?.(...[7]);
+            "#),
+        Value::String(Arc::from("string:base:7"))
     );
 }
 
