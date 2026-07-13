@@ -2142,6 +2142,163 @@ fn arguments_for_of_observes_mutation_and_sloppy_parameter_mapping() {
 }
 
 #[test]
+fn for_in_of_super_lhs_uses_super_reference_receiver() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var keyCalls = 0;
+            class Base {
+              set value(value) {
+                log.push((this === receiver) + ":" + value);
+              }
+            }
+            class Derived extends Base {
+              runOf() { for (super.value of [11]) {} }
+              runComputedOf() {
+                for (super[(keyCalls++, "value")] of [12, 13]) {}
+              }
+              runEmpty() { for (super.value of []) {} }
+              runIn() { for (super.value in { key: 1 }) {} }
+            }
+            class StaticBase {
+              static set value(value) {
+                log.push("static:" + (this === StaticDerived) + ":" + value);
+              }
+            }
+            class StaticDerived extends StaticBase {
+              static run() { for (super.value of [15]) {} }
+            }
+            var receiver = new Derived();
+            receiver.runOf();
+            receiver.runComputedOf();
+            receiver.runEmpty();
+            receiver.runIn();
+            StaticDerived.run();
+            log.join("|") + ";" + keyCalls;
+            "#),
+        Value::String(Arc::from(
+            "true:11|true:12|true:13|true:key|static:true:15;2"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var observed;
+            var parent = {
+              set value(value) {
+                "use strict";
+                observed = typeof this + ":" + this + ":" + value;
+              }
+            };
+            var home = {
+              run() { "use strict"; for (super.value of [7]) {} }
+            };
+            Object.setPrototypeOf(home, parent);
+            home.run.call("receiver");
+            observed;
+            "#),
+        Value::String(Arc::from("string:receiver:7"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var first = { set value(value) { log.push("first:" + value); } };
+            var second = { set value(value) { log.push("second:" + value); } };
+            var home = {
+              run() {
+                for (super[(Object.setPrototypeOf(home, second), "value")] of [9]) {}
+              }
+            };
+            Object.setPrototypeOf(home, first);
+            home.run();
+            log.join("|");
+            "#),
+        Value::String(Arc::from("second:9"))
+    );
+}
+
+#[test]
+fn for_of_super_lhs_abrupt_assignment_closes_iterator() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var iterable = {
+              [Symbol.iterator]() {
+                var done = false;
+                return {
+                  next() {
+                    log.push("next");
+                    if (done) return { done: true };
+                    done = true;
+                    return { value: 1, done: false };
+                  },
+                  return() { log.push("return"); throw "close-error"; }
+                };
+              }
+            };
+            class Base {
+              set value(value) { log.push("setter"); throw "setter-error"; }
+            }
+            class Derived extends Base {
+              run() {
+                try { for (super.value of iterable) { log.push("body"); } }
+                catch (error) { log.push(error); }
+              }
+            }
+            new Derived().run();
+            log.join("|");
+            "#),
+        Value::String(Arc::from("next|setter|return|setter-error"))
+    );
+}
+
+#[test]
+fn for_of_super_lhs_reference_survives_gc() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var receiver;
+            var log = [];
+            var target = {};
+            var parent = new Proxy(target, {
+              set(target, key, value, actualThis) {
+                forceGc();
+                log.push(key + ":" + value + ":" + (actualThis === receiver));
+                return true;
+              }
+            });
+            var home = {
+              run() {
+                for (super[(
+                  forceGc(),
+                  { toString() { forceGc(); return "value"; } }
+                )] of [21]) {}
+              }
+            };
+            Object.setPrototypeOf(home, parent);
+            receiver = Object.create(home);
+            receiver.run();
+            log.join("|");
+            "#,
+        )
+        .expect("super loop Reference should survive key and Proxy GC"),
+        Value::String(Arc::from("value:21:true"))
+    );
+}
+
+#[test]
 fn for_of_allows_async_as_lhs_identifier_name() {
     assert_eq!(
         run("var async = { x: 0 }; for (async.x of [1]) {} async.x;"),

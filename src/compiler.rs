@@ -1678,22 +1678,26 @@ impl Compiler {
                             ..
                         } => {
                             // Stack: [value]. Evaluate the assignment target
-                            // into a raw Reference, then store the loop value.
-                            self.compile_expr(object)?;
-                            if *computed {
-                                self.compile_expr(property)?;
+                            // into its Reference, then store the loop value.
+                            if matches!(object.as_ref(), Expr::Super) {
+                                self.compile_super_property_reference(property, *computed)?;
                             } else {
-                                let key = if let Expr::String(s) = property.as_ref() {
-                                    s.to_string()
+                                self.compile_expr(object)?;
+                                if *computed {
+                                    self.compile_expr(property)?;
                                 } else {
-                                    String::new()
-                                };
-                                let key_idx = self
-                                    .chunk
-                                    .add_constant(Value::String(Arc::from(key.as_str())));
-                                self.chunk.emit(Op::Const(key_idx), self.current_line);
+                                    let key = if let Expr::String(s) = property.as_ref() {
+                                        s.to_string()
+                                    } else {
+                                        String::new()
+                                    };
+                                    let key_idx = self
+                                        .chunk
+                                        .add_constant(Value::String(Arc::from(key.as_str())));
+                                    self.chunk.emit(Op::Const(key_idx), self.current_line);
+                                }
+                                self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
                             }
-                            self.chunk.emit(Op::MakeRawPropertyRef, self.current_line);
                             self.chunk.emit(Op::PutValue, self.current_line);
                             self.chunk.emit(Op::Pop, self.current_line);
                         }
