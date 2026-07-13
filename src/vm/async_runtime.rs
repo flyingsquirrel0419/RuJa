@@ -769,6 +769,7 @@ impl Vm {
             kind: crate::value::FunctionKind::Native { func, length },
             closure,
             lexical_new_target: Value::Undefined,
+            home_object: Mutex::new(None),
             is_class_ctor: std::sync::atomic::AtomicBool::new(false),
             // Native functions have no `prototype` property (they are not
             // constructors). Their [[Prototype]] (`__proto__`) is
@@ -1037,6 +1038,7 @@ impl Vm {
                             func: func.clone(),
                             closure: f.closure,
                             lexical_new_target: f.lexical_new_target.clone(),
+                            home_object: f.home_object.lock().clone(),
                             is_class_ctor: f
                                 .is_class_ctor
                                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -1087,6 +1089,7 @@ impl Vm {
                 is_async,
                 is_class_ctor,
                 lexical_new_target,
+                home_object,
             }) => {
                 // Class constructors cannot be called without `new`.
                 // `construct()` sets `pending_new_target` before calling us;
@@ -1255,18 +1258,18 @@ impl Vm {
                             );
                         }
                     }
-                    // For object literal methods, bind #super to the HomeObject
-                    // approximation used by RuJa's method calls. Super property
-                    // code reads its prototype dynamically at each access. Class
-                    // methods already have #super bound by the compiler.
+                    // Object literal methods carry their [[HomeObject]] on the
+                    // function. Class methods already have #super bound by the
+                    // compiler, but a local binding must still shadow an outer
+                    // method's #super when methods are nested.
                     if func.is_method && !is_arrow {
                         let has_super = crate::environment::has(&self.heap, call_env, "#super");
-                        if !has_super {
+                        if home_object.is_some() || !has_super {
                             env::declare(
                                 &self.heap,
                                 call_env,
                                 "#super",
-                                this_val.clone(),
+                                home_object.clone().unwrap_or_else(|| this_val.clone()),
                                 crate::value::BindingKind::Const,
                             );
                         }

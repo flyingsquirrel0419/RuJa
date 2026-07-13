@@ -47,12 +47,25 @@ pub struct Heap {
     max_objects: AtomicUsize,
 }
 
-fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize>) {
-    let push_value = |value: &crate::value::Value, worklist: &mut Vec<usize>| {
-        if let crate::value::Value::Object(idx) = value {
-            worklist.push(idx.0);
+fn push_value(value: &crate::value::Value, worklist: &mut Vec<usize>) {
+    match value {
+        crate::value::Value::Object(idx) => worklist.push(idx.0),
+        crate::value::Value::Reference(reference) => {
+            match &reference.base {
+                crate::value::ReferenceBase::Unresolvable => {}
+                crate::value::ReferenceBase::Environment(env) => worklist.push(env.0),
+                crate::value::ReferenceBase::ObjectEnvironment(base)
+                | crate::value::ReferenceBase::Value(base) => push_value(base, worklist),
+            }
+            if let Some(this_value) = &reference.this_value {
+                push_value(this_value, worklist);
+            }
         }
-    };
+        _ => {}
+    }
+}
+
+fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize>) {
     match slot {
         crate::value::PrivateSlot::Value(value) | crate::value::PrivateSlot::Method(value) => {
             push_value(value, worklist)
@@ -74,12 +87,6 @@ fn trace_private_slot(slot: &crate::value::PrivateSlot, worklist: &mut Vec<usize
 /// caller iterates to a fixed point so transitively-reachable values are
 /// eventually marked.
 pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
-    let push_value = |v: &crate::value::Value, w: &mut Vec<usize>| {
-        if let crate::value::Value::Object(idx) = v {
-            w.push(idx.0);
-        }
-    };
-
     if let HeapObj::Iterator(it) = obj {
         for v in it.items.lock().iter() {
             push_value(v, worklist);
@@ -151,6 +158,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         HeapObj::Function(f) => {
             worklist.push(f.closure.0);
             push_value(&f.lexical_new_target, worklist);
+            if let Some(home_object) = f.home_object.lock().as_ref() {
+                push_value(home_object, worklist);
+            }
             if let Some(p) = f.prototype.lock().as_ref() {
                 push_value(p, worklist);
             }

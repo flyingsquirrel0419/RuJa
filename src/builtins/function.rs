@@ -143,6 +143,7 @@ pub(crate) fn function_bind(
         },
         closure: vm.global,
         lexical_new_target: Value::Undefined,
+        home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(None),
         proto: Mutex::new(match vm.function_proto {

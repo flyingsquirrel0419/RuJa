@@ -152,6 +152,174 @@ fn static_class_super_property_uses_super_constructor() {
 }
 
 #[test]
+fn super_reference_observes_key_then_base_then_property_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var initial = { value: "initial" };
+            var duringKey = { value: "during-key" };
+            var duringCoercion = { value: "during-coercion" };
+            var key = {
+              toString: function() {
+                Object.setPrototypeOf(home, duringCoercion);
+                return "value";
+              }
+            };
+            var home = {
+              read() {
+                return super[(Object.setPrototypeOf(home, duringKey), key)];
+              }
+            };
+            Object.setPrototypeOf(home, initial);
+            home.read();
+            "#),
+        Value::String(Arc::from("during-key"))
+    );
+}
+
+#[test]
+fn super_reference_rejects_null_base_after_property_key_coercion() {
+    assert_eq!(
+        run(r#"
+            var log = [];
+            var key = {
+              toString: function() { log.push("key"); return "missing"; }
+            };
+            var home = {
+              readString() { return super[key]; },
+              readSymbol() { return super[Symbol.iterator]; },
+              optionalCall() { return super[Symbol.iterator]?.(log.push("argument")); }
+            };
+            Object.setPrototypeOf(home, null);
+            for (var name of ["readString", "readSymbol", "optionalCall"]) {
+              try { home[name](); } catch (error) { log.push(error.name); }
+            }
+            log.join("|");
+            "#),
+        Value::String(Arc::from("key|TypeError|TypeError|TypeError"))
+    );
+}
+
+#[test]
+fn super_reference_preserves_primitive_this_value() {
+    assert_eq!(
+        run(r#"
+            var parent = {
+              get value() { "use strict"; return typeof this + ":" + this; }
+            };
+            var home = {
+              read() { "use strict"; return super.value; }
+            };
+            Object.setPrototypeOf(home, parent);
+            home.read.call("base");
+            "#),
+        Value::String(Arc::from("string:base"))
+    );
+}
+
+#[test]
+fn nested_object_method_uses_its_own_home_object() {
+    assert_eq!(
+        run(r#"
+            var outerParent = { value: "outer" };
+            class Outer {
+              make() {
+                var nested = {
+                  read() { return super.value; }
+                };
+                Object.setPrototypeOf(nested, { value: "nested" });
+                return nested.read;
+              }
+            }
+            Object.setPrototypeOf(Outer.prototype, outerParent);
+            Outer.prototype.make()();
+            "#),
+        Value::String(Arc::from("nested"))
+    );
+}
+
+#[test]
+fn copying_method_does_not_replace_its_home_object() {
+    assert_eq!(
+        run(r#"
+            var original = {
+              read() { return super.value; }
+            };
+            Object.setPrototypeOf(original, { value: "original" });
+            var copy = { read: original.read };
+            Object.setPrototypeOf(copy, { value: "copy" });
+            original.read() + ":" + copy.read();
+            "#),
+        Value::String(Arc::from("original:original"))
+    );
+}
+
+#[test]
+fn super_reference_roots_base_and_this_across_observable_calls() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var receiver;
+            var receiverChecks = [];
+            var target = {
+              get value() {
+                receiverChecks.push(this === receiver);
+                forceGc();
+                return this.marker;
+              },
+              method: function(ignored, value) {
+                "use strict";
+                forceGc();
+                return this.marker + value;
+              },
+              tag: function() {
+                "use strict";
+                forceGc();
+                return this.marker;
+              }
+            };
+            var parent = new Proxy(target, {
+              get: function(object, property, actualReceiver) {
+                receiverChecks.push(actualReceiver === receiver);
+                forceGc();
+                return Reflect.get(object, property, actualReceiver);
+              }
+            });
+            var home = {
+              read() { return super.value; },
+              call() { return super.method(forceGc(), 2); },
+              spread() { return super.method(...[forceGc(), 3]); },
+              optional() { return super.method?.(forceGc(), 4); },
+              tagged() { return super.tag`value:${forceGc()}`; }
+            };
+            Object.setPrototypeOf(home, parent);
+            receiver = Object.create(home);
+            receiver.marker = 10;
+            [
+              receiver.read(),
+              receiver.call(),
+              receiver.spread(),
+              receiver.optional(),
+              receiver.tagged(),
+              receiverChecks.every(function(value) { return value; })
+            ].join(":");
+            "#
+        )
+        .expect("super References should root base and thisValue"),
+        Value::String(Arc::from("10:12:13:14:10:true"))
+    );
+}
+
+#[test]
 fn class_super_capture_is_per_class() {
     assert_eq!(
         run("class B{static get x(){return 2;}} class C extends B{static m(){return super.x;}} class D{} C.m();"),

@@ -72,6 +72,27 @@ impl Vm {
         });
     }
 
+    fn set_method_home_object(&self, value: &Value, home_object: &Value) {
+        let Value::Object(idx) = value else {
+            return;
+        };
+        self.heap.with_obj(idx.0, |obj| {
+            let HeapObj::Function(function) = obj else {
+                return;
+            };
+            let is_method = matches!(
+                &function.kind,
+                crate::value::FunctionKind::Interpreted { func } if func.is_method
+            );
+            if is_method {
+                let mut slot = function.home_object.lock();
+                if slot.is_none() {
+                    *slot = Some(home_object.clone());
+                }
+            }
+        });
+    }
+
     fn property_key_from_value(&mut self, key: &Value) -> error::Result<crate::value::PropertyKey> {
         Ok(match key {
             Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
@@ -1133,6 +1154,7 @@ impl Vm {
                             base: crate::value::ReferenceBase::Environment(env),
                             name: crate::value::PropertyKey::from(name.as_str()).into(),
                             strict,
+                            this_value: None,
                         }));
                         self.put_value(&r#ref, value)?;
                     }
@@ -1175,6 +1197,24 @@ impl Vm {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),
                             name: name.into(),
                             strict,
+                            this_value: None,
+                        })));
+                }
+                Op::MakeSuperPropertyRef => {
+                    let key = self.stack.pop().unwrap_or(Value::Undefined);
+                    let base = self.stack.pop().unwrap_or(Value::Undefined);
+                    let this_value = self.stack.pop().unwrap_or(Value::Undefined);
+                    let pin_count = self.pin_many(&[this_value.clone(), base.clone(), key.clone()]);
+                    let name_result = self.coerce_property_key_record(&key);
+                    self.unpin_many(pin_count);
+                    let name = name_result?;
+                    let strict = self.current_strict();
+                    self.stack
+                        .push(Value::Reference(Box::new(crate::value::ReferenceRecord {
+                            base: crate::value::ReferenceBase::Value(Box::new(base)),
+                            name: name.into(),
+                            strict,
+                            this_value: Some(Box::new(this_value)),
                         })));
                 }
                 Op::MakePropertyRefForSet => {
@@ -1195,6 +1235,7 @@ impl Vm {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),
                             name: name.into(),
                             strict,
+                            this_value: None,
                         })));
                 }
                 Op::MakePrivateRef(name_idx) => {
@@ -1213,6 +1254,7 @@ impl Vm {
                             base: crate::value::ReferenceBase::Value(Box::new(base)),
                             name: crate::value::ReferencedName::Private(name),
                             strict,
+                            this_value: None,
                         })));
                 }
                 Op::GetValue => {
@@ -1753,6 +1795,7 @@ impl Vm {
                     let func = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_val = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.set_method_home_object(&func, &obj);
                     if let Value::Object(idx) = &obj {
                         let pkey = self.property_key_from_value(&key_val)?;
                         self.heap.with_obj(idx.0, |o| {
@@ -1785,6 +1828,7 @@ impl Vm {
                     let func = self.stack.pop().unwrap_or(Value::Undefined);
                     let key_val = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.set_method_home_object(&func, &obj);
                     if let Value::Object(idx) = &obj {
                         let pkey = self.property_key_from_value(&key_val)?;
                         let current = self
@@ -1923,6 +1967,7 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.set_method_home_object(&value, &obj);
                     let (pkey, cache_key) = match &key {
                         Value::Symbol(id) => (crate::value::PropertyKey::Symbol(*id), None),
                         _ => {
@@ -1945,6 +1990,7 @@ impl Vm {
                     let value = self.stack.pop().unwrap_or(Value::Undefined);
                     let key = self.stack.pop().unwrap_or(Value::Undefined);
                     let obj = self.stack.pop().unwrap_or(Value::Undefined);
+                    self.set_method_home_object(&value, &obj);
                     let pkey = match &key {
                         Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
                         _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
@@ -2690,26 +2736,6 @@ impl Vm {
                     self.bind_super_constructor_result(this_env, new_this.clone())?;
                     self.stack.push(new_this);
                 }
-                Op::CallSuper(arg_count) => {
-                    // stack (bottom->top): [this, superProto, key, args...]
-                    let mut args = Vec::with_capacity(arg_count);
-                    for _ in 0..arg_count {
-                        args.push(self.stack.pop().unwrap_or(Value::Undefined));
-                    }
-                    args.reverse();
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let super_proto = self.stack.pop().unwrap_or(Value::Undefined);
-                    let this_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    let pkey = match &key {
-                        Value::Symbol(id) => crate::value::PropertyKey::Symbol(*id),
-                        _ => crate::value::PropertyKey::from(self.to_property_key(&key)?),
-                    };
-                    // Look up the method on the parent prototype (and its chain).
-                    let method =
-                        self.get_property_key_rx(&super_proto, &pkey, this_val.clone(), 0)?;
-                    let result = self.call_function(&method, &args, Some(this_val))?;
-                    self.stack.push(result);
-                }
                 Op::CallSpread => self.op_call_spread()?,
                 Op::CallRefSpread => self.op_call_ref_spread()?,
                 Op::CallEvalSpread => self.op_call_eval_spread()?,
@@ -3041,6 +3067,9 @@ impl Vm {
 
     fn this_value_from_reference(&self, r#ref: &Value) -> Value {
         if let Value::Reference(record) = r#ref {
+            if let Some(this_value) = &record.this_value {
+                return *this_value.clone();
+            }
             match &record.base {
                 crate::value::ReferenceBase::ObjectEnvironment(base)
                 | crate::value::ReferenceBase::Value(base) => return *base.clone(),
@@ -3587,6 +3616,7 @@ impl Vm {
                 kind: crate::value::FunctionKind::Interpreted { func: fdef },
                 closure: closure_env,
                 lexical_new_target,
+                home_object: Mutex::new(None),
                 is_class_ctor: std::sync::atomic::AtomicBool::new(false),
                 prototype: Mutex::new(if has_prototype {
                     Some(proto_val.clone())

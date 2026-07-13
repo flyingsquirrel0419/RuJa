@@ -542,6 +542,7 @@ fn dynamic_function_constructor(
         kind: FunctionKind::Interpreted { func: fdef },
         closure: function_realm,
         lexical_new_target: Value::Undefined,
+        home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(has_prototype.then_some(proto_val.clone())),
         proto: Mutex::new(match function_object_proto {

@@ -1967,6 +1967,7 @@ fn create_bound_native_function(
         },
         closure: vm.global,
         lexical_new_target: Value::Undefined,
+        home_object: Mutex::new(None),
         is_class_ctor: AtomicBool::new(false),
         prototype: Mutex::new(None),
         proto: Mutex::new(match vm.function_proto {

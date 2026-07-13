@@ -189,12 +189,19 @@ impl Vm {
     fn push_value_roots(roots: &mut Vec<usize>, value: &Value) {
         match value {
             Value::Object(idx) => roots.push(idx.0),
-            Value::Reference(r) => match &r.base {
-                crate::value::ReferenceBase::Unresolvable => {}
-                crate::value::ReferenceBase::Environment(env_idx) => roots.push(env_idx.0),
-                crate::value::ReferenceBase::ObjectEnvironment(base)
-                | crate::value::ReferenceBase::Value(base) => Self::push_value_roots(roots, base),
-            },
+            Value::Reference(r) => {
+                match &r.base {
+                    crate::value::ReferenceBase::Unresolvable => {}
+                    crate::value::ReferenceBase::Environment(env_idx) => roots.push(env_idx.0),
+                    crate::value::ReferenceBase::ObjectEnvironment(base)
+                    | crate::value::ReferenceBase::Value(base) => {
+                        Self::push_value_roots(roots, base)
+                    }
+                }
+                if let Some(this_value) = &r.this_value {
+                    Self::push_value_roots(roots, this_value);
+                }
+            }
             _ => {}
         }
     }
@@ -2925,12 +2932,9 @@ impl Vm {
     /// Pin a heap object as a temporary GC root. Returns the number of roots
     /// pushed so callers can pass it to `unpin`/`unpin_many`.
     pub fn pin(&mut self, v: &Value) -> usize {
-        if let Value::Object(idx) = v {
-            self.gc_pins.push(idx.0);
-            1
-        } else {
-            0
-        }
+        let before = self.gc_pins.len();
+        Self::push_value_roots(&mut self.gc_pins, v);
+        self.gc_pins.len() - before
     }
 
     /// Release the temporary root pinned at `token`.
@@ -2940,14 +2944,11 @@ impl Vm {
 
     /// Pin multiple values at once; returns the count to unpin later.
     pub fn pin_many(&mut self, vals: &[Value]) -> usize {
-        let mut n = 0;
+        let before = self.gc_pins.len();
         for v in vals {
-            if let Value::Object(idx) = v {
-                self.gc_pins.push(idx.0);
-                n += 1;
-            }
+            Self::push_value_roots(&mut self.gc_pins, v);
         }
-        n
+        self.gc_pins.len() - before
     }
 
     /// Release `n` most-recently pinned temporary roots.

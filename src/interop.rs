@@ -89,6 +89,7 @@ mod tests {
             base: ReferenceBase::Unresolvable,
             name: ReferencedName::Property(PropertyKey::from("missing")),
             strict: true,
+            this_value: None,
         }));
 
         assert_eq!(to_json_value(&mut vm, &private), serde_json::Value::Null);

@@ -2211,6 +2211,7 @@ fn make_builtin_constructor_with_proto_class_in_env(
         kind: FunctionKind::Native { func: ctor, length },
         closure: env,
         lexical_new_target: Value::Undefined,
+        home_object: Mutex::new(None),
         is_class_ctor: std::sync::atomic::AtomicBool::new(false),
         prototype: Mutex::new(Some(Value::Object(proto_idx))),
         proto: Mutex::new(match vm.function_proto {

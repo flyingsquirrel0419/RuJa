@@ -211,6 +211,9 @@ pub struct ReferenceRecord {
     pub name: ReferencedName,
     /// Whether the reference is strict (unresolved puts throw ReferenceError).
     pub strict: bool,
+    /// Explicit [[ThisValue]] for a super Reference. Ordinary property and
+    /// environment References derive their call receiver from [[Base]].
+    pub this_value: Option<Box<Value>>,
 }
 
 /// The [[ReferencedName]] component of a Reference Record.
@@ -660,6 +663,9 @@ pub struct FunctionData {
     /// functions keep this as `undefined`; construct calls still use the
     /// per-frame `new_target` set by the VM.
     pub lexical_new_target: Value,
+    /// The function's [[HomeObject]], set for concise methods and accessors
+    /// when they are installed on an object or class element.
+    pub home_object: Mutex<Option<Value>>,
     /// True for class constructors: calling them without `new` is a TypeError.
     pub is_class_ctor: std::sync::atomic::AtomicBool,
     pub prototype: Mutex<Option<Value>>,

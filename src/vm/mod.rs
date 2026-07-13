@@ -1963,6 +1963,7 @@ enum FuncCallInfo {
         func: std::sync::Arc<crate::function::FunctionDef>,
         closure: GcIdx,
         lexical_new_target: Value,
+        home_object: Option<Value>,
         is_arrow: bool,
         is_async: bool,
         is_class_ctor: bool,
@@ -2075,6 +2076,7 @@ impl Vm {
             base,
             name: name.into(),
             strict,
+            this_value: None,
         })
     }
 
@@ -2320,7 +2322,16 @@ impl Vm {
                     }
                     crate::value::ReferenceBase::Value(base) => match &r.name {
                         crate::value::ReferencedName::Property(name) => {
-                            self.get_property_reference_value(base, name)
+                            if let Some(receiver) = &r.this_value {
+                                if base.is_nullish() {
+                                    return Err(Error::type_err(
+                                        "Cannot read property from null super base",
+                                    ));
+                                }
+                                self.get_property_key_rx(base, name, *receiver.clone(), 0)
+                            } else {
+                                self.get_property_reference_value(base, name)
+                            }
                         }
                         crate::value::ReferencedName::Private(name) => {
                             self.get_private_value(base, name)

@@ -88,7 +88,6 @@ enum AssignmentIteratorCloseMode {
 #[derive(Clone, Copy)]
 enum TaggedCallKind {
     Reference,
-    ExplicitThis,
     Unbound,
 }
 
@@ -3233,6 +3232,22 @@ impl Compiler {
         }
     }
 
+    fn compile_super_property_reference(
+        &mut self,
+        property: &Expr,
+        computed: bool,
+    ) -> error::Result<()> {
+        let this_idx = self.intern("this");
+        self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+        self.compile_optional_chain_member_key(property, computed)?;
+        let super_idx = self.intern("#super");
+        self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+        self.chunk.emit(Op::GetProto, self.current_line);
+        self.chunk.emit(Op::Swap, self.current_line);
+        self.chunk.emit(Op::MakeSuperPropertyRef, self.current_line);
+        Ok(())
+    }
+
     fn compile_optional_chain_call(
         &mut self,
         callee: &Expr,
@@ -3314,22 +3329,17 @@ impl Compiler {
                 optional,
                 ..
             } if matches!(object.as_ref(), Expr::Super) => {
-                let this_idx = self.intern("this");
-                self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                self.compile_super_property_reference(property, *computed)?;
                 self.chunk.emit(Op::Dup, self.current_line);
-                let super_idx = self.intern("#super");
-                self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
-                self.chunk.emit(Op::GetProto, self.current_line);
-                self.compile_optional_chain_member_key(property, *computed)?;
-                self.chunk.emit(Op::GetSuperProp, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
                 if *optional || call_optional {
                     self.emit_optional_chain_nullish_exit(2, exit_values, exits);
                 }
                 let has_spread = self.compile_optional_chain_args(args)?;
                 if has_spread {
-                    self.chunk.emit(Op::CallThisSpread, self.current_line);
+                    self.chunk.emit(Op::CallRefSpread, self.current_line);
                 } else {
-                    self.chunk.emit(Op::CallThis(args.len()), self.current_line);
+                    self.chunk.emit(Op::CallRef(args.len()), self.current_line);
                 }
             }
             Expr::Member {
@@ -3386,6 +3396,19 @@ impl Compiler {
                 computed,
                 optional,
                 ..
+            } if matches!(object.as_ref(), Expr::Super) => {
+                self.compile_super_property_reference(property, *computed)?;
+                self.chunk.emit(Op::GetValue, self.current_line);
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(1, exit_values, exits);
+                }
+            }
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                ..
             } => {
                 self.compile_optional_chain_operand(object, exits, exit_values)?;
                 if *optional {
@@ -3423,6 +3446,21 @@ impl Compiler {
     fn compile_optional_chain_call_target(&mut self, expr: &Expr) -> error::Result<bool> {
         let mut exits = Vec::new();
         let reference_call = match expr {
+            Expr::Member {
+                object,
+                property,
+                computed,
+                optional,
+                ..
+            } if matches!(object.as_ref(), Expr::Super) => {
+                self.compile_super_property_reference(property, *computed)?;
+                self.chunk.emit(Op::Dup, self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
+                if *optional {
+                    self.emit_optional_chain_nullish_exit(2, 2, &mut exits);
+                }
+                true
+            }
             Expr::Member {
                 object,
                 property,
@@ -4194,28 +4232,10 @@ impl Compiler {
                         if matches!(object.as_ref(), Expr::Super) {
                             // super.m(args): call parent proto's m with `this`.
                             let has_spread = args.iter().any(|a| matches!(a, Expr::Spread(_)));
-                            let this_idx = self.intern("this");
-                            self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
-                            let super_idx = self.intern("#super");
-                            self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
-                            self.chunk.emit(Op::GetProto, self.current_line);
-                            if *computed {
-                                self.compile_expr(property)?;
-                            } else {
-                                let key = if let Expr::String(s) = property.as_ref() {
-                                    s.to_string()
-                                } else {
-                                    String::new()
-                                };
-                                let key_idx = self
-                                    .chunk
-                                    .add_constant(Value::String(Arc::from(key.as_str())));
-                                self.chunk.emit(Op::Const(key_idx), self.current_line);
-                            }
+                            self.compile_super_property_reference(property, *computed)?;
+                            self.chunk.emit(Op::Dup, self.current_line);
+                            self.chunk.emit(Op::GetValue, self.current_line);
                             if has_spread {
-                                self.chunk.emit(Op::GetSuperProp, self.current_line);
-                                self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
-                                self.chunk.emit(Op::Swap, self.current_line);
                                 self.chunk.emit(Op::NewArray(0), self.current_line);
                                 for a in args {
                                     match a {
@@ -4229,13 +4249,12 @@ impl Compiler {
                                         }
                                     }
                                 }
-                                self.chunk.emit(Op::CallThisSpread, self.current_line);
+                                self.chunk.emit(Op::CallRefSpread, self.current_line);
                             } else {
                                 for a in args {
                                     self.compile_expr(a)?;
                                 }
-                                self.chunk
-                                    .emit(Op::CallSuper(args.len()), self.current_line);
+                                self.chunk.emit(Op::CallRef(args.len()), self.current_line);
                             }
                             return Ok(());
                         }
@@ -4421,25 +4440,8 @@ impl Compiler {
                 ..
             } => {
                 if matches!(object.as_ref(), Expr::Super) {
-                    let this_idx = self.intern("this");
-                    self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
-                    let super_idx = self.intern("#super");
-                    self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
-                    self.chunk.emit(Op::GetProto, self.current_line);
-                    if *computed {
-                        self.compile_expr(property)?;
-                    } else {
-                        let key = if let Expr::String(s) = property.as_ref() {
-                            s.to_string()
-                        } else {
-                            String::new()
-                        };
-                        let key_idx = self
-                            .chunk
-                            .add_constant(Value::String(Arc::from(key.as_str())));
-                        self.chunk.emit(Op::Const(key_idx), self.current_line);
-                    }
-                    self.chunk.emit(Op::GetSuperProp, self.current_line);
+                    self.compile_super_property_reference(property, *computed)?;
+                    self.chunk.emit(Op::GetValue, self.current_line);
                     return Ok(());
                 }
                 self.compile_expr(object)?;
@@ -4501,15 +4503,10 @@ impl Compiler {
                         computed,
                         ..
                     } if matches!(object.as_ref(), Expr::Super) => {
-                        let this_idx = self.intern("this");
-                        self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                        self.compile_super_property_reference(property, *computed)?;
                         self.chunk.emit(Op::Dup, self.current_line);
-                        let super_idx = self.intern("#super");
-                        self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
-                        self.chunk.emit(Op::GetProto, self.current_line);
-                        self.compile_optional_chain_member_key(property, *computed)?;
-                        self.chunk.emit(Op::GetSuperProp, self.current_line);
-                        TaggedCallKind::ExplicitThis
+                        self.chunk.emit(Op::GetValue, self.current_line);
+                        TaggedCallKind::Reference
                     }
                     Expr::Member {
                         object,
@@ -4559,9 +4556,6 @@ impl Compiler {
                     TaggedCallKind::Reference => self
                         .chunk
                         .emit(Op::CallRef(1 + exprs.len()), self.current_line),
-                    TaggedCallKind::ExplicitThis => self
-                        .chunk
-                        .emit(Op::CallThis(1 + exprs.len()), self.current_line),
                     TaggedCallKind::Unbound => self
                         .chunk
                         .emit(Op::Call(1 + exprs.len()), self.current_line),
