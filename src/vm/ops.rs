@@ -1872,13 +1872,6 @@ impl Vm {
                     let v = self.get_property_key(&obj, &key)?;
                     self.stack.push(v);
                 }
-                Op::GetMethodForCall => {
-                    let key = self.stack.pop().unwrap_or(Value::Undefined);
-                    let obj = self.stack.pop().unwrap_or(Value::Undefined);
-                    let method = self.get_property_key(&obj, &key)?;
-                    self.stack.push(obj);
-                    self.stack.push(method);
-                }
                 Op::SetProp => {
                     // stack (bottom->top): [obj, key, value]
                     let value = self.stack.pop().unwrap_or(Value::Undefined);

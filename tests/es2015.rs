@@ -306,6 +306,133 @@ fn tagged_template_member_preserves_this() {
 }
 
 #[test]
+fn tagged_templates_use_reference_this_values() {
+    assert_eq!(
+        run(r#"
+            var scope = {};
+            scope.tag = function() { "use strict"; return this === scope; };
+            var withResult;
+            with (scope) { withResult = tag`with`; }
+
+            var log = [];
+            var symbol = Symbol("tag");
+            var method = function(strings, value) {
+              "use strict";
+              return (this === proxy) + ":" + strings[0] + ":" + value;
+            };
+            var target = { tag: method };
+            target[symbol] = method;
+            var proxy = new Proxy(target, {
+              get: function(object, property, receiver) {
+                log.push("get:" + (property === symbol ? "symbol" : property));
+                return Reflect.get(object, property, receiver);
+              }
+            });
+            var key = {
+              toString: function() {
+                log.push("key");
+                return "tag";
+              }
+            };
+            var memberResult = proxy[key]`member:${2}`;
+            var symbolResult = proxy[symbol]`symbol:${3}`;
+
+            String.prototype.tag = function() {
+              "use strict";
+              return typeof this + ":" + this;
+            };
+            var primitiveResult = "base".tag`primitive`;
+
+            var plainThis = "unset";
+            function plainTag() { "use strict"; plainThis = this; }
+            plainTag`plain`;
+            var holder = {
+              tag: function() { "use strict"; return this; }
+            };
+            var groupedResult = (holder.tag)`grouped` === holder;
+            var unboundResult = (0, holder.tag)`unbound` === undefined;
+
+            [
+              withResult,
+              memberResult,
+              symbolResult,
+              primitiveResult,
+              plainThis === undefined,
+              groupedResult,
+              unboundResult,
+              log.join("|")
+            ].join(";");
+            "#),
+        Value::String(Arc::from(
+            "true;true:member::2;true:symbol::3;string:base;true;true;true;key|get:tag|get:symbol"
+        ))
+    );
+
+    assert_eq!(
+        run(r#"
+            var superReceiver;
+            class Base {
+              get tag() {
+                superReceiver = this;
+                return function(strings, value) { return this.marker + value; };
+              }
+            }
+            class Derived extends Base {
+              constructor() { super(); this.marker = 10; }
+              callTag() {
+                var result = super.tag`super:${2}`;
+                return result + ":" + (superReceiver === this);
+              }
+            }
+            class PrivateTag {
+              constructor() { this.marker = 20; }
+              #tag(strings, value) { return this.marker + value; }
+              callTag() { return this.#tag`private:${3}`; }
+            }
+            new Derived().callTag() + ":" + new PrivateTag().callTag();
+            "#),
+        Value::String(Arc::from("12:true:23"))
+    );
+}
+
+#[test]
+fn tagged_template_reference_roots_temporary_base_during_interpolation() {
+    let mut vm = ruja::Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    assert_eq!(
+        vm.run(
+            r#"
+            var order = [];
+            function makeBase() {
+              return {
+                marker: 17,
+                get tag() {
+                  order.push("get");
+                  return function() {
+                    order.push("call");
+                    return this.marker;
+                  };
+                }
+              };
+            }
+            var result = makeBase().tag`value:${(order.push("expression"), forceGc())}`;
+            result + ":" + order.join("|");
+            "#
+        )
+        .expect("tagged template should keep its temporary base alive"),
+        Value::String(Arc::from("17:get|expression|call"))
+    );
+}
+
+#[test]
 fn new_tagged_template_constructs_tag_result() {
     assert_eq!(
         run("function C(x){arg=x;} var tag=function(x){templateObject=x; return C;}; var arg=null, templateObject; var instance = new tag`first`; instance instanceof C && templateObject[0] === 'first' && arg === undefined;"),

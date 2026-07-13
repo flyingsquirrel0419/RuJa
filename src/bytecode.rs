@@ -188,7 +188,6 @@ pub enum Op {
     DefineDataProperty, // define enumerable own data property: stack [obj, key, value]
     DefineMethod,       // define non-enumerable method property: stack [obj, key, value]
     GetElem,            // computed member
-    GetMethodForCall,   // stack [obj, key] -> [obj, method], before args
     SetElem,
     DeleteProp,
     SetProto,        // pop [proto, obj]; set obj's [[Prototype]] to proto

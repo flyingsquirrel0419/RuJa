@@ -85,6 +85,13 @@ enum AssignmentIteratorCloseMode {
     SkipIteratorAbrupt,
 }
 
+#[derive(Clone, Copy)]
+enum TaggedCallKind {
+    Reference,
+    ExplicitThis,
+    Unbound,
+}
+
 #[derive(Clone)]
 enum RestExcludeKey {
     Const(Arc<str>),
@@ -4480,32 +4487,56 @@ impl Compiler {
                 // tag`q0${e0}q1` => tag(strings, e0, ...).
                 // The VM builds a cached, frozen template object with a frozen
                 // `raw` property per GetTemplateObject.
-                let tag_is_member = if let Expr::Member {
-                    object,
-                    property,
-                    computed,
-                    ..
-                } = tag.as_ref()
-                {
-                    self.compile_expr(object)?; // [obj]
-                    if *computed {
-                        self.compile_expr(property)?; // [obj, key]
-                    } else {
-                        let key = if let Expr::String(s) = property.as_ref() {
-                            s.to_string()
-                        } else {
-                            String::new()
-                        };
-                        let key_idx = self
-                            .chunk
-                            .add_constant(Value::String(Arc::from(key.as_str())));
-                        self.chunk.emit(Op::Const(key_idx), self.current_line); // [obj, key]
+                let call_kind = match tag.as_ref() {
+                    Expr::Ident(name) => {
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk.emit(Op::LoadRef(name_idx), self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
+                        TaggedCallKind::Reference
                     }
-                    self.chunk.emit(Op::GetMethodForCall, self.current_line); // [obj, tag]
-                    true
-                } else {
-                    self.compile_expr(tag)?; // [tag]
-                    false
+                    Expr::Member {
+                        object,
+                        property,
+                        computed,
+                        ..
+                    } if matches!(object.as_ref(), Expr::Super) => {
+                        let this_idx = self.intern("this");
+                        self.chunk.emit(Op::LoadEnv(this_idx), self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        let super_idx = self.intern("#super");
+                        self.chunk.emit(Op::LoadEnv(super_idx), self.current_line);
+                        self.chunk.emit(Op::GetProto, self.current_line);
+                        self.compile_optional_chain_member_key(property, *computed)?;
+                        self.chunk.emit(Op::GetSuperProp, self.current_line);
+                        TaggedCallKind::ExplicitThis
+                    }
+                    Expr::Member {
+                        object,
+                        property,
+                        computed,
+                        ..
+                    } => {
+                        self.compile_expr(object)?;
+                        self.compile_optional_chain_member_key(property, *computed)?;
+                        self.chunk.emit(Op::MakePropertyRef, self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
+                        TaggedCallKind::Reference
+                    }
+                    Expr::PrivateGet { object, name, .. } => {
+                        self.compile_expr(object)?;
+                        let name_idx = self.chunk.add_constant(Value::String(name.clone()));
+                        self.chunk
+                            .emit(Op::MakePrivateRef(name_idx), self.current_line);
+                        self.chunk.emit(Op::Dup, self.current_line);
+                        self.chunk.emit(Op::GetValue, self.current_line);
+                        TaggedCallKind::Reference
+                    }
+                    _ => {
+                        self.compile_expr(tag)?;
+                        TaggedCallKind::Unbound
+                    }
                 };
                 let quasi_ids: Vec<usize> = quasis
                     .iter()
@@ -4524,12 +4555,16 @@ impl Compiler {
                 for e in exprs {
                     self.compile_expr(e)?;
                 }
-                if tag_is_member {
-                    self.chunk
-                        .emit(Op::CallThis(1 + exprs.len()), self.current_line);
-                } else {
-                    self.chunk
-                        .emit(Op::Call(1 + exprs.len()), self.current_line);
+                match call_kind {
+                    TaggedCallKind::Reference => self
+                        .chunk
+                        .emit(Op::CallRef(1 + exprs.len()), self.current_line),
+                    TaggedCallKind::ExplicitThis => self
+                        .chunk
+                        .emit(Op::CallThis(1 + exprs.len()), self.current_line),
+                    TaggedCallKind::Unbound => self
+                        .chunk
+                        .emit(Op::Call(1 + exprs.len()), self.current_line),
                 }
             }
             Expr::Regex(pattern, flags) => {
