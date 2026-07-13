@@ -202,6 +202,34 @@ to **28502 pass / 6615 fail / 13188 skip / 12 timeout / 0 error / 48317 total /
 executed files. This is **+15 pass / -14 fail / -1 skip** from the preceding
 confirmed matrix.
 
+## Identifier Reference-record routing
+
+Ordinary `Expr::Ident` reads now compile to `LoadRef` plus `GetValue` instead
+of the legacy value-producing `LoadEnvName` opcode. Identifier lookup therefore
+shares one Reference-record implementation across ordinary reads, assignments,
+compound and logical assignments, updates, TDZ checks, imports, globals, and
+`with` object environments. Calls and direct `eval` continue to use their
+dedicated Reference-preserving call opcodes so object-environment `this` and
+direct-eval classification are not discarded.
+
+At commit `f63145d`, the combined diagnostic over
+`language/types/reference`, `language/statements/with`, and
+`language/expressions/compound-assignment` reports **660 pass / 0 fail / 4
+skip / 664 total** under the normal feature policy. With skips lifted only in
+memory, `with` is **181/181** and compound assignment is **454/454**; the three
+remaining failures are primitive-base and cross-Realm Reference cases outside
+this routing change. The supported subset remains **12232 pass / 0 fail / 8207
+skip / 20439 total**, and tooling remains **64/64**. CI `29220379603` and
+`test262-full` `29220379613` both pass. The 30 downloaded artifacts reproduce
+**28502 pass / 6615 fail / 13188 skip / 12 timeout / 0 error / 48317 total /
+35117 pass-or-fail executed**, or **59.0%** of all matrix files and **81.2%** of
+executed files.
+
+This is the first consolidation step, not the end of the Reference migration.
+Compiler-internal completion slots still use `LoadEnvName`, and direct member
+get/set and delete retain separate VM paths that will be migrated in bounded
+follow-up units.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

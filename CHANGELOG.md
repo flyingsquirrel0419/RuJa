@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Ordinary identifier reads now compile to `LoadRef` followed by `GetValue`,
+  routing lexical, import, global-object, TDZ, and `with` object-environment
+  resolution through the same specification Reference-record path used by
+  assignment and update expressions. Direct calls and direct `eval` retain
+  their dedicated Reference-preserving call opcodes. The combined
+  `language/types/reference`, `language/statements/with`, and
+  `language/expressions/compound-assignment` gate is **660 pass / 0 fail / 4
+  skip**. CI `29220379603` and `test262-full` `29220379613` pass for commit
+  `f63145d`; downloaded artifacts reproduce **28502 pass / 6615 fail / 13188
+  skip / 12 timeout / 0 error / 48317 total / 35117 pass-or-fail executed**.
 - `Date.prototype[Symbol.toPrimitive]` now implements the generic ordinary
   conversion algorithm with string-first `"default"`/`"string"` hints and a
   number-first `"number"` hint, including observable property access, callable
