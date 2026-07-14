@@ -150,6 +150,9 @@ pub struct Vm {
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
     pub(crate) realm_error_prototypes: HashMap<(usize, Arc<str>), Value>,
+    /// Realm global environment index -> original `%RegExp.prototype%`.
+    /// RegExp literals must not consult a mutable `RegExp` binding.
+    pub(crate) realm_regexp_prototypes: HashMap<usize, Value>,
     /// Realm global environment index -> that Realm's original intrinsic
     /// `%ArrayBuffer.prototype%` object. Internal buffer allocation must not
     /// use the main Realm prototype or consult a mutable global binding.
@@ -560,6 +563,7 @@ impl Vm {
             realm_function_prototypes: HashMap::new(),
             realm_async_function_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
+            realm_regexp_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
             realm_typed_array_constructors: HashMap::new(),
             module_records: HashMap::new(),
@@ -1999,7 +2003,7 @@ impl Vm {
         crate::environment::global_env_root(&self.heap, env)
     }
 
-    fn current_interpreted_realm_global_env(&self) -> GcIdx {
+    pub(crate) fn current_interpreted_realm_global_env(&self) -> GcIdx {
         let env = self
             .frames
             .last()

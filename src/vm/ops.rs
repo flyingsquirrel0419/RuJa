@@ -295,67 +295,30 @@ impl Vm {
                     };
                     self.stack.push(v);
                 }
-                Op::LoadGlobal => {
-                    let name_val = self.stack.pop().unwrap_or(Value::Undefined);
-                    let name = match &name_val {
-                        Value::String(s) => s.to_string(),
-                        _ => self.to_string(&name_val)?.to_string(),
+                Op::NewRegExpLiteral(pattern_idx, flags_idx) => {
+                    let (pattern, flags) = {
+                        let frame = self.current_frame()?;
+                        let pattern = match frame.chunk.constants.get(pattern_idx) {
+                            Some(Value::String(value)) => value.clone(),
+                            _ => {
+                                return Err(Error::internal(
+                                    "RegExp literal pattern constant is not a string",
+                                ));
+                            }
+                        };
+                        let flags = match frame.chunk.constants.get(flags_idx) {
+                            Some(Value::String(value)) => value.clone(),
+                            _ => {
+                                return Err(Error::internal(
+                                    "RegExp literal flags constant is not a string",
+                                ));
+                            }
+                        };
+                        (pattern, flags)
                     };
-                    // search the current frame's env first, then global
-                    let cur_env = self.frames.last().map(|f| f.env).unwrap_or(self.global);
-                    match crate::environment::get_checked(&self.heap, cur_env, &name) {
-                        Ok(Some(v)) => self.stack.push(v),
-                        Ok(None) => {
-                            match crate::environment::get_checked(&self.heap, self.global, &name) {
-                                Ok(Some(v)) => self.stack.push(v),
-                                Ok(None) => {
-                                    let global_this = self.global_this.clone();
-                                    if self.has_property(&global_this, &name)? {
-                                        let v = self.get_property(&global_this, &name)?;
-                                        self.stack.push(v);
-                                    } else {
-                                        return Err(Error::reference(format!(
-                                            "{} is not defined",
-                                            name
-                                        )));
-                                    }
-                                }
-                                Err(true) => {
-                                    return Err(Error::reference(format!(
-                                        "Cannot access '{}' before initialization",
-                                        name
-                                    )))
-                                }
-                                Err(false) => {
-                                    let global_this = self.global_this.clone();
-                                    if self.has_property(&global_this, &name)? {
-                                        let v = self.get_property(&global_this, &name)?;
-                                        self.stack.push(v);
-                                    } else {
-                                        return Err(Error::reference(format!(
-                                            "{} is not defined",
-                                            name
-                                        )));
-                                    }
-                                }
-                            }
-                        }
-                        Err(true) => {
-                            return Err(Error::reference(format!(
-                                "Cannot access '{}' before initialization",
-                                name
-                            )))
-                        }
-                        Err(false) => {
-                            let global_this = self.global_this.clone();
-                            if self.has_property(&global_this, &name)? {
-                                let v = self.get_property(&global_this, &name)?;
-                                self.stack.push(v);
-                            } else {
-                                return Err(Error::reference(format!("{} is not defined", name)));
-                            }
-                        }
-                    }
+                    let value =
+                        crate::builtins::regexp::regexp_create_literal(self, &pattern, &flags)?;
+                    self.stack.push(value);
                 }
                 Op::StoreGlobal => {
                     let name_val = self.stack.pop().unwrap_or(Value::Undefined);

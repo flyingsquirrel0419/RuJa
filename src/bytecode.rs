@@ -109,7 +109,6 @@ pub enum Op {
     Const(usize),       // push constants[idx]
     LoadLocal(usize),   // push locals[idx]
     StoreLocal(usize),  // pop into locals[idx]
-    LoadGlobal,         // pop name string, push global[name]
     StoreGlobal,        // pop value + name string, store into global[name]
     LoadEnv(usize),     // push from environment slot
     StoreEnv(usize),    // store to environment slot
@@ -166,11 +165,12 @@ pub enum Op {
 
     // Objects/arrays
     NewObject,
-    NewArray(usize), // count of elements already on stack
-    ArrayPush,       // pop [value, array]; append value to the array's items
-    ArrayHolePush,   // pop [array]; append an absent dense slot
-    SpreadPush,      // pop [iterable, array]; spread iterable's values into the array
-    ObjSpread,       // pop [src, dest]; copy src's enumerable own props into dest
+    NewArray(usize),                // count of elements already on stack
+    NewRegExpLiteral(usize, usize), // pattern and flags constant indices
+    ArrayPush,                      // pop [value, array]; append value to the array's items
+    ArrayHolePush,                  // pop [array]; append an absent dense slot
+    SpreadPush, // pop [iterable, array]; spread iterable's values into the array
+    ObjSpread,  // pop [src, dest]; copy src's enumerable own props into dest
     /// Pop `[src, k1..kN]`; create object with source enumerable own props
     /// except the excluded keys.
     ObjRest(usize),

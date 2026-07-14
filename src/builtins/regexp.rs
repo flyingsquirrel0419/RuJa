@@ -85,6 +85,23 @@ pub(crate) fn regexp_create_intrinsic(vm: &mut Vm, pattern: &Value) -> error::Re
     regexp_create_intrinsic_with_flags(vm, pattern, None)
 }
 
+pub(crate) fn regexp_create_literal(
+    vm: &mut Vm,
+    pattern: &str,
+    flags: &str,
+) -> error::Result<Value> {
+    // This helper is called by an interpreted bytecode opcode. Native
+    // builtins can re-enter a function from another Realm while their own
+    // callee is still active, so the executing frame is authoritative here.
+    let realm = vm.current_interpreted_realm_global_env();
+    let proto = vm
+        .realm_regexp_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.regexp_proto.clone());
+    create_regexp_object(vm, pattern.to_string(), flags.to_string(), proto)
+}
+
 pub(crate) fn regexp_create_intrinsic_with_flags(
     vm: &mut Vm,
     pattern: &Value,

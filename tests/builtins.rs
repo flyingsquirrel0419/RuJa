@@ -8371,6 +8371,116 @@ fn regex_literal_test() {
 }
 
 #[test]
+fn regex_literals_use_realm_intrinsics_not_mutable_bindings() {
+    assert_eq!(
+        run(r#"
+            var original = RegExp;
+            var originalPrototype = RegExp.prototype;
+            var calls = 0;
+            function FakeRegExp() { calls++; return {}; }
+            function parameterShadow(RegExp) { return /parameter/i; }
+            var lexical;
+            {
+              let RegExp = FakeRegExp;
+              lexical = /lexical/g;
+            }
+            globalThis.RegExp = FakeRegExp;
+            var global = /global/m;
+            var parameter = parameterShadow(FakeRegExp);
+            var fresh = /global/m;
+            [
+              calls,
+              lexical.source, lexical.flags,
+              global.source, global.flags,
+              parameter.source, parameter.flags,
+              Object.getPrototypeOf(lexical) === originalPrototype,
+              Object.getPrototypeOf(global) === originalPrototype,
+              global !== fresh
+            ].join(";");
+            "#),
+        Value::String(Arc::from("0;lexical;g;global;m;parameter;i;true;true;true"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var foreignPrototype = other.RegExp.prototype;
+            other.RegExp = function FakeRegExp() { throw "called"; };
+            var foreign = other.eval("/foreign/u");
+            [
+              foreign.source,
+              foreign.flags,
+              Object.getPrototypeOf(foreign) === foreignPrototype,
+              Object.getPrototypeOf(foreign) !== RegExp.prototype
+            ].join(";");
+            "#),
+        Value::String(Arc::from("foreign;u;true;true"))
+    );
+}
+
+#[test]
+fn foreign_realm_regexp_literal_intrinsic_survives_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var other = $262.createRealm().global;
+            other.RegExp = null;
+            forceGc();
+            other.eval("/after-gc/.test('after-gc')");
+            "#,
+        )
+        .expect("foreign RegExp literal intrinsic should survive GC"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn foreign_realm_regexp_literals_survive_native_reentry() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run(
+        r#"
+        var other = $262.createRealm().global;
+        var foreignPrototype = other.RegExp.prototype;
+        var results = [];
+
+        var callback = other.eval("(function() { return /callback/; })");
+        results.push(Object.getPrototypeOf([0].map(callback)[0]) === foreignPrototype);
+
+        var generator = other.eval("(function*() { yield /generator/; })");
+        results.push(Object.getPrototypeOf(generator().next().value) === foreignPrototype);
+
+        var asyncCallback = other.eval("(async function() { return /async/; })");
+        [0].map(asyncCallback)[0].then(function(value) {
+          results.push(Object.getPrototypeOf(value) === foreignPrototype);
+        });
+
+        var asyncGenerator = other.eval("(async function*() { yield /async-generator/; })");
+        asyncGenerator().next().then(function(result) {
+          results.push(Object.getPrototypeOf(result.value) === foreignPrototype);
+        });
+        "#,
+    )
+    .expect("failed to exercise native foreign-Realm re-entry");
+
+    assert_eq!(
+        vm.run("results.join(';');")
+            .expect("failed to read foreign-Realm re-entry results"),
+        Value::String(Arc::from("true;true;true;true"))
+    );
+}
+
+#[test]
 fn regex_exec_captures() {
     let r = run("/(\\w+)@(\\w+)/.exec('user@host');");
     assert!(matches!(r, Value::Object(_)));

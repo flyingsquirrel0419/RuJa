@@ -2927,7 +2927,9 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
     });
     define_realm_global(vm, realm_env, &global, "BigInt", Value::Object(bigint_idx));
 
-    let (regexp_ctor, _) = make_regexp_constructor_in_env(vm, realm_env)?;
+    let (regexp_ctor, regexp_proto) = make_regexp_constructor_in_env(vm, realm_env)?;
+    vm.realm_regexp_prototypes
+        .insert(realm_env.0, Value::Object(regexp_proto));
     define_realm_global(vm, realm_env, &global, "RegExp", Value::Object(regexp_ctor));
     let symbol_idx = vm.new_native_function_in_env("Symbol", symbol_constructor, 0, realm_env)?;
     let symbol_for_idx = vm.new_native_function_in_env("for", symbol_for, 1, realm_env)?;
@@ -6814,6 +6816,8 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // RegExp
     let (regex_ctor, regex_proto) = make_regexp_constructor_in_env(vm, vm.global)?;
     vm.regexp_proto = Value::Object(regex_proto);
+    vm.realm_regexp_prototypes
+        .insert(vm.global.0, vm.regexp_proto.clone());
     define_global(vm, "RegExp", Value::Object(regex_ctor));
     // Generator prototype with next(). Generator instances inherit this proto.
     let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {

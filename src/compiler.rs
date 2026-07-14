@@ -814,7 +814,8 @@ impl Compiler {
             return None;
         }
         for (i, scope) in self.scopes.iter().enumerate().rev() {
-            // Skip the global scope (index 0); its bindings are accessed via LoadGlobal.
+            // Skip the global scope (index 0); runtime Reference resolution
+            // handles global bindings and properties.
             if self.scopes.len() > 1 && i == 0 && !self.top_level_declarative {
                 continue;
             }
@@ -4482,15 +4483,10 @@ impl Compiler {
                 }
             }
             Expr::Regex(pattern, flags) => {
-                // Compile to `new RegExp(pattern, flags)`.
-                let name_idx = self.chunk.add_constant(Value::String(Arc::from("RegExp")));
                 let pat_idx = self.chunk.add_constant(Value::String(pattern.clone()));
                 let flg_idx = self.chunk.add_constant(Value::String(flags.clone()));
-                self.chunk.emit(Op::Const(name_idx), self.current_line);
-                self.chunk.emit(Op::LoadGlobal, self.current_line);
-                self.chunk.emit(Op::Const(pat_idx), self.current_line);
-                self.chunk.emit(Op::Const(flg_idx), self.current_line);
-                self.chunk.emit(Op::New(2), self.current_line);
+                self.chunk
+                    .emit(Op::NewRegExpLiteral(pat_idx, flg_idx), self.current_line);
             }
             Expr::Await(inner) => {
                 self.compile_expr(inner)?;

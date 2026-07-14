@@ -2859,6 +2859,9 @@ impl Vm {
         for v in self.realm_async_function_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
+        for v in self.realm_regexp_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
         for v in self.realm_array_buffer_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
