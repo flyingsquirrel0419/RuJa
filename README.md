@@ -38,7 +38,8 @@ and `withResolvers`,
 destructuring,
 getters/setters, auto-accessors, audited public and private
 field/method/getter/setter decorator context/access,
-method/field/auto-accessor replacement, and initializer semantics, tagged
+method/field/auto-accessor replacement, initializer semantics, and restricted
+decorator-expression early errors, tagged
 templates, Symbols, Map/Set,
 WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable

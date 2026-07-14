@@ -83,6 +83,17 @@
   `3b6da8a` and `5a9ff6f` passed CI `29364732026` and full matrix
   `29364732182`; only the built-ins result changed, producing **29085 pass /
   6495 fail / 12725 skip / 12 timeout / 0 error / 48317 total**.
+- Decorated computed class elements no longer let `@decorators[0]` escape the
+  restricted decorator grammar by being reparsed as an initializer-free
+  computed field followed by an ASI boundary. The parser rejects only that
+  ambiguous field fallback while preserving decorated computed methods,
+  initialized fields, parenthesized computed decorator expressions, and
+  computed arguments to decorator calls. Both pending Test262 early-error
+  files now pass; the complete PR #5048 diagnostic is **569 pass / 88 fail /
+  0 skip / 657 total**, with every remaining failure confined to private
+  auto-accessor decorators. Commit `1981ee2` passed CI `29374930032` and full
+  matrix `29374930033`; all 30 result artifacts are byte-for-byte identical to
+  the preceding baseline.
 - The final value-producing `LoadEnvName` bytecode and its duplicate VM
   environment resolver have been removed. Switch `continue` completion-value
   propagation now emits `LoadRef` plus `GetValue`, so all executable

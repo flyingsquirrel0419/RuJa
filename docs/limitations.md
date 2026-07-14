@@ -98,8 +98,9 @@ guarantees, run RuJa in a separately killable process as well.
   passes all **509/509** files after adding the global `Iterator` intrinsic.
   These files are still pending upstream in Test262 PR #5048, so they are
   verified against its pinned head rather than admitted into the current-main
-  runner early. The remaining direct decorator family is the 88-file private
-  auto-accessor corpus, plus two computed-member early-error cases.
+  runner early. Both computed-member early-error cases also pass; the full PR
+  diagnostic is **569 pass / 88 fail**, and every remaining failure is in the
+  private auto-accessor corpus.
 - The global `Iterator` and common synchronous iterator prototype hierarchy
   are implemented, but Iterator helpers (`map`, `filter`, `take`, `drop`, and
   related methods), `Iterator.from`, `Iterator.concat`, `Iterator.zip`, and

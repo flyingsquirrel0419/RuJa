@@ -5412,15 +5412,13 @@ outside this current-main admission.
 
 The next runtime corpus is pending in Test262 PR #5048. Against pinned PR head
 `58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the audited
-public-plus-private-callable diagnostic is **501 pass / 8 fail / 0 skip / 509
+public-plus-private-callable diagnostic is **509 pass / 0 fail / 0 skip / 509
 total**: 31 class, 116 method (40 public and 76 private), 64 getter (32 public
 and 32 private), 72 setter (36 public and 36 private), 136 field (68 public and
 68 private), 88 public auto-accessor, and two late-`addInitializer` tests
-across class expressions and declarations. All eight failures are private
-generator replacement/identity cases whose decorator behavior reaches the
-final assertion but cannot evaluate `instanceof Iterator` because RuJa does
-not yet expose the global `Iterator` constructor. The remaining direct private
-decorator family is the 88-file private auto-accessor corpus.
+across class expressions and declarations. The full 657-file PR diagnostic is
+**569 pass / 88 fail / 0 skip**. Both computed-member early-error files pass;
+all 88 remaining failures are private auto-accessor decorators.
 
 That boundary verifies fresh context objects, receiver-argument
 `access.has/get/set`, per-decorator `addInitializer` lifetime and callable
@@ -5440,6 +5438,16 @@ class decorators run and the final replacement before static initialization.
 Because these files do not exist in current Test262 main (`020cb740`), the
 runner keeps its broad `decorators` gate and does not claim an admission count
 before upstream merge.
+
+Commit `1981ee2` rejects the ambiguous parse where `@decorators[0]` became a
+decorated computed field and the following method began after ASI. Decorated
+computed methods and initialized fields remain valid, as do
+`@(decorators[0])` and computed expressions inside decorator-call arguments.
+CI `29374930032` and full matrix `29374930033` succeeded. All 30 downloaded
+result artifacts are byte-for-byte identical to the Reference-routing
+baseline, retaining **29085 pass / 6495 fail / 12725 skip / 12 timeout / 0
+error / 48317 total / 35580 pass-or-fail executed**. Artifacts are retained at
+`/tmp/ruja-artifacts-decorator-early-feature.jfQCql`.
 
 Feature commit `d31bbb4` passed CI `29353983772` and full matrix
 `29353983750`. All 30 downloaded result artifacts are byte-for-byte identical
