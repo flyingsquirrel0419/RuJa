@@ -30,7 +30,7 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.3% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.4% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
 | **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12400 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
@@ -133,6 +133,13 @@ test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset is
 **12400 pass / 0 fail / 8039 skip / 20439 total**. The current upstream
 checkout `020cb74075849d1e404bbcdb62feb7a02e6966db` reports **12399 pass / 0
 fail / 8039 skip / 20438 total**.
+
+At commit `cf398c0`, CI `29316245920` and full matrix `29316245922`
+succeeded. Expressions moved by **+32 pass / -32 skip** and statements by
+**+5 pass / -5 skip**; the other 28 result artifacts are byte-for-byte
+identical to matrix `29312667278`. The aggregate is **28704 pass / 6614 fail
+/ 12987 skip / 12 timeout / 0 error / 48317 total / 35318 pass-or-fail
+executed**.
 
 ## JSON.parse reviver admission
 

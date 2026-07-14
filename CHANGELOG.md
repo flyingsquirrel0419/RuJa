@@ -11,7 +11,10 @@
   is frozen to the exact **37** private class files exposed by this boundary;
   runner and analyzer remove only each path's recorded private feature gates.
   The manifest passes **37/37**, and pinned supported coverage is **12400 pass
-  / 0 fail / 8039 skip / 20439 total**.
+  / 0 fail / 8039 skip / 20439 total**. At commit `cf398c0`, CI
+  `29316245920` and full matrix `29316245922` succeeded; expressions moved by
+  **+32 pass / -32 skip** and statements by **+5 pass / -5 skip**, producing
+  **28704 pass / 6614 fail / 12987 skip / 12 timeout**.
 - Test262 now admits the final **5** files whose only unsupported blocker was a
   public or static class-field gate: derived-constructor `this` binding during
   instance-field initialization, computed field-name abrupt completion, and
