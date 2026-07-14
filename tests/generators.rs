@@ -29,6 +29,28 @@ fn generators_inherit_the_iterator_intrinsic() {
 }
 
 #[test]
+fn generator_prototype_has_own_to_string_tag() {
+    assert_eq!(
+        run(r#"
+            function* values() {}
+            let GeneratorPrototype = Object.getPrototypeOf(values.prototype);
+            let desc = Object.getOwnPropertyDescriptor(
+                GeneratorPrototype,
+                Symbol.toStringTag
+            );
+            [
+              desc.value,
+              desc.writable,
+              desc.enumerable,
+              desc.configurable,
+              Object.prototype.toString.call(values())
+            ].join("|");
+        "#),
+        Value::String(Arc::from("Generator|false|false|true|[object Generator]"))
+    );
+}
+
+#[test]
 fn generator_function_constructor_is_distinct_and_subclassable() {
     assert_eq!(
         run(r#"

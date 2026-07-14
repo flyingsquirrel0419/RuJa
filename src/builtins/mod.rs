@@ -7070,6 +7070,12 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                 PropertyKey::from("throw"),
                 data_prop(Value::Object(throw_fn)),
             );
+            let mut tag_desc = data_prop(Value::String(Arc::from("Generator")));
+            tag_desc.writable = false;
+            o.props().lock().insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                tag_desc,
+            );
         });
     }
     vm.generator_proto = Value::Object(GcIdx(generator_proto_idx));

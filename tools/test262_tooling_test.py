@@ -1699,7 +1699,7 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                 test262_analyze.TEST262 = original_analyze_root
 
     def test_iterator_core_admission_is_exact(self):
-        self.assertEqual(len(ITERATOR_CORE_FILES), 23)
+        self.assertEqual(len(ITERATOR_CORE_FILES), 24)
         self.assertEqual(
             sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
             6,
@@ -1715,6 +1715,10 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
         self.assertEqual(
             sum("/prototype/constructor/" in path for path in ITERATOR_CORE_FILES),
             2,
+        )
+        self.assertEqual(
+            sum("/GeneratorPrototype/" in path for path in ITERATOR_CORE_FILES),
+            1,
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:

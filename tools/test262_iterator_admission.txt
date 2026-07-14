@@ -24,3 +24,6 @@ built-ins/Iterator/prototype/Symbol.toStringTag/prop-desc.js
 built-ins/Iterator/prototype/Symbol.toStringTag/weird-setter.js
 built-ins/Iterator/prototype/constructor/prop-desc.js
 built-ins/Iterator/prototype/constructor/weird-setter.js
+
+# Concrete iterator prototypes admitted with the common base hierarchy.
+built-ins/GeneratorPrototype/Symbol.toStringTag.js
