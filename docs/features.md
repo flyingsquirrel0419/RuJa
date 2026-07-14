@@ -46,8 +46,9 @@
 - Public/private, instance/static auto-accessors (`accessor name = init`) use
   hidden private backing storage with prototype or constructor getter/setter
   pairs. The audited decorator boundary supports class, public
-  method/getter/setter/field/auto-accessor, and private field decorators;
-  source-order expression evaluation; grouped application phases;
+  method/getter/setter/field/auto-accessor, and private
+  field/method/getter/setter decorators; source-order expression evaluation;
+  grouped application phases;
   constructable class/callable element replacement validation; auto-accessor
   `get`/`set`/`init` replacement records; public-property and private-brand
   `context.access`; `addInitializer` queues; field initializer transforms;

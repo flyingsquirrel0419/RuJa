@@ -89,15 +89,17 @@ guarantees, run RuJa in a separately killable process as well.
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
-- Decorator support is intentionally limited to audited class and public
-  method/getter/setter/field/auto-accessor semantics plus private field
-  decorators. Private method/getter/setter/auto-accessor decorators and
-  remaining async/generator decorator families are not implemented yet and
-  remain behind the broad Test262 `decorators` gate. Unsupported private
-  decorator forms are rejected instead of silently discarding decorators. The
-  363 audited runtime tests are still pending upstream in Test262 PR #5048, so
-  they are verified against its pinned head rather than admitted into the
-  current-main runner early.
+- Decorator support covers audited class and public
+  method/getter/setter/field/auto-accessor semantics plus private
+  field/method/getter/setter decorators, including private async, generator,
+  and async-generator methods. Private auto-accessor decorators remain
+  unimplemented, and the broader gate stays closed until every pending family
+  is audited. The current pending-PR diagnostic passes 501 of 509 files; the
+  other eight are private generator behavior assertions whose decorator
+  semantics execute but whose `instanceof Iterator` check is blocked by the
+  missing global `Iterator` constructor. These files are still pending
+  upstream in Test262 PR #5048, so they are verified against its pinned head
+  rather than admitted into the current-main runner early.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

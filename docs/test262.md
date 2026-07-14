@@ -5366,16 +5366,20 @@ Local verification against Test262 `020cb740` is **24 pass / 0 fail / 0 skip**
 for the exact manifest, **4184 pass / 0 fail / 4242 skip** for both class
 subtrees, and **12751 pass / 0 fail / 7687 skip / 20438 total** for the current
 supported subset. The pinned `d1d583d` subset is **12752 pass / 0 fail / 7687
-skip / 20439 total**. Private method/getter/setter/auto-accessor decorators
-remain explicitly outside this admission.
+skip / 20439 total**. Pending-PR private decorator families remain explicitly
+outside this current-main admission.
 
 The next runtime corpus is pending in Test262 PR #5048. Against pinned PR head
-`58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the audited public-plus-private-
-field boundary passes **363 pass / 0 fail / 0 skip**: 29 class, 40 method, 32
-getter, 36 setter, 136 field (68 public and 68 private), 88 public
-auto-accessor, and two late-`addInitializer` tests across class expressions and
-declarations. The two pre-definition phase files and remaining private element
-families stay outside this boundary.
+`58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the audited
+public-plus-private-callable diagnostic is **501 pass / 8 fail / 0 skip / 509
+total**: 31 class, 116 method (40 public and 76 private), 64 getter (32 public
+and 32 private), 72 setter (36 public and 36 private), 136 field (68 public and
+68 private), 88 public auto-accessor, and two late-`addInitializer` tests
+across class expressions and declarations. All eight failures are private
+generator replacement/identity cases whose decorator behavior reaches the
+final assertion but cannot evaluate `instanceof Iterator` because RuJa does
+not yet expose the global `Iterator` constructor. The remaining direct private
+decorator family is the 88-file private auto-accessor corpus.
 
 That boundary verifies fresh context objects, receiver-argument
 `access.has/get/set`, per-decorator `addInitializer` lifetime and callable
@@ -5386,10 +5390,15 @@ auto-accessor `{ get, set }` input plus optional `get`/`set`/`init` replacement
 composition. It also verifies that auto-accessors apply with methods/accessors
 but initialize backing storage with fields. Private fields additionally verify
 identity-preserving brand checks and private `get`/`set`, `#`-prefixed context
-names, wrong-brand behavior, and instance/static initializer ordering. Because
-these files do not exist in current Test262 main (`020cb740`), the runner keeps
-its broad `decorators` gate and does not claim an admission count before
-upstream merge.
+names, wrong-brand behavior, and instance/static initializer ordering. Private
+callables additionally verify mutable replacement bindings, ordinary/async/
+generator/async-generator forms, accessor merging, `super` home objects,
+instance/static installation, and static private slots on class decorator
+replacements. The class's inner binding exposes the original constructor while
+class decorators run and the final replacement before static initialization.
+Because these files do not exist in current Test262 main (`020cb740`), the
+runner keeps its broad `decorators` gate and does not claim an admission count
+before upstream merge.
 
 Feature commit `d31bbb4` passed CI `29353983772` and full matrix
 `29353983750`. All 30 downloaded result artifacts are byte-for-byte identical
@@ -5422,6 +5431,13 @@ on the operand stack, catch guards now retain their frame-relative try-entry
 stack depth. Native and explicit throws truncate to that depth before entering
 the handler, preventing caught decorator failures from accumulating hidden GC
 roots across loops or async/generator suspension.
+
+Feature commit `72fe364` passed CI `29359759264` and full matrix
+`29359759319`. All 30 downloaded result artifacts are byte-for-byte identical
+to matrix `29355670154`, reproducing **29056 pass / 6614 fail / 12635 skip / 12
+timeout / 0 error / 48317 total / 35670 pass-or-fail executed**. The feature
+artifacts are retained at
+`/tmp/ruja-artifacts-private-callable-feature.ny7KEc`.
 
 ## Why the full-suite rate is not higher
 

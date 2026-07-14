@@ -36,9 +36,10 @@ no `unsafe` code anywhere in the engine.
 ES5.1 + classes, async/await, generators, Promises with static combinators
 and `withResolvers`,
 destructuring,
-getters/setters, auto-accessors, audited public and private-field decorator
-context/access, method/field/auto-accessor replacement, and initializer
-semantics, tagged templates, Symbols, Map/Set,
+getters/setters, auto-accessors, audited public and private
+field/method/getter/setter decorator context/access,
+method/field/auto-accessor replacement, and initializer semantics, tagged
+templates, Symbols, Map/Set,
 WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,

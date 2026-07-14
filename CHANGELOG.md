@@ -53,6 +53,21 @@
   coverage **12751/0/7687** remain green. Feature commit `d31bbb4` passed CI
   `29353983772` and full matrix `29353983750`; all 30 artifacts are identical
   to the preceding baseline.
+- Private instance/static methods, getters, and setters now support decorator
+  replacement, private-brand `context.access`, and extra initializers across
+  ordinary, async, generator, and async-generator method forms. Mutable
+  compiler-internal callable bindings feed both instance initialization and
+  static private installation; when a class decorator returns a replacement,
+  static private callables are installed on that final class without
+  duplicating slots on an identity result. The inner class name observes the
+  original constructor while class decorators run and is rebound to the final
+  replacement before static fields and blocks. The pending Test262 PR #5048
+  public-plus-private-callable diagnostic is **501 pass / 8 fail / 0 skip /
+  509 total**; all eight failures are generator assertions whose only blocker
+  is the missing global `Iterator` constructor. Current exact **24/24** and
+  supported coverage **12751/0/7687** remain green. Feature commit `72fe364`
+  passed CI `29359759264` and full matrix `29359759319`; all 30 result
+  artifacts are identical to the preceding baseline.
 - Catch handlers now restore the operand stack depth captured at `try` entry
   before pushing the thrown value. This prevents failed decorator and other
   callback operands from remaining as hidden GC roots after a caught throw;
