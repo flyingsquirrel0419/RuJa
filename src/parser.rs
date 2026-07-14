@@ -1267,6 +1267,27 @@ impl Parser {
         check_duplicate_bound_names(&names)
     }
 
+    fn reject_accessor_parameter_early_errors(
+        kind: PropKind,
+        params: &[Arc<str>],
+        rest_param: Option<&Arc<str>>,
+    ) -> error::Result<()> {
+        let valid = match kind {
+            PropKind::Get => params.is_empty() && rest_param.is_none(),
+            PropKind::Set => params.len() == 1 && rest_param.is_none(),
+            _ => true,
+        };
+        if valid {
+            Ok(())
+        } else {
+            Err(error::Error::syntax(match kind {
+                PropKind::Get => "Getter must not have parameters".to_string(),
+                PropKind::Set => "Setter must have exactly one non-rest parameter".to_string(),
+                _ => unreachable!(),
+            }))
+        }
+    }
+
     fn parse_stmt(&mut self) -> error::Result<Stmt> {
         // Bound statement recursion so deeply nested `{{...}}` / `if(1) if(1)
         // ...` fails with a SyntaxError instead of overflowing the Rust
@@ -4096,6 +4117,15 @@ impl Parser {
             if is_getter || is_setter {
                 let (params, param_defaults, rest_param, dstr_decls) =
                     self.parse_params_scoped(false, false, true)?;
+                Self::reject_accessor_parameter_early_errors(
+                    if is_getter {
+                        PropKind::Get
+                    } else {
+                        PropKind::Set
+                    },
+                    &params,
+                    rest_param.as_ref(),
+                )?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
                 let body_contains_use_strict = self.last_fn_body_use_strict_directive;
@@ -6329,6 +6359,7 @@ impl Parser {
                 Self::record_private_bound_name(&mut private_bound_names, &name, is_static, kind)?;
                 let (params, param_defaults, rest_param, dstr_decls) =
                     self.parse_params_scoped(false, false, true)?;
+                Self::reject_accessor_parameter_early_errors(kind, &params, rest_param.as_ref())?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
                 let mut body = self.parse_fn_body(true, false, false, false)?;
                 let body_contains_use_strict = self.last_fn_body_use_strict_directive;
@@ -6571,6 +6602,17 @@ impl Parser {
             }
             let (params, param_defaults, rest_param, dstr_decls) =
                 self.parse_params_scoped(is_generator_method, is_async_method, true)?;
+            if is_getter || is_setter {
+                Self::reject_accessor_parameter_early_errors(
+                    if is_getter {
+                        PropKind::Get
+                    } else {
+                        PropKind::Set
+                    },
+                    &params,
+                    rest_param.as_ref(),
+                )?;
+            }
             Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
             let super_call_allowed = superclass.is_some() && is_constructor;
             let mut body = self.parse_fn_body(

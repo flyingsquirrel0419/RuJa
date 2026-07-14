@@ -20,6 +20,31 @@ fn class_basic() {
 }
 
 #[test]
+fn object_accessor_parameter_grammar_is_enforced() {
+    for src in [
+        "({ get value(param = 1) {} });",
+        "({ set value() {} });",
+        "({ set value(a, b) {} });",
+        "({ set value(...items) {} });",
+    ] {
+        let err = run_err(src);
+        assert!(
+            err.contains("SyntaxError"),
+            "expected SyntaxError for {src}, got {err}"
+        );
+    }
+
+    assert_eq!(
+        run("var o = { set value(v = 3) { this.result = v; } }; o.value = undefined; o.result;"),
+        Value::Number(3.0)
+    );
+    assert_eq!(
+        run("var o = { set value({ result }) { this.result = result; } }; o.value = { result: 4 }; o.result;"),
+        Value::Number(4.0)
+    );
+}
+
+#[test]
 fn class_name_may_be_await_in_script_goal() {
     assert_eq!(run("class await {} 1;"), Value::Number(1.0));
     assert_eq!(

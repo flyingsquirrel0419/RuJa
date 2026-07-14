@@ -11,6 +11,7 @@ from pathlib import Path
 
 try:
     from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+    from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
     from test262_class_private_admission import CLASS_PRIVATE_FEATURES_BY_FILE
     from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
@@ -27,6 +28,7 @@ try:
     )
 except ModuleNotFoundError:
     from tools.test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+    from tools.test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
     from tools.test262_class_private_admission import CLASS_PRIVATE_FEATURES_BY_FILE
     from tools.test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
@@ -1775,6 +1777,13 @@ def class_computed_field_path(path):
         return False
     return rel.as_posix() in CLASS_COMPUTED_FIELD_FILES
 
+def class_default_parameter_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in CLASS_DEFAULT_PARAMETER_FILES
+
 def class_private_path_features(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2167,6 +2176,8 @@ def should_skip(meta, path=None):
         feats.difference_update(CLASS_PRIVATE_BRAND_REALM_FEATURES)
     if path is not None and class_computed_field_path(path):
         feats.difference_update(CLASS_PUBLIC_FIELD_FEATURES)
+    if path is not None and class_default_parameter_path(path):
+        feats.discard("default-parameters")
     if path is not None:
         feats.difference_update(class_private_path_features(path))
     if path is not None and class_public_field_path(path):

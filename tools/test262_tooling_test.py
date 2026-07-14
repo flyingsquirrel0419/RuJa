@@ -10,6 +10,7 @@ from unittest.mock import patch
 import test262_analyze
 import test262_runner
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
 from test262_class_private_admission import (
     CLASS_PRIVATE_FEATURES_BY_FILE,
     CLASS_PRIVATE_FILES,
@@ -1504,6 +1505,101 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.should_skip(meta, unrelated))
                 finally:
                     tool.TEST262 = original_root
+
+    def test_class_default_parameter_admission_is_exact(self):
+        names = {
+            "async-method/dflt-params-duplicates.js",
+            "async-method/dflt-params-rest.js",
+            "async-method-static/dflt-params-duplicates.js",
+            "async-method-static/dflt-params-rest.js",
+            "getter-param-dflt.js",
+            "method/dflt-params-abrupt.js",
+            "method/dflt-params-arg-val-not-undefined.js",
+            "method/dflt-params-arg-val-undefined.js",
+            "method/dflt-params-duplicates.js",
+            "method/dflt-params-ref-later.js",
+            "method/dflt-params-ref-prior.js",
+            "method/dflt-params-ref-self.js",
+            "method/dflt-params-rest.js",
+            "method-length-dflt.js",
+            "method-static/dflt-params-abrupt.js",
+            "method-static/dflt-params-arg-val-not-undefined.js",
+            "method-static/dflt-params-arg-val-undefined.js",
+            "method-static/dflt-params-duplicates.js",
+            "method-static/dflt-params-ref-later.js",
+            "method-static/dflt-params-ref-prior.js",
+            "method-static/dflt-params-ref-self.js",
+            "method-static/dflt-params-rest.js",
+            "params-dflt-meth-args-unmapped.js",
+            "params-dflt-meth-ref-arguments.js",
+            "params-dflt-meth-static-args-unmapped.js",
+            "params-dflt-meth-static-ref-arguments.js",
+            "setter-length-dflt.js",
+            "static-method-length-dflt.js",
+        }
+        expected = frozenset(
+            f"{prefix}{name}"
+            for prefix in (
+                "language/expressions/class/",
+                "language/statements/class/",
+            )
+            for name in names
+        )
+        self.assertEqual(len(CLASS_DEFAULT_PARAMETER_FILES), 56)
+        self.assertEqual(CLASS_DEFAULT_PARAMETER_FILES, expected)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test" / next(iter(expected))
+            unrelated = root / (
+                "test/language/expressions/class/method/"
+                "dflt-params-not-admitted.js"
+            )
+            meta = {"flags": [], "features": ["default-parameters"]}
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.class_default_parameter_path(admitted))
+                    self.assertFalse(tool.should_skip(meta, admitted))
+                    self.assertFalse(tool.class_default_parameter_path(unrelated))
+                    self.assertTrue(tool.should_skip(meta, unrelated))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_class_default_parameter_admission_requires_live_metadata_feature(self):
+        test_root = Path(test262_runner.TEST262) / "test"
+        if not test_root.is_dir():
+            self.skipTest("live Test262 checkout is unavailable")
+        for relative in CLASS_DEFAULT_PARAMETER_FILES:
+            path = test_root / relative
+            self.assertTrue(path.is_file(), relative)
+            meta = test262_runner.parse_meta(path.read_text())
+            self.assertEqual(meta.get("features"), ["default-parameters"], relative)
+
+    def test_class_default_parameter_runner_analyzer_parity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_runner_root = test262_runner.TEST262
+            original_analyze_root = test262_analyze.TEST262
+            test262_runner.TEST262 = str(root)
+            test262_analyze.TEST262 = str(root)
+            try:
+                for relative in CLASS_DEFAULT_PARAMETER_FILES:
+                    path = root / "test" / relative
+                    meta = {"flags": [], "features": ["default-parameters"]}
+                    self.assertEqual(
+                        test262_runner.class_default_parameter_path(path),
+                        test262_analyze.class_default_parameter_path(path),
+                    )
+                    self.assertEqual(
+                        test262_runner.should_skip(meta, path),
+                        test262_analyze.should_skip(meta, path),
+                    )
+                    self.assertFalse(test262_runner.should_skip(meta, path))
+            finally:
+                test262_runner.TEST262 = original_runner_root
+                test262_analyze.TEST262 = original_analyze_root
 
     def test_residual_public_field_admission_is_exact(self):
         expected = {

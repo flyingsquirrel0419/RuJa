@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Object, public class, and private class accessors now enforce their grammar's
+  formal-parameter arity after parsing: getters accept no parameters, and
+  setters accept exactly one non-rest parameter. Valid setter defaults and
+  destructuring remain supported. This fixes two class and one object-literal
+  Test262 parse-negative failures. An exact manifest admits the **56** class
+  files whose sole remaining gate was `default-parameters`; it passes **56/56**
+  and raises pinned supported coverage to **12456 pass / 0 fail / 7983 skip /
+  20439 total**.
 - Private getter/setter duplicate-name early errors now require matching
   instance/static placement. The parser rejects all four mismatched accessor
   orders while retaining valid complementary pairs in either order, escaped

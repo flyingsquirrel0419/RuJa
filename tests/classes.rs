@@ -379,6 +379,11 @@ fn class_element_early_errors_follow_static_semantics() {
         "class C { static #x; #x() {} }",
         "class C { get #x() {} get #x() {} }",
         "class C { set #x(v) {} set #x(v) {} }",
+        "class C { get x(value = 1) {} }",
+        "class C { get #x(value) {} }",
+        "class C { set x() {} }",
+        "class C { set x(a, b) {} }",
+        "class C { set #x(...values) {} }",
         "class C { get #x() {} static set #x(v) {} }",
         "class C { set #x(v) {} static get #x() {} }",
         "class C { static get #x() {} set #x(v) {} }",
@@ -409,6 +414,8 @@ fn class_element_early_errors_follow_static_semantics() {
     run("class C { set #x(v) {} get #x() { return 1; } } new C();");
     run("class C { static get #x() { return 1; } static set #x(v) {} } C;");
     run("class C { static set #x(v) {} static get #x() { return 1; } } C;");
+    run("class C { set x(value = 1) { this.value = value; } } var c = new C(); c.x = undefined;");
+    run("class C { set #x({ value }) { this.value = value; } write(value) { this.#x = value; } } var c = new C(); c.write({ value: 1 });");
     run("class C { get #x() {} set #x(v) {} m() { class D { static get #x() {} static set #x(v) {} } return D; } } new C().m();");
     run("class C { m() { class B { #x() {} } } #x() {} }");
     run("class C { #x = 2; m() { function f(o) { return o.#x; } return f(this); } } new C().m();");

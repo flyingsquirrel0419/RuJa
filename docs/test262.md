@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.4% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12400 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12456 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -140,6 +140,26 @@ succeeded. Expressions moved by **+32 pass / -32 skip** and statements by
 identical to matrix `29312667278`. The aggregate is **28704 pass / 6614 fail
 / 12987 skip / 12 timeout / 0 error / 48317 total / 35318 pass-or-fail
 executed**.
+
+## Class default-parameter admission
+
+`tools/test262_class_default_parameter_admission.txt` freezes the exact **56**
+class declaration and expression files whose only remaining skip reason was
+`default-parameters`. The runner and analyzer remove that feature gate only
+for manifest members; unrelated default-parameter tests remain behind the
+broad gate.
+
+Two parse-negative getter files exposed a shared accessor grammar defect.
+Object, public class, and private class accessors previously reused the general
+function parameter parser without enforcing accessor arity. All three paths
+now require zero getter parameters and exactly one non-rest setter parameter,
+while valid setter defaults and destructuring remain supported.
+
+Local verification reports **56 pass / 0 fail** for the frozen manifest. On
+test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset is
+**12456 pass / 0 fail / 7983 skip / 20439 total**. The current upstream
+checkout `020cb74075849d1e404bbcdb62feb7a02e6966db` reports **12455 pass / 0
+fail / 7983 skip / 20438 total**.
 
 ## JSON.parse reviver admission
 
