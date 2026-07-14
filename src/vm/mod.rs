@@ -2265,6 +2265,25 @@ impl Vm {
                     }
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
+                        let global_env = crate::environment::global_env_root(&self.heap, *env_idx);
+                        if *env_idx == global_env {
+                            let is_global_var = self.heap.with_obj(env_idx.0, |obj| {
+                                matches!(
+                                    obj,
+                                    HeapObj::Environment(environment)
+                                        if environment.vars.lock().get(name.as_str()).is_some_and(
+                                            |binding| binding.kind
+                                                == crate::value::BindingKind::Var
+                                        )
+                                )
+                            });
+                            if is_global_var {
+                                let global_this = self.realm_global_for_env(*env_idx);
+                                if self.has_property(&global_this, &name)? {
+                                    return self.get_property(&global_this, &name);
+                                }
+                            }
+                        }
                         // Walk the environment chain in order: at each env,
                         // check var/let/const bindings first, then the
                         // with-object (if any). This ensures a var binding in
@@ -2589,14 +2608,57 @@ impl Vm {
                     }
                     crate::value::ReferenceBase::Environment(env_idx) => {
                         let name = r.name.as_str().map(|s| s.to_string()).unwrap_or_default();
-                        // Walk the env chain from the reference's env, checking
-                        // at each level: (1) var/let/const binding, (2) with-object
-                        // property. This matches the spec's SetMutableBinding
-                        // semantics where the reference's base env is used, not
-                        // the current env. If a with-object property was deleted
-                        // between GetValue and PutValue, we recreate it on the
-                        // closest with-object (non-strict) or throw (strict).
-                        let global_readonly = self.global_property_is_non_writable_data(&name);
+                        let global_env = crate::environment::global_env_root(&self.heap, *env_idx);
+                        if *env_idx != global_env {
+                            match crate::environment::set_checked_exact(
+                                &self.heap,
+                                *env_idx,
+                                &name,
+                                value.clone(),
+                            ) {
+                                crate::environment::SetOutcome::Set => return Ok(()),
+                                crate::environment::SetOutcome::Tdz => {
+                                    return Err(Error::reference(format!(
+                                        "Cannot access '{}' before initialization",
+                                        name
+                                    )));
+                                }
+                                crate::environment::SetOutcome::Const
+                                | crate::environment::SetOutcome::Import => {
+                                    return Err(Error::type_err(format!(
+                                        "Assignment to constant variable '{}'",
+                                        name
+                                    )));
+                                }
+                                crate::environment::SetOutcome::FunctionName => {
+                                    if r.strict {
+                                        return Err(Error::type_err(format!(
+                                            "Assignment to constant variable '{}'",
+                                            name
+                                        )));
+                                    }
+                                    return Ok(());
+                                }
+                                crate::environment::SetOutcome::NotFound => {
+                                    if r.strict {
+                                        return Err(Error::reference(format!(
+                                            "{} is not defined",
+                                            name
+                                        )));
+                                    }
+                                    crate::environment::create_mutable_binding_exact(
+                                        &self.heap, *env_idx, &name, value,
+                                    );
+                                    return Ok(());
+                                }
+                            }
+                        }
+                        // Global Environment Records mirror `var` bindings to the
+                        // Realm's global object. Route those writes through the
+                        // actual property so accessors and descriptor failures are
+                        // observable before synchronizing the declarative mirror.
+                        let global_readonly =
+                            self.realm_global_property_is_non_writable_data(*env_idx, &name);
                         let mut cur_env = Some(*env_idx);
                         while let Some(e_idx) = cur_env {
                             let (
@@ -2619,7 +2681,7 @@ impl Vm {
                                                 None, None,
                                             );
                                         }
-                                        if e_idx == self.global && global_readonly {
+                                        if e_idx == global_env && global_readonly {
                                             return (
                                                 false, false, false, false, true, false, false,
                                                 None, None,
@@ -2641,9 +2703,11 @@ impl Vm {
                                                 None, None,
                                             );
                                         }
-                                        let is_global_var = e_idx == self.global
+                                        let is_global_var = e_idx == global_env
                                             && b.kind == crate::value::BindingKind::Var;
-                                        *b.value.lock() = value.clone();
+                                        if !is_global_var {
+                                            *b.value.lock() = value.clone();
+                                        }
                                         return (
                                             true,
                                             false,
@@ -2706,13 +2770,31 @@ impl Vm {
                                 return Ok(());
                             }
                             if global_readonly_binding {
-                                let global_this = self.global_this.clone();
+                                let global_this = self.realm_global_for_env(*env_idx);
                                 self.set_property(&global_this, &name, value)?;
                                 return Ok(());
                             }
                             if has_binding {
                                 if global_var_binding {
-                                    self.set_global_var_property(&name, value.clone());
+                                    let global_this = self.realm_global_for_env(*env_idx);
+                                    self.set_property(&global_this, &name, value.clone())?;
+                                    let data_value = match &global_this {
+                                        Value::Object(idx) => self.heap.with_obj(idx.0, |obj| {
+                                            obj.props()
+                                                .lock()
+                                                .get(&crate::value::PropertyKey::from(
+                                                    name.as_str(),
+                                                ))
+                                                .filter(|descriptor| !descriptor.is_accessor)
+                                                .map(|descriptor| descriptor.value.clone())
+                                        }),
+                                        _ => None,
+                                    };
+                                    if let Some(data_value) = data_value {
+                                        let _ = crate::environment::set_checked_exact(
+                                            &self.heap, *env_idx, &name, data_value,
+                                        );
+                                    }
                                 }
                                 return Ok(());
                             }

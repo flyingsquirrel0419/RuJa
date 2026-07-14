@@ -1447,6 +1447,86 @@ fn compound_ident_preserves_resolved_binding_across_eval() {
 }
 
 #[test]
+fn assignment_uses_the_resolved_declarative_environment_after_delete() {
+    assert_eq!(
+        run(r#"
+            var x = "outer";
+            var y = "outer";
+            var z = "outer";
+            function f() {
+              eval("var x; x = (delete x, 'inner');");
+              eval("var y = 'local'; y += (delete y, '-updated');");
+              eval("var z = 0; z ||= (delete z, 7);");
+              return [x, y, z].join(":");
+            }
+            [f(), x, y, z].join("|");
+            "#),
+        Value::String(Arc::from("inner:local-updated:7|outer|outer|outer"))
+    );
+
+    assert_eq!(
+        run(r#"
+            var other = $262.createRealm().global;
+            var writable = other.eval(
+              "var x = 1; x = 2; [x, globalThis.x].join(':');"
+            );
+            var readonly = other.eval(`
+              var fixed = 1;
+              Object.defineProperty(globalThis, "fixed", { writable: false });
+              var error = "";
+              try { (function() { "use strict"; fixed = 2; })(); }
+              catch (e) { error = e.name; }
+              [error, fixed, globalThis.fixed].join(":");
+            `);
+            writable + "|" + readonly;
+            "#),
+        Value::String(Arc::from("2:2|TypeError:1:1"))
+    );
+
+    assert_eq!(
+        run(r#"
+            eval("var blocked = 1; var observed = 1;");
+            Object.defineProperty(globalThis, "blocked", {
+              get: function() { return 10; },
+              set: function() { throw new Error("blocked"); },
+              configurable: true
+            });
+            Object.defineProperty(globalThis, "observed", {
+              get: function() { return this._observed; },
+              set: function(value) { this._observed = value + 1; },
+              configurable: true
+            });
+            var error = "";
+            try { blocked = 2; } catch (e) { error = e.message; }
+            observed = 2;
+            [
+              error, blocked, globalThis.blocked,
+              observed, globalThis.observed
+            ].join("|");
+            "#),
+        Value::String(Arc::from("blocked|10|10|3|3"))
+    );
+
+    assert_eq!(
+        run(r#"
+            eval("var removed = 1; var selfRemoving = 1;");
+            var deleted = delete globalThis.removed;
+            Object.defineProperty(globalThis, "selfRemoving", {
+              get: function() { return 1; },
+              set: function() { delete globalThis.selfRemoving; },
+              configurable: true
+            });
+            selfRemoving = 2;
+            [
+              deleted, typeof removed, "removed" in globalThis,
+              typeof selfRemoving, "selfRemoving" in globalThis
+            ].join("|");
+            "#),
+        Value::String(Arc::from("true|undefined|false|undefined|false"))
+    );
+}
+
+#[test]
 fn compound_ident_strict_object_environment_missing_after_get_throws() {
     let global_err = run_err(
         r#"

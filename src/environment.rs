@@ -517,6 +517,69 @@ pub enum SetOutcome {
     NotFound,
 }
 
+/// Apply SetMutableBinding to one already-resolved declarative environment.
+/// Reference records carry the exact Environment Record in [[Base]], so this
+/// operation must not continue into parent environments.
+pub fn set_checked_exact(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutcome {
+    heap.with_obj(env.0, |obj| {
+        let HeapObj::Environment(environment) = obj else {
+            return SetOutcome::NotFound;
+        };
+        let vars = environment.vars.lock();
+        let Some(binding) = vars.get(name) else {
+            return SetOutcome::NotFound;
+        };
+        if !binding.initialized.load(Ordering::Relaxed) {
+            return SetOutcome::Tdz;
+        }
+        match binding.kind {
+            BindingKind::FunctionName => SetOutcome::FunctionName,
+            BindingKind::Const => SetOutcome::Const,
+            BindingKind::Import => SetOutcome::Import,
+            _ => {
+                *binding.value.lock() = value;
+                SetOutcome::Set
+            }
+        }
+    })
+}
+
+/// Create the missing mutable binding required by non-strict
+/// DeclarativeEnvironmentRecord.SetMutableBinding on its exact record.
+pub fn create_mutable_binding_exact(heap: &Heap, env: GcIdx, name: &str, value: Value) {
+    heap.with_obj(env.0, |obj| {
+        if let HeapObj::Environment(environment) = obj {
+            environment.vars.lock().insert(
+                Arc::from(name),
+                crate::value::Binding {
+                    value: Mutex::new(value),
+                    kind: BindingKind::Var,
+                    indirect: None,
+                    initialized: AtomicBool::new(true),
+                    deletable: true,
+                },
+            );
+        }
+    });
+}
+
+pub fn delete_global_var_binding_exact(heap: &Heap, env: GcIdx, name: &str) -> bool {
+    heap.with_obj(env.0, |obj| {
+        let HeapObj::Environment(environment) = obj else {
+            return false;
+        };
+        let mut vars = environment.vars.lock();
+        if vars
+            .get(name)
+            .is_some_and(|binding| binding.kind == BindingKind::Var)
+        {
+            vars.shift_remove(name);
+            return true;
+        }
+        false
+    })
+}
+
 /// TDZ-aware set: refuses to write a binding that is still in the TDZ.
 pub fn set_checked(heap: &Heap, env: GcIdx, name: &str, value: Value) -> SetOutcome {
     let mut cur = Some(env);

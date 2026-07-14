@@ -2,7 +2,7 @@
 
 mod common;
 use common::{run, run_err};
-use ruja::Value;
+use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
@@ -17,6 +17,35 @@ fn with_reads_object_property() {
         result;
     "#;
     assert_eq!(run(src), Value::Number(103.0));
+}
+
+#[test]
+fn active_with_environment_keeps_binding_object_alive_across_gc() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+
+    assert_eq!(
+        vm.run(
+            r#"
+            var result;
+            with ({ value: 41 }) {
+              forceGc();
+              result = value;
+            }
+            result;
+            "#,
+        )
+        .expect("active with object should survive collection"),
+        Value::Number(41.0)
+    );
 }
 
 #[test]

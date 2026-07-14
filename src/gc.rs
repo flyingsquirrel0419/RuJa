@@ -118,6 +118,9 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                 worklist.push(target.0);
             }
         }
+        if let Some(with_object) = e.with_object.lock().as_ref() {
+            push_value(with_object, worklist);
+        }
         if let Some(p) = *e.parent.lock() {
             worklist.push(p.0);
         }

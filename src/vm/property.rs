@@ -591,6 +591,15 @@ impl Vm {
             });
             if let Some(name) = key.as_str() {
                 self.ic_invalidate(idx.0, name);
+                let realm_env = self.realm_globals.iter().find_map(|(env, global)| {
+                    matches!(global, Value::Object(global_idx) if global_idx == idx)
+                        .then_some(GcIdx(*env))
+                });
+                if let Some(realm_env) = realm_env {
+                    crate::environment::delete_global_var_binding_exact(
+                        &self.heap, realm_env, name,
+                    );
+                }
             }
         }
         Ok(true)
@@ -2168,7 +2177,15 @@ impl Vm {
     }
 
     pub(crate) fn global_property_is_non_writable_data(&self, name: &str) -> bool {
-        let Value::Object(idx) = &self.global_this else {
+        self.realm_global_property_is_non_writable_data(self.global, name)
+    }
+
+    pub(crate) fn realm_global_property_is_non_writable_data(
+        &self,
+        env: GcIdx,
+        name: &str,
+    ) -> bool {
+        let Value::Object(idx) = self.realm_global_for_env(env) else {
             return false;
         };
         let pkey = crate::value::PropertyKey::from(name);
