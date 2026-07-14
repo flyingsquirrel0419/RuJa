@@ -142,6 +142,14 @@ fn switch_function_declarations_do_not_leak() {
     }
 }
 
+#[test]
+fn continue_out_of_switch_preserves_completion_value() {
+    assert_eq!(
+        run("eval('5; do { switch (\"a\") { case \"a\": { 6; continue; } } } while (false)');"),
+        Value::Number(6.0)
+    );
+}
+
 // --- try / catch / finally ---
 
 #[test]

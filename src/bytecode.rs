@@ -401,7 +401,6 @@ pub enum Op {
     InitConst(usize), // pop value, initialize an existing (hoisted) const binding (TDZ lift)
     InitEnv(usize),   // pop value, init-or-declare a let binding in current env (pattern/loop)
     InitEnvConst(usize), // pop value, init-or-declare a const binding in current env (pattern/loop)
-    LoadEnvName(usize), // push name const then load from env
     StoreEnvName(usize), // push name const then store to env
     LoadRef(usize),   // push a Reference record for the named binding
     MakePropertyRef,  // pop [base, propertyKey], push a resolved property Reference

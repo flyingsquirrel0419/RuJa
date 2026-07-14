@@ -295,8 +295,8 @@ impl Compiler {
                 break;
             }
             if let Some(saved) = saved_idx {
-                self.chunk
-                    .emit(Op::LoadEnvName(sw_val_idx), self.current_line);
+                self.chunk.emit(Op::LoadRef(sw_val_idx), self.current_line);
+                self.chunk.emit(Op::GetValue, self.current_line);
                 self.chunk.emit(Op::StoreEnvName(saved), self.current_line);
             }
         }
