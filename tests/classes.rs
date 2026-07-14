@@ -2451,6 +2451,60 @@ fn decorator_grammar_rejects_unrestricted_and_invalid_targets() {
     assert!(run_err("class C { @foo constructor() {} }").contains("cannot be decorated"));
     assert!(run_err("class C { @foo accessor #value; }").contains("not implemented"));
     assert!(!run_err("class C { @foo a\\u0073ync #method() {} }").is_empty());
+    assert!(
+        run_err("let decorators = []; class C { @decorators[0]\n method() {} }")
+            .contains("Computed member expressions")
+    );
+    assert!(
+        run_err("let decorators = []; let C = class { @decorators[0]\n method() {} };")
+            .contains("Computed member expressions")
+    );
+    assert!(run_err("class C { @identity [name]\n method() {} }")
+        .contains("Computed member expressions"));
+    assert_eq!(
+        run(r#"
+            function identity(value) { return value; }
+            let name = "method";
+            class C {
+              @identity
+              [name]() { return 1; }
+            }
+            new C().method();
+        "#),
+        Value::Number(1.0)
+    );
+    assert_eq!(
+        run(r#"
+            function identity(value) { return value; }
+            let name = "field";
+            class C {
+              @identity [name] = 3;
+              @identity
+              ["other"] = 4;
+            }
+            new C().field + new C().other;
+        "#),
+        Value::Number(7.0)
+    );
+    assert_eq!(
+        run(r#"
+            let decorators = [value => value];
+            class C {
+              @(decorators[0]) method() { return 2; }
+            }
+            new C().method();
+        "#),
+        Value::Number(2.0)
+    );
+    assert_eq!(
+        run(r#"
+            function factory(value) { return candidate => candidate; }
+            let decorators = [1];
+            @factory(decorators[0]) class C {}
+            typeof C;
+        "#),
+        Value::String(Arc::from("function"))
+    );
 }
 
 #[test]

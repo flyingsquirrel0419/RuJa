@@ -6929,6 +6929,18 @@ impl Parser {
                         "Static class element cannot be named prototype".to_string(),
                     ));
                 }
+                if !element_decorators.is_empty()
+                    && computed_name.is_some()
+                    && !matches!(
+                        self.peek(),
+                        TokenKind::Assign | TokenKind::Semicolon | TokenKind::RBrace
+                    )
+                {
+                    return Err(error::Error::syntax(
+                        "Computed member expressions are not valid decorator expressions"
+                            .to_string(),
+                    ));
+                }
                 let init = if self.eat(&TokenKind::Assign) {
                     let mut init = self.parse_class_field_initializer()?;
                     Self::reject_class_field_initializer_contains_arguments(&init)?;
