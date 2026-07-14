@@ -298,6 +298,7 @@ impl Compiler {
                 self.chunk.emit(Op::LoadRef(sw_val_idx), self.current_line);
                 self.chunk.emit(Op::GetValue, self.current_line);
                 self.chunk.emit(Op::StoreEnvName(saved), self.current_line);
+                self.chunk.emit(Op::Pop, self.current_line);
             }
         }
     }
@@ -1440,12 +1441,16 @@ impl Compiler {
                 if let Some(i) = target {
                     let scope_depth = self.loop_stack[i].5;
                     let active = self.finally_active();
-                    self.emit_scope_unwind(scope_depth);
                     if active {
                         let divert_ip = self.chunk.code.len();
                         self.chunk.emit(Op::DivertBreak(0), self.current_line);
                         self.finally_stack.last_mut().unwrap().push(divert_ip);
+                        // DivertBreak resumes at the next instruction after all
+                        // enclosing finally bodies have run. Keep the current
+                        // environments alive until then so finally can observe
+                        // bindings from the guarded region.
                     }
+                    self.emit_scope_unwind(scope_depth);
                     let (_, breaks, _, _, _, _) = &mut self.loop_stack[i];
                     let j = self.chunk.code.len();
                     self.chunk.emit(Op::Jump(0), self.current_line);
@@ -1480,25 +1485,31 @@ impl Compiler {
                     let scope_depth = self.loop_stack[i].5;
                     let active = self.finally_active();
                     let cont = self.loop_stack[i].0;
-                    self.emit_scope_unwind(scope_depth);
                     if active {
                         if cont != usize::MAX {
                             let divert_ip = self.chunk.code.len();
                             self.chunk
-                                .emit(Op::DivertContinue(0, cont), self.current_line);
+                                .emit(Op::DivertContinue(0, divert_ip + 1), self.current_line);
                             self.finally_stack.last_mut().unwrap().push(divert_ip);
+                            // Resume here only after every enclosing finally.
+                            self.emit_scope_unwind(scope_depth);
+                            self.chunk.emit(Op::Jump(cont), self.current_line);
                         } else {
                             let divert_ip = self.chunk.code.len();
-                            self.chunk.emit(Op::DivertBreak(0), self.current_line);
+                            self.chunk
+                                .emit(Op::DivertContinue(0, divert_ip + 1), self.current_line);
                             self.finally_stack.last_mut().unwrap().push(divert_ip);
+                            self.emit_scope_unwind(scope_depth);
                             let j = self.chunk.code.len();
                             self.chunk.emit(Op::Jump(0), self.current_line);
                             self.loop_stack[i].2.push(j);
                         }
                     } else if cont != usize::MAX {
+                        self.emit_scope_unwind(scope_depth);
                         self.chunk.emit(Op::Jump(cont), self.current_line);
                     } else {
                         // Target unknown yet (C-style for); record and patch later.
+                        self.emit_scope_unwind(scope_depth);
                         let j = self.chunk.code.len();
                         self.chunk.emit(Op::Jump(0), self.current_line);
                         self.loop_stack[i].2.push(j);
@@ -1580,7 +1591,7 @@ impl Compiler {
                 // Track the switch completion value: the last non-empty
                 // expression value seen before a break or end. Initialized
                 // to undefined; each expression statement updates it.
-                let sw_val_idx = self.intern("#sw_val");
+                let sw_val_idx = self.fresh_temp("#sw_val");
                 self.chunk.emit(Op::Undefined, self.current_line);
                 self.chunk
                     .emit(Op::DeclareEnv(sw_val_idx), self.current_line);

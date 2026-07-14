@@ -2723,10 +2723,21 @@ impl Vm {
                             frame.finally_completion_val.lock().clone(),
                         )
                     };
-                    let stays_in_loop = match (completion_tag, inner_continue, completion_val) {
-                        (3, Some(target), Value::Number(n)) => n as usize == target,
-                        _ => false,
+                    let continue_target = match (completion_tag, completion_val) {
+                        (3, Value::Number(n)) => {
+                            let frame = self.current_frame()?;
+                            let mut target = n as usize;
+                            loop {
+                                match frame.chunk.code.get(target) {
+                                    Some(Op::PopScope | Op::PopWithEnv) => target += 1,
+                                    Some(Op::Jump(next)) => break *next,
+                                    _ => break target,
+                                }
+                            }
+                        }
+                        _ => usize::MAX,
                     };
+                    let stays_in_loop = inner_continue == Some(continue_target);
                     let should_close = completion_tag != 0 && !stays_in_loop;
                     if should_close {
                         let (iter_name, done_name) = {

@@ -1978,6 +1978,24 @@ fn for_of_closes_iterator_on_abrupt_completion() {
         "#),
         Value::Number(0.0)
     );
+
+    assert_eq!(
+        run(r#"
+            var closed = 0;
+            var seen = 0;
+            var i = 0;
+            var iter = {
+                [Symbol.iterator]() { return this; },
+                next() { return ++i > 2 ? { done: true } : { value: i, done: false }; },
+                return() { closed++; return { done: true }; }
+            };
+            for (let v of iter) {
+                try { continue; } finally { seen += v; }
+            }
+            seen + '|' + closed;
+        "#),
+        Value::String(Arc::from("3|0"))
+    );
 }
 
 #[test]

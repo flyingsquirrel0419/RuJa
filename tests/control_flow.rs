@@ -150,6 +150,34 @@ fn continue_out_of_switch_preserves_completion_value() {
     );
 }
 
+#[test]
+fn continue_out_of_nested_switch_preserves_inner_completion() {
+    assert_eq!(
+        run("eval('1; do { switch (0) { case 0: 2; switch (0) { case 0: 3; continue; } } } while (false)');"),
+        Value::Number(3.0)
+    );
+}
+
+#[test]
+fn continue_out_of_switch_runs_finally_before_scope_unwind() {
+    assert_eq!(
+        run("eval('5; do { switch (0) { case 0: try { 6; continue; } finally {} } } while (false)');"),
+        Value::Number(6.0)
+    );
+    assert_eq!(
+        run("var log = ''; do { switch (0) { case 0: let x = 'x'; try { 7; continue; } finally { log += x; } } } while (false); log;"),
+        Value::String(Arc::from("x"))
+    );
+}
+
+#[test]
+fn break_out_of_switch_runs_finally_before_scope_unwind() {
+    assert_eq!(
+        run("var log = ''; switch (0) { case 0: let x = 'x'; try { 8; break; } finally { log += x; } } log;"),
+        Value::String(Arc::from("x"))
+    );
+}
+
 // --- try / catch / finally ---
 
 #[test]
