@@ -83,6 +83,19 @@
   `3b6da8a` and `5a9ff6f` passed CI `29364732026` and full matrix
   `29364732182`; only the built-ins result changed, producing **29085 pass /
   6495 fail / 12725 skip / 12 timeout / 0 error / 48317 total**.
+- The final value-producing `LoadEnvName` bytecode and its duplicate VM
+  environment resolver have been removed. Switch `continue` completion-value
+  propagation now emits `LoadRef` plus `GetValue`, so all executable
+  identifier, member, private, and super reads/calls/assignments/updates/
+  deletes use the shared specification Reference-record machinery. The
+  focused Reference/`with`/compound cluster passes **663/663** with one
+  feature skip, switch statements pass **69/69**, and the supported subset
+  remains **12751/12751**. Switch completion bindings are now unique per
+  nested switch, completion stores stay stack-balanced, and break/continue
+  scope unwinding resumes only after all enclosing `finally` bodies. The
+  unwind trampoline preserves same-loop `for...of` IteratorClose semantics.
+  Commits `00994c7` and `bbfa6f2` passed CI `29370269695` and full matrix
+  `29370269812`; all 30 Test262 result artifacts are unchanged.
 - Catch handlers now restore the operand stack depth captured at `try` entry
   before pushing the thrown value. This prevents failed decorator and other
   callback operands from remaining as hidden GC roots after a caught throw;

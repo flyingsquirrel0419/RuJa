@@ -301,10 +301,51 @@ skip / 20439 total**, and tooling remains **64/64**. CI `29220379603` and
 35117 pass-or-fail executed**, or **59.0%** of all matrix files and **81.2%** of
 executed files.
 
-This is the first consolidation step, not the end of the Reference migration.
-Compiler-internal completion slots still use `LoadEnvName`, and direct member
-get/set and delete retain separate VM paths that will be migrated in bounded
-follow-up units.
+This was the first consolidation step, not the end of the Reference migration
+at commit `f63145d`. At that point compiler-internal completion slots still
+used `LoadEnvName`, and direct member get/set and delete retained separate VM
+paths that were migrated in later bounded units.
+
+## Reference-record routing completion
+
+The final value-producing `LoadEnvName` opcode and its independent environment
+resolver are now removed. A `continue` that exits a switch copies the switch's
+saved completion through `LoadRef` and `GetValue`, preserving `UpdateEmpty`
+semantics without a parallel identifier lookup implementation. Each nested
+switch receives a unique completion binding, and the compiler pops the
+`StoreEnvName` result to keep repeated continues stack-balanced. Break and
+continue scope unwinding now runs from a post-finally trampoline, so a finally
+body can still observe the switch and block environments it guards. The
+IteratorClose path resolves that trampoline to the semantic loop target, so a
+same-loop `for...of` continue still does not close its iterator. The focused
+switch directory is **69 pass / 0 fail / 42 skip / 111 total**.
+
+A fresh source/opcode audit found no remaining high- or medium-risk bypass for
+ordinary identifier, member, private, or `super` reads, calls, assignments,
+compound/logical assignments, updates, deletes, destructuring targets, or
+`for-in`/`for-of` targets. `typeof` on an unresolvable identifier, binding
+initialization, `super()` construction, and decorator `context.access`
+closures retain dedicated operations because they are distinct specification
+operations rather than expression Reference evaluation. `StoreEnvName`
+remains as a compiler write helper for internal `#` bookkeeping and a small
+number of generated ordinary-name stores such as function declarations; its
+ordinary-name branch constructs a Reference before `PutValue` and does not
+reintroduce a value-producing identifier resolver.
+
+Current Test262 `020cb740` reports **663 pass / 0 fail / 1 skip / 664 total**
+for `language/types/reference`, `language/statements/with`, and
+`language/expressions/compound-assignment`. The supported subset remains
+**12751 pass / 0 fail / 7687 skip / 20438 total**. Combined with the switch
+directory, the focused gate is **732 pass / 0 fail / 43 skip / 775 total**.
+Rust all-targets/all-features, control flow **59/59**, Clippy with warnings
+denied, rustfmt, and Python tooling **84/84** also pass.
+
+Commits `00994c7` and `bbfa6f2` passed CI `29370269695` and full matrix
+`29370269812`. All 30 Test262 result artifacts are byte-for-byte identical to
+the Iterator documentation baseline, retaining **29085 pass / 6495 fail /
+12725 skip / 12 timeout / 0 error / 48317 total / 35580 pass-or-fail
+executed**. Artifacts are retained at
+`/tmp/ruja-artifacts-reference-routing-feature.Qw4b7N`.
 
 ## Primitive Reference Realm admission
 

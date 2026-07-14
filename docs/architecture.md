@@ -21,7 +21,11 @@ source ─► Lexer ─► Parser ─► Compiler ─► Bytecode ─► VM
 - **VM** (`src/vm/mod.rs`, `src/vm/ops.rs`) — the dispatch loop: call frames,
   operand stack, property access, type coercion, and non-local control flow.
   `ops.rs` holds the opcode dispatch and immediate helpers; `mod.rs` holds
-  the `Vm` struct, public API, and runtime helpers.
+  the `Vm` struct, public API, and runtime helpers. Identifier, property,
+  private-name, and `super` expression evaluation is represented by rooted
+  `ReferenceRecord` values and resolved through shared `GetValue`, `PutValue`,
+  call, and delete operations; compiler-internal switch completion reads use
+  the same path.
 - **GC** (`src/gc.rs`) — mark-and-sweep collector that traces from VM roots.
 - **Values** (`src/value.rs`) — the `HeapObj` enum
   (Object/Array/Function/Environment/Map/Set/Promise/Generator) referenced by
