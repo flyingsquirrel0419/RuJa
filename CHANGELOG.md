@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Test262 now admits the final **5** files whose only unsupported blocker was a
+  public or static class-field gate: derived-constructor `this` binding during
+  instance-field initialization, computed field-name abrupt completion, and
+  static field/static-block ordering and abrupt completion. The files use a
+  separate exact manifest; both broad gates remain frozen against future
+  upstream expansion. Pinned supported coverage is **12363 pass / 0 fail /
+  8076 skip**. At commit `9c5a2c2`, CI `29307597382` and full matrix
+  `29307597365` succeeded; expressions moved by **+1 pass / -1 skip** and
+  statements by **+4 pass / -4 skip**, producing **28667 pass / 6614 fail /
+  13024 skip / 12 timeout**.
 - Test262 now admits an exact frozen set of **120** generated computed public
   and static class-field files across declaration/expression and field-only /
   field-plus-method families. Runner and analyzer share exact manifest

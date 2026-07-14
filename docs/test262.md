@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.3% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12358 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12363 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -868,6 +868,36 @@ changed, each by **+60 pass / -60 skip**; the other 28 result artifacts exactly
 match matrix `29302178860`. The normalized aggregate is **28662 pass / 6614
 fail / 13029 skip / 12 timeout / 0 error / 48317 total / 35276 pass-or-fail
 executed**.
+
+## Residual public class-field admission
+
+`tools/test262_class_public_field_admission.txt` freezes the remaining five
+files for which `class-fields-public` or `class-static-fields-public` was the
+only unsupported blocker. They cover three connected ClassDefinitionEvaluation
+boundaries: binding derived-constructor `this` before instance fields run,
+propagating abrupt completion from computed instance/static field names, and
+interleaving static fields with static blocks while halting after an abrupt
+completion.
+
+Runner and analyzer share exact manifest membership and remove only the public
+instance/static field feature gates on those paths. Both broad gates remain in
+`SKIP_FEATURES`, preventing future upstream class-field files from being
+admitted implicitly. A full before/after policy audit reports **0** remaining
+files that would become runnable from removing only those broad gates. An
+independent audit reproduced the exact five-file delta and **5/5** execution on
+both available Test262 revisions.
+
+At commit `9c5a2c2`, Rust all-targets, release build, clippy with denied
+warnings, fmt/diff, Python compilation, and **70/70** tooling tests pass. The
+five-file manifest is **5 pass / 0 fail / 0 skip**, the current broad class
+diagnostic is **3795 pass / 0 fail / 4631 skip / 8426 total**, and pinned
+Test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1` reports **12363 pass / 0
+fail / 8076 skip / 20439 total** for the supported subset. CI `29307597382`
+and full matrix `29307597365` succeeded. Only expressions (**+1 pass / -1
+skip**) and statements (**+4 pass / -4 skip**) changed; the other 28 artifacts
+exactly match matrix `29305184262`. The normalized aggregate is **28667 pass /
+6614 fail / 13024 skip / 12 timeout / 0 error / 48317 total / 35281
+pass-or-fail executed**.
 
 ## Full-suite baseline
 
