@@ -43,6 +43,12 @@
 - Static initialization blocks (`static { }`): run with `this` = the
   constructor in source order; can reference the class by name and hold
   local `let`/`const` bindings that do not leak
+- Public/private, instance/static auto-accessors (`accessor name = init`) use
+  hidden private backing storage with prototype or constructor getter/setter
+  pairs. The audited decorator boundary supports class and public
+  method/getter/setter/field decorators, source-order expression evaluation,
+  reverse application, callable replacement validation, field initializer
+  transforms, computed Symbol names, and both class/export placements.
 - BigInt literals (`123n`, `0xffn`, `0o17n`, `0b101n`): exact-integer
   arithmetic (`+ - * / % **`, comparisons, `===`/`==` with `Number`);
   mixing BigInt with `Number` throws `TypeError`; `BigInt()` constructor

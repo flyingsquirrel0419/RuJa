@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- Classes now parse and retain restricted decorator expressions and implement
+  the audited class/public-element core: source-order evaluation, reverse
+  application, method/class replacements, field initializer transforms with
+  explicit `this`, computed Symbol context names, and both decorator/export
+  placements. Public/private instance/static auto-accessors use hidden backing
+  slots and correctly distinguish the contextual `accessor` keyword from
+  methods, fields, escapes, and line-terminated forms. An exact 24-file
+  Test262 manifest passes **24/24**; current supported coverage is **12751 pass
+  / 0 fail / 7687 skip**, and pinned coverage is **12752/0/7687**. Broader
+  decorator context/private/auto semantics remain gated and are not claimed.
+  CI `29334768817` and full matrix `29334768891` succeeded; the 30 artifacts
+  move exactly **+24 pass / -24 skip** to **29056 pass / 6614 fail / 12635
+  skip / 12 timeout / 0 error / 48317 total**.
+- Catch handlers now restore the operand stack depth captured at `try` entry
+  before pushing the thrown value. This prevents failed decorator and other
+  callback operands from remaining as hidden GC roots after a caught throw;
+  the relative depth survives async/generator suspension. Field decorator
+  initializers also run in source order after reverse-order decorator calls.
+
 - Test262 now admits the exact **272** generated class declaration/expression
   files whose sole remaining gate was `destructuring-binding`. The frozen set
   covers 136 ordinary and static method parameter-pattern cases in both class

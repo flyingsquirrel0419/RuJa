@@ -36,7 +36,8 @@ no `unsafe` code anywhere in the engine.
 ES5.1 + classes, async/await, generators, Promises with static combinators
 and `withResolvers`,
 destructuring,
-getters/setters, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
+getters/setters, auto-accessors, audited class/public-element decorator syntax
+and core replacement semantics, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, file-backed ES Module graphs with named imports/exports and live
@@ -54,9 +55,9 @@ full ES conformance — conformance is scoped to this subset. See
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
 
-**Supported-subset pass rate: 100.0%** (12,728 tests in `language/statements`
+**Supported-subset pass rate: 100.0%** (12,752 tests in `language/statements`
 + `language/expressions`, unsupported-feature tests skipped). The latest full
-matrix is 60.1% of all files and 81.4% of executed files — see
+matrix is 60.1% of all files and 81.5% of executed files — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 

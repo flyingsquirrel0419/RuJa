@@ -89,6 +89,12 @@ guarantees, run RuJa in a separately killable process as well.
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
+- Decorator support is intentionally limited to the exact audited syntax/core
+  boundary. Full context objects (`access`, `addInitializer`), initializer
+  queues, private element decorators, and decorated auto-accessor replacement
+  objects are not implemented yet and remain behind the broad Test262
+  `decorators` gate. Unsupported private/decorated-auto forms are rejected
+  instead of silently discarding decorators.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

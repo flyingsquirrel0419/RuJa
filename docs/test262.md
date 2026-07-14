@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.1% of all matrix files; 81.4% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12728 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 60.1% of all matrix files; 81.5% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12752 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -5343,6 +5343,44 @@ Key test262-driven bug fixes that raised the supported-subset rate from
   iterator. With only the `destructuring-binding` skip lifted for diagnostics,
   `language/statements/for-of/dstr` now closes at **449 pass / 0 fail / 120
   skip** while the default supported subset remains green.
+
+## Decorator syntax and auto-accessor core
+
+`tools/test262_decorator_admission.txt` freezes the exact 24 generated class
+files whose metadata is limited to `class` and `decorators`. The runner and
+analyzer remove only the `decorators` gate for these paths; unknown future
+files and broader decorator semantics remain skipped.
+
+The lexer/parser retains restricted decorator member/call/parenthesized
+expressions on classes and public class elements. Compilation evaluates those
+expressions in source order with computed names, calls each list in reverse,
+validates class/method/field replacement types, composes field initializer
+functions in source order with the correct instance or constructor `this`, and
+applies class decorators before static initialization. Auto-accessors use unique hidden
+private backing slots and non-enumerable getter/setter pairs for public/private
+and instance/static forms. Contextual `accessor` still parses as an ordinary
+method or field when followed by `(`, `=`, `;`, `}`, `*`, or a line terminator.
+
+Local verification against Test262 `020cb740` is **24 pass / 0 fail / 0 skip**
+for the exact manifest, **4184 pass / 0 fail / 4242 skip** for both class
+subtrees, and **12751 pass / 0 fail / 7687 skip / 20438 total** for the current
+supported subset. The pinned `d1d583d` subset is **12752 pass / 0 fail / 7687
+skip / 20439 total**. Full `context.access`/`addInitializer`, private element
+decorators, and decorated auto-accessor replacement objects remain explicitly
+outside this admission.
+
+Feature commit `139c6af` passed CI `29334768817` and full matrix
+`29334768891`. Relative to matrix `29328245924`, expressions move by **+10
+pass / -10 skip** and statements by **+14 pass / -14 skip**; the other 28
+downloaded result artifacts are byte-for-byte identical. The aggregate is
+**29056 pass / 6614 fail / 12635 skip / 12 timeout / 0 error / 48317 total /
+35670 pass-or-fail executed**, or **81.5%** of executed tests.
+
+Because decorator calls can throw while the original class or element remains
+on the operand stack, catch guards now retain their frame-relative try-entry
+stack depth. Native and explicit throws truncate to that depth before entering
+the handler, preventing caught decorator failures from accumulating hidden GC
+roots across loops or async/generator suspension.
 
 ## Why the full-suite rate is not higher
 
