@@ -1569,7 +1569,11 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
 
     def test_class_default_parameter_admission_requires_live_metadata_feature(self):
         test_root = Path(test262_runner.TEST262) / "test"
-        if not test_root.is_dir():
+        try:
+            checkout_available = test_root.is_dir()
+        except OSError:
+            checkout_available = False
+        if not checkout_available:
             self.skipTest("live Test262 checkout is unavailable")
         for relative in CLASS_DEFAULT_PARAMETER_FILES:
             path = test_root / relative
