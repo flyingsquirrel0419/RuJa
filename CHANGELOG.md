@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- Test262 now admits an exact frozen set of **120** generated computed public
+  and static class-field files across declaration/expression and field-only /
+  field-plus-method families. Runner and analyzer share exact manifest
+  membership and remove only the two public-field feature gates; four
+  top-level-`await` module siblings and unrelated class files remain skipped.
+  Pinned supported coverage rises to **12358 pass / 0 fail / 8081 skip**. At
+  commit `31013cc`, CI `29303864482` and full matrix `29303864484` succeeded;
+  exactly the expressions and statements shards moved by **+60 pass / -60
+  skip** each, producing **28662 pass / 6614 fail / 13029 skip / 12 timeout**.
 - Environment References now preserve the exact declarative record selected by
   identifier resolution through `PutValue`, including bindings deleted during
   RHS evaluation. Active `with` objects are traced by GC, and global `var`

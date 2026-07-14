@@ -30,8 +30,8 @@ scope, so they are not comparable to each other:
 
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
-| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.1% of all matrix files; 81.2% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12238 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.3% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12358 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -838,6 +838,36 @@ full matrix `29301189900` succeeded. All 30 downloaded result artifacts are
 byte-for-byte identical to matrix `29296682790`, retaining the normalized
 **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317 total /
 35156 pass-or-fail executed** aggregate.
+
+## Computed public class-field admission
+
+`tools/test262_class_computed_field_admission.txt` freezes exactly **120**
+generated computed-name tests for public instance and static fields. The set is
+the Cartesian family boundary of class declaration/expression forms and
+field-only/field-plus-method forms, with 30 common expression suffixes in each
+family. Runner and analyzer use the same exact-membership predicate and remove
+only `class-fields-public` and `class-static-fields-public` for those paths;
+the global feature gates remain unchanged.
+
+Four corresponding `from-await-expression` files are intentionally excluded.
+They carry async module and top-level-await requirements and remain skipped
+until that broader host/runtime boundary is admitted. Tooling checks the 4 x 30
+family shape, rejects an await sibling and an unrelated class file, and prevents
+future upstream files from entering this unit implicitly. Two independent
+audits reproduced **120/120** on both available Test262 revisions and found no
+blocking issue.
+
+At commit `31013cc`, Rust all-targets, release build, clippy with denied
+warnings, fmt/diff, Python compilation, and **69/69** tooling tests pass. The
+120-file manifest is **120 pass / 0 fail / 0 skip**; the current broad class
+diagnostic is **3790 pass / 0 fail / 4636 skip / 8426 total**. On pinned
+Test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset is
+**12358 pass / 0 fail / 8081 skip / 20439 total**. CI `29303864482` and full
+matrix `29303864484` succeeded. Only the expressions and statements artifacts
+changed, each by **+60 pass / -60 skip**; the other 28 result artifacts exactly
+match matrix `29302178860`. The normalized aggregate is **28662 pass / 6614
+fail / 13029 skip / 12 timeout / 0 error / 48317 total / 35276 pass-or-fail
+executed**.
 
 ## Full-suite baseline
 
