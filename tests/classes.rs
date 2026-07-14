@@ -2449,8 +2449,8 @@ fn decorator_grammar_rejects_unrestricted_and_invalid_targets() {
     assert!(run_err("class C { @foo; }").contains("must precede a class element"));
     assert!(run_err("class C { @foo static {} }").contains("cannot be decorated"));
     assert!(run_err("class C { @foo constructor() {} }").contains("cannot be decorated"));
-    assert!(run_err("class C { @foo #method() {} }").contains("not implemented"));
     assert!(run_err("class C { @foo accessor #value; }").contains("not implemented"));
+    assert!(!run_err("class C { @foo a\\u0073ync #method() {} }").is_empty());
 }
 
 #[test]
@@ -2615,6 +2615,121 @@ fn private_field_decorator_access_rejects_wrong_brands() {
     "#
     )
     .contains("Private field is not present"));
+}
+
+#[test]
+fn private_callable_decorators_replace_instance_and_static_elements() {
+    assert_eq!(
+        run(r#"
+            let contexts = [];
+            function replace(value, context) {
+              contexts.push(context);
+              if (context.kind === "method") {
+                return function(next) { return value.call(this, next) + 1; };
+              }
+              if (context.kind === "getter") {
+                return function() { return value.call(this) + 2; };
+              }
+              return function(next) { value.call(this, next + 3); };
+            }
+            class C {
+              @replace #method(value) { return value * 2; }
+              @replace get #value() { return this._value; }
+              @replace set #value(next) { this._value = next; }
+              @replace static #staticMethod(value) { return value * 3; }
+              @replace static get #staticValue() { return this._staticValue; }
+              @replace static set #staticValue(next) { this._staticValue = next; }
+              callMethod(value) { return this.#method(value); }
+              set value(next) { this.#value = next; }
+              get value() { return this.#value; }
+              static callMethod(value) { return this.#staticMethod(value); }
+              static set value(next) { this.#staticValue = next; }
+              static get value() { return this.#staticValue; }
+            }
+            let instance = new C();
+            instance.value = 4;
+            C.value = 5;
+            let staticMethod = contexts[0];
+            let instanceMethod = contexts[3];
+            [
+              contexts.map(context => context.name).join(","),
+              contexts.map(context => context.kind).join(","),
+              contexts.map(context => context.static).join(","),
+              contexts.every(context => context.private),
+              instance.callMethod(6), instance.value,
+              C.callMethod(7), C.value,
+              instanceMethod.access.has(instance),
+              instanceMethod.access.has({}),
+              instanceMethod.access.get(instance).call(instance, 2),
+              staticMethod.access.has(C)
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "#staticMethod,#staticValue,#staticValue,#method,#value,#value|method,getter,setter,method,getter,setter|true,true,true,false,false,false|true|13|9|22|10|true|false|5|true"
+        ))
+    );
+}
+
+#[test]
+fn private_callable_initializers_and_class_decorators_observe_replacements() {
+    assert_eq!(
+        run(r#"
+            let log = [];
+            let observed;
+            function decorate(value, context) {
+              log.push("apply:" + context.name);
+              context.addInitializer(function() {
+                log.push("extra:" + context.name + ":" + this.marker);
+              });
+              return function() { return value.call(this) + 1; };
+            }
+            function inspect(value) { observed = value.read(); }
+            @inspect
+            class C {
+              @decorate #instanceMethod() { return 1; }
+              marker = "instance";
+              call() { return this.#instanceMethod(); }
+              @decorate static #staticMethod() { return 2; }
+              static marker = "static";
+              static read() { return this.#staticMethod(); }
+            }
+            let instance = new C();
+            [observed, instance.call(), log.join(",")].join("|");
+        "#),
+        Value::String(Arc::from(
+            "3|2|apply:#staticMethod,apply:#instanceMethod,extra:#staticMethod:undefined,extra:#instanceMethod:undefined"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            function identity(value) { return value; }
+            function replace(value) { return class Replacement extends value {}; }
+            @replace
+            class C {
+              @identity static #method() { return 7; }
+              static value = C.#method();
+              static read() { return this.#method(); }
+            }
+            [C.name, C.value, C.read()].join("|");
+        "#),
+        Value::String(Arc::from("Replacement|7|7"))
+    );
+    assert_eq!(
+        run(r#"
+            let during;
+            function inspect(value) {
+              during = value.same();
+              return class Replacement extends value {};
+            }
+            @inspect
+            class C {
+              static same() { return C === this; }
+              static after = C;
+            }
+            [during, C.after === C, C.same()].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true"))
+    );
 }
 
 #[test]

@@ -6645,7 +6645,7 @@ impl Parser {
             // Private method/accessor: #name(params) / get #name() / set #name(v)
             let is_async_token = match self.peek().clone() {
                 TokenKind::Async => true,
-                TokenKind::Ident(s) => s == "async",
+                TokenKind::Ident(s) => s == "async" && !self.peek_at_tok(0).had_escape,
                 _ => false,
             };
             let is_private_async_method = is_async_token
@@ -6656,11 +6656,6 @@ impl Parser {
             let is_private_generator_method = matches!(self.peek(), TokenKind::Star)
                 && matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_));
             if is_private_async_method || is_private_generator_method {
-                if !element_decorators.is_empty() {
-                    return Err(error::Error::syntax(
-                        "Private element decorators are not implemented".to_string(),
-                    ));
-                }
                 let is_async = if is_private_async_method {
                     self.advance(); // async
                     true
@@ -6723,11 +6718,6 @@ impl Parser {
                         && !self.tokens[self.pos].had_escape
                         && matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_))
             ) {
-                if !element_decorators.is_empty() {
-                    return Err(error::Error::syntax(
-                        "Private element decorators are not implemented".to_string(),
-                    ));
-                }
                 let kind = if matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "get") {
                     crate::ast::PropKind::Get
                 } else {
@@ -6782,11 +6772,6 @@ impl Parser {
                 // Peek ahead: if next is `(`, this is a private method.
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
-                    if !element_decorators.is_empty() {
-                        return Err(error::Error::syntax(
-                            "Private method decorators are not implemented".to_string(),
-                        ));
-                    }
                     self.advance(); // consume #name
                     Self::record_private_bound_name(
                         &mut private_bound_names,

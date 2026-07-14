@@ -3196,6 +3196,98 @@ impl Compiler {
         )
     }
 
+    fn emit_private_callable_decorators(
+        &mut self,
+        method: &ClassMethod,
+        decorator_bindings: &[Arc<str>],
+        receiver_bindings: &[Arc<str>],
+        active_bindings: &[Arc<str>],
+        queue_binding: &Arc<str>,
+        value_binding: &Arc<str>,
+    ) -> error::Result<()> {
+        if decorator_bindings.is_empty() {
+            return Ok(());
+        }
+        let private_name_binding = Self::private_name_binding_name(&method.name);
+        let value_idx = self.intern(value_binding);
+        self.chunk.emit(Op::LoadEnv(value_idx), self.current_line);
+        let (kind, access) = match method.kind {
+            PropKind::Get => ("getter", DecoratorAccess::Get),
+            PropKind::Set => ("setter", DecoratorAccess::Set),
+            _ => ("method", DecoratorAccess::Get),
+        };
+        self.emit_apply_decorators(
+            decorator_bindings,
+            receiver_bindings,
+            active_bindings,
+            queue_binding,
+            1,
+            DecoratorContextSpec {
+                kind,
+                name: DecoratorName::Private {
+                    description: &method.name,
+                    binding: &private_name_binding,
+                },
+                flags: Some((method.is_static, true)),
+                access,
+            },
+        )?;
+        self.chunk
+            .emit(Op::StoreEnvName(value_idx), self.current_line);
+        self.chunk.emit(Op::Pop, self.current_line);
+        Ok(())
+    }
+
+    fn emit_install_static_private_callable(
+        &mut self,
+        method: &ClassMethod,
+        value_binding: &Arc<str>,
+    ) {
+        if !method.is_private || !method.is_static {
+            return;
+        }
+        self.chunk.emit(Op::Dup, self.current_line);
+        let value_idx = self.intern(value_binding);
+        let name_idx = self.chunk.add_constant(Value::String(method.name.clone()));
+        match method.kind {
+            PropKind::Get => {
+                self.chunk.emit(Op::LoadEnv(value_idx), self.current_line);
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk
+                    .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+            }
+            PropKind::Set => {
+                self.chunk.emit(Op::Undefined, self.current_line);
+                self.chunk.emit(Op::LoadEnv(value_idx), self.current_line);
+                self.chunk
+                    .emit(Op::DefinePrivateAccessor(name_idx), self.current_line);
+            }
+            _ => {
+                self.chunk.emit(Op::LoadEnv(value_idx), self.current_line);
+                self.chunk
+                    .emit(Op::InitPrivateMethod(name_idx), self.current_line);
+            }
+        }
+        self.chunk.emit(Op::Pop, self.current_line);
+    }
+
+    fn emit_install_static_private_callable_on_replacement(
+        &mut self,
+        method: &ClassMethod,
+        value_binding: &Arc<str>,
+        original_class_binding: &Arc<str>,
+    ) {
+        self.chunk.emit(Op::Dup, self.current_line);
+        let original_idx = self.intern(original_class_binding);
+        self.chunk
+            .emit(Op::LoadEnv(original_idx), self.current_line);
+        self.chunk.emit(Op::StrictEq, self.current_line);
+        let skip = self.chunk.code.len();
+        self.chunk.emit(Op::JumpIfTrue(0), self.current_line);
+        self.emit_install_static_private_callable(method, value_binding);
+        self.chunk.patch_jump(skip, self.chunk.code.len());
+    }
+
     fn compile_class_public_method_with_decorators(
         &mut self,
         method: &ClassMethod,
@@ -5797,19 +5889,17 @@ impl Compiler {
                 } else {
                     Vec::new()
                 };
-                let instance_private_method_bindings: Vec<(usize, Arc<str>)> = cls
+                let private_callable_bindings: Vec<(usize, Arc<str>)> = cls
                     .methods
                     .iter()
                     .enumerate()
-                    .filter(|(_, m)| {
-                        m.is_private
-                            && !m.is_static
-                            && matches!(m.kind, crate::ast::PropKind::Method)
-                    })
+                    .filter(|(_, method)| method.is_private)
                     .map(|(idx, method)| {
                         (
                             idx,
-                            Arc::from(format!("#private_method_{}_{}", idx, method.name).as_str()),
+                            Arc::from(
+                                format!("#private_callable_{}_{}", idx, method.name).as_str(),
+                            ),
                         )
                     })
                     .collect();
@@ -5939,17 +6029,17 @@ impl Compiler {
                             if !method.is_private || method.is_static {
                                 continue;
                             }
+                            let binding = private_callable_bindings
+                                .iter()
+                                .find(|(method_idx, _)| *method_idx == *idx)
+                                .map(|(_, binding)| binding.clone())
+                                .unwrap_or_else(|| {
+                                    Arc::from(
+                                        format!("#private_callable_{}_{}", idx, method.name)
+                                            .as_str(),
+                                    )
+                                });
                             if matches!(method.kind, crate::ast::PropKind::Method) {
-                                let binding = instance_private_method_bindings
-                                    .iter()
-                                    .find(|(method_idx, _)| *method_idx == *idx)
-                                    .map(|(_, binding)| binding.clone())
-                                    .unwrap_or_else(|| {
-                                        Arc::from(
-                                            format!("#private_method_{}_{}", idx, method.name)
-                                                .as_str(),
-                                        )
-                                    });
                                 init_stmts.push(Stmt {
                                     line: 0,
                                     node: StmtNode::ExprStmt(Expr::PrivateInit {
@@ -5960,35 +6050,18 @@ impl Compiler {
                                     }),
                                 });
                             } else {
-                                let fn_expr = Expr::Function(FunctionExpr {
-                                    name: Some(Self::private_method_function_name(
-                                        &method.name,
-                                        method.kind,
-                                    )),
-                                    params: method.params.clone(),
-                                    param_defaults: method.param_defaults.clone(),
-                                    rest_param: method.rest_param.clone(),
-                                    body: method.body.clone(),
-                                    is_arrow: false,
-                                    is_async: method.is_async,
-                                    is_generator: false,
-                                    param_decls: Vec::new(),
-                                    is_strict: true,
-                                    is_method: false,
-                                    has_name_binding: false,
-                                });
                                 init_stmts.push(Stmt {
                                     line: 0,
                                     node: StmtNode::ExprStmt(Expr::PrivateDefineAccessor {
                                         object: Box::new(Expr::This),
                                         name: method.name.clone(),
                                         get: if matches!(method.kind, crate::ast::PropKind::Get) {
-                                            Some(Box::new(fn_expr.clone()))
+                                            Some(Box::new(Expr::Ident(binding.clone())))
                                         } else {
                                             None
                                         },
                                         set: if matches!(method.kind, crate::ast::PropKind::Set) {
-                                            Some(Box::new(fn_expr))
+                                            Some(Box::new(Expr::Ident(binding)))
                                         } else {
                                             None
                                         },
@@ -6239,7 +6312,7 @@ impl Compiler {
                     self.chunk
                         .emit(Op::DeclareEnv(super_name_idx), self.current_line);
                 }
-                for (method_idx, binding_name) in &instance_private_method_bindings {
+                for (method_idx, binding_name) in &private_callable_bindings {
                     let method = &cls.methods[*method_idx];
                     let m_fn = FunctionExpr {
                         name: Some(Self::private_method_function_name(
@@ -6280,9 +6353,13 @@ impl Compiler {
                         is_derived: false,
                     };
                     self.funcs.push(Arc::new(mdef));
-                    let super_name_idx = self.intern("#super");
-                    self.chunk
-                        .emit(Op::LoadEnv(super_name_idx), self.current_line);
+                    if method.is_static {
+                        self.chunk.emit(Op::Dup, self.current_line);
+                    } else {
+                        let super_name_idx = self.intern("#super");
+                        self.chunk
+                            .emit(Op::LoadEnv(super_name_idx), self.current_line);
+                    }
                     self.emit_make_closure_capturing_super_from_stack(m_idx);
                     let binding_idx = self.intern(binding_name);
                     self.chunk
@@ -6356,17 +6433,34 @@ impl Compiler {
                                     method.computed_name =
                                         Some(Box::new(Expr::Ident(temp_name.clone())));
                                 }
-                                self.compile_class_public_method_with_decorators(
-                                    &method,
-                                    &element_decorator_bindings[element_index],
-                                    &element_decorator_receiver_bindings[element_index],
-                                    &element_decorator_active_bindings[element_index],
-                                    if method.is_static {
-                                        &static_method_initializer_queue
-                                    } else {
-                                        &instance_method_initializer_queue
-                                    },
-                                )?;
+                                let queue = if method.is_static {
+                                    &static_method_initializer_queue
+                                } else {
+                                    &instance_method_initializer_queue
+                                };
+                                if method.is_private {
+                                    let binding = private_callable_bindings
+                                        .iter()
+                                        .find(|(method_index, _)| *method_index == *index)
+                                        .map(|(_, binding)| binding)
+                                        .expect("private callable binding should exist");
+                                    self.emit_private_callable_decorators(
+                                        &method,
+                                        &element_decorator_bindings[element_index],
+                                        &element_decorator_receiver_bindings[element_index],
+                                        &element_decorator_active_bindings[element_index],
+                                        queue,
+                                        binding,
+                                    )?;
+                                } else {
+                                    self.compile_class_public_method_with_decorators(
+                                        &method,
+                                        &element_decorator_bindings[element_index],
+                                        &element_decorator_receiver_bindings[element_index],
+                                        &element_decorator_active_bindings[element_index],
+                                        queue,
+                                    )?;
+                                }
                             }
                             ClassElement::PublicField(index) => {
                                 let field = &cls.public_fields[*index];
@@ -6472,10 +6566,42 @@ impl Compiler {
 
                 // Static private methods/accessors are installed during class
                 // definition, before class decorators and static fields run.
+                let copy_static_private_to_replacement = !class_decorator_bindings.is_empty()
+                    && private_callable_bindings.iter().any(|(index, _)| {
+                        let method = &cls.methods[*index];
+                        method.is_private && method.is_static
+                    });
+                let original_class_binding: Arc<str> =
+                    Arc::from(format!("#decorated_original_class:{decorator_id}").as_str());
+                if copy_static_private_to_replacement {
+                    self.chunk.emit(Op::Dup, self.current_line);
+                    let original_idx = self.intern(&original_class_binding);
+                    self.chunk
+                        .emit(Op::DeclareEnvConst(original_idx), self.current_line);
+                }
                 for element in &cls.elements {
                     if let ClassElement::Method(index) = element {
-                        self.compile_class_static_private_method(&cls.methods[*index])?;
+                        let method = &cls.methods[*index];
+                        if method.is_private && method.is_static {
+                            let binding = private_callable_bindings
+                                .iter()
+                                .find(|(method_index, _)| *method_index == *index)
+                                .map(|(_, binding)| binding)
+                                .expect("private callable binding should exist");
+                            self.emit_install_static_private_callable(method, binding);
+                        }
                     }
+                }
+
+                // Class decorators may invoke methods that close over the
+                // class's inner name. Make the original constructor visible
+                // for that call, then update the binding to any replacement
+                // after decorator application below.
+                if let Some(name) = &cls.name {
+                    let name_idx = self.intern(name);
+                    self.chunk.emit(Op::Dup, self.current_line);
+                    self.chunk
+                        .emit(Op::InitEnvConst(name_idx), self.current_line);
                 }
 
                 // Class decorators run after all element decorators have been
@@ -6494,8 +6620,21 @@ impl Compiler {
                     },
                 )?;
 
-                // The class's inner name observes a decorator replacement in
-                // static fields/blocks and in all captured class methods.
+                if copy_static_private_to_replacement {
+                    for (index, binding) in &private_callable_bindings {
+                        let method = &cls.methods[*index];
+                        if method.is_private && method.is_static {
+                            self.emit_install_static_private_callable_on_replacement(
+                                method,
+                                binding,
+                                &original_class_binding,
+                            );
+                        }
+                    }
+                }
+
+                // Static fields/blocks and later method calls observe the
+                // decorator replacement through the same inner binding.
                 if let Some(name) = &cls.name {
                     let name_idx = self.intern(name);
                     self.chunk.emit(Op::Dup, self.current_line);
