@@ -43,6 +43,16 @@
   **12751/0/7687** remain green. Feature commit `7a7531a` passed CI
   `29349296562` and full matrix `29349296827`; all 30 artifacts are identical
   to the preceding baseline.
+- Private instance/static field decorators now retain the actual private-name
+  identity in `context.access`; `has` performs a brand check, while `get` and
+  `set` use the private slot and reject wrong brands. Context names include the
+  leading `#`, initializer transforms and extra initializers retain their
+  field ordering, and public properties with the same description cannot
+  collide. The pending Test262 PR #5048 public-plus-private-field boundary
+  passes **363/363** at `58b825d0`; current exact **24/24** and supported
+  coverage **12751/0/7687** remain green. Feature commit `d31bbb4` passed CI
+  `29353983772` and full matrix `29353983750`; all 30 artifacts are identical
+  to the preceding baseline.
 - Catch handlers now restore the operand stack depth captured at `try` entry
   before pushing the thrown value. This prevents failed decorator and other
   callback operands from remaining as hidden GC roots after a caught throw;
