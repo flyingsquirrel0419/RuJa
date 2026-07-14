@@ -11,7 +11,10 @@
   Test262 parse-negative failures. An exact manifest admits the **56** class
   files whose sole remaining gate was `default-parameters`; it passes **56/56**
   and raises pinned supported coverage to **12456 pass / 0 fail / 7983 skip /
-  20439 total**.
+  20439 total**. At commit `99db3dc`, CI `29322169799` and full matrix
+  `29322169773` succeeded; expressions and statements each moved by **+28 pass
+  / -28 skip**, producing **28760 pass / 6614 fail / 12931 skip / 12
+  timeout**.
 - Private getter/setter duplicate-name early errors now require matching
   instance/static placement. The parser rejects all four mismatched accessor
   orders while retaining valid complementary pairs in either order, escaped
