@@ -10,7 +10,10 @@
   forms. Runner and analyzer retain all broad gates and remove only the single
   feature for exact manifest members. The manifest passes **272/272** and
   raises pinned supported coverage to **12728 pass / 0 fail / 7711 skip /
-  20439 total**.
+  20439 total**. At commit `3fe3343`, CI `29326685124` and full matrix
+  `29326685148` succeeded; expressions and statements each moved by **+136
+  pass / -136 skip**, producing **29032 pass / 6614 fail / 12659 skip / 12
+  timeout**.
 - Object, public class, and private class accessors now enforce their grammar's
   formal-parameter arity after parsing: getters accept no parameters, and
   setters accept exactly one non-rest parameter. Valid setter defaults and
