@@ -1106,12 +1106,11 @@ impl Vm {
                         }
                     } else {
                         let strict = self.current_strict();
-                        let r#ref = Value::Reference(Box::new(crate::value::ReferenceRecord {
-                            base: crate::value::ReferenceBase::Environment(env),
-                            name: crate::value::PropertyKey::from(name.as_str()).into(),
+                        let r#ref = self.resolve_identifier_reference(
+                            crate::value::PropertyKey::from(name.as_str()),
                             strict,
-                            this_value: None,
-                        }));
+                        )?;
+                        let r#ref = Value::Reference(Box::new(r#ref));
                         self.put_value(&r#ref, value)?;
                     }
                     self.stack.push(Value::Undefined);

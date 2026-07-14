@@ -724,6 +724,19 @@ fn named_function_expression_binding_is_outside_body_var_env() {
 }
 
 #[test]
+fn sloppy_block_function_updates_resolved_function_binding() {
+    assert_eq!(
+        run("var result;\
+             (function() {\
+               { function f() { return 'declaration'; } }\
+               result = f();\
+             }());\
+             result;"),
+        Value::String(Arc::from("declaration"))
+    );
+}
+
+#[test]
 fn member_call_checks_callee_before_arguments() {
     assert_eq!(
         run("var called = false;\
