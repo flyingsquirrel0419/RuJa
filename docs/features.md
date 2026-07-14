@@ -47,8 +47,10 @@
   hidden private backing storage with prototype or constructor getter/setter
   pairs. The audited decorator boundary supports class and public
   method/getter/setter/field decorators, source-order expression evaluation,
-  reverse application, callable replacement validation, field initializer
-  transforms, computed Symbol names, and both class/export placements.
+  grouped application phases, constructable class/callable element replacement
+  validation, receiver-based `context.access`, `addInitializer` queues, field
+  initializer transforms, computed Symbol names, and both class/export
+  placements.
 - BigInt literals (`123n`, `0xffn`, `0o17n`, `0b101n`): exact-integer
   arithmetic (`+ - * / % **`, comparisons, `===`/`==` with `Number`);
   mixing BigInt with `Number` throws `TypeError`; `BigInt()` constructor

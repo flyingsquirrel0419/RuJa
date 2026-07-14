@@ -36,8 +36,9 @@ no `unsafe` code anywhere in the engine.
 ES5.1 + classes, async/await, generators, Promises with static combinators
 and `withResolvers`,
 destructuring,
-getters/setters, auto-accessors, audited class/public-element decorator syntax
-and core replacement semantics, tagged templates, Symbols, Map/Set, WeakMap/WeakSet,
+getters/setters, auto-accessors, audited public decorator context/access,
+replacement, and initializer semantics, tagged templates, Symbols, Map/Set,
+WeakMap/WeakSet,
 WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, file-backed ES Module graphs with named imports/exports and live

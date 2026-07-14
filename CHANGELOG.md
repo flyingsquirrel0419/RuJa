@@ -17,6 +17,20 @@
   CI `29334768817` and full matrix `29334768891` succeeded; the 30 artifacts
   move exactly **+24 pass / -24 skip** to **29056 pass / 6614 fail / 12635
   skip / 12 timeout / 0 error / 48317 total**.
+- Public class, method, getter, setter, and field decorators now expose fresh
+  `context.access` (`has`/`get`/`set`) and `addInitializer` functions with
+  receiver-argument semantics, per-call lifetime enforcement, callable
+  validation, and GC-rooted extra-initializer queues. Application follows the
+  specified static-method, instance-method, static-field, instance-field,
+  class phases; extra initializers run at their instance/static/class
+  boundaries with explicit `this`. Class replacements must be constructable
+  and rebind the class's inner name before static initialization. The exact
+  public-only runtime boundary in pending Test262 PR #5048 passes **201/201**
+  at PR head `58b825d0`; current-main exact **24/24** and supported coverage
+  **12751/0/7687** remain green without prematurely opening the broad gate.
+  Feature commit `4d7dbc9` passed CI `29343897291` and full matrix
+  `29343897349`; all 30 result artifacts are byte-for-byte identical to the
+  preceding decorator baseline.
 - Catch handlers now restore the operand stack depth captured at `try` entry
   before pushing the thrown value. This prevents failed decorator and other
   callback operands from remaining as hidden GC roots after a caught throw;

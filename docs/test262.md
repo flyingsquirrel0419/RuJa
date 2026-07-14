@@ -5356,18 +5356,41 @@ expressions on classes and public class elements. Compilation evaluates those
 expressions in source order with computed names, calls each list in reverse,
 validates class/method/field replacement types, composes field initializer
 functions in source order with the correct instance or constructor `this`, and
-applies class decorators before static initialization. Auto-accessors use unique hidden
-private backing slots and non-enumerable getter/setter pairs for public/private
-and instance/static forms. Contextual `accessor` still parses as an ordinary
-method or field when followed by `(`, `=`, `;`, `}`, `*`, or a line terminator.
+applies class decorators before static initialization. Auto-accessors use
+unique hidden private backing slots and non-enumerable getter/setter pairs for
+public/private and instance/static forms. Contextual `accessor` still parses as
+an ordinary method or field when followed by `(`, `=`, `;`, `}`, `*`, or a
+line terminator.
 
 Local verification against Test262 `020cb740` is **24 pass / 0 fail / 0 skip**
 for the exact manifest, **4184 pass / 0 fail / 4242 skip** for both class
 subtrees, and **12751 pass / 0 fail / 7687 skip / 20438 total** for the current
 supported subset. The pinned `d1d583d` subset is **12752 pass / 0 fail / 7687
-skip / 20439 total**. Full `context.access`/`addInitializer`, private element
-decorators, and decorated auto-accessor replacement objects remain explicitly
-outside this admission.
+skip / 20439 total**. Private element decorators and decorated auto-accessor
+replacement objects remain explicitly outside this admission.
+
+The next runtime corpus is pending in Test262 PR #5048. Against pinned PR head
+`58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the exact public-only boundary
+passes **201 pass / 0 fail / 0 skip**: 23 class, 40 method, 32 getter, 36
+setter, 68 field, and two late-`addInitializer` tests across class expressions
+and declarations. Eight mixed phase-order files that require private elements
+or decorated auto-accessors are deliberately excluded.
+
+That boundary verifies fresh context objects, receiver-argument
+`access.has/get/set`, per-decorator `addInitializer` lifetime and callable
+checks, grouped static-method/instance-method/static-field/instance-field/class
+application, field and extra-initializer ordering, explicit initializer `this`,
+constructable class replacements, and replacement-aware inner class bindings.
+Because these files do not exist in current Test262 main (`020cb740`), the
+runner keeps its broad `decorators` gate and does not claim an admission count
+before upstream merge.
+
+Feature commit `4d7dbc9` passed CI `29343897291` and full matrix
+`29343897349`. All 30 downloaded result artifacts are byte-for-byte identical
+to matrix `29336676776`, reproducing **29056 pass / 6614 fail / 12635 skip / 12
+timeout / 0 error / 48317 total / 35670 pass-or-fail executed**. The feature
+artifacts are retained at
+`/tmp/ruja-artifacts-public-decorator-feature.NYB1xi`.
 
 Feature commit `139c6af` passed CI `29334768817` and full matrix
 `29334768891`. Relative to matrix `29328245924`, expressions move by **+10
