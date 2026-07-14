@@ -108,6 +108,7 @@ type ParsedParams = (
 #[derive(Debug)]
 struct PrivateBoundName {
     name: Arc<str>,
+    is_static: bool,
     getter: bool,
     setter: bool,
     other: bool,
@@ -5731,6 +5732,7 @@ impl Parser {
     fn record_private_bound_name(
         private_bound_names: &mut Vec<PrivateBoundName>,
         name: &str,
+        is_static: bool,
         kind: crate::ast::PropKind,
     ) -> error::Result<()> {
         if name == "constructor" {
@@ -5749,12 +5751,20 @@ impl Parser {
             };
             private_bound_names.push(PrivateBoundName {
                 name: Arc::from(name),
+                is_static,
                 getter,
                 setter,
                 other,
             });
             return Ok(());
         };
+
+        if entry.is_static != is_static {
+            return Err(error::Error::syntax(format!(
+                "Duplicate private name #{} in class body",
+                name
+            )));
+        }
 
         match kind {
             crate::ast::PropKind::Get if !entry.getter && entry.setter && !entry.other => {
@@ -6259,6 +6269,7 @@ impl Parser {
                 Self::record_private_bound_name(
                     &mut private_bound_names,
                     &name,
+                    is_static,
                     crate::ast::PropKind::Method,
                 )?;
                 let (params, param_defaults, rest_param, dstr_decls) =
@@ -6315,7 +6326,7 @@ impl Parser {
                 } else {
                     unreachable!()
                 };
-                Self::record_private_bound_name(&mut private_bound_names, &name, kind)?;
+                Self::record_private_bound_name(&mut private_bound_names, &name, is_static, kind)?;
                 let (params, param_defaults, rest_param, dstr_decls) =
                     self.parse_params_scoped(false, false, true)?;
                 Self::reject_duplicate_formal_params(&params, &dstr_decls, rest_param.as_ref())?;
@@ -6359,6 +6370,7 @@ impl Parser {
                     Self::record_private_bound_name(
                         &mut private_bound_names,
                         &name,
+                        is_static,
                         crate::ast::PropKind::Method,
                     )?;
                     let (params, param_defaults, rest_param, dstr_decls) =
@@ -6404,6 +6416,7 @@ impl Parser {
                 Self::record_private_bound_name(
                     &mut private_bound_names,
                     &name,
+                    is_static,
                     crate::ast::PropKind::Normal,
                 )?;
                 let init = if self.eat(&TokenKind::Assign) {

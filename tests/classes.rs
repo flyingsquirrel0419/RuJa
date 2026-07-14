@@ -379,6 +379,13 @@ fn class_element_early_errors_follow_static_semantics() {
         "class C { static #x; #x() {} }",
         "class C { get #x() {} get #x() {} }",
         "class C { set #x(v) {} set #x(v) {} }",
+        "class C { get #x() {} static set #x(v) {} }",
+        "class C { set #x(v) {} static get #x() {} }",
+        "class C { static get #x() {} set #x(v) {} }",
+        "class C { static set #x(v) {} get #x() {} }",
+        "class C { get #x() {} set #x(v) {} get #x() {} }",
+        "class C { get #\\u0078() {} static set #x(v) {} }",
+        "(class { static get #x() {} set #x(v) {} });",
         "class C { m() { this.#missing; } }",
         "class C { m() { (() => this)().#missing; } }",
         "class Parent { #x; } class C extends Parent { m() { this.#x; } }",
@@ -399,6 +406,10 @@ fn class_element_early_errors_follow_static_semantics() {
     }
 
     run("class C { get #x() { return 1; } set #x(v) {} value() { return this.#x; } } new C().value();");
+    run("class C { set #x(v) {} get #x() { return 1; } } new C();");
+    run("class C { static get #x() { return 1; } static set #x(v) {} } C;");
+    run("class C { static set #x(v) {} static get #x() { return 1; } } C;");
+    run("class C { get #x() {} set #x(v) {} m() { class D { static get #x() {} static set #x(v) {} } return D; } } new C().m();");
     run("class C { m() { class B { #x() {} } } #x() {} }");
     run("class C { #x = 2; m() { function f(o) { return o.#x; } return f(this); } } new C().m();");
     run("class C { #x = 3; m() { class Inner { read(o) { return o.#x; } } return new Inner().read(this); } } new C().m();");

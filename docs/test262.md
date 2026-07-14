@@ -31,7 +31,7 @@ scope, so they are not comparable to each other:
 | Scope | What it measures | Current rate | Where to verify |
 |-------|-----------------|-------------|-----------------|
 | **Full suite** | `test262-full` workflow matrix — includes thousands of tests for features RuJa does not support | 59.3% of all matrix files; 81.3% of executed files in the latest confirmed full run | `test262-full` CI workflow job summary |
-| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12363 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
+| **Supported subset** | `language/statements` + `language/expressions` — the areas RuJa actively targets, with unsupported-feature tests skipped | 100.0% (12400 pass / 0 fail) | Run locally: `TEST262=… python3 tools/test262_runner.py language/statements language/expressions` |
 | **CI subset** | 9 narrow directories the `ci.yml` job runs on every push (identifiers, keywords, types, comments, white-space, punctuators, arrow-function, function, object) | 100.0% | `CI` workflow job summary |
 
 **The number to cite in README and public-facing material is the
@@ -112,6 +112,27 @@ python3 tools/test262_analyze.py
 The focused analyzer mirrors the runner's `raw`, `onlyStrict` directive
 prologue, and `negative:` metadata handling, so strict-mode and parse-negative
 tests are not reported as false failure buckets.
+
+## Private class boundary admission
+
+`tools/test262_class_private_admission.txt` freezes **37** class declaration
+and expression files whose remaining skip reason was an exact private class
+feature gate. The runner and analyzer remove only the feature tags recorded for
+each exact path; the broad private field and method gates remain active for all
+other files.
+
+Four files in this set require a parser early error: a private getter and setter
+may share a name only when both are static or both are non-static. RuJa records
+that staticness with each private bound name, rejects all four mismatched
+orders, and continues to accept complementary accessor pairs in either order.
+The other 33 files cover repeated private method, accessor, and static field
+class evaluations plus private static-block scope.
+
+Local verification reports **37 pass / 0 fail** for the frozen manifest. On
+test262 `d1d583db95a521218f3eb8341a887fd63eda8ff1`, the supported subset is
+**12400 pass / 0 fail / 8039 skip / 20439 total**. The current upstream
+checkout `020cb74075849d1e404bbcdb62feb7a02e6966db` reports **12399 pass / 0
+fail / 8039 skip / 20438 total**.
 
 ## JSON.parse reviver admission
 

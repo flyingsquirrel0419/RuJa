@@ -10,6 +10,11 @@ from unittest.mock import patch
 import test262_analyze
 import test262_runner
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+from test262_class_private_admission import (
+    CLASS_PRIVATE_FEATURES_BY_FILE,
+    CLASS_PRIVATE_FILES,
+    PRIVATE_CLASS_FEATURES,
+)
 from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
@@ -1544,6 +1549,116 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     )
                 finally:
                     tool.TEST262 = original_root
+
+    def test_private_class_boundary_admission_is_exact(self):
+        expected = {
+            "language/expressions/class/private-getter-brand-check-multiple-evaluations-of-class-eval-indirect.js": {"class-methods-private"},
+            "language/expressions/class/private-getter-brand-check-multiple-evaluations-of-class-eval.js": {"class-methods-private"},
+            "language/expressions/class/private-getter-brand-check-multiple-evaluations-of-class-factory.js": {"class-methods-private"},
+            "language/expressions/class/private-getter-brand-check-multiple-evaluations-of-class-function-ctor.js": {"class-methods-private"},
+            "language/expressions/class/private-method-brand-check-multiple-evaluations-of-class-eval-indirect.js": {"class-methods-private"},
+            "language/expressions/class/private-method-brand-check-multiple-evaluations-of-class-eval.js": {"class-methods-private"},
+            "language/expressions/class/private-method-brand-check-multiple-evaluations-of-class-factory.js": {"class-methods-private"},
+            "language/expressions/class/private-method-brand-check-multiple-evaluations-of-class-function-ctor.js": {"class-methods-private"},
+            "language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-eval-indirect.js": {"class-methods-private"},
+            "language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-eval.js": {"class-methods-private"},
+            "language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-factory.js": {"class-methods-private"},
+            "language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-function-ctor.js": {"class-methods-private"},
+            "language/expressions/class/private-static-field-multiple-evaluations-of-class-direct-eval.js": {"class-static-fields-private"},
+            "language/expressions/class/private-static-field-multiple-evaluations-of-class-eval-indirect.js": {"class-static-fields-private"},
+            "language/expressions/class/private-static-field-multiple-evaluations-of-class-factory.js": {"class-static-fields-private"},
+            "language/expressions/class/private-static-field-multiple-evaluations-of-class-function-ctor.js": {"class-static-fields-private"},
+            "language/expressions/class/private-static-field-multiple-evaluations-of-class-realm.js": {"class-static-fields-private"},
+            "language/expressions/class/private-static-getter-multiple-evaluations-of-class-direct-eval.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-getter-multiple-evaluations-of-class-eval-indirect.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-getter-multiple-evaluations-of-class-factory.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-getter-multiple-evaluations-of-class-function-ctor.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-getter-multiple-evaluations-of-class-realm.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-method-brand-check-multiple-evaluations-of-class-direct-eval.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-method-brand-check-multiple-evaluations-of-class-eval-indirect.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-method-brand-check-multiple-evaluations-of-class-factory.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-method-brand-check-multiple-evaluations-of-class-function-ctor.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-method-brand-check-multiple-evaluations-of-class-realm.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-setter-multiple-evaluations-of-class-direct-eval.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-setter-multiple-evaluations-of-class-eval-indirect.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-setter-multiple-evaluations-of-class-factory.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-setter-multiple-evaluations-of-class-function-ctor.js": {"class-static-methods-private"},
+            "language/expressions/class/private-static-setter-multiple-evaluations-of-class-realm.js": {"class-static-methods-private"},
+            "language/statements/class/private-non-static-getter-static-setter-early-error.js": {"class-methods-private", "class-static-methods-private"},
+            "language/statements/class/private-non-static-setter-static-getter-early-error.js": {"class-methods-private", "class-static-methods-private"},
+            "language/statements/class/private-static-getter-non-static-setter-early-error.js": {"class-methods-private", "class-static-methods-private"},
+            "language/statements/class/private-static-setter-non-static-getter-early-error.js": {"class-methods-private", "class-static-methods-private"},
+            "language/statements/class/static-init-scope-private.js": {"class-fields-private"},
+        }
+        expected = {path: frozenset(features) for path, features in expected.items()}
+        self.assertEqual(len(CLASS_PRIVATE_FILES), 37)
+        self.assertEqual(CLASS_PRIVATE_FEATURES_BY_FILE, expected)
+        self.assertEqual(CLASS_PRIVATE_FILES, frozenset(expected))
+        self.assertTrue(
+            all(
+                path.startswith((
+                    "language/expressions/class/",
+                    "language/statements/class/",
+                ))
+                and path.endswith(".js")
+                and "/elements/" not in path
+                for path in CLASS_PRIVATE_FILES
+            )
+        )
+        self.assertTrue(
+            all(features <= PRIVATE_CLASS_FEATURES for features in expected.values())
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            unrelated = root / "test/language/expressions/class/private-method.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, private_features in expected.items():
+                        admitted = root / "test" / relative
+                        meta = {"flags": [], "features": ["class", *private_features]}
+                        self.assertEqual(
+                            tool.class_private_path_features(admitted),
+                            private_features,
+                        )
+                        self.assertFalse(tool.should_skip(meta, admitted))
+                        excluded = next(iter(PRIVATE_CLASS_FEATURES - private_features))
+                        self.assertTrue(
+                            tool.should_skip(
+                                {"flags": [], "features": ["class", *private_features, excluded]},
+                                admitted,
+                            )
+                        )
+                    self.assertEqual(tool.class_private_path_features(unrelated), frozenset())
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["class", *PRIVATE_CLASS_FEATURES]},
+                            unrelated,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_private_class_boundary_runner_analyzer_parity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_runner_root = test262_runner.TEST262
+            original_analyze_root = test262_analyze.TEST262
+            test262_runner.TEST262 = str(root)
+            test262_analyze.TEST262 = str(root)
+            try:
+                for relative, private_features in CLASS_PRIVATE_FEATURES_BY_FILE.items():
+                    path = root / "test" / relative
+                    meta = {"flags": [], "features": ["class", *private_features]}
+                    self.assertEqual(
+                        test262_runner.should_skip(meta, path),
+                        test262_analyze.should_skip(meta, path),
+                    )
+            finally:
+                test262_runner.TEST262 = original_runner_root
+                test262_analyze.TEST262 = original_analyze_root
 
     def test_slice_features_are_admitted_only_on_its_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

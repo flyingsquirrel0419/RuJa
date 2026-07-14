@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Private getter/setter duplicate-name early errors now require matching
+  instance/static placement. The parser rejects all four mismatched accessor
+  orders while retaining valid complementary pairs in either order, escaped
+  private-name identity, and per-class private environments. Test262 admission
+  is frozen to the exact **37** private class files exposed by this boundary;
+  runner and analyzer remove only each path's recorded private feature gates.
+  The manifest passes **37/37**, and pinned supported coverage is **12400 pass
+  / 0 fail / 8039 skip / 20439 total**.
 - Test262 now admits the final **5** files whose only unsupported blocker was a
   public or static class-field gate: derived-constructor `this` binding during
   instance-field initialization, computed field-name abrupt completion, and
