@@ -12,6 +12,7 @@ import test262_runner
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
 from test262_class_default_parameter_admission import CLASS_DEFAULT_PARAMETER_FILES
 from test262_class_destructuring_admission import CLASS_DESTRUCTURING_FILES
+from test262_decorator_admission import DECORATOR_FILES
 from test262_class_private_admission import (
     CLASS_PRIVATE_FEATURES_BY_FILE,
     CLASS_PRIVATE_FILES,
@@ -1596,6 +1597,96 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertEqual(
                         test262_runner.class_default_parameter_path(path),
                         test262_analyze.class_default_parameter_path(path),
+                    )
+                    self.assertEqual(
+                        test262_runner.should_skip(meta, path),
+                        test262_analyze.should_skip(meta, path),
+                    )
+                    self.assertFalse(test262_runner.should_skip(meta, path))
+            finally:
+                test262_runner.TEST262 = original_runner_root
+                test262_analyze.TEST262 = original_analyze_root
+
+    def test_decorator_admission_is_exact(self):
+        self.assertEqual(len(DECORATOR_FILES), 24)
+        self.assertEqual(
+            sum(path.startswith("language/expressions/class/") for path in DECORATOR_FILES),
+            10,
+        )
+        self.assertEqual(
+            sum(path.startswith("language/statements/class/") for path in DECORATOR_FILES),
+            14,
+        )
+        self.assertEqual(
+            sum("/decorator/syntax/" in path for path in DECORATOR_FILES),
+            20,
+        )
+        self.assertEqual(
+            sum("field-definition-accessor-no-line-terminator.js" in path for path in DECORATOR_FILES),
+            2,
+        )
+        self.assertEqual(
+            sum("grammar-field-accessor.js" in path for path in DECORATOR_FILES),
+            2,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test" / next(iter(DECORATOR_FILES))
+            unrelated = root / "test/language/statements/class/decorator/not-admitted.js"
+            meta = {"flags": ["generated"], "features": ["class", "decorators"]}
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.decorator_path(admitted))
+                    self.assertFalse(tool.should_skip(meta, admitted))
+                    self.assertFalse(tool.decorator_path(unrelated))
+                    self.assertTrue(tool.should_skip(meta, unrelated))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "flags": ["generated"],
+                                "features": ["class", "decorators", "Intl"],
+                            },
+                            admitted,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_decorator_admission_requires_live_metadata(self):
+        test_root = Path(test262_runner.TEST262) / "test"
+        try:
+            checkout_available = test_root.is_dir()
+        except (OSError, PermissionError):
+            checkout_available = False
+        if not checkout_available:
+            self.skipTest("live Test262 checkout is unavailable")
+        for relative in DECORATOR_FILES:
+            path = test_root / relative
+            try:
+                self.assertTrue(path.is_file(), relative)
+                meta = test262_runner.parse_meta(path.read_text())
+            except (OSError, PermissionError):
+                self.skipTest("live Test262 checkout is inaccessible")
+            self.assertEqual(set(meta.get("features", [])), {"class", "decorators"}, relative)
+            self.assertIn("generated", meta.get("flags", []), relative)
+
+    def test_decorator_admission_runner_analyzer_parity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_runner_root = test262_runner.TEST262
+            original_analyze_root = test262_analyze.TEST262
+            test262_runner.TEST262 = str(root)
+            test262_analyze.TEST262 = str(root)
+            try:
+                meta = {"flags": ["generated"], "features": ["class", "decorators"]}
+                for relative in DECORATOR_FILES:
+                    path = root / "test" / relative
+                    self.assertEqual(
+                        test262_runner.decorator_path(path),
+                        test262_analyze.decorator_path(path),
                     )
                     self.assertEqual(
                         test262_runner.should_skip(meta, path),

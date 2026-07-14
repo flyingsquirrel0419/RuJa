@@ -88,6 +88,29 @@ fn duplicate_labels_are_early_errors() {
 }
 
 #[test]
+fn decorated_classes_allow_both_export_positions() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.run("globalThis.decoratedExportCalls = 0;")
+        .expect("counter should initialize");
+    for source in [
+        "function d() { decoratedExportCalls++; } @d export class C {}",
+        "function d() { decoratedExportCalls++; } export @d class C {}",
+        "function d() { decoratedExportCalls++; } @d export default class C {}",
+        "function d() { decoratedExportCalls++; } export default @d class C {}",
+    ] {
+        vm.run_module(source)
+            .expect("decorated export should evaluate");
+    }
+    assert_eq!(
+        vm.run("decoratedExportCalls;")
+            .expect("counter should be readable"),
+        Value::Number(4.0)
+    );
+    assert!(Parser::parse_module("@a export @b class C {}").is_err());
+    assert!(Parser::parse_module("@a export default @b class C {}").is_err());
+}
+
+#[test]
 fn module_graph_preserves_named_import_live_bindings_and_aliases() {
     let dir = module_fixture_dir("live-binding");
     fs::write(

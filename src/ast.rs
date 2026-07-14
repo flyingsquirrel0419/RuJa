@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassExpr {
+    /// Decorator expressions in source order.
+    pub decorators: Vec<Expr>,
     pub name: Option<Arc<str>>,
     pub inferred_name: Option<Arc<str>>,
     pub is_declaration: bool,
@@ -17,6 +19,8 @@ pub struct ClassExpr {
     pub private_fields: Vec<PrivateFieldDecl>,
     /// Public field declarations: `name = init`, `static name = init`, `[key] = init`.
     pub public_fields: Vec<PublicFieldDecl>,
+    /// Auto-accessor declarations: `accessor name = init`.
+    pub auto_accessors: Vec<AutoAccessorDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,10 +29,13 @@ pub enum ClassElement {
     StaticBlock(usize),
     PrivateField(usize),
     PublicField(usize),
+    AutoAccessor(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassMethod {
+    /// Decorator expressions in source order.
+    pub decorators: Vec<Expr>,
     pub name: Arc<str>,
     /// Computed property name expression (when `name` is from `[expr]`).
     /// None means the name is a static string.
@@ -127,6 +134,12 @@ pub enum Expr {
         optional: bool,
         optional_chain: bool,
     },
+    /// Compiler-generated direct call with an explicit `this` value.
+    CallWithThis {
+        callee: Box<Expr>,
+        this_value: Box<Expr>,
+        args: Vec<Expr>,
+    },
     ImportCall {
         specifier: Box<Expr>,
         options: Option<Box<Expr>>,
@@ -160,6 +173,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrivateFieldDecl {
+    pub decorators: Vec<Expr>,
     pub name: Arc<str>,
     pub init: Option<Box<Expr>>,
     pub is_static: bool,
@@ -168,10 +182,21 @@ pub struct PrivateFieldDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PublicFieldDecl {
+    pub decorators: Vec<Expr>,
     pub name: Arc<str>,
     pub computed_name: Option<Box<Expr>>,
     pub init: Option<Box<Expr>>,
     pub is_static: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoAccessorDecl {
+    pub decorators: Vec<Expr>,
+    pub name: Arc<str>,
+    pub computed_name: Option<Box<Expr>>,
+    pub init: Option<Box<Expr>>,
+    pub is_static: bool,
+    pub is_private: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy)]

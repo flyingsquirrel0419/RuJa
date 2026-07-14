@@ -671,10 +671,32 @@ impl Parser {
                 && !matches!(self.peek_at_tok(1).kind, TokenKind::LParen | TokenKind::Dot)
             {
                 self.parse_import_declaration(&mut module_requests, &mut import_entries)?;
+            } else if self.source_type == SourceType::Module && self.check(&TokenKind::At) {
+                let decorators = self.parse_decorator_list()?;
+                if !self.is_unescaped_ident("export") {
+                    if !self.check(&TokenKind::Class) {
+                        return Err(error::Error::syntax(
+                            "Class decorators must be followed by a class or export declaration"
+                                .to_string(),
+                        ));
+                    }
+                    let class = self.parse_class_body_with_decorators(true, decorators)?;
+                    body.push(self.stmt(StmtNode::ExprStmt(Expr::Class(class))));
+                    continue;
+                }
+                if let Some(stmt) = self.parse_export_declaration(
+                    &mut module_requests,
+                    &mut export_entries,
+                    decorators,
+                )? {
+                    body.push(stmt);
+                }
             } else if self.source_type == SourceType::Module && self.is_unescaped_ident("export") {
-                if let Some(stmt) =
-                    self.parse_export_declaration(&mut module_requests, &mut export_entries)?
-                {
+                if let Some(stmt) = self.parse_export_declaration(
+                    &mut module_requests,
+                    &mut export_entries,
+                    Vec::new(),
+                )? {
                     body.push(stmt);
                 }
             } else {
@@ -913,10 +935,16 @@ impl Parser {
         &mut self,
         module_requests: &mut Vec<ModuleRequest>,
         export_entries: &mut Vec<ExportEntry>,
+        leading_decorators: Vec<Expr>,
     ) -> error::Result<Option<Stmt>> {
         self.stmt_start_line = self.current_line();
         self.advance(); // export
         if self.eat(&TokenKind::Default) {
+            if !leading_decorators.is_empty() && self.check(&TokenKind::At) {
+                return Err(error::Error::syntax(
+                    "Class decorators cannot appear on both sides of export default".to_string(),
+                ));
+            }
             let (stmt, local_name) = match self.peek() {
                 TokenKind::Function => self.parse_default_function_declaration(false)?,
                 TokenKind::Async
@@ -925,8 +953,20 @@ impl Parser {
                 {
                     self.parse_default_function_declaration(true)?
                 }
-                TokenKind::Class => {
-                    let mut class = self.parse_class_body(true)?;
+                TokenKind::Class | TokenKind::At => {
+                    let decorators = if !leading_decorators.is_empty() {
+                        leading_decorators
+                    } else if self.check(&TokenKind::At) {
+                        self.parse_decorator_list()?
+                    } else {
+                        Vec::new()
+                    };
+                    if !self.check(&TokenKind::Class) {
+                        return Err(error::Error::syntax(
+                            "Class decorators must be followed by a class".to_string(),
+                        ));
+                    }
+                    let mut class = self.parse_class_body_with_decorators(true, decorators)?;
                     let local_name = class.name.clone().unwrap_or_else(|| Arc::from("default"));
                     if class.name.is_none() {
                         class.name = Some(Arc::from("default"));
@@ -937,6 +977,12 @@ impl Parser {
                     )
                 }
                 _ => {
+                    if !leading_decorators.is_empty() {
+                        return Err(error::Error::syntax(
+                            "Decorators before export default require a class declaration"
+                                .to_string(),
+                        ));
+                    }
                     let mut expression = self.parse_assign()?;
                     Self::name_function_from_ident(&mut expression, &Arc::from("default"));
                     self.expect_semi()?;
@@ -1012,6 +1058,11 @@ impl Parser {
             return Ok(None);
         }
 
+        if !leading_decorators.is_empty() && self.check(&TokenKind::At) {
+            return Err(error::Error::syntax(
+                "Class decorators cannot appear on both sides of export".to_string(),
+            ));
+        }
         let stmt = match self.peek() {
             TokenKind::Var | TokenKind::Let | TokenKind::Const => self.parse_var_decl()?,
             TokenKind::Function => self.parse_function_decl()?,
@@ -1022,11 +1073,20 @@ impl Parser {
                 self.advance();
                 self.parse_function_decl_with_async(true)?
             }
-            TokenKind::Class => self.parse_class_decl()?,
+            TokenKind::Class if !leading_decorators.is_empty() => {
+                let class = self.parse_class_body_with_decorators(true, leading_decorators)?;
+                self.stmt(StmtNode::ExprStmt(Expr::Class(class)))
+            }
+            TokenKind::Class | TokenKind::At => self.parse_class_decl()?,
             _ => {
+                if !leading_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Decorators before export require a class declaration".to_string(),
+                    ));
+                }
                 return Err(error::Error::syntax(
                     "Expected export declaration".to_string(),
-                ))
+                ));
             }
         };
         let mut names = Vec::new();
@@ -1373,7 +1433,7 @@ impl Parser {
                     Ok(self.stmt(StmtNode::ExprStmt(e)))
                 }
             }
-            TokenKind::Class => self.parse_class_decl(),
+            TokenKind::Class | TokenKind::At => self.parse_class_decl(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::Do => self.parse_do_while(),
@@ -3667,6 +3727,16 @@ impl Parser {
                 // Class expression: `var C = class C { ... }`
                 self.parse_class_body(false).map(Expr::Class)
             }
+            TokenKind::At => {
+                let decorators = self.parse_decorator_list()?;
+                if !self.check(&TokenKind::Class) {
+                    return Err(error::Error::syntax(
+                        "Class decorators must be followed by a class".to_string(),
+                    ));
+                }
+                self.parse_class_body_with_decorators(false, decorators)
+                    .map(Expr::Class)
+            }
             TokenKind::Ident(s) => {
                 if s == "import" && !self.peek_at_tok(0).had_escape {
                     if matches!(self.peek_at_tok(1).kind, TokenKind::Dot)
@@ -5243,6 +5313,17 @@ impl Parser {
                         .iter()
                         .any(Self::class_field_initializer_contains_arguments_expr)
             }
+            Expr::CallWithThis {
+                callee,
+                this_value,
+                args,
+            } => {
+                Self::class_field_initializer_contains_arguments_expr(callee)
+                    || Self::class_field_initializer_contains_arguments_expr(this_value)
+                    || args
+                        .iter()
+                        .any(Self::class_field_initializer_contains_arguments_expr)
+            }
             Expr::ImportCall { specifier, options } => {
                 Self::class_field_initializer_contains_arguments_expr(specifier)
                     || options.as_ref().is_some_and(|options| {
@@ -5556,6 +5637,18 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expr::CallWithThis {
+                callee,
+                this_value,
+                args,
+            } => {
+                Self::check_static_block_expr(callee)?;
+                Self::check_static_block_expr(this_value)?;
+                for arg in args {
+                    Self::check_static_block_expr(arg)?;
+                }
+                Ok(())
+            }
             Expr::ImportCall { specifier, options } => {
                 Self::check_static_block_expr(specifier)?;
                 if let Some(options) = options {
@@ -5755,8 +5848,87 @@ impl Parser {
 
     fn parse_class_decl(&mut self) -> error::Result<Stmt> {
         // Parse a class declaration as a statement that evaluates the class expr.
-        let cls = self.parse_class_body(true)?;
+        let decorators = if self.check(&TokenKind::At) {
+            self.parse_decorator_list()?
+        } else {
+            Vec::new()
+        };
+        if !self.check(&TokenKind::Class) {
+            return Err(error::Error::syntax(
+                "Class decorators must be followed by a class declaration".to_string(),
+            ));
+        }
+        let cls = self.parse_class_body_with_decorators(true, decorators)?;
         Ok(self.stmt(StmtNode::ExprStmt(Expr::Class(cls))))
+    }
+
+    fn parse_decorator_list(&mut self) -> error::Result<Vec<Expr>> {
+        let mut decorators = Vec::new();
+        while self.eat(&TokenKind::At) {
+            decorators.push(self.parse_decorator_expression()?);
+        }
+        Ok(decorators)
+    }
+
+    fn parse_decorator_expression(&mut self) -> error::Result<Expr> {
+        if self.eat(&TokenKind::LParen) {
+            let expression = self.with_in_allowed(|parser| parser.parse_expr())?;
+            self.expect(&TokenKind::RParen, ")")?;
+            return Ok(expression);
+        }
+
+        let mut expression = match self.peek().clone() {
+            TokenKind::Ident(name) => {
+                self.advance();
+                Expr::Ident(Arc::from(name.as_str()))
+            }
+            TokenKind::Await if self.await_as_identifier_allowed() => {
+                self.advance();
+                Expr::Ident(Arc::from("await"))
+            }
+            TokenKind::Yield if self.yield_as_identifier_allowed() => {
+                self.advance();
+                Expr::Ident(Arc::from("yield"))
+            }
+            token => {
+                return Err(error::Error::syntax(format!(
+                    "Invalid decorator expression starting with {:?}",
+                    token
+                )))
+            }
+        };
+
+        while self.eat(&TokenKind::Dot) {
+            if let TokenKind::PrivateName(name) = self.peek().clone() {
+                self.advance();
+                expression = Expr::PrivateGet {
+                    object: Box::new(expression),
+                    name: Arc::from(name.as_str()),
+                    optional: false,
+                };
+            } else {
+                let name = self.read_property_name()?;
+                expression = Expr::Member {
+                    object: Box::new(expression),
+                    property: Box::new(Expr::String(Arc::from(name.as_str()))),
+                    computed: false,
+                    optional: false,
+                    optional_chain: false,
+                };
+            }
+        }
+
+        if self.eat(&TokenKind::LParen) {
+            let args = self.parse_args()?;
+            self.expect(&TokenKind::RParen, ")")?;
+            expression = Expr::Call {
+                callee: Box::new(expression),
+                args,
+                optional: false,
+                optional_chain: false,
+            };
+        }
+        Ok(expression)
     }
 
     fn record_private_bound_name(
@@ -6046,6 +6218,18 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expr::CallWithThis {
+                callee,
+                this_value,
+                args,
+            } => {
+                Self::validate_private_names_expr(callee, names)?;
+                Self::validate_private_names_expr(this_value, names)?;
+                for arg in args {
+                    Self::validate_private_names_expr(arg, names)?;
+                }
+                Ok(())
+            }
             Expr::ImportCall { specifier, options } => {
                 Self::validate_private_names_expr(specifier, names)?;
                 if let Some(options) = options {
@@ -6091,6 +6275,9 @@ impl Parser {
     }
 
     fn validate_private_names_class(cls: &ClassExpr, names: &[Arc<str>]) -> error::Result<()> {
+        for decorator in &cls.decorators {
+            Self::validate_private_names_expr(decorator, names)?;
+        }
         if let Some(superclass) = &cls.superclass {
             Self::validate_private_names_expr(superclass, names)?;
         }
@@ -6104,8 +6291,16 @@ impl Parser {
                 class_names.push(method.name.clone());
             }
         }
+        for accessor in &cls.auto_accessors {
+            if accessor.is_private {
+                class_names.push(accessor.name.clone());
+            }
+        }
 
         for field in &cls.public_fields {
+            for decorator in &field.decorators {
+                Self::validate_private_names_expr(decorator, &class_names)?;
+            }
             if let Some(computed_name) = &field.computed_name {
                 Self::validate_private_names_expr(computed_name, &class_names)?;
             }
@@ -6114,6 +6309,9 @@ impl Parser {
             }
         }
         for method in &cls.methods {
+            for decorator in &method.decorators {
+                Self::validate_private_names_expr(decorator, &class_names)?;
+            }
             if let Some(computed_name) = &method.computed_name {
                 Self::validate_private_names_expr(computed_name, &class_names)?;
             }
@@ -6126,7 +6324,21 @@ impl Parser {
             Self::validate_private_names_statement_list(block, &class_names)?;
         }
         for field in &cls.private_fields {
+            for decorator in &field.decorators {
+                Self::validate_private_names_expr(decorator, &class_names)?;
+            }
             if let Some(init) = &field.init {
+                Self::validate_private_names_expr(init, &class_names)?;
+            }
+        }
+        for accessor in &cls.auto_accessors {
+            for decorator in &accessor.decorators {
+                Self::validate_private_names_expr(decorator, &class_names)?;
+            }
+            if let Some(computed_name) = &accessor.computed_name {
+                Self::validate_private_names_expr(computed_name, &class_names)?;
+            }
+            if let Some(init) = &accessor.init {
                 Self::validate_private_names_expr(init, &class_names)?;
             }
         }
@@ -6183,6 +6395,14 @@ impl Parser {
     }
 
     fn parse_class_body(&mut self, is_declaration: bool) -> error::Result<ClassExpr> {
+        self.parse_class_body_with_decorators(is_declaration, Vec::new())
+    }
+
+    fn parse_class_body_with_decorators(
+        &mut self,
+        is_declaration: bool,
+        decorators: Vec<Expr>,
+    ) -> error::Result<ClassExpr> {
         self.advance(); // 'class'
         let name = match self.peek().clone() {
             TokenKind::Ident(s) => {
@@ -6240,10 +6460,21 @@ impl Parser {
         let mut static_blocks: Vec<Vec<Stmt>> = Vec::new();
         let mut private_fields: Vec<crate::ast::PrivateFieldDecl> = Vec::new();
         let mut public_fields: Vec<crate::ast::PublicFieldDecl> = Vec::new();
+        let mut auto_accessors: Vec<crate::ast::AutoAccessorDecl> = Vec::new();
         let mut seen_constructor = false;
         let mut private_bound_names = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let element_decorators = if self.check(&TokenKind::At) {
+                self.parse_decorator_list()?
+            } else {
+                Vec::new()
+            };
             if self.eat(&TokenKind::Semicolon) {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Decorators must precede a class element".to_string(),
+                    ));
+                }
                 continue;
             }
             // static { ... } initialization block
@@ -6251,6 +6482,11 @@ impl Parser {
                 && !self.peek_at_tok(0).had_escape
                 && matches!(self.peek_at_tok(1).kind, TokenKind::LBrace)
             {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Class static blocks cannot be decorated".to_string(),
+                    ));
+                }
                 self.advance(); // static
                 let block = self.parse_static_block_body()?;
                 let idx = static_blocks.len();
@@ -6268,6 +6504,96 @@ impl Parser {
                     self.advance();
                     true
                 };
+            let is_auto_accessor = matches!(
+                self.peek(),
+                TokenKind::Ident(name) if name == "accessor"
+            ) && !self.peek_at_tok(0).had_escape
+                && !self.peek_at_tok(1).preceded_by_newline
+                && !matches!(
+                    self.peek_at_tok(1).kind,
+                    TokenKind::LParen
+                        | TokenKind::Assign
+                        | TokenKind::Semicolon
+                        | TokenKind::RBrace
+                        | TokenKind::Star
+                );
+            if is_auto_accessor {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Decorated auto-accessors are not implemented".to_string(),
+                    ));
+                }
+                self.advance(); // accessor
+                let (name, computed_name, is_private): (Arc<str>, Option<Box<Expr>>, bool) =
+                    if self.eat(&TokenKind::LBracket) {
+                        let expression = self.with_in_allowed(|parser| parser.parse_assign())?;
+                        self.expect(&TokenKind::RBracket, "]")?;
+                        (Arc::from(""), Some(Box::new(expression)), false)
+                    } else if let TokenKind::PrivateName(name) = self.peek().clone() {
+                        self.advance();
+                        Self::record_private_bound_name(
+                            &mut private_bound_names,
+                            &name,
+                            is_static,
+                            crate::ast::PropKind::Normal,
+                        )?;
+                        (Arc::from(name.as_str()), None, true)
+                    } else {
+                        let name = match self.peek().clone() {
+                            TokenKind::Number(number) | TokenKind::LegacyNumber(number) => {
+                                self.advance();
+                                crate::value::num_to_string(number)
+                            }
+                            TokenKind::String(name) => {
+                                self.advance();
+                                name
+                            }
+                            _ => self.read_property_name()?,
+                        };
+                        (Arc::from(name.as_str()), None, false)
+                    };
+                if !is_private && computed_name.is_none() && name.as_ref() == "constructor" {
+                    return Err(error::Error::syntax(
+                        "Class field cannot be named constructor".to_string(),
+                    ));
+                }
+                if !is_private
+                    && computed_name.is_none()
+                    && is_static
+                    && name.as_ref() == "prototype"
+                {
+                    return Err(error::Error::syntax(
+                        "Static class element cannot be named prototype".to_string(),
+                    ));
+                }
+                let init = if self.eat(&TokenKind::Assign) {
+                    let mut init = self.parse_class_field_initializer()?;
+                    Self::reject_class_field_initializer_contains_arguments(&init)?;
+                    if computed_name.is_none() {
+                        let function_name = if is_private {
+                            Arc::from(format!("#{}", name).as_str())
+                        } else {
+                            name.clone()
+                        };
+                        Self::name_function_from_ident(&mut init, &function_name);
+                    }
+                    Some(Box::new(init))
+                } else {
+                    None
+                };
+                self.expect_semi()?;
+                let index = auto_accessors.len();
+                auto_accessors.push(crate::ast::AutoAccessorDecl {
+                    decorators: element_decorators,
+                    name,
+                    computed_name,
+                    init,
+                    is_static,
+                    is_private,
+                });
+                elements.push(crate::ast::ClassElement::AutoAccessor(index));
+                continue;
+            }
             // Private field declaration: #name = init  or  #name;
             // Private method/accessor: #name(params) / get #name() / set #name(v)
             let is_async_token = match self.peek().clone() {
@@ -6283,6 +6609,11 @@ impl Parser {
             let is_private_generator_method = matches!(self.peek(), TokenKind::Star)
                 && matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_));
             if is_private_async_method || is_private_generator_method {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Private element decorators are not implemented".to_string(),
+                    ));
+                }
                 let is_async = if is_private_async_method {
                     self.advance(); // async
                     true
@@ -6321,6 +6652,7 @@ impl Parser {
                 }
                 let idx = methods.len();
                 methods.push(ClassMethod {
+                    decorators: element_decorators,
                     name: Arc::from(name.as_str()),
                     computed_name: None,
                     params,
@@ -6344,6 +6676,11 @@ impl Parser {
                         && !self.tokens[self.pos].had_escape
                         && matches!(self.peek_at_tok(1).kind, TokenKind::PrivateName(_))
             ) {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Private element decorators are not implemented".to_string(),
+                    ));
+                }
                 let kind = if matches!(self.peek().clone(), TokenKind::Ident(ref s) if s == "get") {
                     crate::ast::PropKind::Get
                 } else {
@@ -6377,6 +6714,7 @@ impl Parser {
                 }
                 let idx = methods.len();
                 methods.push(ClassMethod {
+                    decorators: element_decorators,
                     name: Arc::from(name.as_str()),
                     computed_name: None,
                     params,
@@ -6394,6 +6732,11 @@ impl Parser {
                 continue;
             }
             if let TokenKind::PrivateName(name) = self.peek().clone() {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Private element decorators are not implemented".to_string(),
+                    ));
+                }
                 // Peek ahead: if next is `(`, this is a private method.
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
@@ -6427,6 +6770,7 @@ impl Parser {
                     }
                     let idx = methods.len();
                     methods.push(ClassMethod {
+                        decorators: element_decorators,
                         name: Arc::from(name.as_str()),
                         computed_name: None,
                         params,
@@ -6460,6 +6804,7 @@ impl Parser {
                 self.expect_semi()?;
                 let idx = private_fields.len();
                 private_fields.push(crate::ast::PrivateFieldDecl {
+                    decorators: element_decorators,
                     name: Arc::from(name.as_str()),
                     init,
                     is_static,
@@ -6565,6 +6910,7 @@ impl Parser {
                 self.expect_semi()?;
                 let idx = public_fields.len();
                 public_fields.push(crate::ast::PublicFieldDecl {
+                    decorators: element_decorators,
                     name: method_name,
                     computed_name,
                     init,
@@ -6574,6 +6920,11 @@ impl Parser {
                 continue;
             }
             if is_constructor {
+                if !element_decorators.is_empty() {
+                    return Err(error::Error::syntax(
+                        "Class constructors cannot be decorated".to_string(),
+                    ));
+                }
                 if seen_constructor {
                     return Err(error::Error::syntax(
                         "Duplicate constructor in class body".to_string(),
@@ -6636,6 +6987,7 @@ impl Parser {
             }
             let idx = methods.len();
             methods.push(ClassMethod {
+                decorators: element_decorators,
                 name: method_name,
                 computed_name,
                 params,
@@ -6660,6 +7012,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "}")?;
         self.is_strict_context = saved_strict_context;
         Ok(ClassExpr {
+            decorators,
             name,
             inferred_name: None,
             is_declaration,
@@ -6669,6 +7022,7 @@ impl Parser {
             static_blocks,
             private_fields,
             public_fields,
+            auto_accessors,
         })
     }
     #[allow(dead_code)]

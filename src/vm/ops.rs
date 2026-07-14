@@ -126,7 +126,7 @@ impl Vm {
         while frame
             .catch_stack
             .last()
-            .is_some_and(|(_, cseq, _)| *cseq > finally_seq)
+            .is_some_and(|(_, cseq, _, _)| *cseq > finally_seq)
         {
             frame.catch_stack.pop();
         }
@@ -2006,6 +2006,7 @@ impl Vm {
                     // to finally only when there is no catch handler on top of
                     // the finally guard (i.e. try/finally without catch, or a
                     // throw escaping from a catch body that a finally guards).
+                    let mut catch_stack_target = None;
                     if let Some(frame) = self.frames.last_mut() {
                         // A throw must pass through any finally that is *more
                         // deeply nested* than the nearest catch. Compare the
@@ -2019,7 +2020,7 @@ impl Vm {
                         let divert_to_finally =
                             match (frame.finally_stack.last(), frame.catch_stack.last()) {
                                 (Some(&(_, _)), None) => true,
-                                (Some(&(_, fseq)), Some(&(_, cseq, _))) => fseq > cseq,
+                                (Some(&(_, fseq)), Some(&(_, cseq, _, _))) => fseq > cseq,
                                 _ => false,
                             };
                         if divert_to_finally {
@@ -2038,7 +2039,9 @@ impl Vm {
                             frame.ip = target;
                             continue;
                         }
-                        if let Some((handler, _, saved_env)) = frame.catch_stack.pop() {
+                        if let Some((handler, _, saved_env, saved_stack_depth)) =
+                            frame.catch_stack.pop()
+                        {
                             // A throw from inside a running finally replaces
                             // the completion that originally entered that
                             // finally. If an outer catch handles this new
@@ -2049,9 +2052,13 @@ impl Vm {
                             // scopes/with-envs opened in the try body.
                             frame.env = saved_env;
                             frame.ip = handler;
-                            self.stack.push(v);
-                            continue;
+                            catch_stack_target = Some(frame.stack_base + saved_stack_depth);
                         }
+                    }
+                    if let Some(stack_target) = catch_stack_target {
+                        self.stack.truncate(stack_target);
+                        self.stack.push(v);
+                        continue;
                     }
                     return Err(Error::thrown(v, &self.heap));
                 }
@@ -2072,11 +2079,15 @@ impl Vm {
                     return Err(Error::reference(message));
                 }
                 Op::PushTry(handler) => {
+                    let stack_depth = {
+                        let frame = self.current_frame()?;
+                        self.stack.len().saturating_sub(frame.stack_base)
+                    };
                     let f = self.current_frame_mut()?;
                     let seq = f.guard_seq.load(Ordering::Relaxed) + 1;
                     f.guard_seq.store(seq, Ordering::Relaxed);
                     let saved_env = f.env;
-                    f.catch_stack.push((handler, seq, saved_env));
+                    f.catch_stack.push((handler, seq, saved_env, stack_depth));
                 }
                 Op::PopTry => {
                     let f = self.current_frame_mut()?;
@@ -2241,43 +2252,47 @@ impl Vm {
                         }
                         4 => {
                             // throw
-                            let frame = self.current_frame_mut()?;
-                            // If an outer finally still guards this scope,
-                            // divert the throw through it first.
-                            // Divert only if the outer finally is more deeply
-                            // nested than the nearest catch (per spec, a throw
-                            // is caught by the innermost matching handler, but
-                            // must still run any finally nested inside it).
-                            let divert_to_outer_finally =
-                                match (frame.finally_stack.last(), frame.catch_stack.last()) {
-                                    (Some(&(_, _)), None) => true,
-                                    (Some(&(_, fseq)), Some(&(_, cseq, _))) => fseq > cseq,
-                                    _ => false,
-                                };
-                            if divert_to_outer_finally {
-                                let outer =
-                                    frame.finally_stack.last().map(|(ip, _)| *ip).ok_or_else(
-                                        || {
-                                            crate::error::Error::internal(
-                                                "finally stack empty during throw diversion",
-                                            )
-                                        },
-                                    )?;
-                                frame.finally_completion_tag.store(4, Ordering::Relaxed);
-                                *frame.finally_completion_val.lock() = val.clone();
-                                frame.ip = outer;
-                                continue;
-                            }
-                            // If an outer try catches, route there; else propagate.
-                            if let Some(&(handler, _, _)) = frame.catch_stack.last() {
-                                frame.catch_stack.pop();
-                                frame.finally_completion_tag.store(0, Ordering::Relaxed);
-                                *frame.finally_completion_val.lock() = Value::Undefined;
-                                frame.ip = handler;
+                            let catch_stack_target = {
+                                let frame = self.current_frame_mut()?;
+                                // If an outer finally still guards this scope,
+                                // divert the throw through it first.
+                                let divert_to_outer_finally =
+                                    match (frame.finally_stack.last(), frame.catch_stack.last()) {
+                                        (Some(&(_, _)), None) => true,
+                                        (Some(&(_, fseq)), Some(&(_, cseq, _, _))) => fseq > cseq,
+                                        _ => false,
+                                    };
+                                if divert_to_outer_finally {
+                                    let outer =
+                                        frame.finally_stack.last().map(|(ip, _)| *ip).ok_or_else(
+                                            || {
+                                                crate::error::Error::internal(
+                                                    "finally stack empty during throw diversion",
+                                                )
+                                            },
+                                        )?;
+                                    frame.finally_completion_tag.store(4, Ordering::Relaxed);
+                                    *frame.finally_completion_val.lock() = val.clone();
+                                    frame.ip = outer;
+                                    None
+                                } else if let Some((handler, _, saved_env, saved_stack_depth)) =
+                                    frame.catch_stack.pop()
+                                {
+                                    frame.finally_completion_tag.store(0, Ordering::Relaxed);
+                                    *frame.finally_completion_val.lock() = Value::Undefined;
+                                    frame.env = saved_env;
+                                    frame.ip = handler;
+                                    Some(frame.stack_base + saved_stack_depth)
+                                } else {
+                                    return Err(Error::thrown(val, &self.heap));
+                                }
+                            };
+                            if let Some(stack_target) = catch_stack_target {
+                                self.stack.truncate(stack_target);
                                 self.stack.push(val);
                                 continue;
                             }
-                            return Err(Error::thrown(val, &self.heap));
+                            continue;
                         }
                         // 2 (break) / 3 (continue): re-issue the recorded
                         // transfer by jumping to its saved target. These are
@@ -2307,6 +2322,27 @@ impl Vm {
                     // emitted a StoreLocal for the catch param.
                 }
                 Op::Call(arg_count) => self.op_call(arg_count)?,
+                Op::ApplyDecoratorResult(kind) => {
+                    let result = self.stack.pop().unwrap_or(Value::Undefined);
+                    let original = self.stack.pop().unwrap_or(Value::Undefined);
+                    if matches!(result, Value::Undefined) {
+                        self.stack.push(original);
+                    } else {
+                        let valid = match kind {
+                            0 => crate::builtins::is_callable(&result, &self.heap),
+                            1 | 2 => crate::builtins::is_callable(&result, &self.heap),
+                            _ => false,
+                        };
+                        if !valid {
+                            return Err(Error::type_err(match kind {
+                                0 => "Class decorator must return a callable value or undefined",
+                                2 => "Field decorator must return a function or undefined",
+                                _ => "Element decorator must return a function or undefined",
+                            }));
+                        }
+                        self.stack.push(result);
+                    }
+                }
                 Op::CallRef(arg_count) => self.op_call_ref(arg_count)?,
                 Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
                 Op::CallEval(arg_count) => self.op_call_eval(arg_count)?,

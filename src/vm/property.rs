@@ -2814,7 +2814,7 @@ impl Vm {
                                 Self::push_value_roots(&mut roots, &frame.new_target);
                                 Self::push_value_roots(&mut roots, &frame.finally_completion_val);
                                 roots.push(frame.env.0);
-                                roots.extend(frame.catch_stack.iter().map(|(_, _, env)| env.0));
+                                roots.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
                                 for value in frame.stack.iter().chain(frame.locals.iter()) {
                                     Self::push_value_roots(&mut roots, value);
                                 }

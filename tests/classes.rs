@@ -2026,3 +2026,278 @@ fn private_names_follow_identifier_name_grammar() {
         Value::Number(4.0)
     );
 }
+
+#[test]
+fn decorators_evaluate_in_source_order_and_apply_in_reverse_order() {
+    assert_eq!(
+        run(r#"
+            let log = [];
+            function decorator(name) {
+              log.push("evaluate " + name);
+              return function(value, context) {
+                "use strict";
+                log.push("apply " + name + " " + context.kind + " " + context.name + " " + (this === undefined));
+              };
+            }
+            @decorator("class-a")
+            @decorator("class-b")
+            class C {
+              @decorator("method-a")
+              @decorator("method-b")
+              method() {}
+              @decorator("field-a")
+              @decorator("field-b")
+              field;
+              static initialized = log.push("static field");
+            }
+            log.join("|");
+        "#),
+        Value::String(Arc::from(
+            "evaluate class-a|evaluate class-b|evaluate method-a|evaluate method-b|evaluate field-a|evaluate field-b|apply method-b method method true|apply method-a method method true|apply field-b field field true|apply field-a field field true|apply class-b class C true|apply class-a class C true|static field"
+        ))
+    );
+}
+
+#[test]
+fn decorators_replace_methods_classes_and_field_initializers() {
+    assert_eq!(
+        run(r#"
+            function replaceMethod(value, context) {
+              return function() { return context.name + ":replacement"; };
+            }
+            function initializeField(offset) {
+              return function(value, context) {
+                return function(initial) { return initial + offset + context.name.length; };
+              };
+            }
+            function replaceClass(value, context) {
+              return class extends value { static decorated = context.name; };
+            }
+            @replaceClass
+            class C {
+              @replaceMethod method() { return "original"; }
+              @initializeField(2) field = 3;
+              @initializeField(4) static value = 5;
+            }
+            let instance = new C();
+            [instance.method(), instance.field, C.value, C.decorated, instance instanceof C].join("|");
+        "#),
+        Value::String(Arc::from("method:replacement|10|14|C|true"))
+    );
+    assert_eq!(
+        run(r#"
+            let instanceThis;
+            let staticThis;
+            function capture(value, context) {
+              return function(initial) {
+                if (context.static) staticThis = this;
+                else instanceThis = this;
+                return initial;
+              };
+            }
+            Function.prototype.call = function() { throw new Error("must not be observed"); };
+            class C {
+              @capture field = 1;
+              @capture static field = 2;
+            }
+            let instance = new C();
+            instanceThis === instance && staticThis === C;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            let log = [];
+            function append(name) {
+              return function() {
+                log.push("apply " + name);
+                return function(value) {
+                  log.push("init " + name);
+                  return value + name;
+                };
+              };
+            }
+            class C { @append("A") @append("B") field = ""; }
+            let instance = new C();
+            log.join(",") + "|" + instance.field;
+        "#),
+        Value::String(Arc::from("apply B,apply A,init A,init B|AB"))
+    );
+}
+
+#[test]
+fn decorator_replacements_are_type_checked() {
+    assert!(run_err("@(() => 1) class C {}").contains("Class decorator"));
+    assert!(run_err("class C { @(() => 1) method() {} }").contains("Element decorator"));
+    assert!(run_err("class C { @(() => 1) field; }").contains("Field decorator"));
+    assert_eq!(
+        run("@(() => (() => 7)) class C {} C();"),
+        Value::Number(7.0)
+    );
+}
+
+#[test]
+fn throwing_decorators_do_not_leak_caught_operand_roots() {
+    let mut vm = Vm::new().expect("failed to initialize VM");
+    vm.register_fn(
+        "forceGc",
+        |vm, _, _| {
+            vm.gc();
+            Ok(Value::Undefined)
+        },
+        0,
+    )
+    .expect("failed to register GC test hook");
+    vm.gc();
+    vm.set_max_heap_objects(Some(5_000));
+    assert_eq!(
+        vm.run(
+            r#"
+            function fail() { throw 1; }
+            let caught = 0;
+            for (let i = 0; i < 10000; i++) {
+              try { @fail class C {} }
+              catch (error) {
+                caught++;
+                if (i % 50 === 0) forceGc();
+              }
+            }
+            caught;
+        "#
+        )
+        .expect("caught decorator failures must not remain GC roots"),
+        Value::Number(10000.0)
+    );
+}
+
+#[test]
+fn decorator_member_expressions_preserve_factory_receivers() {
+    assert_eq!(
+        run(r#"
+            let receiver;
+            let namespace = {
+              factory() {
+                receiver = this;
+                return function() {};
+              }
+            };
+            @namespace.factory() class C {}
+            receiver === namespace;
+        "#),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        run(r#"
+            let symbol = Symbol("decorated");
+            let methodName;
+            let fieldName;
+            function methodDecorator(value, context) { methodName = context.name; }
+            function fieldDecorator(value, context) { fieldName = context.name; }
+            class C {
+              @methodDecorator [symbol]() {}
+              @fieldDecorator [symbol] = 1;
+            }
+            methodName === symbol && fieldName === symbol;
+        "#),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn auto_accessors_use_hidden_backing_storage() {
+    assert_eq!(
+        run(r#"
+            let keyCalls = 0;
+            let key = { toString() { keyCalls++; return "computed"; } };
+            class C {
+              accessor value = 1;
+              accessor [key] = 2;
+              accessor #private = 3;
+              static accessor shared = 4;
+              static accessor #secret = 5;
+              readPrivate() { return this.#private; }
+              writePrivate(value) { this.#private = value; }
+              static readSecret() { return this.#secret; }
+            }
+            let first = new C();
+            let second = new C();
+            first.value = 6;
+            first.computed = 7;
+            first.writePrivate(8);
+            C.shared = 9;
+            let descriptor = Object.getOwnPropertyDescriptor(C.prototype, "value");
+            [
+              first.value, second.value, first.computed, second.computed,
+              first.readPrivate(), second.readPrivate(), C.shared, C.readSecret(),
+              keyCalls, descriptor.enumerable, typeof descriptor.get, typeof descriptor.set,
+              Object.prototype.hasOwnProperty.call(first, "value")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("6|1|7|2|8|3|9|5|1|false|function|function|false"))
+    );
+    assert_eq!(
+        run(r#"
+            class C {
+              accessor value = function() {};
+              accessor #private = class {};
+              readPrivate() { return this.#private.name; }
+            }
+            let instance = new C();
+            [instance.value.name, instance.readPrivate()].join("|");
+        "#),
+        Value::String(Arc::from("value|#private"))
+    );
+    assert!(run_err("class C { accessor constructor = 1; }").contains("constructor"));
+    assert!(run_err("class C { static accessor constructor = 1; }").contains("constructor"));
+    assert_eq!(
+        run("class C { accessor ['constructor'] = 1; } new C().constructor;"),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
+fn accessor_keyword_requires_no_line_terminator() {
+    assert_eq!(
+        run(r#"
+            class C {
+              accessor
+              value;
+              static accessor
+              other;
+            }
+            let instance = new C();
+            [
+              Object.prototype.hasOwnProperty.call(instance, "accessor"),
+              Object.prototype.hasOwnProperty.call(instance, "value"),
+              Object.prototype.hasOwnProperty.call(C, "accessor"),
+              Object.prototype.hasOwnProperty.call(C, "other")
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|true|false"))
+    );
+    assert_eq!(
+        run(r#"
+            class C {
+              accessor() { return "method"; }
+              accessor = "field";
+            }
+            let instance = new C();
+            [instance.accessor, Object.prototype.hasOwnProperty.call(instance, "accessor")].join("|");
+        "#),
+        Value::String(Arc::from("field|true"))
+    );
+}
+
+#[test]
+fn decorator_grammar_rejects_unrestricted_and_invalid_targets() {
+    assert_eq!(
+        run("let C = @(value => value) class {}; typeof C;"),
+        Value::String(Arc::from("function"))
+    );
+    assert!(run_err("@foo + bar class C {}").contains("followed by a class"));
+    assert!(run_err("class C { @foo; }").contains("must precede a class element"));
+    assert!(run_err("class C { @foo static {} }").contains("cannot be decorated"));
+    assert!(run_err("class C { @foo constructor() {} }").contains("cannot be decorated"));
+    assert!(run_err("class C { @foo #method() {} }").contains("not implemented"));
+    assert!(run_err("class C { @foo accessor value; }").contains("not implemented"));
+}

@@ -277,7 +277,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
                             push_value(&frame.new_target, worklist);
                             push_value(&frame.finally_completion_val, worklist);
                             worklist.push(frame.env.0);
-                            worklist.extend(frame.catch_stack.iter().map(|(_, _, env)| env.0));
+                            worklist.extend(frame.catch_stack.iter().map(|(_, _, env, _)| env.0));
                             for value in frame.stack.iter().chain(frame.locals.iter()) {
                                 push_value(value, worklist);
                             }
@@ -295,7 +295,7 @@ pub fn trace_obj(obj: &HeapObj, marked: &[bool], worklist: &mut Vec<usize>) {
         HeapObj::LazyGenerator(g) => {
             worklist.push(g.closure.0);
             worklist.push(g.env.lock().0);
-            for (_, _, env) in g.catch_stack.lock().iter() {
+            for (_, _, env, _) in g.catch_stack.lock().iter() {
                 worklist.push(env.0);
             }
             for v in g.stack.lock().iter() {

@@ -890,7 +890,7 @@ pub struct AsyncFunctionContinuation {
     pub locals: Vec<Value>,
     pub callee: Value,
     pub env: GcIdx,
-    pub catch_stack: Vec<(usize, u32, GcIdx)>,
+    pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
     pub guard_seq: u32,
     pub this_val: Value,
     pub new_target: Value,
@@ -937,7 +937,7 @@ pub struct LazyGeneratorData {
     /// Local variables slot table.
     pub locals: Mutex<Vec<Value>>,
     /// Saved try/catch handler stack (so catches resume across yields).
-    pub catch_stack: Mutex<Vec<(usize, u32, GcIdx)>>,
+    pub catch_stack: Mutex<Vec<(usize, u32, GcIdx, usize)>>,
     /// Saved try/finally guard stack (so generator return/throw resumes can
     /// run active finally blocks after yielding inside protected regions).
     pub finally_stack: Mutex<Vec<(usize, u32)>>,

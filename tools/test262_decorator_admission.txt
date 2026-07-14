@@ -1,0 +1,27 @@
+# Class expression decorator syntax and auto-accessor boundary.
+language/expressions/class/decorator/syntax/class-valid/decorator-member-expr-private-identifier.js
+language/expressions/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js
+language/expressions/class/decorator/syntax/valid/decorator-call-expr-identifier-reference.js
+language/expressions/class/decorator/syntax/valid/decorator-member-expr-decorator-member-expr.js
+language/expressions/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js
+language/expressions/class/decorator/syntax/valid/decorator-member-expr-identifier-reference.js
+language/expressions/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js
+language/expressions/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference.js
+language/expressions/class/elements/field-definition-accessor-no-line-terminator.js
+language/expressions/class/elements/syntax/valid/grammar-field-accessor.js
+
+# Class declaration and public class-element decorator syntax.
+language/statements/class/decorator/syntax/class-valid/decorator-member-expr-private-identifier.js
+language/statements/class/decorator/syntax/valid/class-element-decorator-call-expr-identifier-reference.js
+language/statements/class/decorator/syntax/valid/class-element-decorator-member-expr-decorator-member-expr.js
+language/statements/class/decorator/syntax/valid/class-element-decorator-member-expr-identifier-reference.js
+language/statements/class/decorator/syntax/valid/class-element-decorator-parenthesized-expr-identifier-reference.js
+language/statements/class/decorator/syntax/valid/decorator-call-expr-identifier-reference-yield.js
+language/statements/class/decorator/syntax/valid/decorator-call-expr-identifier-reference.js
+language/statements/class/decorator/syntax/valid/decorator-member-expr-decorator-member-expr.js
+language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference-yield.js
+language/statements/class/decorator/syntax/valid/decorator-member-expr-identifier-reference.js
+language/statements/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference-yield.js
+language/statements/class/decorator/syntax/valid/decorator-parenthesized-expr-identifier-reference.js
+language/statements/class/elements/field-definition-accessor-no-line-terminator.js
+language/statements/class/elements/syntax/valid/grammar-field-accessor.js

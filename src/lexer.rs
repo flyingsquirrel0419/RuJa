@@ -1213,6 +1213,10 @@ impl<'a> Lexer<'a> {
                 }
                 return self.read_template_start(line, col, preceded_by_newline);
             }
+            Some(b'@') => {
+                self.advance();
+                TokenKind::At
+            }
             Some(b'/') => {
                 // Regex literal vs division, decided by the previous token.
                 if self.prev_value_ending {

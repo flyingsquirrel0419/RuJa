@@ -205,7 +205,9 @@ pub struct CallFrame {
     pub locals: Vec<Value>,
     pub callee: Value,
     pub env: GcIdx,
-    pub catch_stack: Vec<(usize, u32, GcIdx)>,
+    /// Catch handler, guard sequence, saved environment, and operand-stack
+    /// depth relative to this frame's `stack_base` at try entry.
+    pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
     /// Monotonic push counter for ordering catch vs finally guards by depth.
     pub guard_seq: AtomicU32,
     pub this_val: Value,
@@ -359,7 +361,7 @@ pub(crate) struct GeneratorPrologueState {
     pub ip: usize,
     pub stack: Vec<Value>,
     pub locals: Vec<Value>,
-    pub catch_stack: Vec<(usize, u32, GcIdx)>,
+    pub catch_stack: Vec<(usize, u32, GcIdx, usize)>,
     pub finally_stack: Vec<(usize, u32)>,
     pub guard_seq: u32,
     pub finally_completion_tag: u8,
@@ -1899,7 +1901,7 @@ impl Vm {
                     let divert_to_finally = self.frames.last().is_some_and(|frame| {
                         match (frame.finally_stack.last(), frame.catch_stack.last()) {
                             (Some(&(_, _)), None) => true,
-                            (Some(&(_, fseq)), Some(&(_, cseq, _))) => fseq > cseq,
+                            (Some(&(_, fseq)), Some(&(_, cseq, _, _))) => fseq > cseq,
                             _ => false,
                         }
                     });
@@ -1925,11 +1927,11 @@ impl Vm {
                     let handler = self
                         .frames
                         .last()
-                        .and_then(|f| f.catch_stack.last().map(|(ip, _, _)| *ip));
+                        .and_then(|f| f.catch_stack.last().map(|(ip, _, _, _)| *ip));
                     if let Some(handler) = handler {
                         // Pop the handler so we don't loop, push the thrown value
                         // for the catch binding, and jump to the handler ip.
-                        let (_, _, saved_env) =
+                        let (_, _, saved_env, saved_stack_depth) =
                             self.current_frame_mut()?.catch_stack.pop().unwrap();
                         {
                             let frame = self.current_frame_mut()?;
@@ -1937,7 +1939,12 @@ impl Vm {
                             *frame.finally_completion_val.lock() = Value::Undefined;
                         }
                         // Unwind scopes opened in the try body.
-                        self.current_frame_mut()?.env = saved_env;
+                        let stack_target = {
+                            let frame = self.current_frame_mut()?;
+                            frame.env = saved_env;
+                            frame.stack_base + saved_stack_depth
+                        };
+                        self.stack.truncate(stack_target);
                         self.stack.push(thrown);
                         self.current_frame_mut()?.ip = handler;
                         continue;

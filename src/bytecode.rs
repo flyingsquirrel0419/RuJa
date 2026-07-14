@@ -199,6 +199,9 @@ pub enum Op {
     CallMethod(usize),   // arg count (method call: this is on stack)
     CallSpread,          // callee + args-array on stack; spread array into call args
     CallRefSpread,       // Reference call; stack [ref, callee, args-array]
+    /// Select a decorator replacement. Kind: 0 class constructor, 1 callable
+    /// element value, 2 field initializer. Stack: [original, result].
+    ApplyDecoratorResult(u8),
     /// Unqualified `eval(...)`: call directly only if the resolved callee is
     /// the current Realm's intrinsic eval function; otherwise call normally.
     /// Stack: [callee, args...].
