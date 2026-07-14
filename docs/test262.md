@@ -5366,24 +5366,33 @@ Local verification against Test262 `020cb740` is **24 pass / 0 fail / 0 skip**
 for the exact manifest, **4184 pass / 0 fail / 4242 skip** for both class
 subtrees, and **12751 pass / 0 fail / 7687 skip / 20438 total** for the current
 supported subset. The pinned `d1d583d` subset is **12752 pass / 0 fail / 7687
-skip / 20439 total**. Private element decorators and decorated auto-accessor
-replacement objects remain explicitly outside this admission.
+skip / 20439 total**. Private element decorators and private decorated
+auto-accessors remain explicitly outside this admission.
 
 The next runtime corpus is pending in Test262 PR #5048. Against pinned PR head
 `58b825d0eb50f66bc171d7254d19d0e2928d2d3a`, the exact public-only boundary
-passes **201 pass / 0 fail / 0 skip**: 23 class, 40 method, 32 getter, 36
-setter, 68 field, and two late-`addInitializer` tests across class expressions
-and declarations. Eight mixed phase-order files that require private elements
-or decorated auto-accessors are deliberately excluded.
+passes **295 pass / 0 fail / 0 skip**: 29 class, 40 method, 32 getter, 36
+setter, 68 field, 88 auto-accessor, and two late-`addInitializer` tests across
+class expressions and declarations. Only the two pre-definition phase files
+that contain private decorated elements are excluded from the four phase-order
+families.
 
 That boundary verifies fresh context objects, receiver-argument
 `access.has/get/set`, per-decorator `addInitializer` lifetime and callable
 checks, grouped static-method/instance-method/static-field/instance-field/class
 application, field and extra-initializer ordering, explicit initializer `this`,
-constructable class replacements, and replacement-aware inner class bindings.
-Because these files do not exist in current Test262 main (`020cb740`), the
-runner keeps its broad `decorators` gate and does not claim an admission count
-before upstream merge.
+constructable class replacements, replacement-aware inner class bindings, and
+auto-accessor `{ get, set }` input plus optional `get`/`set`/`init` replacement
+composition. It also verifies that auto-accessors apply with methods/accessors
+but initialize backing storage with fields. Because these files do not exist in
+current Test262 main (`020cb740`), the runner keeps its broad `decorators` gate
+and does not claim an admission count before upstream merge.
+
+Feature commit `7a7531a` passed CI `29349296562` and full matrix
+`29349296827`. All 30 downloaded result artifacts are byte-for-byte identical
+to matrix `29345693370`, reproducing **29056 pass / 6614 fail / 12635 skip / 12
+timeout / 0 error / 48317 total / 35670 pass-or-fail executed**. The feature
+artifacts are retained at `/tmp/ruja-artifacts-public-auto-feature.mI0pRB`.
 
 Feature commit `4d7dbc9` passed CI `29343897291` and full matrix
 `29343897349`. All 30 downloaded result artifacts are byte-for-byte identical

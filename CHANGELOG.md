@@ -31,6 +31,18 @@
   Feature commit `4d7dbc9` passed CI `29343897291` and full matrix
   `29343897349`; all 30 result artifacts are byte-for-byte identical to the
   preceding decorator baseline.
+- Public decorated auto-accessors now pass `{ get, set }` to each decorator,
+  validate and compose optional `get`/`set`/`init` replacements, preserve
+  computed Symbol names, and run returned/extra initializers at the specified
+  instance and static boundaries. Auto-accessor decorators apply in the
+  method/accessor phase while their backing storage initializes with fields.
+  Static private methods/accessors are installed before class decorators, so
+  class decorators can observe them through public methods. The expanded
+  public-only boundary in pending Test262 PR #5048 passes **295/295** at
+  `58b825d0`; current-main exact **24/24** and supported coverage
+  **12751/0/7687** remain green. Feature commit `7a7531a` passed CI
+  `29349296562` and full matrix `29349296827`; all 30 artifacts are identical
+  to the preceding baseline.
 - Catch handlers now restore the operand stack depth captured at `try` entry
   before pushing the thrown value. This prevents failed decorator and other
   callback operands from remaining as hidden GC roots after a caught throw;

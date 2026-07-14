@@ -90,11 +90,11 @@ guarantees, run RuJa in a separately killable process as well.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
 - Decorator support is intentionally limited to audited class and public
-  method/getter/setter/field semantics. Private element decorators, decorated
-  auto-accessor replacement objects, and remaining async/generator decorator
-  families are not implemented yet and remain behind the broad Test262
-  `decorators` gate. Unsupported private/decorated-auto forms are rejected
-  instead of silently discarding decorators. The 201 public runtime tests are
+  method/getter/setter/field/auto-accessor semantics. Private element
+  decorators, private decorated auto-accessors, and remaining async/generator
+  decorator families are not implemented yet and remain behind the broad
+  Test262 `decorators` gate. Unsupported private decorator forms are rejected
+  instead of silently discarding decorators. The 295 public runtime tests are
   still pending upstream in Test262 PR #5048, so they are verified against its
   pinned head rather than admitted into the current-main runner early.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
