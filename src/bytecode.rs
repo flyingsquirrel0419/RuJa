@@ -205,7 +205,8 @@ pub enum Op {
     /// Validate and append a decorator extra initializer. Stack:
     /// [active(bool), queue(array), initializer].
     DecoratorAddInitializer,
-    /// Public decorator context access. Kind: 0 has, 1 get, 2 set.
+    /// Decorator context access for public or private keys. Kind: 0 has,
+    /// 1 get, 2 set.
     DecoratorAccess(u8),
     /// Validate an auto-accessor decorator result and extract optional
     /// get/set/init replacements. Stack: [result] -> [get, set, init].

@@ -2390,6 +2390,34 @@ impl Vm {
                             "Decorator access receiver must be an object",
                         ));
                     }
+                    if let Value::PrivateName(private_name) = &key {
+                        match kind {
+                            0 => {
+                                let found = if let Value::Object(idx) = &receiver {
+                                    let slot_key =
+                                        crate::value::PrivateSlotKey::Private(private_name.clone());
+                                    self.heap.get_private_element(idx.0, &slot_key).is_some()
+                                } else {
+                                    false
+                                };
+                                self.stack.push(Value::Bool(found));
+                            }
+                            1 => {
+                                let result = self.get_private_value(&receiver, private_name)?;
+                                self.stack.push(result);
+                            }
+                            2 => {
+                                self.set_private_value(
+                                    &receiver,
+                                    private_name,
+                                    value.unwrap_or(Value::Undefined),
+                                )?;
+                                self.stack.push(Value::Undefined);
+                            }
+                            _ => return Err(Error::internal("invalid decorator access kind")),
+                        }
+                        continue;
+                    }
                     match kind {
                         0 => {
                             let property_key = match &key {

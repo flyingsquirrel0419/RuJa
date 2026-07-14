@@ -118,9 +118,18 @@ enum DecoratorAccess {
 }
 
 #[derive(Clone, Copy)]
+enum DecoratorName<'a> {
+    Public(Option<&'a Arc<str>>, Option<&'a Arc<str>>),
+    Private {
+        description: &'a Arc<str>,
+        binding: &'a Arc<str>,
+    },
+}
+
+#[derive(Clone, Copy)]
 struct DecoratorContextSpec<'a> {
     kind: &'a str,
-    name: (Option<&'a Arc<str>>, Option<&'a Arc<str>>),
+    name: DecoratorName<'a>,
     flags: Option<(bool, bool)>,
     access: DecoratorAccess,
 }
@@ -2727,18 +2736,17 @@ impl Compiler {
         self.pop_scope();
     }
 
-    fn decorator_property_key_expr(name: (Option<&Arc<str>>, Option<&Arc<str>>)) -> Expr {
-        if let Some(binding) = name.1 {
-            Expr::Ident(binding.clone())
-        } else {
-            Expr::String(name.0.cloned().unwrap_or_else(|| Arc::from("")))
+    fn decorator_property_key_expr(name: DecoratorName<'_>) -> Expr {
+        match name {
+            DecoratorName::Public(_, Some(binding)) => Expr::Ident(binding.clone()),
+            DecoratorName::Public(name, None) => {
+                Expr::String(name.cloned().unwrap_or_else(|| Arc::from("")))
+            }
+            DecoratorName::Private { binding, .. } => Expr::Ident(binding.clone()),
         }
     }
 
-    fn decorator_access_function(
-        name: (Option<&Arc<str>>, Option<&Arc<str>>),
-        setter: bool,
-    ) -> Expr {
+    fn decorator_access_function(name: DecoratorName<'_>, setter: bool) -> Expr {
         let receiver_name: Arc<str> = Arc::from("receiver");
         let value_name: Arc<str> = Arc::from("value");
         let access = Expr::DecoratorAccess {
@@ -2778,7 +2786,7 @@ impl Compiler {
         })
     }
 
-    fn decorator_has_function(name: (Option<&Arc<str>>, Option<&Arc<str>>)) -> Expr {
+    fn decorator_has_function(name: DecoratorName<'_>) -> Expr {
         let receiver_name: Arc<str> = Arc::from("receiver");
         Expr::Arrow(FunctionExpr {
             name: Some(Arc::from("")),
@@ -2886,12 +2894,13 @@ impl Compiler {
             self.emit_context_data_property("static", &Expr::Bool(is_static))?;
             self.emit_context_data_property("private", &Expr::Bool(is_private))?;
         }
-        let context_name = if let Some(binding) = spec.name.1 {
-            Expr::Ident(binding.clone())
-        } else if let Some(name) = spec.name.0 {
-            Expr::String(name.clone())
-        } else {
-            Expr::Undefined
+        let context_name = match spec.name {
+            DecoratorName::Public(_, Some(binding)) => Expr::Ident(binding.clone()),
+            DecoratorName::Public(Some(name), None) => Expr::String(name.clone()),
+            DecoratorName::Public(None, None) => Expr::Undefined,
+            DecoratorName::Private { description, .. } => {
+                Expr::String(Arc::from(format!("#{}", description).as_str()))
+            }
         };
         self.emit_context_data_property("name", &context_name)?;
         self.emit_context_data_property(
@@ -3278,7 +3287,7 @@ impl Compiler {
                     1,
                     DecoratorContextSpec {
                         kind: if akind == 0 { "getter" } else { "setter" },
-                        name: (Some(&method.name), context_name_binding),
+                        name: DecoratorName::Public(Some(&method.name), context_name_binding),
                         flags: Some((true, false)),
                         access: if akind == 0 {
                             DecoratorAccess::Get
@@ -3323,7 +3332,7 @@ impl Compiler {
                     1,
                     DecoratorContextSpec {
                         kind: if akind == 0 { "getter" } else { "setter" },
-                        name: (Some(&method.name), context_name_binding),
+                        name: DecoratorName::Public(Some(&method.name), context_name_binding),
                         flags: Some((false, false)),
                         access: if akind == 0 {
                             DecoratorAccess::Get
@@ -3365,7 +3374,7 @@ impl Compiler {
                 1,
                 DecoratorContextSpec {
                     kind: "method",
-                    name: (Some(&method.name), context_name_binding),
+                    name: DecoratorName::Public(Some(&method.name), context_name_binding),
                     flags: Some((true, false)),
                     access: DecoratorAccess::Get,
                 },
@@ -3405,7 +3414,7 @@ impl Compiler {
                 1,
                 DecoratorContextSpec {
                     kind: "method",
-                    name: (Some(&method.name), context_name_binding),
+                    name: DecoratorName::Public(Some(&method.name), context_name_binding),
                     flags: Some((false, false)),
                     access: DecoratorAccess::Get,
                 },
@@ -6369,7 +6378,7 @@ impl Compiler {
                                     &element_extra_initializer_queues[element_index],
                                     DecoratorContextSpec {
                                         kind: "field",
-                                        name: (
+                                        name: DecoratorName::Public(
                                             Some(&field.name),
                                             public_field_computed_key_temps[*index].as_ref(),
                                         ),
@@ -6380,6 +6389,8 @@ impl Compiler {
                             }
                             ClassElement::PrivateField(index) => {
                                 let field = &cls.private_fields[*index];
+                                let private_name_binding =
+                                    Self::private_name_binding_name(&field.name);
                                 self.emit_field_decorators(
                                     &element_decorator_bindings[element_index],
                                     &element_decorator_receiver_bindings[element_index],
@@ -6388,7 +6399,10 @@ impl Compiler {
                                     &element_extra_initializer_queues[element_index],
                                     DecoratorContextSpec {
                                         kind: "field",
-                                        name: (Some(&field.name), None),
+                                        name: DecoratorName::Private {
+                                            description: &field.name,
+                                            binding: &private_name_binding,
+                                        },
                                         flags: Some((field.is_static, true)),
                                         access: DecoratorAccess::GetSet,
                                     },
@@ -6433,7 +6447,7 @@ impl Compiler {
                                             setter_binding: &auto_accessor_setter_bindings[*index],
                                             context: DecoratorContextSpec {
                                                 kind: "accessor",
-                                                name: (
+                                                name: DecoratorName::Public(
                                                     Some(&accessor.name),
                                                     auto_accessor_computed_key_temps[*index]
                                                         .as_ref(),
@@ -6474,7 +6488,7 @@ impl Compiler {
                     0,
                     DecoratorContextSpec {
                         kind: "class",
-                        name: (display_name.as_ref(), None),
+                        name: DecoratorName::Public(display_name.as_ref(), None),
                         flags: None,
                         access: DecoratorAccess::None,
                     },

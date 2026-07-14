@@ -2540,6 +2540,84 @@ fn decorator_context_exposes_public_access_and_exact_shape() {
 }
 
 #[test]
+fn decorator_context_preserves_private_field_identity_and_brand() {
+    assert_eq!(
+        run(r#"
+            let contexts = [];
+            let extras = [];
+            function decorate(value, context) {
+              contexts.push(context);
+              context.addInitializer(function() {
+                extras.push(context.static ? this.readStatic() : this.readInstance());
+              });
+              return function(initial) { return initial + 1; };
+            }
+            class C {
+              @decorate #instanceValue = 1;
+              @decorate static #staticValue = 2;
+              value = 99;
+              static value = 100;
+              readInstance() { return this.#instanceValue; }
+              static readStatic() { return this.#staticValue; }
+            }
+            let instance = new C();
+            let staticContext = contexts[0];
+            let instanceContext = contexts[1];
+            let wrongBrand = {};
+            let primitiveErrors = 0;
+            for (let operation of [
+              () => instanceContext.access.has(1),
+              () => instanceContext.access.get(1),
+              () => instanceContext.access.set(1, 2)
+            ]) {
+              try { operation(); } catch (error) {
+                if (error instanceof TypeError) primitiveErrors++;
+              }
+            }
+            instanceContext.access.set(instance, 7);
+            staticContext.access.set(C, 8);
+            [
+              Object.keys(instanceContext).join(","),
+              Object.keys(instanceContext.access).join(","),
+              instanceContext.kind, instanceContext.name,
+              instanceContext.private, instanceContext.static,
+              staticContext.name, staticContext.private, staticContext.static,
+              instanceContext.access.has(instance),
+              instanceContext.access.has(wrongBrand),
+              staticContext.access.has(C), staticContext.access.has(class D {}),
+              instanceContext.access.get(instance), staticContext.access.get(C),
+              instance.value, C.value, extras.join(","), primitiveErrors
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "kind,access,static,private,name,addInitializer|get,set,has|field|#instanceValue|true|false|#staticValue|true|true|true|false|true|false|7|8|99|100|3,2|3"
+        ))
+    );
+}
+
+#[test]
+fn private_field_decorator_access_rejects_wrong_brands() {
+    assert!(run_err(
+        r#"
+        let access;
+        function capture(value, context) { access = context.access; }
+        class C { @capture #value = 1; }
+        access.get({});
+    "#
+    )
+    .contains("Private field is not present"));
+    assert!(run_err(
+        r#"
+        let access;
+        function capture(value, context) { access = context.access; }
+        class C { @capture #value = 1; }
+        access.set({}, 2);
+    "#
+    )
+    .contains("Private field is not present"));
+}
+
+#[test]
 fn decorator_add_initializer_runs_at_specified_boundaries() {
     assert_eq!(
         run(r#"

@@ -6779,14 +6779,14 @@ impl Parser {
                 continue;
             }
             if let TokenKind::PrivateName(name) = self.peek().clone() {
-                if !element_decorators.is_empty() {
-                    return Err(error::Error::syntax(
-                        "Private element decorators are not implemented".to_string(),
-                    ));
-                }
                 // Peek ahead: if next is `(`, this is a private method.
                 let is_private_method = matches!(self.peek_at_tok(1).kind, TokenKind::LParen);
                 if is_private_method {
+                    if !element_decorators.is_empty() {
+                        return Err(error::Error::syntax(
+                            "Private method decorators are not implemented".to_string(),
+                        ));
+                    }
                     self.advance(); // consume #name
                     Self::record_private_bound_name(
                         &mut private_bound_names,

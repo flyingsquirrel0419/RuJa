@@ -146,8 +146,8 @@ pub enum Expr {
         active_binding: Arc<str>,
         queue_binding: Arc<str>,
     },
-    /// Compiler-generated public decorator access operation. Kind: 0 has,
-    /// 1 get, 2 set.
+    /// Compiler-generated decorator access operation. The key may be a public
+    /// property key or a private-name identity. Kind: 0 has, 1 get, 2 set.
     DecoratorAccess {
         receiver: Box<Expr>,
         key: Box<Expr>,
