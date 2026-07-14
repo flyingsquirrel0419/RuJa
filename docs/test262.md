@@ -803,6 +803,42 @@ result artifacts are byte-for-byte identical to matrix `29293614900`, retaining
 the normalized **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error /
 48317 total / 35156 pass-or-fail executed** aggregate.
 
+## Environment Reference completion
+
+Environment Reference records now remain tied to the exact declarative record
+selected during identifier resolution. `PutValue` no longer repeats name
+resolution through parent environments after RHS evaluation; a deleted sloppy
+binding is recreated on that exact record, while strict, TDZ, const, import,
+and function-name behavior remains distinct. Environment GC tracing also keeps
+an active `with` binding object alive before a Reference is created.
+
+Global `var` bindings route reads and writes through the correct Realm global
+object so accessors, non-writable descriptors, throwing setters, and foreign
+Realms remain observable. Successful data-property writes synchronize the
+declarative mirror only after `[[Set]]`, and deleting a configurable global
+property removes its stale `var` mirror. Compiler-internal `StoreEnvName`
+writes first resolve an identifier Reference instead of treating the current
+frame environment as an already-resolved base.
+
+Regressions cover forced GC in `with`, simple/compound/logical assignment after
+direct-eval binding deletion, foreign global writes and readonly properties,
+throwing and successful global setters, direct and setter-side global property
+deletion, and sloppy block-function updates. A first full matrix exposed four
+Annex B regressions and one offsetting improvement in the internal store path;
+the follow-up resolution fix restores the prior **206 pass / 830 fail / 50
+skip** Annex B result.
+
+At commit `db0e5a9`, Rust all-targets, release build, clippy with denied
+warnings, fmt/diff, and **68/68** tooling tests pass. Focused Reference Test262
+is **1426 pass / 0 fail / 27 skip / 1453 total**; 19 skipped
+`Symbol.iterator`/generator-gated files pass when run directly, leaving eight
+tail-call tests outside the current engine scope. The pinned supported subset
+remains **12238 pass / 0 fail / 8201 skip / 20439 total**. CI `29301189893` and
+full matrix `29301189900` succeeded. All 30 downloaded result artifacts are
+byte-for-byte identical to matrix `29296682790`, retaining the normalized
+**28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317 total /
+35156 pass-or-fail executed** aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- Environment References now preserve the exact declarative record selected by
+  identifier resolution through `PutValue`, including bindings deleted during
+  RHS evaluation. Active `with` objects are traced by GC, and global `var`
+  reads, writes, accessors, descriptor failures, and property deletion use the
+  correct Realm global object without stale binding mirrors. Compiler-internal
+  `StoreEnvName` writes resolve their target before entering this exact-base
+  path. Focused Reference Test262 is **1426 pass / 0 fail / 27 skip**, the
+  pinned supported subset remains **12238 pass / 0 fail / 8201 skip**, and the
+  current Annex B diagnostic is **206 pass / 830 fail / 50 skip**. At follow-up
+  commit `db0e5a9`, CI `29301189893` and full matrix `29301189900` succeeded;
+  all 30 result artifacts exactly match the preceding confirmed matrix.
 - RegExp literals now use a dedicated bytecode operation that constructs from
   the executing Realm's original `%RegExp.prototype%` instead of resolving a
   mutable lexical or global `RegExp` binding. Realm prototypes are retained as
