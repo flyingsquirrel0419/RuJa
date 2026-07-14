@@ -24,6 +24,7 @@ from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
 from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
 from test262_import_meta_admission import IMPORT_META_FILES
+from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
 from test262_json_parse_admission import JSON_PARSE_FILES
 from test262_json_raw_admission import JSON_RAW_FILES
 from test262_json_stringify_admission import JSON_STRINGIFY_FILES
@@ -1687,6 +1688,138 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertEqual(
                         test262_runner.decorator_path(path),
                         test262_analyze.decorator_path(path),
+                    )
+                    self.assertEqual(
+                        test262_runner.should_skip(meta, path),
+                        test262_analyze.should_skip(meta, path),
+                    )
+                    self.assertFalse(test262_runner.should_skip(meta, path))
+            finally:
+                test262_runner.TEST262 = original_runner_root
+                test262_analyze.TEST262 = original_analyze_root
+
+    def test_iterator_core_admission_is_exact(self):
+        self.assertEqual(len(ITERATOR_CORE_FILES), 23)
+        self.assertEqual(
+            sum("/prototype/Symbol.dispose/" in path for path in ITERATOR_CORE_FILES),
+            6,
+        )
+        self.assertEqual(
+            sum("/prototype/Symbol.iterator/" in path for path in ITERATOR_CORE_FILES),
+            5,
+        )
+        self.assertEqual(
+            sum("/prototype/Symbol.toStringTag/" in path for path in ITERATOR_CORE_FILES),
+            2,
+        )
+        self.assertEqual(
+            sum("/prototype/constructor/" in path for path in ITERATOR_CORE_FILES),
+            2,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test/built-ins/Iterator/constructor.js"
+            dispose = root / "test/built-ins/Iterator/prototype/Symbol.dispose/is-function.js"
+            symbol_iterator = root / "test/built-ins/Iterator/prototype/Symbol.iterator/is-function.js"
+            unrelated = root / "test/built-ins/Iterator/from/is-function.js"
+            sequencing = root / "test/built-ins/Iterator/concat/is-function.js"
+            joint = root / "test/built-ins/Iterator/zip/is-function.js"
+            joint_keyed = root / "test/built-ins/Iterator/zipKeyed/is-function.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.iterator_core_path(admitted))
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"flags": [], "features": ["iterator-helpers"]},
+                            admitted,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"flags": [], "features": ["explicit-resource-management"]},
+                            dispose,
+                        )
+                    )
+                    self.assertFalse(
+                        tool.should_skip(
+                            {"flags": [], "features": ["Symbol.iterator"]},
+                            symbol_iterator,
+                        )
+                    )
+                    self.assertFalse(tool.iterator_core_path(unrelated))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["iterator-helpers"]},
+                            unrelated,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["iterator-sequencing"]},
+                            sequencing,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["joint-iteration"]},
+                            joint,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["joint-iteration"]},
+                            joint_keyed,
+                        )
+                    )
+                    self.assertTrue(
+                        tool.should_skip(
+                            {
+                                "flags": [],
+                                "features": ["iterator-helpers", "Intl"],
+                            },
+                            admitted,
+                        )
+                    )
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_iterator_core_admission_requires_live_metadata(self):
+        test_root = Path(test262_runner.TEST262) / "test"
+        if not test_root.is_dir():
+            self.skipTest("live Test262 checkout is unavailable")
+        allowed = set(ITERATOR_CORE_FEATURES) | {"cross-realm", "globalThis"}
+        for relative in ITERATOR_CORE_FILES:
+            path = test_root / relative
+            self.assertTrue(path.is_file(), relative)
+            features = set(test262_runner.parse_meta(path.read_text()).get("features", []))
+            self.assertTrue(features <= allowed, relative)
+            self.assertTrue(features & set(ITERATOR_CORE_FEATURES), relative)
+
+    def test_iterator_core_admission_runner_analyzer_parity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            original_runner_root = test262_runner.TEST262
+            original_analyze_root = test262_analyze.TEST262
+            test262_runner.TEST262 = str(root)
+            test262_analyze.TEST262 = str(root)
+            try:
+                for relative in ITERATOR_CORE_FILES:
+                    if "/Symbol.dispose/" in relative:
+                        features = ["explicit-resource-management"]
+                    elif "/Symbol.iterator/" in relative:
+                        features = ["Symbol.iterator"]
+                    elif relative.endswith("proto-from-ctor-realm.js"):
+                        features = ["Reflect", "Symbol", "iterator-helpers"]
+                    else:
+                        features = ["iterator-helpers"]
+                    path = root / "test" / relative
+                    meta = {"flags": [], "features": features}
+                    self.assertEqual(
+                        test262_runner.iterator_core_path(path),
+                        test262_analyze.iterator_core_path(path),
                     )
                     self.assertEqual(
                         test262_runner.should_skip(meta, path),

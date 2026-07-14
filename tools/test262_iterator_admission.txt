@@ -1,0 +1,26 @@
+# Global Iterator constructor.
+built-ins/Iterator/constructor.js
+built-ins/Iterator/length.js
+built-ins/Iterator/name.js
+built-ins/Iterator/newtarget-or-active-function-object.js
+built-ins/Iterator/prop-desc.js
+built-ins/Iterator/proto-from-ctor-realm.js
+built-ins/Iterator/proto.js
+built-ins/Iterator/subclassable.js
+
+# %Iterator.prototype% accessors and common protocol methods.
+built-ins/Iterator/prototype/Symbol.dispose/invokes-return.js
+built-ins/Iterator/prototype/Symbol.dispose/is-function.js
+built-ins/Iterator/prototype/Symbol.dispose/length.js
+built-ins/Iterator/prototype/Symbol.dispose/name.js
+built-ins/Iterator/prototype/Symbol.dispose/prop-desc.js
+built-ins/Iterator/prototype/Symbol.dispose/return-val.js
+built-ins/Iterator/prototype/Symbol.iterator/is-function.js
+built-ins/Iterator/prototype/Symbol.iterator/length.js
+built-ins/Iterator/prototype/Symbol.iterator/name.js
+built-ins/Iterator/prototype/Symbol.iterator/prop-desc.js
+built-ins/Iterator/prototype/Symbol.iterator/return-val.js
+built-ins/Iterator/prototype/Symbol.toStringTag/prop-desc.js
+built-ins/Iterator/prototype/Symbol.toStringTag/weird-setter.js
+built-ins/Iterator/prototype/constructor/prop-desc.js
+built-ins/Iterator/prototype/constructor/weird-setter.js

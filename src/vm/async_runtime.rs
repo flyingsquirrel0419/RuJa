@@ -1436,7 +1436,8 @@ impl Vm {
             }
             matches!(
                 f.name.as_deref(),
-                Some("ArrayBuffer")
+                Some("Iterator")
+                    | Some("ArrayBuffer")
                     | Some("DataView")
                     | Some("WeakRef")
                     | Some("FinalizationRegistry")

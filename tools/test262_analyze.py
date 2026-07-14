@@ -18,6 +18,7 @@ try:
     from test262_support import append_async_harness, execute_source
     from test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from test262_import_meta_admission import IMPORT_META_FILES
+    from test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from test262_json_parse_admission import JSON_PARSE_FILES
     from test262_json_raw_admission import JSON_RAW_FILES
     from test262_json_stringify_admission import JSON_STRINGIFY_FILES
@@ -37,6 +38,7 @@ except ModuleNotFoundError:
     from tools.test262_support import append_async_harness, execute_source
     from tools.test262_dynamic_import_admission import DYNAMIC_IMPORT_FILES
     from tools.test262_import_meta_admission import IMPORT_META_FILES
+    from tools.test262_iterator_admission import ITERATOR_CORE_FEATURES, ITERATOR_CORE_FILES
     from tools.test262_json_parse_admission import JSON_PARSE_FILES
     from tools.test262_json_raw_admission import JSON_RAW_FILES
     from tools.test262_json_stringify_admission import JSON_STRINGIFY_FILES
@@ -187,6 +189,7 @@ SKIP_FEATURES = {
     "export-star-as-namespace-from-module",
     "generators", "hashbang", "import-assertions",
     "import-attributes", "import-defer", "import.meta", "iterator-helpers",
+    "iterator-sequencing", "joint-iteration",
     "json-modules", "module",
     "object-rest", "optional-chaining",
     "proxy-missing-checks", "Proxy", "Reflect",
@@ -1794,6 +1797,13 @@ def decorator_path(path):
         return False
     return rel.as_posix() in DECORATOR_FILES
 
+def iterator_core_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in ITERATOR_CORE_FILES
+
 def class_private_path_features(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2192,6 +2202,8 @@ def should_skip(meta, path=None):
         feats.discard("destructuring-binding")
     if path is not None and decorator_path(path):
         feats.discard("decorators")
+    if path is not None and iterator_core_path(path):
+        feats.difference_update(ITERATOR_CORE_FEATURES)
     if path is not None:
         feats.difference_update(class_private_path_features(path))
     if path is not None and class_public_field_path(path):

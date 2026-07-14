@@ -322,8 +322,6 @@ fn new_regexp_string_iterator(
     global: bool,
     full_unicode: bool,
 ) -> error::Result<Value> {
-    let next_fn = vm.new_native_function("next", regexp_string_iterator_next, 0)?;
-    let iter_fn = vm.new_native_function("[Symbol.iterator]", regexp_string_iterator_this, 0)?;
     let obj_idx = vm
         .heap
         .allocate(HeapObj::RegExpStringIterator(RegExpStringIteratorData {
@@ -333,26 +331,39 @@ fn new_regexp_string_iterator(
             full_unicode,
             done: AtomicBool::new(false),
             props: Mutex::new(IndexMap::new()),
-            proto: Mutex::new(Some(vm.object_proto.clone())),
+            proto: Mutex::new(Some(vm.regexp_string_iterator_proto.clone())),
         }))?;
-    vm.heap.with_obj(obj_idx, |obj| {
-        obj.props()
-            .lock()
-            .insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
-        obj.props().lock().insert(
-            PropertyKey::Symbol(vm.well_known_symbols.iterator),
-            data_prop(Value::Object(iter_fn)),
-        );
-    });
     Ok(Value::Object(GcIdx(obj_idx)))
 }
 
-fn regexp_string_iterator_this(
-    _vm: &mut Vm,
-    _args: &[Value],
-    this: Option<Value>,
-) -> error::Result<Value> {
-    this.ok_or_else(|| Error::type_err("Iterator method called on non-iterator"))
+pub(crate) fn setup_regexp_string_iterator_proto(vm: &mut Vm) -> error::Result<()> {
+    let next_fn = vm.new_native_function("next", regexp_string_iterator_next, 0)?;
+    let proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(vm.iterator_base_proto.clone())),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("RegExp String Iterator")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?;
+    vm.heap.with_obj(proto_idx, |obj| {
+        let mut props = obj.props().lock();
+        props.insert(PropertyKey::from("next"), data_prop(Value::Object(next_fn)));
+        props.insert(
+            PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+            PropertyDescriptor {
+                value: Value::String(Arc::from("RegExp String Iterator")),
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                get: None,
+                set: None,
+                is_accessor: false,
+            },
+        );
+    });
+    vm.regexp_string_iterator_proto = Value::Object(GcIdx(proto_idx));
+    Ok(())
 }
 
 fn regexp_string_iterator_next(
@@ -363,20 +374,25 @@ fn regexp_string_iterator_next(
     let Some(Value::Object(iter_idx)) = this else {
         return Err(Error::type_err("Iterator next called on non-iterator"));
     };
-    let (matcher, string, global, full_unicode, already_done) =
+    let Some((matcher, string, global, full_unicode, already_done)) =
         vm.heap.with_obj(iter_idx.0, |obj| {
             if let HeapObj::RegExpStringIterator(iter) = obj {
-                (
+                Some((
                     iter.matcher.clone(),
                     iter.string.clone(),
                     iter.global,
                     iter.full_unicode,
                     iter.done.load(Ordering::Relaxed),
-                )
+                ))
             } else {
-                (Value::Undefined, Arc::from(""), false, false, true)
+                None
             }
-        });
+        })
+    else {
+        return Err(Error::type_err(
+            "RegExp String Iterator next called on incompatible receiver",
+        ));
+    };
     if already_done {
         return gen_result(vm, Value::Undefined, true, false);
     }

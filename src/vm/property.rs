@@ -2751,9 +2751,11 @@ impl Vm {
             &self.array_buffer_proto,
             &self.promise_ctor,
             &self.promise_proto,
+            &self.iterator_base_proto,
             &self.iterator_proto,
             &self.map_iterator_proto,
             &self.set_iterator_proto,
+            &self.regexp_string_iterator_proto,
             &self.map_proto,
             &self.set_proto,
             &self.generator_proto,
@@ -2874,6 +2876,12 @@ impl Vm {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_async_function_prototypes.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_iterator_constructors.values() {
+            Self::push_value_roots(&mut roots, v);
+        }
+        for v in self.realm_iterator_prototypes.values() {
             Self::push_value_roots(&mut roots, v);
         }
         for v in self.realm_regexp_prototypes.values() {

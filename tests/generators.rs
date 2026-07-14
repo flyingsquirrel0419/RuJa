@@ -8,6 +8,27 @@ use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
+fn generators_inherit_the_iterator_intrinsic() {
+    assert_eq!(
+        run(r#"
+            function* values() { yield 1; }
+            let iterator = values();
+            let GeneratorPrototype = Object.getPrototypeOf(values.prototype);
+            let IteratorPrototype = Object.getPrototypeOf(GeneratorPrototype);
+            [
+              typeof Iterator,
+              iterator instanceof Iterator,
+              IteratorPrototype === Iterator.prototype,
+              iterator[Symbol.iterator]() === iterator,
+              Object.getPrototypeOf(IteratorPrototype) === Object.prototype,
+              Object.prototype.toString.call(IteratorPrototype)
+            ].join("|");
+        "#),
+        Value::String(Arc::from("function|true|true|true|true|[object Iterator]"))
+    );
+}
+
+#[test]
 fn generator_function_constructor_is_distinct_and_subclassable() {
     assert_eq!(
         run(r#"

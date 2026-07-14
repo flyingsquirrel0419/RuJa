@@ -2810,6 +2810,8 @@ fn make_test262_realm(vm: &mut Vm) -> error::Result<Value> {
         );
     }
     install_async_function_intrinsic(vm, realm_env, &realm_function_proto, function_ctor_idx)?;
+    let object_proto = vm.object_proto.clone();
+    install_iterator_intrinsic_in_env(vm, realm_env, Some(&global), object_proto)?;
     let (str_ctor, str_proto) = make_builtin_constructor_with_in_env(
         vm,
         "String",
@@ -6250,6 +6252,227 @@ fn install_async_function_intrinsic(
     Ok(())
 }
 
+fn active_iterator_realm(vm: &Vm) -> GcIdx {
+    vm.native_callee_closure()
+        .map(|closure| env::global_env_root(&vm.heap, closure))
+        .unwrap_or(vm.global)
+}
+
+fn iterator_constructor(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let Some(new_target) = vm.current_native_new_target.clone() else {
+        return Err(Error::type_err("Iterator must be subclassed"));
+    };
+    if vm
+        .current_native_callee
+        .as_ref()
+        .is_some_and(|callee| *callee == new_target)
+    {
+        return Err(Error::type_err("Iterator must be subclassed"));
+    }
+    let realm = active_iterator_realm(vm);
+    let fallback = vm
+        .realm_iterator_prototypes
+        .get(&realm.0)
+        .cloned()
+        .unwrap_or_else(|| vm.iterator_base_proto.clone());
+    let proto = native_constructor_prototype_with_default(vm, "Iterator", fallback)?;
+    let pin_count = vm.pin(&proto);
+    let object = HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(proto)),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Iterator")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    });
+    let result = vm.alloc(object).map(Value::Object);
+    vm.unpin_many(pin_count);
+    result
+}
+
+fn iterator_identity(_vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    Ok(this.unwrap_or(Value::Undefined))
+}
+
+fn iterator_dispose(vm: &mut Vm, _args: &[Value], this: Option<Value>) -> error::Result<Value> {
+    let receiver = this.unwrap_or(Value::Undefined);
+    let return_method = vm.get_property(&receiver, "return")?;
+    if !return_method.is_nullish() {
+        vm.call_function(&return_method, &[], Some(receiver))?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn iterator_constructor_get(
+    vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    let realm = active_iterator_realm(vm);
+    vm.realm_iterator_constructors
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Iterator intrinsic"))
+}
+
+fn iterator_to_string_tag_get(
+    _vm: &mut Vm,
+    _args: &[Value],
+    _this: Option<Value>,
+) -> error::Result<Value> {
+    Ok(Value::String(Arc::from("Iterator")))
+}
+
+fn iterator_proto_set_property(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+    key: PropertyKey,
+) -> error::Result<Value> {
+    let Some(receiver @ Value::Object(_)) = this else {
+        return Err(Error::type_err(
+            "Iterator prototype setter requires an object",
+        ));
+    };
+    let realm = active_iterator_realm(vm);
+    let home = vm
+        .realm_iterator_prototypes
+        .get(&realm.0)
+        .cloned()
+        .ok_or_else(|| Error::internal("missing Iterator prototype intrinsic"))?;
+    if receiver == home {
+        return Err(Error::type_err(
+            "Cannot assign to Iterator prototype intrinsic",
+        ));
+    }
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    if own_property_descriptor_for_key_or_throw(vm, &receiver, &key)?.is_none() {
+        vm.define_own_property_or_throw(&receiver, key, PropertyDescriptor::data(value))?;
+    } else if !vm.try_set_property_key_with_receiver(&receiver, &key, value, &receiver)? {
+        return Err(Error::type_err("Cannot assign Iterator prototype property"));
+    }
+    Ok(Value::Undefined)
+}
+
+fn iterator_constructor_set(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    iterator_proto_set_property(vm, args, this, PropertyKey::from("constructor"))
+}
+
+fn iterator_to_string_tag_set(
+    vm: &mut Vm,
+    args: &[Value],
+    this: Option<Value>,
+) -> error::Result<Value> {
+    iterator_proto_set_property(
+        vm,
+        args,
+        this,
+        PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+    )
+}
+
+fn install_iterator_intrinsic_in_env(
+    vm: &mut Vm,
+    realm: GcIdx,
+    realm_global: Option<&Value>,
+    object_proto: Value,
+) -> error::Result<Value> {
+    let prototype = Value::Object(vm.alloc(HeapObj::Object(ObjectData {
+        props: Mutex::new(IndexMap::new()),
+        proto: Mutex::new(Some(object_proto)),
+        extensible: AtomicBool::new(true),
+        class_name: Some(Arc::from("Iterator")),
+        private_fields: Mutex::new(std::collections::HashMap::new()),
+        primitive: Mutex::new(None),
+    }))?);
+    let mut pin_count = vm.pin(&prototype);
+
+    let iterator_fn =
+        vm.new_native_function_in_env("[Symbol.iterator]", iterator_identity, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(iterator_fn));
+    let dispose_fn =
+        vm.new_native_function_in_env("[Symbol.dispose]", iterator_dispose, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(dispose_fn));
+    let constructor_get =
+        vm.new_native_function_in_env("get constructor", iterator_constructor_get, 0, realm)?;
+    pin_count += vm.pin(&Value::Object(constructor_get));
+    let constructor_set =
+        vm.new_native_function_in_env("set constructor", iterator_constructor_set, 1, realm)?;
+    pin_count += vm.pin(&Value::Object(constructor_set));
+    let tag_get = vm.new_native_function_in_env(
+        "get [Symbol.toStringTag]",
+        iterator_to_string_tag_get,
+        0,
+        realm,
+    )?;
+    pin_count += vm.pin(&Value::Object(tag_get));
+    let tag_set = vm.new_native_function_in_env(
+        "set [Symbol.toStringTag]",
+        iterator_to_string_tag_set,
+        1,
+        realm,
+    )?;
+    pin_count += vm.pin(&Value::Object(tag_set));
+    let constructor = vm.new_native_function_in_env("Iterator", iterator_constructor, 0, realm)?;
+    let constructor_value = Value::Object(constructor);
+    pin_count += vm.pin(&constructor_value);
+
+    vm.heap.with_obj(constructor.0, |obj| {
+        if let HeapObj::Function(function) = obj {
+            *function.prototype.lock() = Some(prototype.clone());
+        }
+        obj.props().lock().insert(
+            PropertyKey::from("prototype"),
+            const_prop(prototype.clone()),
+        );
+    });
+    if let Value::Object(prototype_idx) = &prototype {
+        vm.heap.with_obj(prototype_idx.0, |obj| {
+            let mut props = obj.props().lock();
+            props.insert(
+                PropertyKey::from("constructor"),
+                accessor_prop(
+                    Value::Object(constructor_get),
+                    Value::Object(constructor_set),
+                ),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.to_string_tag),
+                accessor_prop(Value::Object(tag_get), Value::Object(tag_set)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.iterator),
+                data_prop(Value::Object(iterator_fn)),
+            );
+            props.insert(
+                PropertyKey::Symbol(vm.well_known_symbols.dispose),
+                data_prop(Value::Object(dispose_fn)),
+            );
+        });
+    }
+
+    vm.realm_iterator_constructors
+        .insert(realm.0, constructor_value.clone());
+    vm.realm_iterator_prototypes
+        .insert(realm.0, prototype.clone());
+    if realm == vm.global {
+        vm.iterator_base_proto = prototype.clone();
+        define_global(vm, "Iterator", constructor_value);
+    } else if let Some(global) = realm_global {
+        define_realm_global(vm, realm, global, "Iterator", constructor_value);
+    }
+    vm.unpin_many(pin_count);
+    Ok(prototype)
+}
+
 pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // Allocate Function.prototype first so that every function created during
     // the rest of bootstrap inherits call/apply/bind via its [[Prototype]].
@@ -6399,7 +6622,10 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
                 .insert(PropertyKey::from("UTC"), data_prop(Value::Object(utc_fn)));
         });
     }
+    let object_proto = vm.object_proto.clone();
+    install_iterator_intrinsic_in_env(vm, vm.global, None, object_proto)?;
     setup_array_iterator_proto(vm)?;
+    setup_regexp_string_iterator_proto(vm)?;
     // Array
     let (array_ctor, array_proto) = make_builtin_constructor_with(
         vm,
@@ -6822,7 +7048,7 @@ pub fn setup_full(vm: &mut Vm) -> error::Result<()> {
     // Generator prototype with next(). Generator instances inherit this proto.
     let generator_proto_idx = vm.heap.allocate(HeapObj::Object(ObjectData {
         props: Mutex::new(IndexMap::new()),
-        proto: Mutex::new(Some(vm.object_proto.clone())),
+        proto: Mutex::new(Some(vm.iterator_base_proto.clone())),
         extensible: AtomicBool::new(true),
         class_name: Some(Arc::from("Generator")),
         private_fields: Mutex::new(std::collections::HashMap::new()),

@@ -6,6 +6,132 @@ use ruja::{Value, Vm};
 use std::sync::Arc;
 
 #[test]
+fn iterator_constructor_and_prototype_have_spec_shape() {
+    assert_eq!(
+        run(r#"
+            let directCall = false;
+            let directConstruct = false;
+            try { Iterator(); } catch (error) { directCall = error instanceof TypeError; }
+            try { new Iterator(); } catch (error) { directConstruct = error instanceof TypeError; }
+            class Derived extends Iterator {}
+            let derived = new Derived();
+            let globalDesc = Object.getOwnPropertyDescriptor(globalThis, "Iterator");
+            let prototypeDesc = Object.getOwnPropertyDescriptor(Iterator, "prototype");
+            let iteratorDesc = Object.getOwnPropertyDescriptor(
+              Iterator.prototype,
+              Symbol.iterator
+            );
+            [
+              directCall, directConstruct,
+              derived instanceof Derived, derived instanceof Iterator,
+              Iterator.length, Iterator.name,
+              Object.getPrototypeOf(Iterator) === Function.prototype,
+              globalDesc.writable, globalDesc.enumerable, globalDesc.configurable,
+              prototypeDesc.writable, prototypeDesc.enumerable, prototypeDesc.configurable,
+              iteratorDesc.writable, iteratorDesc.enumerable, iteratorDesc.configurable,
+              Iterator.prototype[Symbol.iterator].length,
+              Iterator.prototype[Symbol.iterator].name
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|0|Iterator|true|true|false|true|false|false|false|true|false|true|0|[Symbol.iterator]"
+        ))
+    );
+}
+
+#[test]
+fn iterator_prototype_accessors_ignore_prototype_properties() {
+    assert_eq!(
+        run(r#"
+            let base = Iterator.prototype;
+            let constructorDesc = Object.getOwnPropertyDescriptor(base, "constructor");
+            let tagDesc = Object.getOwnPropertyDescriptor(base, Symbol.toStringTag);
+            let errors = 0;
+            for (let receiver of [undefined, null, true, base]) {
+              try { constructorDesc.set.call(receiver, 1); }
+              catch (error) { if (error instanceof TypeError) errors++; }
+              try { tagDesc.set.call(receiver, 1); }
+              catch (error) { if (error instanceof TypeError) errors++; }
+            }
+            let child = Object.create(base);
+            Object.freeze(base);
+            child.constructor = 1;
+            child[Symbol.toStringTag] = "Child Iterator";
+            let existing = { constructor: 2, [Symbol.toStringTag]: "old" };
+            constructorDesc.set.call(existing, 3);
+            tagDesc.set.call(existing, "new");
+            [
+              typeof constructorDesc.get, typeof constructorDesc.set,
+              constructorDesc.enumerable, constructorDesc.configurable,
+              constructorDesc.get.call() === Iterator,
+              tagDesc.get.call(), errors,
+              child.constructor, child[Symbol.toStringTag],
+              existing.constructor, existing[Symbol.toStringTag]
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "function|function|false|true|true|Iterator|8|1|Child Iterator|3|new"
+        ))
+    );
+}
+
+#[test]
+fn synchronous_iterators_share_iterator_prototype_and_dispose() {
+    assert_eq!(
+        run(r#"
+            let arrayIterator = [1].values();
+            let mapIterator = new Map([[1, 2]]).entries();
+            let setIterator = new Set([1]).values();
+            let regexpIterator = /a/g[Symbol.matchAll]("a");
+            let wrongRegExpReceiver = false;
+            try { Object.create(regexpIterator).next(); }
+            catch (error) { wrongRegExpReceiver = error instanceof TypeError; }
+            let returnCalls = 0;
+            let disposable = Object.create(Iterator.prototype);
+            disposable.return = function() { returnCalls++; return {}; };
+            let disposeResult = disposable[Symbol.dispose]();
+            [
+              arrayIterator instanceof Iterator,
+              mapIterator instanceof Iterator,
+              setIterator instanceof Iterator,
+              regexpIterator instanceof Iterator,
+              Object.getPrototypeOf(Object.getPrototypeOf(arrayIterator)) === Iterator.prototype,
+              Object.getPrototypeOf(Object.getPrototypeOf(mapIterator)) === Iterator.prototype,
+              Object.getPrototypeOf(Object.getPrototypeOf(setIterator)) === Iterator.prototype,
+              Object.getPrototypeOf(regexpIterator) !== Iterator.prototype,
+              Object.getPrototypeOf(Object.getPrototypeOf(regexpIterator)) === Iterator.prototype,
+              Object.prototype.toString.call(arrayIterator),
+              Object.prototype.toString.call(mapIterator),
+              Object.prototype.toString.call(setIterator),
+              Object.prototype.toString.call(regexpIterator),
+              wrongRegExpReceiver, returnCalls, disposeResult === undefined
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "true|true|true|true|true|true|true|true|true|[object Array Iterator]|[object Map Iterator]|[object Set Iterator]|[object RegExp String Iterator]|true|1|true"
+        ))
+    );
+}
+
+#[test]
+fn iterator_constructor_uses_new_target_realm_default_prototype() {
+    assert_eq!(
+        run(r#"
+            let other = $262.createRealm().global;
+            let newTarget = new other.Function();
+            newTarget.prototype = undefined;
+            let result = Reflect.construct(Iterator, [], newTarget);
+            [
+              typeof other.Iterator,
+              Object.getPrototypeOf(other.Iterator) === other.Function.prototype,
+              Object.getPrototypeOf(result) === other.Iterator.prototype
+            ].join("|");
+        "#),
+        Value::String(Arc::from("function|true|true"))
+    );
+}
+
+#[test]
 fn array_map_reduce() {
     assert_eq!(
         run("[1,2,3].map(x => x*2).join(',');"),

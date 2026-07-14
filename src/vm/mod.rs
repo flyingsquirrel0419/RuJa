@@ -96,9 +96,13 @@ pub struct Vm {
     pub(crate) array_buffer_proto: Value,
     pub(crate) promise_ctor: Value,
     pub(crate) promise_proto: Value,
+    /// `%Iterator.prototype%`, shared by synchronous iterator prototypes.
+    pub(crate) iterator_base_proto: Value,
+    /// `%ArrayIteratorPrototype%`.
     pub(crate) iterator_proto: Value,
     pub(crate) map_iterator_proto: Value,
     pub(crate) set_iterator_proto: Value,
+    pub(crate) regexp_string_iterator_proto: Value,
     pub(crate) generator_proto: Value,
     pub(crate) generator_function_proto: Value,
     pub(crate) async_iterator_proto: Value,
@@ -146,6 +150,9 @@ pub struct Vm {
     /// Realm global environment index -> that Realm's intrinsic
     /// `%AsyncFunction.prototype%` object.
     pub(crate) realm_async_function_prototypes: HashMap<usize, Value>,
+    /// Realm global environment -> `%Iterator%` and `%Iterator.prototype%`.
+    pub(crate) realm_iterator_constructors: HashMap<usize, Value>,
+    pub(crate) realm_iterator_prototypes: HashMap<usize, Value>,
     /// Realm global environment index + native error constructor name -> that
     /// Realm's original intrinsic Error prototype. Native errors must not
     /// consult mutable global bindings such as `TypeError`.
@@ -519,9 +526,11 @@ impl Vm {
             array_buffer_proto: Value::Undefined,
             promise_ctor: Value::Undefined,
             promise_proto: Value::Undefined,
+            iterator_base_proto: Value::Undefined,
             iterator_proto: Value::Undefined,
             map_iterator_proto: Value::Undefined,
             set_iterator_proto: Value::Undefined,
+            regexp_string_iterator_proto: Value::Undefined,
             generator_proto: Value::Undefined,
             generator_function_proto: Value::Undefined,
             async_iterator_proto: Value::Undefined,
@@ -564,6 +573,8 @@ impl Vm {
             realm_throw_type_errors: HashMap::new(),
             realm_function_prototypes: HashMap::new(),
             realm_async_function_prototypes: HashMap::new(),
+            realm_iterator_constructors: HashMap::new(),
+            realm_iterator_prototypes: HashMap::new(),
             realm_error_prototypes: HashMap::new(),
             realm_regexp_prototypes: HashMap::new(),
             realm_array_buffer_prototypes: HashMap::new(),
