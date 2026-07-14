@@ -76,6 +76,12 @@
 - `async function*`: `next()` returns a Promise; `await` works in the body
 - Per-frame generator isolation: a generator body may call `next()` on another
   generator without corrupting either's run-state
+- Realm-specific global `Iterator`: direct construction is rejected while
+  subclass construction is supported. `%Iterator.prototype%` supplies
+  `Symbol.iterator`, `Symbol.dispose`, `constructor`, and
+  `Symbol.toStringTag`; generator, Array, Map, Set, and RegExp String iterator
+  prototypes inherit from it while retaining their concrete tags, including
+  the Generator prototype's own `"Generator"` tag.
 
 ## Property model
 

@@ -68,6 +68,21 @@
   supported coverage **12751/0/7687** remain green. Feature commit `72fe364`
   passed CI `29359759264` and full matrix `29359759319`; all 30 result
   artifacts are identical to the preceding baseline.
+- The realm-specific global `Iterator` is now subclassable but rejects direct
+  construction, and `%Iterator.prototype%` provides the specified
+  `Symbol.iterator`, `Symbol.dispose`, `constructor`, and
+  `Symbol.toStringTag` surface. Generator, Array, Map, Set, and RegExp String
+  iterator prototypes inherit through this common base while retaining their
+  concrete tags. RegExp String Iterator `next` now also rejects incompatible
+  receivers. An exact 24-file Iterator/prototype manifest passes **24/24**;
+  all of `built-ins/Iterator` is **23 pass / 0 fail / 491 skip**, and the five
+  related concrete-prototype directories are **31 pass / 0 fail / 96 skip**.
+  The pending decorator PR boundary now passes **509/509**. Unsupported
+  Iterator helper, sequencing, and joint-iteration proposals remain gated
+  explicitly instead of running as accidental failures. Feature commits
+  `3b6da8a` and `5a9ff6f` passed CI `29364732026` and full matrix
+  `29364732182`; only the built-ins result changed, producing **29085 pass /
+  6495 fail / 12725 skip / 12 timeout / 0 error / 48317 total**.
 - Catch handlers now restore the operand stack depth captured at `try` entry
   before pushing the thrown value. This prevents failed decorator and other
   callback operands from remaining as hidden GC roots after a caught throw;

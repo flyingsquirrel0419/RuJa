@@ -85,7 +85,7 @@ guarantees, run RuJa in a separately killable process as well.
   scoped subset of ES5.1 + selected ES2015+ features (see
   [test262.md](test262.md#supported-subset) for the exact list). The full
   suite is run in CI (excluding `intl402`/`staging`) with a baseline pass
-  rate of 59.0% of all matrix files and 81.1% of executed files; within the
+  rate of 60.2% of all matrix files and 81.7% of executed files; within the
   supported subset, tests currently run at 100%.
   Full ES conformance is not claimed. See
   [test262.md](test262.md) for current numbers and the failure breakdown.
@@ -94,12 +94,18 @@ guarantees, run RuJa in a separately killable process as well.
   field/method/getter/setter decorators, including private async, generator,
   and async-generator methods. Private auto-accessor decorators remain
   unimplemented, and the broader gate stays closed until every pending family
-  is audited. The current pending-PR diagnostic passes 501 of 509 files; the
-  other eight are private generator behavior assertions whose decorator
-  semantics execute but whose `instanceof Iterator` check is blocked by the
-  missing global `Iterator` constructor. These files are still pending
-  upstream in Test262 PR #5048, so they are verified against its pinned head
-  rather than admitted into the current-main runner early.
+  is audited. The current pending-PR public-plus-private-callable diagnostic
+  passes all **509/509** files after adding the global `Iterator` intrinsic.
+  These files are still pending upstream in Test262 PR #5048, so they are
+  verified against its pinned head rather than admitted into the current-main
+  runner early. The remaining direct decorator family is the 88-file private
+  auto-accessor corpus, plus two computed-member early-error cases.
+- The global `Iterator` and common synchronous iterator prototype hierarchy
+  are implemented, but Iterator helpers (`map`, `filter`, `take`, `drop`, and
+  related methods), `Iterator.from`, `Iterator.concat`, `Iterator.zip`, and
+  `Iterator.zipKeyed` are not. Primitive strings still use an internal
+  snapshot iterator rather than a JavaScript-visible String Iterator
+  prototype. Async iterator helpers are a separate unsupported surface.
 - `Vm` is `Send` (but not `Sync`): the engine uses `Arc`/`Mutex`/atomics
   for shared ownership and interior mutability, so a `Vm` can be moved
   between threads. Concurrent *shared* access still requires external

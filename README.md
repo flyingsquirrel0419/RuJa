@@ -45,6 +45,8 @@ WeakRef/FinalizationRegistry, Reflect, Proxy, resizable ArrayBuffer and growable
 SharedArrayBuffer cores, Atomics including worker `wait`/`notify`, `waitAsync`,
 and `pause`, file-backed ES Module graphs with named imports/exports and live
 bindings, relative dynamic imports, and JSON/text import attributes,
+the realm-specific global `Iterator` and the common synchronous iterator
+prototype hierarchy,
 length-tracking TypedArray/DataView views, TypedArray constructors,
 indexing, `at`/`copyWithin`/`entries`/`fill`/`filter`/`find`/`findIndex`/
 `findLast`/`findLastIndex`/`forEach`/`includes`/`indexOf`/`join`/`keys`/
@@ -58,9 +60,10 @@ full ES conformance — conformance is scoped to this subset. See
 feature list and current pass rates, and [limitations](docs/limitations.md)
 for intentionally-unsupported features.
 
-**Supported-subset pass rate: 100.0%** (12,752 tests in `language/statements`
-+ `language/expressions`, unsupported-feature tests skipped). The latest full
-matrix is 60.1% of all files and 81.5% of executed files — see
+**Supported-subset pass rate: 100.0%** (12,751 tests in `language/statements`
++ `language/expressions` on current Test262, unsupported-feature tests
+skipped). The latest full matrix is 60.2% of all files and 81.7% of executed
+files — see
 [test262 conformance](docs/test262.md)
 for why these numbers differ.
 
