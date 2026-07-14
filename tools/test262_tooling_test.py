@@ -10,6 +10,7 @@ from unittest.mock import patch
 import test262_analyze
 import test262_runner
 from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
@@ -1496,6 +1497,51 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertTrue(tool.should_skip(meta, await_case))
                     self.assertFalse(tool.class_computed_field_path(unrelated))
                     self.assertTrue(tool.should_skip(meta, unrelated))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_residual_public_field_admission_is_exact(self):
+        expected = {
+            "language/expressions/class/constructor-this-tdz-during-initializers.js": [
+                "class-fields-public"
+            ],
+            "language/statements/class/classelementname-abrupt-completion.js": [
+                "class",
+                "class-fields-public",
+            ],
+            "language/statements/class/static-classelementname-abrupt-completion.js": [
+                "class-static-fields-public"
+            ],
+            "language/statements/class/static-init-abrupt.js": [
+                "class-static-fields-public",
+                "class-static-block",
+            ],
+            "language/statements/class/static-init-sequence.js": [
+                "class-static-fields-public",
+                "class-static-block",
+            ],
+        }
+        self.assertEqual(CLASS_PUBLIC_FIELD_FILES, frozenset(expected))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            unrelated = root / "test/language/statements/class/unsupported-field.js"
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    for relative, features in expected.items():
+                        admitted = root / "test" / relative
+                        meta = {"flags": [], "features": features}
+                        self.assertTrue(tool.class_public_field_path(admitted))
+                        self.assertFalse(tool.should_skip(meta, admitted))
+                    self.assertFalse(tool.class_public_field_path(unrelated))
+                    self.assertTrue(
+                        tool.should_skip(
+                            {"flags": [], "features": ["class-fields-public"]},
+                            unrelated,
+                        )
+                    )
                 finally:
                     tool.TEST262 = original_root
 

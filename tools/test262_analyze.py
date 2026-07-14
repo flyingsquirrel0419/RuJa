@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 
 try:
     from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+    from test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
     from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
@@ -21,6 +22,7 @@ try:
     )
 except ModuleNotFoundError:
     from tools.test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
+    from tools.test262_class_public_field_admission import CLASS_PUBLIC_FIELD_FILES
     from tools.test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
     from tools.test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
     from tools.test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
@@ -1092,7 +1094,7 @@ CLASS_PRIVATE_BRAND_REALM_FEATURES = {
     "class-methods-private",
 }
 
-CLASS_COMPUTED_FIELD_FEATURES = {
+CLASS_PUBLIC_FIELD_FEATURES = {
     "class-fields-public",
     "class-static-fields-public",
 }
@@ -1763,6 +1765,13 @@ def class_computed_field_path(path):
         return False
     return rel.as_posix() in CLASS_COMPUTED_FIELD_FILES
 
+def class_public_field_path(path):
+    try:
+        rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
+    except ValueError:
+        return False
+    return rel.as_posix() in CLASS_PUBLIC_FIELD_FILES
+
 def class_elements_path(path):
     try:
         rel = Path(path).resolve().relative_to((Path(TEST262) / "test").resolve())
@@ -2140,7 +2149,9 @@ def should_skip(meta, path=None):
     if path is not None and class_private_brand_realm_path(path):
         feats.difference_update(CLASS_PRIVATE_BRAND_REALM_FEATURES)
     if path is not None and class_computed_field_path(path):
-        feats.difference_update(CLASS_COMPUTED_FIELD_FEATURES)
+        feats.difference_update(CLASS_PUBLIC_FIELD_FEATURES)
+    if path is not None and class_public_field_path(path):
+        feats.difference_update(CLASS_PUBLIC_FIELD_FEATURES)
     if path is not None and class_elements_path(path):
         feats.difference_update(CLASS_ELEMENTS_FEATURES)
     if path is not None and optional_chaining_path(path):

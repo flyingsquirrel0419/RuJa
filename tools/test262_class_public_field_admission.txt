@@ -1,0 +1,6 @@
+# Frozen residual public/static class-field evaluation files.
+language/expressions/class/constructor-this-tdz-during-initializers.js
+language/statements/class/classelementname-abrupt-completion.js
+language/statements/class/static-classelementname-abrupt-completion.js
+language/statements/class/static-init-abrupt.js
+language/statements/class/static-init-sequence.js
