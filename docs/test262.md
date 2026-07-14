@@ -771,6 +771,38 @@ byte-for-byte identical to matrix `29290696382`, retaining the normalized
 **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error / 48317 total /
 35156 pass-or-fail executed** aggregate.
 
+## RegExp literal Realm intrinsics
+
+A RegExp literal is not equivalent to evaluating `new RegExp(pattern, flags)`:
+it must construct through the current Realm's intrinsic while ignoring mutable
+lexical and global `RegExp` bindings. The compiler now emits a dedicated
+`NewRegExpLiteral` operation with pattern and flags constants. Each initialized
+Realm retains its original `%RegExp.prototype%` in a traced VM table, and the
+operation selects the executing interpreted frame's Realm. This distinction is
+required when a main-Realm native builtin re-enters a foreign callback,
+generator, async function, or async generator before the native call returns.
+The obsolete, otherwise-unreferenced `LoadGlobal` operation is removed.
+
+Regressions cover lexical, parameter, and global shadowing; fresh literal
+identity; main and foreign prototype selection; foreign eval; GC retention;
+and native re-entry through `Array.prototype.map`, generator `next`, async
+callbacks, and async-generator `next`. Malformed bytecode constant indices or
+types now produce an internal error instead of silently creating an empty
+RegExp. Independent review reproduced the native re-entry defect, verified the
+fix, and found no remaining literal-path defect. Existing `RegExp()` call
+semantics and backend support for valid lookaround patterns remain separate
+follow-up units rather than being hidden inside this literal change.
+
+At commit `953a821`, Rust all-targets, release build, clippy with denied
+warnings, fmt/diff, and **68/68** tooling tests pass. Pinned literal Test262 is
+**474 pass / 0 fail / 60 skip / 534 total**; the full `built-ins/RegExp` run is
+unchanged at **865 pass / 144 fail / 864 skip / 6 timeout / 1879 total**; and
+the supported subset remains **12238 pass / 0 fail / 8201 skip / 20439 total**.
+CI `29295535589` and full matrix `29295535579` succeeded. All 30 downloaded
+result artifacts are byte-for-byte identical to matrix `29293614900`, retaining
+the normalized **28542 pass / 6614 fail / 13149 skip / 12 timeout / 0 error /
+48317 total / 35156 pass-or-fail executed** aggregate.
+
 ## Full-suite baseline
 
 The `test262-full` CI workflow runs the sharded test262 matrix in parallel,

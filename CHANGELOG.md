@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- RegExp literals now use a dedicated bytecode operation that constructs from
+  the executing Realm's original `%RegExp.prototype%` instead of resolving a
+  mutable lexical or global `RegExp` binding. Realm prototypes are retained as
+  GC roots, and interpreted-frame selection remains correct when native array,
+  generator, async, or async-generator operations re-enter foreign code. The
+  obsolete `LoadGlobal` bytecode is removed. Literal Test262 is **474 pass / 0
+  fail / 60 skip**, the supported subset remains **12238 pass / 0 fail / 8201
+  skip**, and the full aggregate is unchanged at commit `953a821`. CI
+  `29295535589` and full matrix `29295535579` succeeded; all 30 result
+  artifacts exactly match the preceding matrix.
 - Direct `super` assignment targets in `for-in` and `for-of` now create a
   super property Reference with distinct base and actual-this components
   instead of an ordinary property Reference rooted at the home prototype.
