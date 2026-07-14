@@ -2417,6 +2417,34 @@ impl Vm {
                         _ => return Err(Error::internal("invalid decorator access kind")),
                     }
                 }
+                Op::ExtractAccessorDecoratorResult => {
+                    let result = self.stack.last().cloned().unwrap_or(Value::Undefined);
+                    if result.is_undefined() {
+                        self.stack.pop();
+                        self.stack
+                            .extend([Value::Undefined, Value::Undefined, Value::Undefined]);
+                        continue;
+                    }
+                    if !matches!(result, Value::Object(_)) {
+                        return Err(Error::type_err(
+                            "Accessor decorator must return an object or undefined",
+                        ));
+                    }
+                    for name in ["get", "set", "init"] {
+                        let replacement = self.get_property(&result, name)?;
+                        if !replacement.is_undefined()
+                            && !crate::builtins::is_callable(&replacement, &self.heap)
+                        {
+                            return Err(Error::type_err(format!(
+                                "Accessor decorator '{}' replacement must be callable or undefined",
+                                name
+                            )));
+                        }
+                        self.stack.push(replacement);
+                    }
+                    let result_index = self.stack.len().saturating_sub(4);
+                    self.stack.remove(result_index);
+                }
                 Op::CallRef(arg_count) => self.op_call_ref(arg_count)?,
                 Op::CallMethod(arg_count) => self.op_call_method(arg_count)?,
                 Op::CallEval(arg_count) => self.op_call_eval(arg_count)?,

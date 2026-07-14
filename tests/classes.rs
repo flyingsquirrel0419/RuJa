@@ -2272,6 +2272,141 @@ fn auto_accessors_use_hidden_backing_storage() {
 }
 
 #[test]
+fn decorated_public_auto_accessors_compose_replacements_and_context() {
+    assert_eq!(
+        run(r#"
+            let captured;
+            let extraValue;
+            function decorate(value, context) {
+              captured = [Object.keys(value).join(","), context];
+              context.addInitializer(function() { extraValue = this.value; });
+              return {
+                get() { return value.get.call(this) * 2; },
+                set(next) { value.set.call(this, next + 1); },
+                init(initial) { return initial + 3; }
+              };
+            }
+            class C { @decorate accessor value = 4; }
+            let instance = new C();
+            let initial = instance.value;
+            instance.value = 5;
+            [
+              captured[0], Object.keys(captured[1]).join(","),
+              Object.keys(captured[1].access).join(","), captured[1].kind,
+              captured[1].name, captured[1].static, captured[1].private,
+              captured[1].access.get(instance), initial, extraValue, instance.value
+            ].join("|");
+        "#),
+        Value::String(Arc::from(
+            "get,set|kind,access,static,private,name,addInitializer|get,set,has|accessor|value|false|false|12|14|14|12"
+        ))
+    );
+    assert_eq!(
+        run(r#"
+            let order = [];
+            function outer(value, context) {
+              order.push("apply outer");
+              return { init(value) { order.push("init outer"); return value * 2; } };
+            }
+            function inner(value, context) {
+              order.push("apply inner");
+              return { init(value) { order.push("init inner"); return value + 3; } };
+            }
+            class C { @outer @inner accessor value = 1; }
+            let instance = new C();
+            [order.join(","), instance.value].join("|");
+        "#),
+        Value::String(Arc::from("apply inner,apply outer,init outer,init inner|5"))
+    );
+}
+
+#[test]
+fn decorated_public_auto_accessors_support_static_computed_names() {
+    assert_eq!(
+        run(r#"
+            let key = Symbol("value");
+            let context;
+            function decorate(value, nextContext) {
+              context = nextContext;
+              return { get() { return value.get.call(this) + 1; } };
+            }
+            class C { @decorate static accessor [key] = 8; }
+            [
+              context.name === key, context.static, context.private,
+              context.access.has(C), context.access.get(C), C[key]
+            ].join("|");
+        "#),
+        Value::String(Arc::from("true|true|false|true|9|9"))
+    );
+}
+
+#[test]
+fn decorated_auto_accessors_use_method_application_phases() {
+    assert_eq!(
+        run(r#"
+            let order = [];
+            function mark(value) { return () => { order.push(value); }; }
+            @mark(9)
+            class C {
+              @mark(8) field = 1;
+              @mark(4) method() {}
+              @mark(1) static accessor staticAccessor = 2;
+              @mark(2) static get staticGetter() {}
+              @mark(5) accessor accessor = 3;
+              @mark(6) get getter() {}
+              @mark(7) static staticField = 4;
+              @mark(3) static staticMethod() {}
+            }
+            order.join(",");
+        "#),
+        Value::String(Arc::from("1,2,3,4,5,6,7,8,9"))
+    );
+}
+
+#[test]
+fn class_decorators_observe_static_private_methods() {
+    assert_eq!(
+        run(r#"
+            let observed;
+            function inspect(value) { observed = value.read(); }
+            @inspect
+            class C {
+              static #method() { return 7; }
+              static get #accessor() { return 8; }
+              static read() { return this.#method() + this.#accessor; }
+            }
+            observed;
+        "#),
+        Value::Number(15.0)
+    );
+}
+
+#[test]
+fn decorated_public_auto_accessors_validate_return_records() {
+    assert!(run_err("class C { @(() => 1) accessor value; }").contains("object or undefined"));
+    for property in ["get", "set", "init"] {
+        let source = format!("class C {{ @(() => ({{ {property}: 1 }})) accessor value; }}");
+        let error = run_err(&source);
+        assert!(error.contains("must be callable"), "{property}: {error}");
+    }
+    assert_eq!(
+        run(r#"
+            let order = [];
+            function decorate() {
+              return {
+                get get() { order.push("get"); return undefined; },
+                get set() { order.push("set"); return undefined; },
+                get init() { order.push("init"); return undefined; }
+              };
+            }
+            class C { @decorate accessor value; }
+            order.join(",");
+        "#),
+        Value::String(Arc::from("get,set,init"))
+    );
+}
+
+#[test]
 fn accessor_keyword_requires_no_line_terminator() {
     assert_eq!(
         run(r#"
@@ -2315,7 +2450,7 @@ fn decorator_grammar_rejects_unrestricted_and_invalid_targets() {
     assert!(run_err("class C { @foo static {} }").contains("cannot be decorated"));
     assert!(run_err("class C { @foo constructor() {} }").contains("cannot be decorated"));
     assert!(run_err("class C { @foo #method() {} }").contains("not implemented"));
-    assert!(run_err("class C { @foo accessor value; }").contains("not implemented"));
+    assert!(run_err("class C { @foo accessor #value; }").contains("not implemented"));
 }
 
 #[test]
@@ -2565,6 +2700,32 @@ fn decorator_instance_initializer_queues_survive_gc() {
         )
         .expect("decorator initializer queues should remain reachable"),
         Value::Number(2.0)
+    );
+    assert_eq!(
+        vm.run(
+            r#"
+            function preserve(value) {
+              return {
+                get get() {
+                  forceGc();
+                  return function() { return value.get.call(this) + 1; };
+                },
+                get set() {
+                  forceGc();
+                  return value.set;
+                },
+                get init() {
+                  forceGc();
+                  return function(initial) { return initial + 1; };
+                }
+              };
+            }
+            class D { @preserve accessor value = 1; }
+            new D().value;
+        "#,
+        )
+        .expect("accessor decorator result should remain rooted during property access"),
+        Value::Number(3.0)
     );
 }
 

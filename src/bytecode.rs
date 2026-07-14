@@ -207,6 +207,9 @@ pub enum Op {
     DecoratorAddInitializer,
     /// Public decorator context access. Kind: 0 has, 1 get, 2 set.
     DecoratorAccess(u8),
+    /// Validate an auto-accessor decorator result and extract optional
+    /// get/set/init replacements. Stack: [result] -> [get, set, init].
+    ExtractAccessorDecoratorResult,
     /// Unqualified `eval(...)`: call directly only if the resolved callee is
     /// the current Realm's intrinsic eval function; otherwise call normally.
     /// Stack: [callee, args...].
