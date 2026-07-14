@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import test262_analyze
 import test262_runner
+from test262_class_computed_field_admission import CLASS_COMPUTED_FIELD_FILES
 from test262_date_to_primitive_admission import DATE_TO_PRIMITIVE_FILES
 from test262_proxy_get_admission import PROXY_GET_FEATURES, PROXY_GET_FILES
 from test262_reference_primitive_admission import REFERENCE_PRIMITIVE_FILES
@@ -1444,6 +1445,56 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
                     self.assertFalse(tool.class_private_brand_realm_path(static_case))
                     self.assertTrue(tool.should_skip(meta, static_case))
                     self.assertFalse(tool.class_private_brand_realm_path(unrelated))
+                    self.assertTrue(tool.should_skip(meta, unrelated))
+                finally:
+                    tool.TEST262 = original_root
+
+    def test_computed_public_field_admission_is_exact(self):
+        self.assertEqual(len(CLASS_COMPUTED_FIELD_FILES), 120)
+        self.assertTrue(all("-fields" in path for path in CLASS_COMPUTED_FIELD_FILES))
+        self.assertTrue(all("await-expression" not in path for path in CLASS_COMPUTED_FIELD_FILES))
+        prefixes = (
+            "language/expressions/class/cpn-class-expr-fields-computed-property-name-from-",
+            "language/expressions/class/cpn-class-expr-fields-methods-computed-property-name-from-",
+            "language/statements/class/cpn-class-decl-fields-computed-property-name-from-",
+            "language/statements/class/cpn-class-decl-fields-methods-computed-property-name-from-",
+        )
+        suffix_sets = []
+        for prefix in prefixes:
+            suffixes = {
+                path.removeprefix(prefix)
+                for path in CLASS_COMPUTED_FIELD_FILES
+                if path.startswith(prefix)
+            }
+            self.assertEqual(len(suffixes), 30)
+            suffix_sets.append(suffixes)
+        self.assertTrue(all(suffixes == suffix_sets[0] for suffixes in suffix_sets))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            admitted = root / "test" / next(iter(CLASS_COMPUTED_FIELD_FILES))
+            await_case = root / (
+                "test/language/expressions/class/"
+                "cpn-class-expr-fields-computed-property-name-from-await-expression.js"
+            )
+            unrelated = root / "test/language/expressions/class/field.js"
+            meta = {
+                "flags": ["generated"],
+                "features": [
+                    "computed-property-names",
+                    "class-fields-public",
+                    "class-static-fields-public",
+                ],
+            }
+            for tool in (test262_runner, test262_analyze):
+                original_root = tool.TEST262
+                tool.TEST262 = str(root)
+                try:
+                    self.assertTrue(tool.class_computed_field_path(admitted))
+                    self.assertFalse(tool.should_skip(meta, admitted))
+                    self.assertFalse(tool.class_computed_field_path(await_case))
+                    self.assertTrue(tool.should_skip(meta, await_case))
+                    self.assertFalse(tool.class_computed_field_path(unrelated))
                     self.assertTrue(tool.should_skip(meta, unrelated))
                 finally:
                     tool.TEST262 = original_root
