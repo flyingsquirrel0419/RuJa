@@ -1788,7 +1788,11 @@ class TypedArrayResizableAdmissionTests(unittest.TestCase):
 
     def test_iterator_core_admission_requires_live_metadata(self):
         test_root = Path(test262_runner.TEST262) / "test"
-        if not test_root.is_dir():
+        try:
+            test_root_available = test_root.is_dir()
+        except OSError:
+            test_root_available = False
+        if not test_root_available:
             self.skipTest("live Test262 checkout is unavailable")
         allowed = set(ITERATOR_CORE_FEATURES) | {"cross-realm", "globalThis"}
         for relative in ITERATOR_CORE_FILES:
